@@ -1,5 +1,5 @@
 {
-  "name": "curl-mcp-server",
+  "name": "mcp-curl",
   "version": "1.0.0",
   "description": "MCP server for executing cURL commands",
   "main": "dist/index.js",
