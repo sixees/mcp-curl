@@ -8,8 +8,7 @@
     "curl-mcp-server": "./dist/index.js"
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "repository": {
     "type": "git",
@@ -21,7 +20,7 @@
   },
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",
-    "prepare": "npm run build",
+    "prepublishOnly": "npm run build",
     "start": "node dist/index.js",
     "dev": "tsc --watch"
   },
