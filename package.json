@@ -8,10 +8,20 @@
     "curl-mcp-server": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sixees/mcp-curl.git"
+  },
+  "homepage": "https://github.com/sixees/mcp-curl#readme",
+  "bugs": {
+    "url": "https://github.com/sixees/mcp-curl/issues"
+  },
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",
+    "prepare": "npm run build",
     "start": "node dist/index.js",
     "dev": "tsc --watch"
   },

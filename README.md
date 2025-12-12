@@ -22,27 +22,27 @@ npm run build
 
 ### With Claude Code
 
-Add to your Claude Code MCP settings:
-
-```json
-{
-  "mcpServers": {
-    "curl": {
-      "command": "node",
-      "args": ["/path/to/curl-mcp-server/dist/index.js"]
-    }
-  }
-}
-```
-
-Or if published to npm, use npx:
+The easiest way is to install directly from GitHub using npx:
 
 ```json
 {
   "mcpServers": {
     "curl": {
       "command": "npx",
-      "args": ["-y", "curl-mcp-server"]
+      "args": ["-y", "github:sixees/mcp-curl"]
+    }
+  }
+}
+```
+
+Or with a local clone:
+
+```json
+{
+  "mcpServers": {
+    "curl": {
+      "command": "node",
+      "args": ["/path/to/mcp-curl/dist/index.js"]
     }
   }
 }
@@ -59,8 +59,8 @@ Add to your Claude Desktop configuration file:
 {
   "mcpServers": {
     "curl": {
-      "command": "node",
-      "args": ["/path/to/curl-mcp-server/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "github:sixees/mcp-curl"]
     }
   }
 }
