@@ -14,7 +14,8 @@ TRANSPORT=http PORT=3000 npm start  # Run with HTTP transport
 
 ## Architecture
 
-This is an MCP (Model Context Protocol) server that enables LLMs to execute cURL commands. Single-file TypeScript implementation in `src/index.ts`.
+This is an MCP (Model Context Protocol) server that enables LLMs to execute cURL commands. Single-file TypeScript
+implementation in `src/index.ts`.
 
 ### Key Components
 
@@ -35,6 +36,7 @@ This is an MCP (Model Context Protocol) server that enables LLMs to execute cURL
 ### HTTP Transport Sessions
 
 The HTTP transport uses proper session management:
+
 - `sessions` Map tracks active sessions by ID
 - Each session has its own McpServer instance
 - POST creates/reuses sessions, GET handles SSE, DELETE terminates

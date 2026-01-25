@@ -17,16 +17,45 @@ const SERVER_VERSION = "1.0.0";
 const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
 const TEMP_DIR_PREFIX = "mcp-curl-";
 const METADATA_SEPARATOR = "\n---MCP-CURL-METADATA---\n"; // Separator for extracting content-type
+const ERROR_PREVIEW_LENGTH = 200; // Characters to show in error previews
+const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
 // Session tracking for HTTP transport
 const sessions = new Map();
+// Rate limiting
+const MAX_REQUESTS_PER_MINUTE = 60;
+const requestCounts = new Map();
+function checkRateLimit(clientId) {
+    const count = requestCounts.get(clientId) || 0;
+    if (count >= MAX_REQUESTS_PER_MINUTE) {
+        throw new Error(`Rate limit exceeded. Maximum ${MAX_REQUESTS_PER_MINUTE} requests per minute.`);
+    }
+    requestCounts.set(clientId, count + 1);
+    // Decrement count after 1 minute
+    setTimeout(() => {
+        const current = requestCounts.get(clientId) || 1;
+        if (current <= 1) {
+            requestCounts.delete(clientId);
+        }
+        else {
+            requestCounts.set(clientId, current - 1);
+        }
+    }, 60000);
+}
 // Shared temp directory for saved responses (lazily initialized, cleaned up on shutdown)
 let sharedTempDir = null;
+let tempDirPromise = null;
 async function getOrCreateTempDir() {
-    if (!sharedTempDir) {
-        sharedTempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
-        await chmod(sharedTempDir, 0o700); // Owner-only access
+    // Return cached promise to prevent race condition with concurrent requests
+    if (tempDirPromise) {
+        return tempDirPromise;
     }
-    return sharedTempDir;
+    tempDirPromise = (async () => {
+        const dir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
+        await chmod(dir, 0o700); // Owner-only access
+        sharedTempDir = dir;
+        return dir;
+    })();
+    return tempDirPromise;
 }
 // Clean up orphaned temp directories from previous runs (handles crashes)
 async function cleanupOrphanedTempDirs() {
@@ -59,15 +88,38 @@ function isJsonContentType(contentType) {
     const ct = contentType.toLowerCase();
     return ct.includes("application/json") || ct.includes("+json");
 }
+// Maximum distance from end where we expect to find the metadata separator
+// Content-type headers are typically short, so 200 chars is plenty
+const MAX_METADATA_TAIL_LENGTH = 200;
 // Parse curl response to extract body and content-type
 function parseResponseWithMetadata(rawResponse) {
-    const separatorIndex = rawResponse.lastIndexOf(METADATA_SEPARATOR);
-    if (separatorIndex === -1) {
+    // Only search for separator near the end to prevent spoofing via response body
+    // containing the separator string
+    const searchStart = Math.max(0, rawResponse.length - MAX_METADATA_TAIL_LENGTH);
+    const tailSection = rawResponse.slice(searchStart);
+    const separatorIndexInTail = tailSection.lastIndexOf(METADATA_SEPARATOR);
+    if (separatorIndexInTail === -1) {
         return { body: rawResponse };
     }
+    const separatorIndex = searchStart + separatorIndexInTail;
     const body = rawResponse.slice(0, separatorIndex);
     const contentType = rawResponse.slice(separatorIndex + METADATA_SEPARATOR.length).trim();
     return { body, contentType: contentType || undefined };
+}
+// Sanitize error messages to prevent information disclosure
+function sanitizeErrorMessage(message, includeDetails) {
+    if (includeDetails) {
+        return message;
+    }
+    // Remove response previews (could contain sensitive API data)
+    let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
+    // Remove file paths (could leak system information)
+    sanitized = sanitized.replace(/\/[^\s:]+/g, "[PATH]");
+    // Add hint about getting more details
+    if (sanitized !== message) {
+        sanitized += " (use include_metadata: true for details)";
+    }
+    return sanitized;
 }
 // Create a new MCP server instance
 function createServer() {
@@ -210,14 +262,14 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo)
                 exit_code: exitCode,
                 saved_to_file: true,
                 filepath: fileSaveInfo.filepath,
-                message: "Response saved to file. Read the file to access contents.",
+                message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents.",
             };
             if (stderr)
                 output.stderr = stderr;
             return JSON.stringify(output, null, 2);
         }
-        // Plain text - just return the filepath (consistent with not requesting metadata)
-        return `Response saved to: ${fileSaveInfo.filepath}`;
+        // Plain text - just return the message or fallback to filepath
+        return fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
     }
     // Normal response
     if (includeMetadata) {
@@ -235,6 +287,9 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo)
 // Parse bracket notation: [], ["key"], [n], [n:m]
 function parseBracketToken(filter, startIndex) {
     let i = startIndex + 1; // skip opening [
+    if (i >= filter.length) {
+        throw new Error(`Unterminated bracket "[" in filter "${filter}"`);
+    }
     // Check for iterate []
     if (filter[i] === "]") {
         return { token: { type: "iterate" }, newIndex: i + 1 };
@@ -266,8 +321,10 @@ function parseBracketToken(filter, startIndex) {
             key += ch;
             i++;
         }
-        if (i < filter.length && filter[i] === "]")
-            i++; // skip ]
+        if (i >= filter.length || filter[i] !== "]") {
+            throw new Error(`Missing closing bracket "]" after quoted key in filter "${filter}"`);
+        }
+        i++; // skip ]
         return { token: { type: "key", value: key }, newIndex: i };
     }
     // Parse number index or slice
@@ -286,6 +343,9 @@ function parseBracketToken(filter, startIndex) {
     i++; // skip ]
     if (hasColon) {
         const parts = numStr.split(":");
+        if (parts.length > 2) {
+            throw new Error(`Invalid slice "[${numStr}]" in filter "${filter}": only [start:end] format is supported`);
+        }
         let start;
         if (parts[0]) {
             const parsedStart = parseInt(parts[0], 10);
@@ -314,8 +374,14 @@ function parseBracketToken(filter, startIndex) {
     }
     return { token: { type: "index", value: index }, newIndex: i };
 }
+// Limits to prevent DoS via complex jq filters
+const MAX_JQ_FILTER_LENGTH = 500;
+const MAX_JQ_TOKENS = 50;
 // Parse a jq-like filter expression into tokens
 function parseJqFilter(filter) {
+    if (filter.length > MAX_JQ_FILTER_LENGTH) {
+        throw new Error(`jq_filter exceeds maximum length of ${MAX_JQ_FILTER_LENGTH} characters`);
+    }
     const tokens = [];
     let i = filter[0] === "." ? 1 : 0; // skip leading dot
     while (i < filter.length) {
@@ -326,6 +392,9 @@ function parseJqFilter(filter) {
         if (filter[i] === "[") {
             const result = parseBracketToken(filter, i);
             tokens.push(result.token);
+            if (tokens.length > MAX_JQ_TOKENS) {
+                throw new Error(`jq_filter exceeds maximum of ${MAX_JQ_TOKENS} path segments`);
+            }
             i = result.newIndex;
             continue;
         }
@@ -337,9 +406,16 @@ function parseJqFilter(filter) {
         }
         if (key) {
             tokens.push({ type: "key", value: key });
+            if (tokens.length > MAX_JQ_TOKENS) {
+                throw new Error(`jq_filter exceeds maximum of ${MAX_JQ_TOKENS} path segments`);
+            }
         }
     }
     return tokens;
+}
+// Type guard for plain objects (not arrays or null)
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 // Apply a jq-like filter to JSON data
 function applyJqFilter(jsonString, filter) {
@@ -347,11 +423,19 @@ function applyJqFilter(jsonString, filter) {
     try {
         data = JSON.parse(jsonString);
     }
-    catch {
-        const preview = jsonString.slice(0, 200);
-        throw new Error(`Response is not valid JSON. Cannot apply jq_filter.\nPreview: ${preview}${jsonString.length > 200 ? "..." : ""}`);
+    catch (error) {
+        // SyntaxError indicates invalid JSON
+        if (error instanceof SyntaxError) {
+            const preview = jsonString.slice(0, ERROR_PREVIEW_LENGTH);
+            throw new Error(`Response is not valid JSON. Cannot apply jq_filter.\nPreview: ${preview}${jsonString.length > ERROR_PREVIEW_LENGTH ? "..." : ""}`);
+        }
+        throw error; // Re-throw unexpected errors
     }
     const tokens = parseJqFilter(filter);
+    // Reject empty or dots-only filters that produce no tokens
+    if (tokens.length === 0) {
+        throw new Error(`Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`);
+    }
     for (const token of tokens) {
         if (data === null || data === undefined) {
             return "null";
@@ -359,14 +443,14 @@ function applyJqFilter(jsonString, filter) {
         switch (token.type) {
             case "key":
                 // Key access only works on plain objects, not arrays or primitives
-                // (null is caught by the loop guard above)
-                if (typeof data !== "object" || Array.isArray(data)) {
+                if (!isRecord(data)) {
                     return "null";
                 }
                 data = data[token.value];
                 break;
             case "index":
                 if (Array.isArray(data)) {
+                    // Support negative indices: -1 is last element, -2 is second-to-last, etc.
                     const idx = token.value < 0 ? data.length + token.value : token.value;
                     data = data[idx];
                 }
@@ -393,20 +477,50 @@ function applyJqFilter(jsonString, filter) {
     }
     return JSON.stringify(data, null, 2);
 }
+// Windows reserved filenames that cannot be used as base names
+const WINDOWS_RESERVED_BASENAMES = new Set([
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+]);
+// Create a safe filename base from arbitrary input
+function createSafeFilenameBase(input, fallback = "response") {
+    // Replace non-alphanumeric characters with underscores
+    let base = input.replace(/[^a-zA-Z0-9]/g, "_");
+    // Trim leading and trailing underscores to avoid names like "___"
+    base = base.replace(/^_+|_+$/g, "");
+    // Ensure we have a non-empty base
+    if (!base) {
+        base = fallback;
+    }
+    // Enforce maximum length
+    base = base.slice(0, FILENAME_MAX_LENGTH);
+    const upper = base.toUpperCase();
+    // Avoid reserved or problematic base names across platforms
+    if (WINDOWS_RESERVED_BASENAMES.has(upper) || upper === "." || upper === "..") {
+        base = `${fallback}_${base}`.slice(0, FILENAME_MAX_LENGTH);
+    }
+    return base;
+}
 // Save response content to a temporary file
 async function saveResponseToFile(content, url) {
     const tempDir = await getOrCreateTempDir();
     // Create a safe filename from URL (fall back to raw string if URL is invalid)
-    let safeName;
+    let baseName;
     try {
         const urlObj = new URL(url);
-        safeName = (urlObj.hostname + urlObj.pathname)
-            .replace(/[^a-zA-Z0-9]/g, "_")
-            .slice(0, 50);
+        baseName = urlObj.hostname + urlObj.pathname;
     }
-    catch {
-        safeName = url.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 50) || "response";
+    catch (error) {
+        // TypeError indicates invalid URL format; fall back to raw string
+        if (error instanceof TypeError) {
+            baseName = url;
+        }
+        else {
+            throw error; // Re-throw unexpected errors
+        }
     }
+    const safeName = createSafeFilenameBase(baseName);
     const filename = `${safeName}_${Date.now()}.txt`;
     const filepath = join(tempDir, filename);
     await writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 }); // Owner-only access
@@ -423,7 +537,19 @@ async function processResponse(response, options) {
             const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
             if (!looksLikeJson) {
                 throw new Error(`Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"}).\n` +
-                    `Preview: ${content.slice(0, 200)}${content.length > 200 ? "..." : ""}`);
+                    `Preview: ${content.slice(0, ERROR_PREVIEW_LENGTH)}${content.length > ERROR_PREVIEW_LENGTH ? "..." : ""}`);
+            }
+            // Actually try to parse it to verify it's valid JSON
+            try {
+                JSON.parse(trimmed);
+            }
+            catch (error) {
+                // SyntaxError indicates invalid JSON
+                if (error instanceof SyntaxError) {
+                    throw new Error(`Cannot apply jq_filter: Response does not appear to be valid JSON.\n` +
+                        `Preview: ${content.slice(0, ERROR_PREVIEW_LENGTH)}${content.length > ERROR_PREVIEW_LENGTH ? "..." : ""}`);
+                }
+                throw error; // Re-throw unexpected errors
             }
         }
         content = applyJqFilter(content, options.jqFilter);
@@ -435,10 +561,13 @@ async function processResponse(response, options) {
     const shouldSave = options.saveToFile || contentBytes > maxSize;
     if (shouldSave) {
         const filepath = await saveResponseToFile(content, options.url);
+        // Keep content as actual response data, capped to maxSize for preview
+        const displayContent = contentBytes > maxSize ? content.slice(0, maxSize) : content;
         return {
-            content: `Response (${contentBytes} bytes) saved to: ${filepath}`,
+            content: displayContent,
             savedToFile: true,
             filepath,
+            message: `Response (${contentBytes} bytes) saved to: ${filepath}`,
         };
     }
     return {
@@ -450,6 +579,10 @@ async function processResponse(response, options) {
 const CurlExecuteSchema = z.object({
     url: z.string()
         .url("Must be a valid URL")
+        .refine((url) => {
+        const scheme = url.split(":")[0].toLowerCase();
+        return ["http", "https"].includes(scheme);
+    }, { message: "URL must use http or https scheme" })
         .describe("The URL to request"),
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
         .optional()
@@ -504,7 +637,7 @@ const CurlExecuteSchema = z.object({
         .describe("Wrap response in JSON with metadata (exit code, success status)"),
     jq_filter: z.string()
         .optional()
-        .describe("JSON path filter to extract specific data (e.g., '.data.items[0]', '.users[0:5]'). Applied before size checks."),
+        .describe("JSON path filter to extract specific data (e.g., '.data.items[0]', '.users[0:5]'). Applied after receiving full response but before max_result_size check."),
     max_result_size: z.number()
         .int()
         .min(1000)
@@ -569,7 +702,14 @@ Error Handling:
   - Returns error message if cURL fails or times out
   - Exit code 0 indicates success
   - Non-zero exit codes indicate various cURL errors
-  - Invalid JSON with jq_filter returns error with response preview`,
+  - Invalid JSON with jq_filter returns error with response preview
+
+Temp File Lifecycle:
+  Files saved with save_to_file or auto-save are:
+  - Stored in a secure temp directory (owner-only access: 0o700/0o600)
+  - Deleted on graceful server shutdown (SIGINT/SIGTERM)
+  - Orphaned files from crashed sessions are cleaned on next server start
+  - Check ${TEMP_DIR_PREFIX}* in system temp dir if files persist after crash`,
         inputSchema: CurlExecuteSchema,
         annotations: {
             readOnlyHint: false,
@@ -579,6 +719,9 @@ Error Handling:
         },
     }, async (params) => {
         try {
+            // Rate limit by target host to prevent abuse
+            const targetHost = new URL(params.url).hostname;
+            checkRateLimit(targetHost);
             const args = buildCurlArgs({
                 ...params,
                 silent: true,
@@ -594,7 +737,7 @@ Error Handling:
                 saveToFile: params.save_to_file,
                 contentType,
             });
-            const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, { savedToFile: processed.savedToFile, filepath: processed.filepath });
+            const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, { savedToFile: processed.savedToFile, filepath: processed.filepath, message: processed.message });
             return {
                 content: [
                     {
@@ -605,7 +748,8 @@ Error Handling:
             };
         }
         catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
+            const rawMessage = error instanceof Error ? error.message : String(error);
+            const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
             return {
                 content: [
                     {
