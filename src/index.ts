@@ -346,6 +346,11 @@ function parseBracketToken(filter: string, startIndex: number): { token: JqToken
         numStr += filter[i];
         i++;
     }
+
+    // Validate closing bracket exists
+    if (i >= filter.length) {
+        throw new Error(`Unterminated bracket expression in filter "${filter}" at position ${startIndex}`);
+    }
     i++; // skip ]
 
     if (hasColon) {
