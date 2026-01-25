@@ -218,16 +218,33 @@ function parseBracketToken(filter, startIndex) {
     i++; // skip ]
     if (hasColon) {
         const parts = numStr.split(":");
+        let start;
+        if (parts[0]) {
+            const parsedStart = parseInt(parts[0], 10);
+            if (Number.isNaN(parsedStart)) {
+                throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}"`);
+            }
+            start = parsedStart;
+        }
+        let end;
+        if (parts[1]) {
+            const parsedEnd = parseInt(parts[1], 10);
+            if (Number.isNaN(parsedEnd)) {
+                throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}"`);
+            }
+            end = parsedEnd;
+        }
         return {
-            token: {
-                type: "slice",
-                start: parts[0] ? parseInt(parts[0], 10) : undefined,
-                end: parts[1] ? parseInt(parts[1], 10) : undefined,
-            },
+            token: { type: "slice", start, end },
             newIndex: i,
         };
     }
-    return { token: { type: "index", value: parseInt(numStr, 10) }, newIndex: i };
+    // Simple index [n]
+    const index = parseInt(numStr, 10);
+    if (Number.isNaN(index)) {
+        throw new Error(`Invalid array index "${numStr}" in filter "${filter}"`);
+    }
+    return { token: { type: "index", value: index }, newIndex: i };
 }
 // Parse a jq-like filter expression into tokens
 function parseJqFilter(filter) {
