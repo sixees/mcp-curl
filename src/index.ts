@@ -597,24 +597,34 @@ async function runHTTP(): Promise<void> {
     });
 
     // GET /mcp - Handle SSE streams for existing sessions
-    app.get("/mcp", async (req: Request, res: Response) => {
-        const sessionId = req.headers["mcp-session-id"] as string;
-        if (!sessionId || !sessions.has(sessionId)) {
-            res.status(400).json({error: "Invalid or missing session ID"});
-            return;
+    app.get("/mcp", async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const sessionId = req.headers["mcp-session-id"] as string;
+            if (!sessionId || !sessions.has(sessionId)) {
+                res.status(400).json({error: "Invalid or missing session ID"});
+                return;
+            }
+            const session = sessions.get(sessionId)!;
+            await session.transport.handleRequest(req, res);
+        } catch (error) {
+            next(error);
         }
-        const session = sessions.get(sessionId)!;
-        await session.transport.handleRequest(req, res);
     });
 
     // DELETE /mcp - Terminate a session
-    app.delete("/mcp", async (req: Request, res: Response) => {
+    app.delete("/mcp", async (req: Request, res: Response, next: NextFunction) => {
         const sessionId = req.headers["mcp-session-id"] as string;
         if (sessionId && sessions.has(sessionId)) {
             const session = sessions.get(sessionId)!;
-            session.transport.close();
-            await session.server.close();
-            sessions.delete(sessionId);
+            try {
+                session.transport.close();
+                await session.server.close();
+            } catch (error) {
+                next(error);
+                return;
+            } finally {
+                sessions.delete(sessionId);
+            }
         }
         res.status(200).end();
     });
