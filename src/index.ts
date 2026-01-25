@@ -507,7 +507,12 @@ async function shutdown(signal: string): Promise<void> {
 
     // Close HTTP server if running
     if (httpServer) {
-        httpServer.close();
+        await new Promise<void>((resolve, reject) => {
+            httpServer!.close((err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
     }
 
     // Close all active sessions
