@@ -224,74 +224,68 @@ type JqToken =
     | { type: "slice"; start?: number; end?: number }
     | { type: "iterate" };
 
+// Parse bracket notation: [], ["key"], [n], [n:m]
+function parseBracketToken(filter: string, startIndex: number): { token: JqToken; newIndex: number } {
+    let i = startIndex + 1; // skip opening [
+
+    // Check for iterate []
+    if (filter[i] === "]") {
+        return { token: { type: "iterate" }, newIndex: i + 1 };
+    }
+
+    // Check for string key ["key"]
+    if (filter[i] === '"' || filter[i] === "'") {
+        const quote = filter[i];
+        i++; // skip opening quote
+        let key = "";
+        while (i < filter.length && filter[i] !== quote) {
+            key += filter[i];
+            i++;
+        }
+        i++; // skip closing quote
+        if (filter[i] === "]") i++; // skip ]
+        return { token: { type: "key", value: key }, newIndex: i };
+    }
+
+    // Parse number index or slice
+    let numStr = "";
+    let hasColon = false;
+    while (i < filter.length && filter[i] !== "]") {
+        if (filter[i] === ":") hasColon = true;
+        numStr += filter[i];
+        i++;
+    }
+    i++; // skip ]
+
+    if (hasColon) {
+        const parts = numStr.split(":");
+        return {
+            token: {
+                type: "slice",
+                start: parts[0] ? parseInt(parts[0], 10) : undefined,
+                end: parts[1] ? parseInt(parts[1], 10) : undefined,
+            },
+            newIndex: i,
+        };
+    }
+    return { token: { type: "index", value: parseInt(numStr, 10) }, newIndex: i };
+}
+
 // Parse a jq-like filter expression into tokens
 function parseJqFilter(filter: string): JqToken[] {
     const tokens: JqToken[] = [];
-    let i = 0;
-
-    // Skip leading dot
-    if (filter[i] === ".") {
-        i++;
-    }
+    let i = filter[0] === "." ? 1 : 0; // skip leading dot
 
     while (i < filter.length) {
-        // Skip dots between tokens
         if (filter[i] === ".") {
             i++;
             continue;
         }
 
-        // Bracket notation
         if (filter[i] === "[") {
-            i++; // skip [
-
-            // Check for iterate []
-            if (filter[i] === "]") {
-                tokens.push({ type: "iterate" });
-                i++;
-                continue;
-            }
-
-            // Check for string key ["key"]
-            if (filter[i] === '"' || filter[i] === "'") {
-                const quote = filter[i];
-                i++; // skip opening quote
-                let key = "";
-                while (i < filter.length && filter[i] !== quote) {
-                    key += filter[i];
-                    i++;
-                }
-                i++; // skip closing quote
-                if (filter[i] === "]") i++; // skip ]
-                tokens.push({ type: "key", value: key });
-                continue;
-            }
-
-            // Check for number index or slice
-            let numStr = "";
-            let hasColon = false;
-
-            while (i < filter.length && filter[i] !== "]") {
-                if (filter[i] === ":") {
-                    hasColon = true;
-                }
-                numStr += filter[i];
-                i++;
-            }
-            i++; // skip ]
-
-            if (hasColon) {
-                // Slice [n:m], [:m], [n:], or [:]
-                const parts = numStr.split(":");
-                tokens.push({
-                    type: "slice",
-                    start: parts[0] ? parseInt(parts[0], 10) : undefined,
-                    end: parts[1] ? parseInt(parts[1], 10) : undefined,
-                });
-            } else {
-                // Simple index [n]
-                tokens.push({ type: "index", value: parseInt(numStr, 10) });
-            }
+            const result = parseBracketToken(filter, i);
+            tokens.push(result.token);
+            i = result.newIndex;
             continue;
         }
 
