@@ -18,6 +18,7 @@ const SERVER_NAME = "curl-mcp-server";
 const SERVER_VERSION = "1.0.0";
 const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
 const TEMP_DIR_PREFIX = "mcp-curl-";
+const METADATA_SEPARATOR = "\n---MCP-CURL-METADATA---\n"; // Separator for extracting content-type
 
 // Session tracking for HTTP transport
 const sessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
@@ -30,6 +31,24 @@ async function getOrCreateTempDir(): Promise<string> {
         sharedTempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
     }
     return sharedTempDir;
+}
+
+// Check if content-type indicates JSON
+function isJsonContentType(contentType: string | undefined): boolean {
+    if (!contentType) return false;
+    const ct = contentType.toLowerCase();
+    return ct.includes("application/json") || ct.includes("+json");
+}
+
+// Parse curl response to extract body and content-type
+function parseResponseWithMetadata(rawResponse: string): { body: string; contentType?: string } {
+    const separatorIndex = rawResponse.lastIndexOf(METADATA_SEPARATOR);
+    if (separatorIndex === -1) {
+        return { body: rawResponse };
+    }
+    const body = rawResponse.slice(0, separatorIndex);
+    const contentType = rawResponse.slice(separatorIndex + METADATA_SEPARATOR.length).trim();
+    return { body, contentType: contentType || undefined };
 }
 
 // Create a new MCP server instance
@@ -188,9 +207,12 @@ function buildCurlArgs(params: {
         args.push("-s");
     }
 
-    // Output format for response info
+    // Output format for response info (custom format + metadata separator for content-type)
+    const metadataSuffix = METADATA_SEPARATOR.replace(/\n/g, "\\n") + "%{content_type}";
     if (params.output_format) {
-        args.push("-w", params.output_format);
+        args.push("-w", params.output_format + metadataSuffix);
+    } else {
+        args.push("-w", metadataSuffix);
     }
 
     // URL must be last
@@ -207,21 +229,32 @@ function formatResponse(
     includeMetadata: boolean,
     fileSaveInfo?: { savedToFile: boolean; filepath?: string }
 ): string {
-    if (includeMetadata || fileSaveInfo?.savedToFile) {
+    // If file was saved, always indicate the filepath (user needs to know where data is)
+    if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
+        if (includeMetadata) {
+            // Full JSON metadata
+            const output: Record<string, unknown> = {
+                success: exitCode === 0,
+                exit_code: exitCode,
+                saved_to_file: true,
+                filepath: fileSaveInfo.filepath,
+                message: "Response saved to file. Read the file to access contents.",
+            };
+            if (stderr) output.stderr = stderr;
+            return JSON.stringify(output, null, 2);
+        }
+        // Plain text - just return the filepath (consistent with not requesting metadata)
+        return `Response saved to: ${fileSaveInfo.filepath}`;
+    }
+
+    // Normal response
+    if (includeMetadata) {
         const output: Record<string, unknown> = {
             success: exitCode === 0,
             exit_code: exitCode,
+            response: stdout,
         };
-        if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
-            output.saved_to_file = true;
-            output.filepath = fileSaveInfo.filepath;
-            output.message = `Response saved to file due to size. Read the file to access contents.`;
-        } else {
-            output.response = stdout;
-        }
-        if (stderr) {
-            output.stderr = stderr;
-        }
+        if (stderr) output.stderr = stderr;
         return JSON.stringify(output, null, 2);
     }
     return stdout;
@@ -435,6 +468,7 @@ interface ProcessResponseOptions {
     jqFilter?: string;
     maxResultSize?: number;
     saveToFile?: boolean;
+    contentType?: string;
 }
 
 interface ProcessedResponse {
@@ -449,8 +483,20 @@ async function processResponse(
 ): Promise<ProcessedResponse> {
     let content = response;
 
-    // Step 1: Apply jq filter if provided
+    // Step 1: Apply jq filter if provided AND response is JSON
     if (options.jqFilter) {
+        const isJson = isJsonContentType(options.contentType);
+        if (!isJson) {
+            // Check if it looks like JSON despite content-type (some APIs don't set correct headers)
+            const trimmed = content.trim();
+            const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+            if (!looksLikeJson) {
+                throw new Error(
+                    `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"}).\n` +
+                    `Preview: ${content.slice(0, 200)}${content.length > 200 ? "..." : ""}`
+                );
+            }
+        }
         content = applyJqFilter(content, options.jqFilter);
     }
 
@@ -621,12 +667,16 @@ Error Handling:
 
                 const result = await executeCommand("curl", args, params.timeout * 1000);
 
+                // Parse response to extract body and content-type
+                const { body, contentType } = parseResponseWithMetadata(result.stdout);
+
                 // Process response with filtering and size handling
-                const processed = await processResponse(result.stdout, {
+                const processed = await processResponse(body, {
                     url: params.url,
                     jqFilter: params.jq_filter,
                     maxResultSize: params.max_result_size,
                     saveToFile: params.save_to_file,
+                    contentType,
                 });
 
                 const output = formatResponse(
