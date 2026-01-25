@@ -243,16 +243,33 @@ function parseBracketToken(filter: string, startIndex: number): { token: JqToken
         return { token: { type: "iterate" }, newIndex: i + 1 };
     }
 
-    // Check for string key ["key"]
+    // Check for string key ["key"] with escape sequence handling
     if (filter[i] === '"' || filter[i] === "'") {
         const quote = filter[i];
         i++; // skip opening quote
         let key = "";
-        while (i < filter.length && filter[i] !== quote) {
-            key += filter[i];
+        while (i < filter.length) {
+            const ch = filter[i];
+            // Handle escape sequences like \" or \'
+            if (ch === "\\") {
+                if (i + 1 < filter.length) {
+                    key += filter[i + 1];
+                    i += 2;
+                    continue;
+                }
+                // Trailing backslash with no next char; append as-is
+                key += ch;
+                i++;
+                continue;
+            }
+            // End of quoted string on unescaped matching quote
+            if (ch === quote) {
+                i++; // skip closing quote
+                break;
+            }
+            key += ch;
             i++;
         }
-        if (i < filter.length) i++; // skip closing quote
         if (i < filter.length && filter[i] === "]") i++; // skip ]
         return { token: { type: "key", value: key }, newIndex: i };
     }
