@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
-import { writeFile, mkdtemp, rm } from "fs/promises";
+import { writeFile, mkdtemp, rm, chmod } from "fs/promises";
 // Constants
 const MAX_RESPONSE_SIZE = 4_000_000; // 4MB max response
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -24,6 +24,7 @@ let sharedTempDir = null;
 async function getOrCreateTempDir() {
     if (!sharedTempDir) {
         sharedTempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
+        await chmod(sharedTempDir, 0o700); // Owner-only access
     }
     return sharedTempDir;
 }
@@ -375,7 +376,7 @@ async function saveResponseToFile(content, url) {
     }
     const filename = `${safeName}_${Date.now()}.txt`;
     const filepath = join(tempDir, filename);
-    await writeFile(filepath, content, "utf-8");
+    await writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 }); // Owner-only access
     return filepath;
 }
 async function processResponse(response, options) {
