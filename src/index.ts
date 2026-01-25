@@ -408,10 +408,8 @@ function applyJqFilter(jsonString: string, filter: string): string {
 
         switch (token.type) {
             case "key":
+                // typeof null === "object", but null is caught by the loop guard above
                 if (typeof data !== "object") {
-                    return "null";
-                }
-                if (data === null) {
                     return "null";
                 }
                 data = (data as Record<string, unknown>)[token.value];
