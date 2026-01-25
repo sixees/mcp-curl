@@ -7,7 +7,7 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 // Constants
-const MAX_RESPONSE_SIZE = 1_000_000; // 1MB max response
+const MAX_RESPONSE_SIZE = 2_000_000; // 2MB max response
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
 const SERVER_NAME = "curl-mcp-server";
 const SERVER_VERSION = "1.0.0";

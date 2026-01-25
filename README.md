@@ -29,7 +29,10 @@ The easiest way is to install directly from GitHub using npx:
   "mcpServers": {
     "curl": {
       "command": "npx",
-      "args": ["-y", "github:sixees/mcp-curl"]
+      "args": [
+        "-y",
+        "github:sixees/mcp-curl"
+      ]
     }
   }
 }
@@ -42,7 +45,9 @@ Or with a local clone:
   "mcpServers": {
     "curl": {
       "command": "node",
-      "args": ["/path/to/mcp-curl/dist/index.js"]
+      "args": [
+        "/path/to/mcp-curl/dist/index.js"
+      ]
     }
   }
 }
@@ -60,7 +65,10 @@ Add to your Claude Desktop configuration file:
   "mcpServers": {
     "curl": {
       "command": "npx",
-      "args": ["-y", "github:sixees/mcp-curl"]
+      "args": [
+        "-y",
+        "github:sixees/mcp-curl"
+      ]
     }
   }
 }
@@ -69,6 +77,7 @@ Add to your Claude Desktop configuration file:
 ### Standalone Usage
 
 **Stdio Transport (Default):**
+
 ```bash
 npm start
 # or
@@ -76,6 +85,7 @@ node dist/index.js
 ```
 
 **HTTP Transport:**
+
 ```bash
 TRANSPORT=http PORT=3000 npm start
 ```
@@ -84,28 +94,29 @@ TRANSPORT=http PORT=3000 npm start
 
 ### `curl_execute`
 
-Execute HTTP requests with structured parameters. This is the only tool available, providing a safe, validated interface for HTTP requests.
+Execute HTTP requests with structured parameters. This is the only tool available, providing a safe, validated interface
+for HTTP requests.
 
 **Parameters:**
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `url` | string | Yes | - | The URL to request |
-| `method` | string | No | GET | HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) |
-| `headers` | object | No | - | HTTP headers as key-value pairs |
-| `data` | string | No | - | Request body data |
-| `form` | object | No | - | Form data as key-value pairs |
-| `follow_redirects` | boolean | No | true | Follow HTTP redirects |
-| `max_redirects` | number | No | - | Maximum redirects to follow (0-50) |
-| `insecure` | boolean | No | false | Skip SSL certificate verification |
-| `timeout` | number | No | 30 | Request timeout in seconds (1-300) |
-| `user_agent` | string | No | - | Custom User-Agent header |
-| `basic_auth` | string | No | - | Basic auth as "username:password" |
-| `bearer_token` | string | No | - | Bearer token for Authorization |
-| `verbose` | boolean | No | false | Include verbose output |
-| `include_headers` | boolean | No | false | Include response headers |
-| `compressed` | boolean | No | true | Request compressed response |
-| `include_metadata` | boolean | No | false | Wrap response in JSON metadata |
+| Parameter          | Type    | Required | Default | Description                                                |
+|--------------------|---------|----------|---------|------------------------------------------------------------|
+| `url`              | string  | Yes      | -       | The URL to request                                         |
+| `method`           | string  | No       | GET     | HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) |
+| `headers`          | object  | No       | -       | HTTP headers as key-value pairs                            |
+| `data`             | string  | No       | -       | Request body data                                          |
+| `form`             | object  | No       | -       | Form data as key-value pairs                               |
+| `follow_redirects` | boolean | No       | true    | Follow HTTP redirects                                      |
+| `max_redirects`    | number  | No       | -       | Maximum redirects to follow (0-50)                         |
+| `insecure`         | boolean | No       | false   | Skip SSL certificate verification                          |
+| `timeout`          | number  | No       | 30      | Request timeout in seconds (1-300)                         |
+| `user_agent`       | string  | No       | -       | Custom User-Agent header                                   |
+| `basic_auth`       | string  | No       | -       | Basic auth as "username:password"                          |
+| `bearer_token`     | string  | No       | -       | Bearer token for Authorization                             |
+| `verbose`          | boolean | No       | false   | Include verbose output                                     |
+| `include_headers`  | boolean | No       | false   | Include response headers                                   |
+| `compressed`       | boolean | No       | true    | Request compressed response                                |
+| `include_metadata` | boolean | No       | false   | Wrap response in JSON metadata                             |
 
 **Examples:**
 
