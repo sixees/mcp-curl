@@ -10,7 +10,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { writeFile, mkdtemp, rm, chmod } from "fs/promises";
 // Constants
-const MAX_RESPONSE_SIZE = 4_000_000; // 4MB max response
+const MAX_RESPONSE_SIZE = 1_000_000; // 1MB max response (matches tool result limits)
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
 const SERVER_NAME = "curl-mcp-server";
 const SERVER_VERSION = "1.0.0";
@@ -474,9 +474,9 @@ const CurlExecuteSchema = z.object({
     max_result_size: z.number()
         .int()
         .min(1000)
-        .max(4_000_000)
+        .max(1_000_000)
         .optional()
-        .describe("Max bytes to return inline (default: 500KB). Larger responses auto-save to temp file"),
+        .describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger responses auto-save to temp file"),
     save_to_file: z.boolean()
         .optional()
         .describe("Force save response to temp file. Returns filepath instead of content"),
@@ -509,7 +509,7 @@ Args:
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data (e.g., ".data.items[0]", ".users[0:5]")
-  - max_result_size (number): Max bytes to return inline (default: 500KB). Auto-saves to file when exceeded
+  - max_result_size (number): Max bytes to return inline (default: 500KB, max: 1MB). Auto-saves to file when exceeded
   - save_to_file (boolean): Force save response to temp file. Returns filepath instead of content
 
 Returns:
@@ -614,7 +614,7 @@ Execute HTTP requests with structured, validated parameters.
 | include_headers | boolean | No | false | Include response headers |
 | include_metadata | boolean | No | false | Return JSON with metadata |
 | jq_filter | string | No | - | JSON path filter (e.g., ".data.items[0]") |
-| max_result_size | number | No | 500KB | Max bytes inline before auto-save to file |
+| max_result_size | number | No | 500KB | Max bytes inline before auto-save (max: 1MB) |
 | save_to_file | boolean | No | false | Force save response to temp file |
 
 ### Large Response Handling
