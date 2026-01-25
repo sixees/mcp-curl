@@ -201,11 +201,9 @@ function parseJqFilter(filter) {
             // Check for number index or slice
             let numStr = "";
             let hasColon = false;
-            let colonPos = -1;
             while (i < filter.length && filter[i] !== "]") {
                 if (filter[i] === ":") {
                     hasColon = true;
-                    colonPos = numStr.length;
                 }
                 numStr += filter[i];
                 i++;
