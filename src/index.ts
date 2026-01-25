@@ -9,7 +9,7 @@ import {spawn, ChildProcess} from "child_process";
 import {randomUUID} from "crypto";
 import {tmpdir} from "os";
 import {join} from "path";
-import {writeFile, mkdtemp, rm, chmod} from "fs/promises";
+import {writeFile, mkdtemp, rm, chmod, readdir} from "fs/promises";
 
 // Constants
 const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
@@ -32,6 +32,28 @@ async function getOrCreateTempDir(): Promise<string> {
         await chmod(sharedTempDir, 0o700); // Owner-only access
     }
     return sharedTempDir;
+}
+
+// Clean up orphaned temp directories from previous runs (handles crashes)
+async function cleanupOrphanedTempDirs(): Promise<void> {
+    try {
+        const tempBase = tmpdir();
+        const entries = await readdir(tempBase);
+        for (const entry of entries) {
+            if (entry.startsWith(TEMP_DIR_PREFIX)) {
+                const dirPath = join(tempBase, entry);
+                // Skip our current session's directory
+                if (dirPath === sharedTempDir) continue;
+                try {
+                    await rm(dirPath, { recursive: true, force: true });
+                } catch {
+                    // Ignore individual cleanup errors
+                }
+            }
+        }
+    } catch {
+        // Ignore errors during orphan cleanup
+    }
 }
 
 // Check if content-type indicates JSON
@@ -938,6 +960,9 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 // Run with stdio transport (default)
 async function runStdio(): Promise<void> {
+    // Clean up orphaned temp directories from previous runs
+    await cleanupOrphanedTempDirs();
+
     const server = createServer();
     registerToolsAndResources(server);
 
@@ -948,6 +973,9 @@ async function runStdio(): Promise<void> {
 
 // Run with HTTP transport
 async function runHTTP(): Promise<void> {
+    // Clean up orphaned temp directories from previous runs
+    await cleanupOrphanedTempDirs();
+
     const app = express();
     app.use(express.json());
 
