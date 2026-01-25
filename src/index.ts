@@ -114,11 +114,11 @@ async function executeCommand(
             if (stderrBytes < MAX_RESPONSE_SIZE) {
                 stderr += data.toString();
                 if (Buffer.byteLength(stderr, "utf8") > MAX_RESPONSE_SIZE) {
-                    // Truncate to approximate byte limit
-                    while (Buffer.byteLength(stderr, "utf8") > MAX_RESPONSE_SIZE) {
-                        stderr = stderr.slice(0, -100);
-                    }
-                    stderr += "\n[stderr truncated]";
+                    // Truncate efficiently using Buffer slice
+                    const truncateMsg = "\n[stderr truncated]";
+                    const maxBytes = MAX_RESPONSE_SIZE - Buffer.byteLength(truncateMsg, "utf8");
+                    const buf = Buffer.from(stderr, "utf8").subarray(0, maxBytes);
+                    stderr = buf.toString("utf8") + truncateMsg;
                 }
             }
         });
