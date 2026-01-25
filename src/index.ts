@@ -77,7 +77,7 @@ async function executeCommand(
 
         childProcess.stdout?.on("data", (data: Buffer) => {
             stdout += data.toString();
-            if (stdout.length > MAX_RESPONSE_SIZE && !killed) {
+            if (Buffer.byteLength(stdout, "utf8") > MAX_RESPONSE_SIZE && !killed) {
                 killed = true;
                 childProcess.kill();
                 reject(new Error(`Response exceeded maximum size of ${MAX_RESPONSE_SIZE} bytes`));
@@ -85,10 +85,15 @@ async function executeCommand(
         });
 
         childProcess.stderr?.on("data", (data: Buffer) => {
-            if (stderr.length < MAX_RESPONSE_SIZE) {
+            const stderrBytes = Buffer.byteLength(stderr, "utf8");
+            if (stderrBytes < MAX_RESPONSE_SIZE) {
                 stderr += data.toString();
-                if (stderr.length > MAX_RESPONSE_SIZE) {
-                    stderr = stderr.slice(0, MAX_RESPONSE_SIZE) + "\n[stderr truncated]";
+                if (Buffer.byteLength(stderr, "utf8") > MAX_RESPONSE_SIZE) {
+                    // Truncate to approximate byte limit
+                    while (Buffer.byteLength(stderr, "utf8") > MAX_RESPONSE_SIZE) {
+                        stderr = stderr.slice(0, -100);
+                    }
+                    stderr += "\n[stderr truncated]";
                 }
             }
         });
@@ -503,14 +508,15 @@ async function processResponse(
 
     // Step 2: Determine max size
     const maxSize = options.maxResultSize ?? DEFAULT_MAX_RESULT_SIZE;
+    const contentBytes = Buffer.byteLength(content, "utf8");
 
     // Step 3: Check if we need to save to file
-    const shouldSave = options.saveToFile || content.length > maxSize;
+    const shouldSave = options.saveToFile || contentBytes > maxSize;
 
     if (shouldSave) {
         const filepath = await saveResponseToFile(content, options.url);
         return {
-            content: `Response (${content.length} bytes) saved to: ${filepath}`,
+            content: `Response (${contentBytes} bytes) saved to: ${filepath}`,
             savedToFile: true,
             filepath,
         };
