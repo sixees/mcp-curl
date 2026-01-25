@@ -296,11 +296,17 @@ function applyJqFilter(jsonString, filter) {
 // Save response content to a temporary file
 async function saveResponseToFile(content, url) {
     const tempDir = await getOrCreateTempDir();
-    // Create a safe filename from URL
-    const urlObj = new URL(url);
-    const safeName = (urlObj.hostname + urlObj.pathname)
-        .replace(/[^a-zA-Z0-9]/g, "_")
-        .slice(0, 50);
+    // Create a safe filename from URL (fall back to raw string if URL is invalid)
+    let safeName;
+    try {
+        const urlObj = new URL(url);
+        safeName = (urlObj.hostname + urlObj.pathname)
+            .replace(/[^a-zA-Z0-9]/g, "_")
+            .slice(0, 50);
+    }
+    catch {
+        safeName = url.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 50) || "response";
+    }
     const filename = `${safeName}_${Date.now()}.txt`;
     const filepath = join(tempDir, filename);
     await writeFile(filepath, content, "utf-8");
