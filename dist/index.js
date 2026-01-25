@@ -10,7 +10,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { writeFile, mkdtemp, rm, chmod } from "fs/promises";
 // Constants
-const MAX_RESPONSE_SIZE = 1_000_000; // 1MB max response (matches tool result limits)
+const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
 const SERVER_NAME = "curl-mcp-server";
 const SERVER_VERSION = "1.0.0";
@@ -66,7 +66,8 @@ async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
             if (Buffer.byteLength(stdout, "utf8") > MAX_RESPONSE_SIZE && !killed) {
                 killed = true;
                 childProcess.kill();
-                reject(new Error(`Response exceeded maximum size of ${MAX_RESPONSE_SIZE} bytes`));
+                reject(new Error(`Response exceeded maximum processing size of ${MAX_RESPONSE_SIZE / 1_000_000}MB. ` +
+                    `Consider using a more specific API endpoint or adding query parameters to reduce response size.`));
             }
         });
         childProcess.stderr?.on("data", (data) => {
