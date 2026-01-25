@@ -6,11 +6,16 @@ import express from "express";
 import { z } from "zod";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
+import { tmpdir } from "os";
+import { join } from "path";
+import { writeFile, mkdir } from "fs/promises";
 // Constants
 const MAX_RESPONSE_SIZE = 4_000_000; // 4MB max response
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
 const SERVER_NAME = "curl-mcp-server";
 const SERVER_VERSION = "1.0.0";
+const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
+const TEMP_DIR_PREFIX = "mcp-curl-";
 // Session tracking for HTTP transport
 const sessions = new Map();
 // Create a new MCP server instance
@@ -134,19 +139,193 @@ function buildCurlArgs(params) {
     return args;
 }
 // Format the response for output
-function formatResponse(stdout, stderr, exitCode, includeMetadata) {
-    if (includeMetadata) {
+function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo) {
+    if (includeMetadata || fileSaveInfo?.savedToFile) {
         const output = {
             success: exitCode === 0,
             exit_code: exitCode,
-            response: stdout,
         };
+        if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
+            output.saved_to_file = true;
+            output.filepath = fileSaveInfo.filepath;
+            output.message = `Response saved to file due to size. Read the file to access contents.`;
+        }
+        else {
+            output.response = stdout;
+        }
         if (stderr) {
             output.stderr = stderr;
         }
         return JSON.stringify(output, null, 2);
     }
     return stdout;
+}
+// Parse a jq-like filter expression into tokens
+function parseJqFilter(filter) {
+    const tokens = [];
+    let i = 0;
+    // Skip leading dot
+    if (filter[i] === ".") {
+        i++;
+    }
+    while (i < filter.length) {
+        // Skip dots between tokens
+        if (filter[i] === ".") {
+            i++;
+            continue;
+        }
+        // Bracket notation
+        if (filter[i] === "[") {
+            i++; // skip [
+            // Check for iterate []
+            if (filter[i] === "]") {
+                tokens.push({ type: "iterate" });
+                i++;
+                continue;
+            }
+            // Check for string key ["key"]
+            if (filter[i] === '"' || filter[i] === "'") {
+                const quote = filter[i];
+                i++; // skip opening quote
+                let key = "";
+                while (i < filter.length && filter[i] !== quote) {
+                    key += filter[i];
+                    i++;
+                }
+                i++; // skip closing quote
+                if (filter[i] === "]")
+                    i++; // skip ]
+                tokens.push({ type: "key", value: key });
+                continue;
+            }
+            // Check for number index or slice
+            let numStr = "";
+            let hasColon = false;
+            let colonPos = -1;
+            while (i < filter.length && filter[i] !== "]") {
+                if (filter[i] === ":") {
+                    hasColon = true;
+                    colonPos = numStr.length;
+                }
+                numStr += filter[i];
+                i++;
+            }
+            i++; // skip ]
+            if (hasColon) {
+                // Slice [n:m], [:m], [n:], or [:]
+                const parts = numStr.split(":");
+                tokens.push({
+                    type: "slice",
+                    start: parts[0] ? parseInt(parts[0], 10) : undefined,
+                    end: parts[1] ? parseInt(parts[1], 10) : undefined,
+                });
+            }
+            else {
+                // Simple index [n]
+                tokens.push({ type: "index", value: parseInt(numStr, 10) });
+            }
+            continue;
+        }
+        // Bare key
+        let key = "";
+        while (i < filter.length && filter[i] !== "." && filter[i] !== "[") {
+            key += filter[i];
+            i++;
+        }
+        if (key) {
+            tokens.push({ type: "key", value: key });
+        }
+    }
+    return tokens;
+}
+// Apply a jq-like filter to JSON data
+function applyJqFilter(jsonString, filter) {
+    let data;
+    try {
+        data = JSON.parse(jsonString);
+    }
+    catch {
+        const preview = jsonString.slice(0, 200);
+        throw new Error(`Response is not valid JSON. Cannot apply jq_filter.\nPreview: ${preview}${jsonString.length > 200 ? "..." : ""}`);
+    }
+    const tokens = parseJqFilter(filter);
+    for (const token of tokens) {
+        if (data === null || data === undefined) {
+            return "null";
+        }
+        switch (token.type) {
+            case "key":
+                if (typeof data === "object" && data !== null) {
+                    data = data[token.value];
+                }
+                else {
+                    return "null";
+                }
+                break;
+            case "index":
+                if (Array.isArray(data)) {
+                    const idx = token.value < 0 ? data.length + token.value : token.value;
+                    data = data[idx];
+                }
+                else {
+                    return "null";
+                }
+                break;
+            case "slice":
+                if (Array.isArray(data)) {
+                    data = data.slice(token.start, token.end);
+                }
+                else {
+                    return "null";
+                }
+                break;
+            case "iterate":
+                if (!Array.isArray(data)) {
+                    return "null";
+                }
+                // For iterate, we just keep the array as-is for now
+                // (full jq would expand it, but for our purposes keeping array is fine)
+                break;
+        }
+    }
+    return JSON.stringify(data, null, 2);
+}
+// Save response content to a temporary file
+async function saveResponseToFile(content, url) {
+    const tempDir = join(tmpdir(), TEMP_DIR_PREFIX + Date.now().toString(36));
+    await mkdir(tempDir, { recursive: true });
+    // Create a safe filename from URL
+    const urlObj = new URL(url);
+    const safeName = (urlObj.hostname + urlObj.pathname)
+        .replace(/[^a-zA-Z0-9]/g, "_")
+        .slice(0, 50);
+    const filename = `${safeName}_${Date.now()}.txt`;
+    const filepath = join(tempDir, filename);
+    await writeFile(filepath, content, "utf-8");
+    return filepath;
+}
+async function processResponse(response, options) {
+    let content = response;
+    // Step 1: Apply jq filter if provided
+    if (options.jqFilter) {
+        content = applyJqFilter(content, options.jqFilter);
+    }
+    // Step 2: Determine max size
+    const maxSize = options.maxResultSize ?? DEFAULT_MAX_RESULT_SIZE;
+    // Step 3: Check if we need to save to file
+    const shouldSave = options.saveToFile || content.length > maxSize;
+    if (shouldSave) {
+        const filepath = await saveResponseToFile(content, options.url);
+        return {
+            content: `Response (${content.length} bytes) saved to: ${filepath}`,
+            savedToFile: true,
+            filepath,
+        };
+    }
+    return {
+        content,
+        savedToFile: false,
+    };
 }
 // Schema for structured cURL execution
 const CurlExecuteSchema = z.object({
@@ -204,6 +383,18 @@ const CurlExecuteSchema = z.object({
     include_metadata: z.boolean()
         .default(false)
         .describe("Wrap response in JSON with metadata (exit code, success status)"),
+    jq_filter: z.string()
+        .optional()
+        .describe("JSON path filter to extract specific data (e.g., '.data.items[0]', '.users[0:5]'). Applied before size checks."),
+    max_result_size: z.number()
+        .int()
+        .min(1000)
+        .max(4_000_000)
+        .optional()
+        .describe("Max bytes to return inline (default: 500KB). Larger responses auto-save to temp file"),
+    save_to_file: z.boolean()
+        .optional()
+        .describe("Force save response to temp file. Returns filepath instead of content"),
 });
 // Register all tools and resources on a server instance
 function registerToolsAndResources(server) {
@@ -212,7 +403,7 @@ function registerToolsAndResources(server) {
         title: "Execute cURL Request",
         description: `Execute an HTTP request using cURL with structured parameters.
 
-This tool provides a safe, structured way to make HTTP requests with common cURL options. 
+This tool provides a safe, structured way to make HTTP requests with common cURL options.
 It handles URL encoding, header formatting, and response processing automatically.
 
 Args:
@@ -232,6 +423,9 @@ Args:
   - include_headers (boolean): Include response headers in output
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
+  - jq_filter (string): JSON path filter to extract specific data (e.g., ".data.items[0]", ".users[0:5]")
+  - max_result_size (number): Max bytes to return inline (default: 500KB). Auto-saves to file when exceeded
+  - save_to_file (boolean): Force save response to temp file. Returns filepath instead of content
 
 Returns:
   The HTTP response body, or JSON with metadata if include_metadata is true:
@@ -239,18 +433,24 @@ Returns:
     "success": boolean,
     "exit_code": number,
     "response": string,
-    "stderr": string (if present)
+    "stderr": string (if present),
+    "saved_to_file": boolean (if response was saved),
+    "filepath": string (path to saved file)
   }
 
 Examples:
   - Simple GET: { "url": "https://api.example.com/data" }
   - POST JSON: { "url": "https://api.example.com/users", "method": "POST", "headers": {"Content-Type": "application/json"}, "data": "{\\"name\\": \\"John\\"}" }
   - With auth: { "url": "https://api.example.com/secure", "bearer_token": "your-token-here" }
+  - Extract data: { "url": "https://api.github.com/repos/octocat/hello-world", "jq_filter": ".name" }
+  - First 10 items: { "url": "https://api.example.com/items", "jq_filter": ".results[0:10]" }
+  - Force file save: { "url": "https://api.example.com/large", "save_to_file": true }
 
 Error Handling:
   - Returns error message if cURL fails or times out
   - Exit code 0 indicates success
-  - Non-zero exit codes indicate various cURL errors`,
+  - Non-zero exit codes indicate various cURL errors
+  - Invalid JSON with jq_filter returns error with response preview`,
         inputSchema: CurlExecuteSchema,
         annotations: {
             readOnlyHint: false,
@@ -265,7 +465,14 @@ Error Handling:
                 silent: true,
             });
             const result = await executeCommand("curl", args, params.timeout * 1000);
-            const output = formatResponse(result.stdout, result.stderr, result.exitCode, params.include_metadata);
+            // Process response with filtering and size handling
+            const processed = await processResponse(result.stdout, {
+                url: params.url,
+                jqFilter: params.jq_filter,
+                maxResultSize: params.max_result_size,
+                saveToFile: params.save_to_file,
+            });
+            const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, { savedToFile: processed.savedToFile, filepath: processed.filepath });
             return {
                 content: [
                     {
@@ -318,6 +525,24 @@ Execute HTTP requests with structured, validated parameters.
 | follow_redirects | boolean | No | true | Follow HTTP redirects |
 | include_headers | boolean | No | false | Include response headers |
 | include_metadata | boolean | No | false | Return JSON with metadata |
+| jq_filter | string | No | - | JSON path filter (e.g., ".data.items[0]") |
+| max_result_size | number | No | 500KB | Max bytes inline before auto-save to file |
+| save_to_file | boolean | No | false | Force save response to temp file |
+
+### Large Response Handling
+
+Responses larger than \`max_result_size\` (default: 500KB) are automatically saved to a temp file.
+This prevents issues with AI agent context limits while still allowing access to full data.
+
+The response will include:
+- \`saved_to_file: true\`
+- \`filepath\`: Path to the saved response file
+
+Use \`jq_filter\` to extract only the data you need, reducing response size:
+- \`.key\` - Get object property
+- \`.[n]\` - Get array element at index n
+- \`.[n:m]\` - Array slice from n to m
+- \`.["key"]\` - Bracket notation for keys with special chars
 
 ### Examples
 
@@ -336,11 +561,27 @@ Execute HTTP requests with structured, validated parameters.
 }
 \`\`\`
 
-**Authenticated request:**
+**Extract specific field:**
 \`\`\`json
 {
-  "url": "https://api.example.com/protected",
-  "bearer_token": "your-access-token"
+  "url": "https://api.github.com/repos/octocat/hello-world",
+  "jq_filter": ".name"
+}
+\`\`\`
+
+**Get first 10 items from array:**
+\`\`\`json
+{
+  "url": "https://api.example.com/items",
+  "jq_filter": ".results[0:10]"
+}
+\`\`\`
+
+**Force save to file:**
+\`\`\`json
+{
+  "url": "https://api.example.com/large-response",
+  "save_to_file": true
 }
 \`\`\`
 
