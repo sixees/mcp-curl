@@ -242,8 +242,8 @@ function parseBracketToken(filter: string, startIndex: number): { token: JqToken
             key += filter[i];
             i++;
         }
-        i++; // skip closing quote
-        if (filter[i] === "]") i++; // skip ]
+        if (i < filter.length) i++; // skip closing quote
+        if (i < filter.length && filter[i] === "]") i++; // skip ]
         return { token: { type: "key", value: key }, newIndex: i };
     }
 
