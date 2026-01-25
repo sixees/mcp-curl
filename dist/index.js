@@ -255,12 +255,13 @@ function applyJqFilter(jsonString, filter) {
         }
         switch (token.type) {
             case "key":
-                if (typeof data === "object" && data !== null) {
-                    data = data[token.value];
-                }
-                else {
+                if (typeof data !== "object") {
                     return "null";
                 }
+                if (data === null) {
+                    return "null";
+                }
+                data = data[token.value];
                 break;
             case "index":
                 if (Array.isArray(data)) {
