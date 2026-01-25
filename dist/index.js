@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdtemp } from "fs/promises";
 // Constants
 const MAX_RESPONSE_SIZE = 4_000_000; // 4MB max response
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -291,8 +291,7 @@ function applyJqFilter(jsonString, filter) {
 }
 // Save response content to a temporary file
 async function saveResponseToFile(content, url) {
-    const tempDir = join(tmpdir(), TEMP_DIR_PREFIX + Date.now().toString(36));
-    await mkdir(tempDir, { recursive: true });
+    const tempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
     // Create a safe filename from URL
     const urlObj = new URL(url);
     const safeName = (urlObj.hostname + urlObj.pathname)
