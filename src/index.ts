@@ -9,7 +9,7 @@ import {spawn, ChildProcess} from "child_process";
 import {randomUUID} from "crypto";
 import {tmpdir} from "os";
 import {join} from "path";
-import {writeFile, mkdtemp} from "fs/promises";
+import {writeFile, mkdtemp, rm} from "fs/promises";
 
 // Constants
 const MAX_RESPONSE_SIZE = 4_000_000; // 4MB max response
@@ -21,6 +21,16 @@ const TEMP_DIR_PREFIX = "mcp-curl-";
 
 // Session tracking for HTTP transport
 const sessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
+
+// Shared temp directory for saved responses (lazily initialized, cleaned up on shutdown)
+let sharedTempDir: string | null = null;
+
+async function getOrCreateTempDir(): Promise<string> {
+    if (!sharedTempDir) {
+        sharedTempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
+    }
+    return sharedTempDir;
+}
 
 // Create a new MCP server instance
 function createServer(): McpServer {
@@ -365,7 +375,7 @@ function applyJqFilter(jsonString: string, filter: string): string {
 
 // Save response content to a temporary file
 async function saveResponseToFile(content: string, url: string): Promise<string> {
-    const tempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
+    const tempDir = await getOrCreateTempDir();
 
     // Create a safe filename from URL
     const urlObj = new URL(url);
@@ -809,6 +819,15 @@ async function shutdown(signal: string): Promise<void> {
             // Ignore errors during shutdown
         }
         sessions.delete(sessionId);
+    }
+
+    // Clean up temp directory
+    if (sharedTempDir) {
+        try {
+            await rm(sharedTempDir, { recursive: true, force: true });
+        } catch {
+            // Ignore errors during cleanup
+        }
     }
 
     process.exit(0);

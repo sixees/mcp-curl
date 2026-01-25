@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
-import { writeFile, mkdtemp } from "fs/promises";
+import { writeFile, mkdtemp, rm } from "fs/promises";
 // Constants
 const MAX_RESPONSE_SIZE = 4_000_000; // 4MB max response
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -18,6 +18,14 @@ const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
 const TEMP_DIR_PREFIX = "mcp-curl-";
 // Session tracking for HTTP transport
 const sessions = new Map();
+// Shared temp directory for saved responses (lazily initialized, cleaned up on shutdown)
+let sharedTempDir = null;
+async function getOrCreateTempDir() {
+    if (!sharedTempDir) {
+        sharedTempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
+    }
+    return sharedTempDir;
+}
 // Create a new MCP server instance
 function createServer() {
     return new McpServer({
@@ -287,7 +295,7 @@ function applyJqFilter(jsonString, filter) {
 }
 // Save response content to a temporary file
 async function saveResponseToFile(content, url) {
-    const tempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
+    const tempDir = await getOrCreateTempDir();
     // Create a safe filename from URL
     const urlObj = new URL(url);
     const safeName = (urlObj.hostname + urlObj.pathname)
@@ -672,6 +680,15 @@ async function shutdown(signal) {
             // Ignore errors during shutdown
         }
         sessions.delete(sessionId);
+    }
+    // Clean up temp directory
+    if (sharedTempDir) {
+        try {
+            await rm(sharedTempDir, { recursive: true, force: true });
+        }
+        catch {
+            // Ignore errors during cleanup
+        }
     }
     process.exit(0);
 }
