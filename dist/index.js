@@ -367,8 +367,19 @@ function createServer() {
         version: SERVER_VERSION,
     });
 }
+/**
+ * Global memory tracking for concurrent response handling.
+ *
+ * While each request is limited to MAX_RESPONSE_SIZE (10MB), multiple concurrent
+ * requests could exhaust memory. This tracks total memory across all active
+ * requests and rejects new data when the limit is reached.
+ */
+const MAX_TOTAL_RESPONSE_MEMORY = 100_000_000; // 100MB total across all requests
+let totalResponseMemory = 0;
 // Helper function to execute a command
 async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
+    // Track this request's memory usage for cleanup
+    let requestMemoryUsage = 0;
     return new Promise((resolve, reject) => {
         // Use AbortController for process-level timeout (spawn ignores timeout option)
         const abortController = new AbortController();
@@ -381,11 +392,30 @@ async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
         let stdout = "";
         let stderr = "";
         let killed = false;
+        // Cleanup function to release memory tracking
+        const releaseMemory = () => {
+            totalResponseMemory -= requestMemoryUsage;
+            requestMemoryUsage = 0;
+        };
         childProcess.stdout?.on("data", (data) => {
+            const dataSize = Buffer.byteLength(data, "utf8");
+            // Check global memory limit
+            if (totalResponseMemory + dataSize > MAX_TOTAL_RESPONSE_MEMORY && !killed) {
+                killed = true;
+                clearTimeout(timeoutId);
+                releaseMemory();
+                childProcess.kill();
+                reject(new Error("Server memory limit reached due to concurrent requests. Please try again later."));
+                return;
+            }
             stdout += data.toString();
+            requestMemoryUsage += dataSize;
+            totalResponseMemory += dataSize;
+            // Check per-request limit
             if (Buffer.byteLength(stdout, "utf8") > MAX_RESPONSE_SIZE && !killed) {
                 killed = true;
                 clearTimeout(timeoutId);
+                releaseMemory();
                 childProcess.kill();
                 reject(new Error(`Response exceeded maximum processing size of ${MAX_RESPONSE_SIZE / 1_000_000}MB. ` +
                     `Consider using a more specific API endpoint or adding query parameters to reduce response size.`));
@@ -406,6 +436,7 @@ async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
         });
         childProcess.on("close", (code) => {
             clearTimeout(timeoutId);
+            releaseMemory(); // Release memory tracking on completion
             if (!killed) {
                 resolve({
                     stdout,
@@ -416,6 +447,7 @@ async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
         });
         childProcess.on("error", (error) => {
             clearTimeout(timeoutId);
+            releaseMemory(); // Release memory tracking on error
             // AbortError means our timeout triggered
             if (error.name === "AbortError") {
                 reject(new Error(`Request timed out after ${timeout / 1000} seconds. ` +
