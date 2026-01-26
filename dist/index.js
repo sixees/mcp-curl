@@ -384,27 +384,85 @@ function validateNoCRLF(value, fieldName) {
             `This could enable header injection attacks.`);
     }
 }
-// SSRF protection: block requests to private/internal networks
+/**
+ * SSRF protection: block requests to private/internal networks.
+ *
+ * This includes IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) which could otherwise
+ * bypass IPv4-only blocklists. For example, ::ffff:127.0.0.1 maps to 127.0.0.1.
+ */
 const BLOCKED_HOSTNAME_PATTERNS = [
-    /^localhost$/i,
-    /^127\.\d+\.\d+\.\d+$/, // IPv4 loopback
-    /^10\.\d+\.\d+\.\d+$/, // Private Class A
-    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/, // Private Class B
-    /^192\.168\.\d+\.\d+$/, // Private Class C
-    /^169\.254\.\d+\.\d+$/, // Link-local
-    /^0\.0\.0\.0$/, // All interfaces
-    /^\[?::1]?$/, // IPv6 loopback
-    /^\[?fe80:/i, // IPv6 link-local
-    /^\[?fc00:/i, // IPv6 unique local
-    /^\[?fd[0-9a-f]{2}:/i, // IPv6 unique local
-    /\.local$/i, // mDNS
-    /\.internal$/i, // Common internal TLD
-    /\.corp$/i, // Corporate internal
-    /\.lan$/i, // Local network
+    // IPv4 loopback and mapped IPv6
+    /^127\.\d+\.\d+\.\d+$/,
+    /^\[?::ffff:127\.\d+\.\d+\.\d+\]?$/i,
+    // Private Class A (10.x.x.x) and mapped IPv6
+    /^10\.\d+\.\d+\.\d+$/,
+    /^\[?::ffff:10\.\d+\.\d+\.\d+\]?$/i,
+    // Private Class B (172.16-31.x.x) and mapped IPv6
+    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
+    /^\[?::ffff:172\.(1[6-9]|2\d|3[01])\.\d+\.\d+\]?$/i,
+    // Private Class C (192.168.x.x) and mapped IPv6
+    /^192\.168\.\d+\.\d+$/,
+    /^\[?::ffff:192\.168\.\d+\.\d+\]?$/i,
+    // Link-local (169.254.x.x) and mapped IPv6
+    /^169\.254\.\d+\.\d+$/,
+    /^\[?::ffff:169\.254\.\d+\.\d+\]?$/i,
+    // All interfaces
+    /^0\.0\.0\.0$/,
+    /^\[?::ffff:0\.0\.0\.0\]?$/i,
+    // IPv6 loopback
+    /^\[?::1\]?$/,
+    // IPv6 link-local
+    /^\[?fe80:/i,
+    // IPv6 unique local (fc00::/7)
+    /^\[?fc00:/i,
+    /^\[?fd[0-9a-f]{2}:/i,
+    // Internal TLDs
+    /\.local$/i,
+    /\.internal$/i,
+    /\.corp$/i,
+    /\.lan$/i,
+    /\.localhost$/i,
 ];
+// Localhost patterns - separate so they can be conditionally allowed
+const LOCALHOST_PATTERNS = [
+    /^localhost$/i,
+    /^127\.\d+\.\d+\.\d+$/,
+    /^\[?::ffff:127\.\d+\.\d+\.\d+\]?$/i,
+    /^\[?::1\]?$/,
+];
+// Environment variable to allow localhost access (for local development/testing)
+const ALLOW_LOCALHOST_ENV_VAR = "MCP_CURL_ALLOW_LOCALHOST";
+// Allowed ports when localhost is enabled: 80, 443, and unprivileged ports (>1024)
+// This prevents access to privileged services like SSH (22), SMTP (25), databases, etc.
+const ALLOWED_LOCALHOST_PORTS = new Set([80, 443]);
+const MIN_UNPRIVILEGED_PORT = 1024;
+function isLocalhostAllowed() {
+    const value = process.env[ALLOW_LOCALHOST_ENV_VAR]?.toLowerCase();
+    return value === "true" || value === "1" || value === "yes";
+}
+function isAllowedLocalhostPort(port) {
+    return ALLOWED_LOCALHOST_PORTS.has(port) || port > MIN_UNPRIVILEGED_PORT;
+}
 function validateUrlNotInternal(url) {
     const parsed = new URL(url);
     const hostname = parsed.hostname.toLowerCase();
+    const port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === "https:" ? 443 : 80);
+    // Check if this is a localhost request
+    const isLocalhost = LOCALHOST_PATTERNS.some(pattern => pattern.test(hostname));
+    if (isLocalhost) {
+        if (!isLocalhostAllowed()) {
+            throw new Error(`Requests to localhost are blocked by default. ` +
+                `Set ${ALLOW_LOCALHOST_ENV_VAR}=true to enable local development/testing.`);
+        }
+        // Localhost is allowed, but check port restrictions
+        if (!isAllowedLocalhostPort(port)) {
+            throw new Error(`Localhost requests are restricted to ports 80, 443, and >1024. ` +
+                `Port ${port} is not allowed to prevent access to privileged services.`);
+        }
+        // Localhost request is allowed
+        return;
+    }
+    // Check against other blocked patterns (private networks, internal TLDs, etc.)
     for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
         if (pattern.test(hostname)) {
             throw new Error(`Requests to internal/private networks are not allowed: ${hostname}`);

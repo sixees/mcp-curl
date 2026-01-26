@@ -274,8 +274,14 @@ Two prompts are available for common use cases:
 - Only structured `curl_execute` and `jq_query` tools available (no arbitrary command execution)
 - All parameters are validated using Zod schemas
 - Commands are executed without shell interpretation to prevent injection
-- **SSRF Protection**: Blocks requests to localhost, private IPs (10.x, 172.16-31.x, 192.168.x), link-local, and
-  internal TLDs (.local, .internal, .corp, .lan)
+- **SSRF Protection**: Blocks requests to private networks and internal hosts:
+  - Private IPs: 10.x, 172.16-31.x, 192.168.x, 169.254.x (link-local)
+  - IPv4-mapped IPv6: `::ffff:` prefixed versions of all blocked IPv4 ranges
+  - IPv6 private: loopback (::1), link-local (fe80::), unique local (fc00::, fd00::)
+  - Internal TLDs: .local, .internal, .corp, .lan, .localhost
+  - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
+    development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
+    service ports like 22, 25, 3306 remain blocked)
 - **Rate Limiting**: 60 requests per minute per target host
 - **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters
 - **File Exfiltration Prevention**: Uses `--data-raw` and `--form-string` to prevent `@` file reading
