@@ -164,10 +164,28 @@ async function validateFilePath(filepath) {
     if (sharedTempDir) {
         allowedDirs.push(sharedTempDir);
     }
-    // 2. Configured output directory from env var
+    // 2. Configured output directory from env var (validate it exists and is a directory)
     const envOutputDir = process.env[OUTPUT_DIR_ENV_VAR];
     if (envOutputDir) {
-        allowedDirs.push(resolve(envOutputDir));
+        const resolvedEnvOutputDir = resolve(envOutputDir);
+        try {
+            const envDirStats = await stat(resolvedEnvOutputDir);
+            if (!envDirStats.isDirectory()) {
+                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": path exists but is not a directory`);
+            }
+            await access(resolvedEnvOutputDir, fsConstants.W_OK);
+            allowedDirs.push(resolvedEnvOutputDir);
+        }
+        catch (error) {
+            const err = error;
+            if (err.code === "ENOENT") {
+                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": directory does not exist`);
+            }
+            if (err.code === "EACCES") {
+                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": directory is not writable`);
+            }
+            throw error;
+        }
     }
     // 3. Current working directory
     allowedDirs.push(process.cwd());
