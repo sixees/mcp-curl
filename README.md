@@ -244,7 +244,9 @@ Query existing JSON files without making new HTTP requests. Useful for extractin
 
 - Temp directory (files saved by curl_execute)
 - `MCP_CURL_OUTPUT_DIR` path
-- Current working directory and subdirectories
+- Current working directory and all subdirectories
+
+> **Warning**: The cwd permission is broad. Ensure the server's working directory doesn't contain sensitive files you don't want accessible via `jq_query`.
 
 **Example:**
 
@@ -278,7 +280,7 @@ Two prompts are available for common use cases:
 - **Rate Limiting**: 60 requests per minute per target host
 - **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters
 - **File Exfiltration Prevention**: Uses `--data-raw` and `--form-string` to prevent `@` file reading
-- **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd
+- **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd (including all subdirectories - ensure cwd doesn't contain sensitive files)
 - **Path Traversal Prevention**: `output_dir` and `filepath` reject paths containing `..`
 - Maximum response/file size for processing: 10MB
 - Maximum result size for inline return: 1MB (default 500KB)

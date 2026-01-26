@@ -66,6 +66,7 @@ Responses are processed in stages:
 Query saved JSON files without new HTTP requests:
 
 - Only allows files in: temp directory, `MCP_CURL_OUTPUT_DIR`, or current working directory
+- **Note**: cwd access includes ALL subdirectories - be aware of what files exist in the server's working directory
 - 10MB file size limit (same as curl response limit)
 - Supports same jq_filter syntax as curl_execute
 
@@ -77,7 +78,7 @@ Query saved JSON files without new HTTP requests:
 - Rate limiting: 60 requests per minute per target host
 - CRLF injection protection: validates headers, user-agent, auth values
 - Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix
-- `jq_query` file access restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd
+- `jq_query` file access restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd (including all subdirectories)
 - `output_dir` validation: must exist, be writable, no path traversal (`..`)
 - Max response/file size for processing: 10MB
 - Max result size for inline return: 1MB (default 500KB)

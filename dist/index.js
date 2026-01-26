@@ -1158,7 +1158,7 @@ Security:
   - Only files in these directories can be read:
     1. Our temp directory (files saved by curl_execute)
     2. MCP_CURL_OUTPUT_DIR environment variable path
-    3. Current working directory and subdirectories
+    3. Current working directory and ALL subdirectories (broad - ensure cwd is safe)
   - Maximum file size: 10MB
 
 Examples:
@@ -1337,7 +1337,9 @@ Query existing JSON files with jq_filter without making new HTTP requests.
 Files can only be read from:
 - Our temp directory (files saved by curl_execute)
 - MCP_CURL_OUTPUT_DIR path
-- Current working directory and subdirectories
+- Current working directory and all subdirectories
+
+**Note:** The cwd permission is broad. Ensure the server's working directory doesn't contain sensitive files.
 
 ### Example
 
