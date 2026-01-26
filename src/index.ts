@@ -828,9 +828,14 @@ function splitJqFilters(filter: string): string[] {
         // Split on comma only at top level (not inside brackets or quotes)
         if (ch === "," && bracketDepth === 0) {
             const trimmed = current.trim();
-            if (trimmed) {
-                filters.push(trimmed);
+            if (!trimmed) {
+                // Empty segment: leading comma, consecutive commas, or will be trailing
+                const position = filters.length === 0 ? "leading" : "consecutive";
+                throw new Error(
+                    `Invalid jq_filter "${filter}": ${position} comma at position ${i}`
+                );
             }
+            filters.push(trimmed);
             current = "";
             continue;
         }
@@ -854,6 +859,12 @@ function splitJqFilters(filter: string): string[] {
 
     // Don't forget the last segment
     const trimmed = current.trim();
+    if (!trimmed && filters.length > 0) {
+        // We had previous segments but the last one is empty = trailing comma
+        throw new Error(
+            `Invalid jq_filter "${filter}": trailing comma`
+        );
+    }
     if (trimmed) {
         filters.push(trimmed);
     }
