@@ -55,7 +55,6 @@ Responses are processed in stages:
 2. `jq_filter` extracts specific data if provided:
    - Dot notation for arrays: `.results.0` same as `.results[0]`
    - Multiple paths: `.name,.email` returns array (max 20 paths)
-   - Negative indices: `.-1` for last element
    - Validation: unclosed quotes/brackets, leading zeros, safe integer bounds
 3. If result exceeds `max_result_size` (default 500KB), auto-saves to file
 4. Output directory priority: `output_dir` param > `MCP_CURL_OUTPUT_DIR` env > system temp

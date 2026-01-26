@@ -686,10 +686,13 @@ function parseBracketToken(filter: string, startIndex: number): { token: JqToken
         };
     }
 
-    // Simple index [n]
+    // Simple index [n] - must be non-negative
     const index = parseInt(numStr, 10);
     if (Number.isNaN(index)) {
         throw new Error(`Invalid array index "${numStr}" in filter "${filter}"`);
+    }
+    if (index < 0) {
+        throw new Error(`Invalid array index "${numStr}" in filter "${filter}": negative indices are not supported`);
     }
     return { token: { type: "index", value: index }, newIndex: i };
 }
@@ -724,15 +727,15 @@ function parseJqFilter(filter: string): JqToken[] {
             continue;
         }
 
-        // Bare key (or numeric index via dot notation like .0 or .-1)
+        // Bare key (or numeric index via dot notation like .0)
         let key = "";
         while (i < filter.length && filter[i] !== "." && filter[i] !== "[") {
             key += filter[i];
             i++;
         }
         if (key) {
-            // Check if key is a numeric index (supports negative indices like .-1)
-            if (/^-?\d+$/.test(key)) {
+            // Check if key is a non-negative numeric index (e.g., .0, .10)
+            if (/^\d+$/.test(key)) {
                 const parsed = parseInt(key, 10);
                 // Validate: within safe integer range
                 if (!Number.isSafeInteger(parsed)) {
@@ -740,9 +743,8 @@ function parseJqFilter(filter: string): JqToken[] {
                         `Invalid array index "${key}" in filter "${filter}": exceeds safe integer range`
                     );
                 }
-                // Validate: no leading zeros (e.g., "007" should be rejected, but "0" and "-0" are ok)
-                const canonical = String(parsed);
-                if (key !== canonical && key !== `-0`) {
+                // Validate: no leading zeros (e.g., "007" should be rejected, but "0" is ok)
+                if (key !== String(parsed)) {
                     throw new Error(
                         `Invalid array index "${key}" in filter "${filter}": leading zeros are not allowed`
                     );
@@ -901,9 +903,7 @@ function applySingleJqFilter(data: unknown, filter: string): unknown {
 
             case "index":
                 if (Array.isArray(result)) {
-                    // Support negative indices: -1 is last element, -2 is second-to-last, etc.
-                    const idx = token.value < 0 ? result.length + token.value : token.value;
-                    result = result[idx];
+                    result = result[token.value];
                 } else {
                     return null;
                 }
@@ -1168,7 +1168,7 @@ const CurlExecuteSchema = z.object({
         .describe("Wrap response in JSON with metadata (exit code, success status)"),
     jq_filter: z.string()
         .optional()
-        .describe("JSON path filter to extract specific data. Supports: .key, .[n] or .n (array index), .[n:m] (slice), .[\"key\"] (bracket notation), .-1 (negative index), .a,.b (multiple paths return array). Max 20 paths. Applied after response, before max_result_size check."),
+        .describe("JSON path filter to extract specific data. Supports: .key, .[n] or .n (array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple paths return array). Max 20 paths. Applied after response, before max_result_size check."),
     max_result_size: z.number()
         .int()
         .min(1000)
@@ -1190,7 +1190,7 @@ const JqQuerySchema = z.object({
     filepath: z.string()
         .describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
     jq_filter: z.string()
-        .describe("JSON path filter expression. Supports: .key, .[n] or .n (array index), .[n:m] (slice), .[\"key\"] (bracket notation), .-1 (negative index), .a,.b (multiple paths return array). Max 20 paths."),
+        .describe("JSON path filter expression. Supports: .key, .[n] or .n (array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple paths return array). Max 20 paths."),
     max_result_size: z.number()
         .int()
         .min(1000)
@@ -1246,7 +1246,6 @@ jq_filter Syntax:
   - .[n] or .n - Array index (dot notation supported, e.g., .results.0)
   - .[n:m] - Array slice from index n to m
   - .["key"] - Bracket notation for special characters in keys
-  - .-1 - Negative index (last element)
   - .a,.b,.c - Multiple paths (returns array of values, max 20 paths)
 
 jq_filter Validation:
@@ -1273,7 +1272,6 @@ Examples:
   - Multiple fields: { "url": "https://api.example.com/user", "jq_filter": ".name,.email,.id" }
   - Dot notation: { "url": "https://api.example.com/items", "jq_filter": ".results.0.name" }
   - Array slice: { "url": "https://api.example.com/items", "jq_filter": ".results[0:10]" }
-  - Last element: { "url": "https://api.example.com/items", "jq_filter": ".results.-1" }
   - Custom output: { "url": "https://api.example.com/large", "save_to_file": true, "output_dir": "/path/to/dir" }
 
 Error Handling:
@@ -1398,7 +1396,6 @@ Filter Syntax:
   - .[n] - Get array element at index n (also .n with dot notation)
   - .[n:m] - Array slice from n to m
   - .["key"] - Bracket notation for keys with special chars
-  - .-1 - Get last array element (negative index)
   - .name,.email - Multiple paths (returns array of values)
 
 Security:
@@ -1539,7 +1536,6 @@ Extract data from JSON responses:
 - \`.[n]\` or \`.n\` - Get array element at index n (dot notation supported)
 - \`.[n:m]\` - Array slice from n to m
 - \`.["key"]\` - Bracket notation for keys with special chars
-- \`.-1\` - Negative index (last element)
 - \`.name,.email\` - Multiple paths (returns array of values, max 20)
 
 **Validation:**

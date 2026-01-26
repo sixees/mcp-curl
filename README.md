@@ -11,7 +11,6 @@ An MCP (Model Context Protocol) server that enables LLMs to execute cURL command
 - **JSON Filtering**: Extract specific data with jq-like path expressions (`jq_filter`)
     - Dot notation for arrays: `.results.0.name` or `.results[0].name`
     - Multiple paths: `.name,.email,.id` returns array of values
-    - Negative indices: `.-1` for last element
 - **JSON File Querying**: Use `jq_query` to re-query saved files without new HTTP requests
 - **Security**: SSRF protection, rate limiting, CRLF injection prevention, file access restrictions
 - **Error Handling**: Clear error messages with exit codes and metadata
@@ -215,7 +214,7 @@ Use `jq_filter` to reduce response size before the limit is checked:
 | Syntax         | Description                          | Example             |
 |----------------|--------------------------------------|---------------------|
 | `.key`         | Object property                      | `.data`             |
-| `.[n]` or `.n` | Array index (dot notation supported) | `.[0]`, `.0`, `.-1` |
+| `.[n]` or `.n` | Array index (dot notation supported) | `.[0]`, `.0`        |
 | `.[n:m]`       | Array slice                          | `.[0:10]`           |
 | `.["key"]`     | Bracket notation                     | `.["special-key"]`  |
 | `.a,.b,.c`     | Multiple paths (returns array)       | `.name,.email`      |
