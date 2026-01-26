@@ -29,24 +29,39 @@ implementation in `src/index.ts`.
 
 - `createServer()` - Factory function for MCP server instances
 - `registerToolsAndResources(server)` - Registers tool, resources, and prompts
-- `executeCommand()` - Spawns cURL process with size limits
+- `executeCommand()` - Spawns cURL process with size limits and timeout handling
 - `buildCurlArgs()` - Converts structured params to cURL CLI arguments
+- `processResponse()` - Handles jq filtering, size limits, and file saving
+- `applyJqFilter()` / `parseJqFilter()` - JSON path extraction (jq-like syntax)
 - `runStdio()` / `runHTTP()` - Transport-specific startup
 
 ### HTTP Transport Sessions
 
 The HTTP transport uses proper session management:
 
-- `sessions` Map tracks active sessions by ID
+- `sessions` Map tracks active sessions by ID (max 100 concurrent)
 - Each session has its own McpServer instance
 - POST creates/reuses sessions, GET handles SSE, DELETE terminates
 - Graceful shutdown closes all sessions on SIGINT/SIGTERM
+
+### Large Response Handling
+
+Responses are processed in stages:
+1. cURL fetches response (max 10MB processing limit)
+2. `jq_filter` extracts specific data if provided
+3. If result exceeds `max_result_size` (default 500KB), auto-saves to temp file
+4. Temp files use secure permissions (0o700/0o600) and are cleaned on shutdown
 
 ### Security Constraints
 
 - Only structured `curl_execute` (no arbitrary command execution)
 - Commands executed via `spawn()` without shell (prevents injection)
-- Max response size: 4MB for both stdout and stderr
+- SSRF protection: blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x), link-local, internal TLDs
+- Rate limiting: 60 requests per minute per target host
+- CRLF injection protection: validates headers, user-agent, auth values
+- Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix
+- Max response size for processing: 10MB
+- Max result size for inline return: 1MB (default 500KB)
 - Default timeout: 30 seconds
 - SSL verification enabled by default
 
