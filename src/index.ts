@@ -9,7 +9,7 @@ import {spawn, ChildProcess} from "child_process";
 import {randomUUID} from "crypto";
 import {tmpdir} from "os";
 import {join} from "path";
-import {writeFile, mkdtemp, rm, chmod, readdir} from "fs/promises";
+import {writeFile, mkdtemp, rm, chmod, readdir, stat} from "fs/promises";
 
 // Constants
 const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
@@ -18,6 +18,7 @@ const SERVER_NAME = "curl-mcp-server";
 const SERVER_VERSION = "1.0.0";
 const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
 const TEMP_DIR_PREFIX = "mcp-curl-";
+const ORPHAN_DIR_MIN_AGE_MS = 3600000; // 1 hour - only cleanup temp dirs older than this to avoid racing with other instances
 const METADATA_SEPARATOR = "\n---MCP-CURL-METADATA---\n"; // Separator for extracting content-type
 const ERROR_PREVIEW_LENGTH = 200; // Characters to show in error previews
 const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
@@ -67,19 +68,27 @@ async function getOrCreateTempDir(): Promise<string> {
 }
 
 // Clean up orphaned temp directories from previous runs (handles crashes)
+// Uses age-based cleanup to avoid racing with other live instances
 async function cleanupOrphanedTempDirs(): Promise<void> {
     try {
         const tempBase = tmpdir();
         const entries = await readdir(tempBase);
+        const now = Date.now();
         for (const entry of entries) {
             if (entry.startsWith(TEMP_DIR_PREFIX)) {
                 const dirPath = join(tempBase, entry);
                 // Skip our current session's directory
                 if (dirPath === sharedTempDir) continue;
                 try {
+                    // Only delete directories older than threshold to avoid racing with other instances
+                    const stats = await stat(dirPath);
+                    const ageMs = now - stats.mtimeMs;
+                    if (ageMs < ORPHAN_DIR_MIN_AGE_MS) {
+                        continue; // Too recent, might belong to another live instance
+                    }
                     await rm(dirPath, { recursive: true, force: true });
                 } catch {
-                    // Ignore individual cleanup errors
+                    // Ignore individual cleanup errors (dir may have been deleted by another instance)
                 }
             }
         }
@@ -148,8 +157,14 @@ async function executeCommand(
     timeout: number = DEFAULT_TIMEOUT
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return new Promise((resolve, reject) => {
+        // Use AbortController for process-level timeout (spawn ignores timeout option)
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => {
+            abortController.abort();
+        }, timeout);
+
         const childProcess: ChildProcess = spawn(command, args, {
-            timeout,
+            signal: abortController.signal,
         });
 
         let stdout = "";
@@ -160,6 +175,7 @@ async function executeCommand(
             stdout += data.toString();
             if (Buffer.byteLength(stdout, "utf8") > MAX_RESPONSE_SIZE && !killed) {
                 killed = true;
+                clearTimeout(timeoutId);
                 childProcess.kill();
                 reject(new Error(
                     `Response exceeded maximum processing size of ${MAX_RESPONSE_SIZE / 1_000_000}MB. ` +
@@ -183,6 +199,7 @@ async function executeCommand(
         });
 
         childProcess.on("close", (code: number | null) => {
+            clearTimeout(timeoutId);
             if (!killed) {
                 resolve({
                     stdout,
@@ -193,9 +210,28 @@ async function executeCommand(
         });
 
         childProcess.on("error", (error: Error) => {
-            reject(error);
+            clearTimeout(timeoutId);
+            // AbortError means our timeout triggered
+            if (error.name === "AbortError") {
+                reject(new Error(
+                    `Request timed out after ${timeout / 1000} seconds. ` +
+                    `The server may be slow or unresponsive.`
+                ));
+            } else {
+                reject(error);
+            }
         });
     });
+}
+
+// Validate that a string doesn't contain CRLF characters (prevents header injection/smuggling)
+function validateNoCRLF(value: string, fieldName: string): void {
+    if (value.includes("\r") || value.includes("\n")) {
+        throw new Error(
+            `Invalid ${fieldName}: contains newline characters. ` +
+            `This could enable header injection attacks.`
+        );
+    }
 }
 
 // Build cURL arguments from structured parameters
@@ -225,22 +261,24 @@ function buildCurlArgs(params: {
         args.push("-X", params.method.toUpperCase());
     }
 
-    // Headers
+    // Headers - validate against CRLF injection
     if (params.headers) {
         for (const [key, value] of Object.entries(params.headers)) {
+            validateNoCRLF(key, "header name");
+            validateNoCRLF(value, `header value for "${key}"`);
             args.push("-H", `${key}: ${value}`);
         }
     }
 
-    // Data/body
+    // Data/body - use --data-raw to prevent @/< file reading (security: prevents local file exfiltration)
     if (params.data) {
-        args.push("-d", params.data);
+        args.push("--data-raw", params.data);
     }
 
-    // Form data
+    // Form data - use --form-string to prevent @/< file reading (security: prevents local file exfiltration)
     if (params.form) {
         for (const [key, value] of Object.entries(params.form)) {
-            args.push("-F", `${key}=${value}`);
+            args.push("--form-string", `${key}=${value}`);
         }
     }
 
@@ -262,18 +300,21 @@ function buildCurlArgs(params: {
         args.push("--max-time", params.timeout.toString());
     }
 
-    // User agent
+    // User agent - validate against CRLF injection
     if (params.user_agent) {
+        validateNoCRLF(params.user_agent, "user_agent");
         args.push("-A", params.user_agent);
     }
 
-    // Basic auth
+    // Basic auth - validate against CRLF injection
     if (params.basic_auth) {
+        validateNoCRLF(params.basic_auth, "basic_auth");
         args.push("-u", params.basic_auth);
     }
 
-    // Bearer token
+    // Bearer token - validate against CRLF injection
     if (params.bearer_token) {
+        validateNoCRLF(params.bearer_token, "bearer_token");
         args.push("-H", `Authorization: Bearer ${params.bearer_token}`);
     }
 
@@ -857,6 +898,16 @@ Temp File Lifecycle:
         },
         async (params: CurlExecuteInput) => {
             try {
+                // Validate incompatible options: include_headers prepends HTTP headers to response,
+                // making it non-JSON and breaking jq_filter parsing
+                if (params.include_headers && params.jq_filter) {
+                    throw new Error(
+                        "Cannot use jq_filter with include_headers. " +
+                        "HTTP headers in the response make it non-JSON. " +
+                        "Remove include_headers to use jq_filter, or remove jq_filter to see headers."
+                    );
+                }
+
                 // Rate limit by target host to prevent abuse
                 const targetHost = new URL(params.url).hostname;
                 checkRateLimit(targetHost);
