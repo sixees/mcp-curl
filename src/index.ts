@@ -25,6 +25,7 @@ const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
 
 // Session tracking for HTTP transport
 const sessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
+const MAX_SESSIONS = 100; // Limit concurrent sessions to prevent memory exhaustion
 
 // Rate limiting
 const MAX_REQUESTS_PER_MINUTE = 60;
@@ -231,6 +232,38 @@ function validateNoCRLF(value: string, fieldName: string): void {
             `Invalid ${fieldName}: contains newline characters. ` +
             `This could enable header injection attacks.`
         );
+    }
+}
+
+// SSRF protection: block requests to private/internal networks
+const BLOCKED_HOSTNAME_PATTERNS = [
+    /^localhost$/i,
+    /^127\.\d+\.\d+\.\d+$/,           // IPv4 loopback
+    /^10\.\d+\.\d+\.\d+$/,            // Private Class A
+    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/, // Private Class B
+    /^192\.168\.\d+\.\d+$/,           // Private Class C
+    /^169\.254\.\d+\.\d+$/,           // Link-local
+    /^0\.0\.0\.0$/,                   // All interfaces
+    /^\[?::1]?$/,                     // IPv6 loopback
+    /^\[?fe80:/i,                     // IPv6 link-local
+    /^\[?fc00:/i,                     // IPv6 unique local
+    /^\[?fd[0-9a-f]{2}:/i,            // IPv6 unique local
+    /\.local$/i,                      // mDNS
+    /\.internal$/i,                   // Common internal TLD
+    /\.corp$/i,                       // Corporate internal
+    /\.lan$/i,                        // Local network
+];
+
+function validateUrlNotInternal(url: string): void {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+
+    for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
+        if (pattern.test(hostname)) {
+            throw new Error(
+                `Requests to internal/private networks are not allowed: ${hostname}`
+            );
+        }
     }
 }
 
@@ -908,6 +941,9 @@ Temp File Lifecycle:
                     );
                 }
 
+                // SSRF protection: block internal/private network requests
+                validateUrlNotInternal(params.url);
+
                 // Rate limit by target host to prevent abuse
                 const targetHost = new URL(params.url).hostname;
                 checkRateLimit(targetHost);
@@ -1199,7 +1235,8 @@ async function runHTTP(): Promise<void> {
     await cleanupOrphanedTempDirs();
 
     const app = express();
-    app.use(express.json());
+    // Limit request body size to prevent DoS
+    app.use(express.json({ limit: "1mb" }));
 
     // POST /mcp - Handle MCP requests
     app.post("/mcp", async (req: Request, res: Response) => {
@@ -1210,6 +1247,15 @@ async function runHTTP(): Promise<void> {
             if (sessionId && sessions.has(sessionId)) {
                 const session = sessions.get(sessionId)!;
                 await session.transport.handleRequest(req, res, req.body);
+                return;
+            }
+
+            // Check session limit before creating new session
+            if (sessions.size >= MAX_SESSIONS) {
+                res.status(503).json({
+                    jsonrpc: "2.0",
+                    error: {code: -32603, message: "Server at capacity. Try again later."},
+                });
                 return;
             }
 
