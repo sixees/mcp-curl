@@ -7,8 +7,8 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
-import { join, resolve, relative, isAbsolute, basename, normalize } from "path";
-import { readFile, writeFile, mkdtemp, rm, chmod, readdir, stat, access, constants as fsConstants } from "fs/promises";
+import { join, resolve, relative, isAbsolute, basename } from "path";
+import { readFile, writeFile, mkdtemp, rm, chmod, readdir, stat, access, realpath, constants as fsConstants } from "fs/promises";
 // Constants
 const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -125,21 +125,16 @@ function resolveOutputDir(paramDir) {
     }
     return null;
 }
-// Validate output directory is safe to use
+// Validate output directory is safe to use. Returns the real path (symlinks resolved).
 async function validateOutputDir(dir) {
-    // Resolve to absolute path first (canonicalizes the path)
-    const absolutePath = resolve(dir);
-    // Detect path traversal by comparing normalized path with original
-    // normalize() collapses .. segments, so if the result differs significantly, traversal was attempted
-    const normalizedInput = normalize(dir);
-    // Check for .. in original input OR if normalization changed the path structure
-    // This catches both explicit ".." and edge cases
-    if (dir.includes("..") || (normalizedInput !== dir && normalizedInput.length < dir.length)) {
+    // Block path traversal in input string
+    if (dir.includes("..")) {
         throw new Error(`Invalid output_dir: path traversal detected. ` +
-            `Input "${dir}" resolves to "${absolutePath}". ` +
             `Please provide a direct path without ".." components.`);
     }
-    // Check directory exists using resolved absolute path
+    // Resolve to absolute path (does NOT follow symlinks)
+    const absolutePath = resolve(dir);
+    // Check directory exists first
     try {
         const stats = await stat(absolutePath);
         if (!stats.isDirectory()) {
@@ -153,65 +148,30 @@ async function validateOutputDir(dir) {
         }
         throw error;
     }
-    // Check directory is writable using resolved absolute path
+    // Resolve symlinks to get the real filesystem path
+    // This ensures we validate and use the actual destination, not just the symlink
+    const realPath = await realpath(absolutePath);
+    // Check directory is writable using the real path
     try {
-        await access(absolutePath, fsConstants.W_OK);
+        await access(realPath, fsConstants.W_OK);
     }
     catch (error) {
         throw new Error(`Invalid output_dir "${dir}": directory is not writable`);
     }
+    return realPath;
 }
 // Maximum file size for jq_query tool (same as curl response limit)
 const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
 // Validate a file path for jq_query tool (security: restrict to allowed directories)
 async function validateFilePath(filepath) {
-    // Resolve to absolute path (canonicalizes the path, handles .., symlinks, etc.)
+    // First, resolve to absolute path (does NOT follow symlinks)
     const absolutePath = resolve(filepath);
-    // Build list of allowed directories
-    const allowedDirs = [];
-    // 1. Our temp directory
-    if (sharedTempDir) {
-        allowedDirs.push(sharedTempDir);
-    }
-    // 2. Configured output directory from env var (validate it exists and is a directory)
-    const envOutputDir = process.env[OUTPUT_DIR_ENV_VAR];
-    if (envOutputDir) {
-        const resolvedEnvOutputDir = resolve(envOutputDir);
-        try {
-            const envDirStats = await stat(resolvedEnvOutputDir);
-            if (!envDirStats.isDirectory()) {
-                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": path exists but is not a directory`);
-            }
-            await access(resolvedEnvOutputDir, fsConstants.W_OK);
-            allowedDirs.push(resolvedEnvOutputDir);
-        }
-        catch (error) {
-            const err = error;
-            if (err.code === "ENOENT") {
-                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": directory does not exist`);
-            }
-            if (err.code === "EACCES") {
-                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": directory is not writable`);
-            }
-            throw error;
-        }
-    }
-    // 3. Current working directory
-    allowedDirs.push(process.cwd());
-    // Check if file is within any allowed directory
-    const isInAllowedDir = allowedDirs.some((dir) => {
-        const rel = relative(dir, absolutePath);
-        // File is in allowed dir if relative path doesn't start with .. and isn't absolute
-        // (absolute check handles Windows cross-drive paths like "D:\other")
-        return !rel.startsWith("..") && !isAbsolute(rel);
-    });
-    if (!isInAllowedDir) {
-        throw new Error(`Access denied: file "${filepath}" is not in an allowed directory. ` +
-            `Allowed directories: temp directory, MCP_CURL_OUTPUT_DIR, and current working directory.`);
-    }
-    // Check file exists and is readable
+    // Check file exists and get its real path (follows symlinks)
+    let realFilePath;
     try {
-        const stats = await stat(absolutePath);
+        // realpath() resolves symlinks and will fail if file doesn't exist
+        realFilePath = await realpath(absolutePath);
+        const stats = await stat(realFilePath);
         if (!stats.isFile()) {
             throw new Error(`Invalid filepath "${filepath}": path exists but is not a file`);
         }
@@ -227,11 +187,62 @@ async function validateFilePath(filepath) {
         }
         throw error;
     }
+    // Check file is readable
     try {
-        await access(absolutePath, fsConstants.R_OK);
+        await access(realFilePath, fsConstants.R_OK);
     }
     catch (error) {
         throw new Error(`File "${filepath}" is not readable`);
+    }
+    // Build list of allowed directories (using real paths to handle symlinks consistently)
+    const allowedDirs = [];
+    // 1. Our temp directory
+    if (sharedTempDir) {
+        allowedDirs.push(sharedTempDir);
+    }
+    // 2. Configured output directory from env var
+    const envOutputDir = process.env[OUTPUT_DIR_ENV_VAR];
+    if (envOutputDir) {
+        try {
+            // Use realpath to get actual directory path
+            const realEnvDir = await realpath(resolve(envOutputDir));
+            const envDirStats = await stat(realEnvDir);
+            if (!envDirStats.isDirectory()) {
+                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": path exists but is not a directory`);
+            }
+            await access(realEnvDir, fsConstants.W_OK);
+            allowedDirs.push(realEnvDir);
+        }
+        catch (error) {
+            const err = error;
+            if (err.code === "ENOENT") {
+                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": directory does not exist`);
+            }
+            if (err.code === "EACCES") {
+                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": directory is not writable`);
+            }
+            throw error;
+        }
+    }
+    // 3. Current working directory (use realpath in case cwd itself is a symlink)
+    try {
+        allowedDirs.push(await realpath(process.cwd()));
+    }
+    catch {
+        // If cwd can't be resolved (unlikely), use it as-is
+        allowedDirs.push(process.cwd());
+    }
+    // Check if REAL file path is within any allowed directory
+    // This prevents symlink escapes: a symlink in cwd pointing to /etc would be blocked
+    const isInAllowedDir = allowedDirs.some((dir) => {
+        const rel = relative(dir, realFilePath);
+        // File is in allowed dir if relative path doesn't start with .. and isn't absolute
+        // (absolute check handles Windows cross-drive paths like "D:\other")
+        return !rel.startsWith("..") && !isAbsolute(rel);
+    });
+    if (!isInAllowedDir) {
+        throw new Error(`Access denied: file "${filepath}" is not in an allowed directory. ` +
+            `Allowed directories: temp directory, MCP_CURL_OUTPUT_DIR, and current working directory.`);
     }
 }
 // Check if the content-type indicates JSON
@@ -1108,11 +1119,11 @@ Temp File Lifecycle:
             // Rate limit by target host to prevent abuse
             const targetHost = new URL(params.url).hostname;
             checkRateLimit(targetHost);
-            // Resolve and validate output directory
+            // Resolve and validate output directory (returns real path with symlinks resolved)
             const resolvedOutputDir = resolveOutputDir(params.output_dir);
-            if (resolvedOutputDir) {
-                await validateOutputDir(resolvedOutputDir);
-            }
+            const validatedOutputDir = resolvedOutputDir
+                ? await validateOutputDir(resolvedOutputDir)
+                : undefined;
             const args = buildCurlArgs({
                 ...params,
                 silent: true,
@@ -1127,7 +1138,7 @@ Temp File Lifecycle:
                 maxResultSize: params.max_result_size,
                 saveToFile: params.save_to_file,
                 contentType,
-                outputDir: resolvedOutputDir ?? undefined,
+                outputDir: validatedOutputDir,
             });
             const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, { savedToFile: processed.savedToFile, filepath: processed.filepath, message: processed.message });
             return {
@@ -1200,11 +1211,11 @@ Examples:
         try {
             // Validate file path (security check)
             await validateFilePath(params.filepath);
-            // Resolve and validate output directory if saving
+            // Resolve and validate output directory if saving (returns real path with symlinks resolved)
             const resolvedOutputDir = resolveOutputDir(params.output_dir);
-            if (resolvedOutputDir) {
-                await validateOutputDir(resolvedOutputDir);
-            }
+            const validatedOutputDir = resolvedOutputDir
+                ? await validateOutputDir(resolvedOutputDir)
+                : undefined;
             // Read the file
             const content = await readFile(resolve(params.filepath), { encoding: "utf-8" });
             // Apply jq filter
@@ -1218,7 +1229,7 @@ Examples:
                 const sourceBasename = basename(params.filepath) || "query_result";
                 const safeName = createSafeFilenameBase(sourceBasename, "query_result");
                 const filename = `${safeName}_${Date.now()}.txt`;
-                const targetDir = resolvedOutputDir ?? await getOrCreateTempDir();
+                const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
                 const filepath = join(targetDir, filename);
                 await writeFile(filepath, filtered, { encoding: "utf-8", mode: 0o600 });
                 return {

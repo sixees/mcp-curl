@@ -78,7 +78,8 @@ Query saved JSON files without new HTTP requests:
 - CRLF injection protection: validates headers, user-agent, auth values
 - Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix
 - `jq_query` file access restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd (including all subdirectories)
-- `output_dir` validation: must exist, be writable, no path traversal (`..`)
+- **Symlink handling**: All paths resolved via `realpath()` before validation - symlinks are followed to their actual destination
+- `output_dir` validation: must exist, be writable, no path traversal (`..`), symlinks resolved
 - Max response/file size for processing: 10MB
 - Max result size for inline return: 1MB (default 500KB)
 - Max jq_filter paths: 20 comma-separated expressions
