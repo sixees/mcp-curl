@@ -125,7 +125,14 @@ function resolveOutputDir(paramDir) {
     }
     return null;
 }
-// Validate output directory is safe to use. Returns the real path (symlinks resolved).
+/**
+ * Validate output directory is safe to use. Returns the real path (symlinks resolved).
+ *
+ * Security: We use realpath() to resolve symlinks before validation. This prevents
+ * symlink-based attacks where an attacker creates a symlink pointing outside the
+ * intended directory (e.g., /safe/output -> /etc). Without realpath(), we would
+ * validate "/safe/output" but actually write to "/etc".
+ */
 async function validateOutputDir(dir) {
     // Block path traversal in input string
     if (dir.includes("..")) {
@@ -162,7 +169,20 @@ async function validateOutputDir(dir) {
 }
 // Maximum file size for jq_query tool (same as curl response limit)
 const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
-// Validate a file path for jq_query tool (security: restrict to allowed directories)
+/**
+ * Validate a file path for jq_query tool (security: restrict to allowed directories).
+ *
+ * Security: We use realpath() to resolve symlinks before checking directory containment.
+ * This prevents symlink escape attacks where an attacker creates a symlink in an allowed
+ * directory that points outside it. For example:
+ *   - Allowed directory: /home/user/project (cwd)
+ *   - Attacker creates: /home/user/project/data.json -> /etc/passwd
+ *   - Without realpath(): "/home/user/project/data.json" passes containment check
+ *   - With realpath(): Resolves to "/etc/passwd", which fails containment check
+ *
+ * We also resolve allowed directories via realpath() for consistency, in case cwd or
+ * MCP_CURL_OUTPUT_DIR are themselves symlinks.
+ */
 async function validateFilePath(filepath) {
     // First, resolve to absolute path (does NOT follow symlinks)
     const absolutePath = resolve(filepath);

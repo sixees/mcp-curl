@@ -280,7 +280,14 @@ Two prompts are available for common use cases:
 - **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters
 - **File Exfiltration Prevention**: Uses `--data-raw` and `--form-string` to prevent `@` file reading
 - **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd (including all subdirectories - ensure cwd doesn't contain sensitive files)
-- **Symlink Resolution**: All file paths and output directories are resolved via `realpath()` before validation - symlinks are followed to their actual destination to prevent escaping allowed directories
+- **Symlink Escape Prevention**: All file paths and output directories are resolved via `realpath()` before
+  validation. This prevents attacks where a symlink in an allowed directory points outside it:
+  ```
+  # Example attack that is blocked:
+  # Attacker creates: /allowed/dir/data.json -> /etc/passwd
+  # Without realpath: "/allowed/dir/data.json" passes check, reads /etc/passwd
+  # With realpath: Resolves to "/etc/passwd", blocked as outside allowed dirs
+  ```
 - **Path Traversal Prevention**: `output_dir` and `filepath` reject paths containing `..`
 - Maximum response/file size for processing: 10MB
 - Maximum result size for inline return: 1MB (default 500KB)
