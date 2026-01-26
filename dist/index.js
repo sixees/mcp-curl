@@ -23,26 +23,35 @@ const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
 // Session tracking for HTTP transport
 const sessions = new Map();
 const MAX_SESSIONS = 100; // Limit concurrent sessions to prevent memory exhaustion
-// Rate limiting
+// Rate limiting with fixed time windows and periodic cleanup (avoids per-request timers)
 const MAX_REQUESTS_PER_MINUTE = 60;
-const requestCounts = new Map();
+const RATE_LIMIT_WINDOW_MS = 60000;
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 10000; // Sweep every 10 seconds
+const rateLimitMap = new Map();
 function checkRateLimit(clientId) {
-    const count = requestCounts.get(clientId) || 0;
-    if (count >= MAX_REQUESTS_PER_MINUTE) {
+    const now = Date.now();
+    const entry = rateLimitMap.get(clientId);
+    // Start new window if none exists or current window expired
+    if (!entry || (now - entry.windowStart) >= RATE_LIMIT_WINDOW_MS) {
+        rateLimitMap.set(clientId, { count: 1, windowStart: now });
+        return;
+    }
+    if (entry.count >= MAX_REQUESTS_PER_MINUTE) {
         throw new Error(`Rate limit exceeded. Maximum ${MAX_REQUESTS_PER_MINUTE} requests per minute.`);
     }
-    requestCounts.set(clientId, count + 1);
-    // Decrement count after 1 minute
-    setTimeout(() => {
-        const current = requestCounts.get(clientId) || 1;
-        if (current <= 1) {
-            requestCounts.delete(clientId);
-        }
-        else {
-            requestCounts.set(clientId, current - 1);
-        }
-    }, 60000);
+    entry.count++;
 }
+// Single cleanup interval instead of O(n) per-request timers
+const rateLimitCleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [clientId, entry] of rateLimitMap) {
+        if ((now - entry.windowStart) >= RATE_LIMIT_WINDOW_MS) {
+            rateLimitMap.delete(clientId);
+        }
+    }
+}, RATE_LIMIT_CLEANUP_INTERVAL_MS);
+// Prevent interval from keeping process alive during shutdown
+rateLimitCleanupInterval.unref();
 // Shared temp directory for saved responses (lazily initialized, cleaned up on shutdown)
 let sharedTempDir = null;
 let tempDirPromise = null;
@@ -81,14 +90,16 @@ async function cleanupOrphanedTempDirs() {
                     }
                     await rm(dirPath, { recursive: true, force: true });
                 }
-                catch {
-                    // Ignore individual cleanup errors (dir may have been deleted by another instance)
+                catch (error) {
+                    // Log but don't fail - dir may have been deleted by another instance
+                    console.error("Error cleaning up orphaned temp dir:", dirPath, error);
                 }
             }
         }
     }
-    catch {
-        // Ignore errors during orphan cleanup
+    catch (error) {
+        // Log but don't crash - cleanup is best-effort
+        console.error("Error during orphaned temp dir cleanup:", error);
     }
 }
 // Check if content-type indicates JSON
@@ -363,6 +374,7 @@ function parseBracketToken(filter, startIndex) {
         const quote = filter[i];
         i++; // skip opening quote
         let key = "";
+        let foundClosingQuote = false;
         while (i < filter.length) {
             const ch = filter[i];
             // Handle escape sequences like \" or \'
@@ -380,10 +392,15 @@ function parseBracketToken(filter, startIndex) {
             // End of quoted string on unescaped matching quote
             if (ch === quote) {
                 i++; // skip closing quote
+                foundClosingQuote = true;
                 break;
             }
             key += ch;
             i++;
+        }
+        // Check for missing closing quote first (more specific error)
+        if (!foundClosingQuote) {
+            throw new Error(`Missing closing quote ${quote} in filter "${filter}"`);
         }
         if (i >= filter.length || filter[i] !== "]") {
             throw new Error(`Missing closing bracket "]" after quoted key in filter "${filter}"`);
