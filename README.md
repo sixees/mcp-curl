@@ -105,6 +105,7 @@ TRANSPORT=http PORT=3000 MCP_AUTH_TOKEN=your-secret-token npm start
 ```
 
 Clients must include the token in the Authorization header:
+
 ```
 Authorization: Bearer your-secret-token
 ```
@@ -224,15 +225,16 @@ Responses exceeding `max_result_size` (default: 500KB, max: 1MB) are automatical
 
 Use `jq_filter` to reduce response size before the limit is checked:
 
-| Syntax         | Description                          | Example             |
-|----------------|--------------------------------------|---------------------|
-| `.key`         | Object property                      | `.data`             |
-| `.[n]` or `.n` | Array index (dot notation supported) | `.[0]`, `.0`        |
-| `.[n:m]`       | Array slice                          | `.[0:10]`           |
-| `.["key"]`     | Bracket notation                     | `.["special-key"]`  |
-| `.a,.b,.c`     | Multiple paths (returns array)       | `.name,.email`      |
+| Syntax         | Description                          | Example            |
+|----------------|--------------------------------------|--------------------|
+| `.key`         | Object property                      | `.data`            |
+| `.[n]` or `.n` | Array index (dot notation supported) | `.[0]`, `.0`       |
+| `.[n:m]`       | Array slice                          | `.[0:10]`          |
+| `.["key"]`     | Bracket notation                     | `.["special-key"]` |
+| `.a,.b,.c`     | Multiple paths (returns array)       | `.name,.email`     |
 
 **Filter Validation:**
+
 - Maximum 20 comma-separated paths
 - Unclosed quotes and unmatched brackets throw clear errors
 - Leading zeros in indices are rejected (use `.0` not `.00`)
@@ -258,7 +260,8 @@ Query existing JSON files without making new HTTP requests. Useful for extractin
 - `MCP_CURL_OUTPUT_DIR` path
 - Current working directory and all subdirectories
 
-> **Warning**: The cwd permission is broad. Ensure the server's working directory doesn't contain sensitive files you don't want accessible via `jq_query`.
+> **Warning**: The cwd permission is broad. Ensure the server's working directory doesn't contain sensitive files you
+> don't want accessible via `jq_query`.
 
 **Example:**
 
@@ -287,24 +290,24 @@ Two prompts are available for common use cases:
 ### Network Security
 
 - **SSRF Protection**: Blocks requests to private networks and internal hosts:
-  - **Protocol whitelist**: Only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
-  - **Windows UNC paths**: `\\server\share` patterns blocked to prevent internal network share access
-  - **DNS Rebinding Prevention**: DNS is resolved before validation, and cURL is pinned to the validated
-    IP using `--resolve`. This prevents attacks where DNS returns a public IP during validation but a
-    private IP when cURL connects.
-  - Private IPs: 10.x, 172.16-31.x, 192.168.x, 169.254.x (link-local)
-  - IPv4-mapped IPv6: `::ffff:` prefixed versions of all blocked IPv4 ranges
-  - IPv6 private: loopback (::1), link-local (fe80::), unique local (fc00::, fd00::)
-  - Internal TLDs: .local, .internal, .corp, .lan, .localhost
-  - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
-    development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
-    service ports like 22, 25, 3306 remain blocked)
+    - **Protocol whitelist**: Only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
+    - **Windows UNC paths**: `\\server\share` patterns blocked to prevent internal network share access
+    - **DNS Rebinding Prevention**: DNS is resolved before validation, and cURL is pinned to the validated
+      IP using `--resolve`. This prevents attacks where DNS returns a public IP during validation but a
+      private IP when cURL connects.
+    - Private IPs: 10.x, 172.16-31.x, 192.168.x, 169.254.x (link-local)
+    - IPv4-mapped IPv6: `::ffff:` prefixed versions of all blocked IPv4 ranges
+    - IPv6 private: loopback (::1), link-local (fe80::), unique local (fc00::, fd00::)
+    - Internal TLDs: .local, .internal, .corp, .lan, .localhost
+    - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
+      development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
+      service ports like 22, 25, 3306 remain blocked)
 
 ### Rate Limiting
 
 - **Dual limits** prevent abuse:
-  - Per-hostname: 60 requests/minute to any single host (protects target servers)
-  - Per-client: 300 requests/minute total (prevents bypassing host limits via many hostnames)
+    - Per-hostname: 60 requests/minute to any single host (protects target servers)
+    - Per-client: 300 requests/minute total (prevents bypassing host limits via many hostnames)
 
 ### Input Validation
 
@@ -313,11 +316,13 @@ Two prompts are available for common use cases:
 - Commands are executed without shell interpretation to prevent injection
 - **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters
 - **File Exfiltration Prevention**: Uses `--data-raw` and `--form-string` to prevent `@` file reading
-- **Response Injection Prevention**: Uses unique per-request separators for metadata to prevent crafted responses from injecting fake metadata
+- **Response Injection Prevention**: Uses unique per-request separators for metadata to prevent crafted responses from
+  injecting fake metadata
 
 ### File Access Security
 
-- **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd (including all subdirectories - ensure cwd doesn't contain sensitive files)
+- **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd (including
+  all subdirectories - ensure cwd doesn't contain sensitive files)
 - **Symlink Escape Prevention**: All file paths and output directories are resolved via `realpath()` before
   validation. This prevents attacks where a symlink in an allowed directory points outside it:
   ```

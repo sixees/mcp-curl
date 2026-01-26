@@ -55,9 +55,9 @@ Responses are processed in stages:
 
 1. cURL fetches response (max 10MB processing limit)
 2. `jq_filter` extracts specific data if provided:
-   - Dot notation for arrays: `.results.0` same as `.results[0]`
-   - Multiple paths: `.name,.email` returns array (max 20 paths)
-   - Validation: unclosed quotes/brackets, leading zeros, safe integer bounds
+    - Dot notation for arrays: `.results.0` same as `.results[0]`
+    - Multiple paths: `.name,.email` returns array (max 20 paths)
+    - Validation: unclosed quotes/brackets, leading zeros, safe integer bounds
 3. If result exceeds `max_result_size` (default 500KB), auto-saves to file
 4. Output directory priority: `output_dir` param > `MCP_CURL_OUTPUT_DIR` env > system temp
 5. Temp files use secure permissions (0o700/0o600) and are cleaned on shutdown
@@ -74,6 +74,7 @@ Query saved JSON files without new HTTP requests:
 ### Security Constraints
 
 **Network Security:**
+
 - SSRF protection: blocks private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.x), IPv4-mapped IPv6, internal TLDs
 - DNS rebinding prevention: DNS resolved before validation, cURL pinned to validated IP via `--resolve`
 - Protocol whitelist: only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
@@ -81,10 +82,12 @@ Query saved JSON files without new HTTP requests:
 - Localhost: blocked by default; `MCP_CURL_ALLOW_LOCALHOST=true` enables with port restrictions (80, 443, >1024)
 
 **Rate Limiting:**
+
 - Per-hostname: 60 requests/minute to any single host
 - Per-client: 300 requests/minute total (prevents bypassing host limits via many hostnames)
 
 **Input Validation:**
+
 - Only structured `curl_execute` and `jq_query` tools (no arbitrary command execution)
 - Commands executed via `spawn()` without shell (prevents injection)
 - CRLF injection protection: validates headers, user-agent, auth values for newlines
@@ -92,11 +95,13 @@ Query saved JSON files without new HTTP requests:
 - Per-request unique metadata separator prevents response injection attacks
 
 **File Access:**
+
 - `jq_query` restricted to: temp dir, `MCP_CURL_OUTPUT_DIR`, cwd (including subdirectories)
 - **Symlink handling**: All paths resolved via `realpath()` before validation
 - `output_dir` validation: must exist, be writable, no path traversal (`..`)
 
 **Resource Limits:**
+
 - Max response/file size for processing: 10MB
 - Max result size for inline return: 1MB (default 500KB)
 - Global memory limit: 100MB across all concurrent requests
@@ -106,6 +111,7 @@ Query saved JSON files without new HTTP requests:
 - SSL verification enabled by default
 
 **HTTP Transport:**
+
 - Optional bearer token authentication via `MCP_AUTH_TOKEN` env var
 - Session idle timeout: 1 hour (cleanup every 5 minutes)
 - Max 100 concurrent sessions
