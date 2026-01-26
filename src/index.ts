@@ -20,7 +20,11 @@ const SERVER_VERSION = "1.1.0";
 const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
 const TEMP_DIR_PREFIX = "mcp-curl-";
 const ORPHAN_DIR_MIN_AGE_MS = 3600000; // 1 hour - only cleanup temp dirs older than this to avoid racing with other instances
-const METADATA_SEPARATOR = "\n---MCP-CURL-METADATA---\n"; // Separator for extracting content-type
+// Generate unique separator per request to prevent response injection attacks
+// An attacker could craft a response containing our separator to inject fake metadata
+function generateMetadataSeparator(): string {
+    return `\n---MCP-CURL-${randomUUID()}---\n`;
+}
 const ERROR_PREVIEW_LENGTH = 200; // Characters to show in error previews
 const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
 
@@ -332,12 +336,13 @@ function isJsonContentType(contentType: string | undefined): boolean {
 const MAX_METADATA_TAIL_LENGTH = 200;
 
 // Parse curl response to extract body and content-type
-function parseResponseWithMetadata(rawResponse: string): { body: string; contentType?: string } {
-    // Only search for separator near the end to prevent spoofing via response body
-    // containing the separator string
+// The separator must be the same unique value used in the -w format string
+function parseResponseWithMetadata(rawResponse: string, separator: string): { body: string; contentType?: string } {
+    // Only search for separator near the end as a defense-in-depth measure
+    // The unique per-request separator is the primary protection against injection
     const searchStart = Math.max(0, rawResponse.length - MAX_METADATA_TAIL_LENGTH);
     const tailSection = rawResponse.slice(searchStart);
-    const separatorIndexInTail = tailSection.lastIndexOf(METADATA_SEPARATOR);
+    const separatorIndexInTail = tailSection.lastIndexOf(separator);
 
     if (separatorIndexInTail === -1) {
         return { body: rawResponse };
@@ -345,7 +350,7 @@ function parseResponseWithMetadata(rawResponse: string): { body: string; content
 
     const separatorIndex = searchStart + separatorIndexInTail;
     const body = rawResponse.slice(0, separatorIndex);
-    const contentType = rawResponse.slice(separatorIndex + METADATA_SEPARATOR.length).trim();
+    const contentType = rawResponse.slice(separatorIndex + separator.length).trim();
     return { body, contentType: contentType || undefined };
 }
 
@@ -711,6 +716,8 @@ function buildCurlArgs(params: {
     silent?: boolean;
     // DNS pinning to prevent rebinding attacks (see validateUrlAndResolveDns)
     dnsResolve?: { hostname: string; port: number; resolvedIp: string };
+    // Unique per-request separator for extracting metadata (prevents injection)
+    metadataSeparator: string;
 }): string[] {
     const args: string[] = [];
 
@@ -797,7 +804,8 @@ function buildCurlArgs(params: {
     }
 
     // Output format for response info (custom format + metadata separator for content-type)
-    const metadataSuffix = METADATA_SEPARATOR.replace(/\n/g, "\\n") + "%{content_type}";
+    // The separator is unique per-request to prevent response injection attacks
+    const metadataSuffix = params.metadataSeparator.replace(/\n/g, "\\n") + "%{content_type}";
     if (params.output_format) {
         args.push("-w", params.output_format + metadataSuffix);
     } else {
@@ -1592,16 +1600,20 @@ Temp File Lifecycle:
                     ? await validateOutputDir(resolvedOutputDir)
                     : undefined;
 
+                // Generate unique separator for this request to prevent response injection
+                const metadataSeparator = generateMetadataSeparator();
+
                 const args = buildCurlArgs({
                     ...params,
                     silent: true,
                     dnsResolve: dnsResult,
+                    metadataSeparator,
                 });
 
                 const result = await executeCommand("curl", args, params.timeout * 1000);
 
-                // Parse response to extract body and content-type
-                const { body, contentType } = parseResponseWithMetadata(result.stdout);
+                // Parse response using the same unique separator
+                const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);
 
                 // Process response with filtering and size handling
                 const processed = await processResponse(body, {
