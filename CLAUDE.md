@@ -20,7 +20,7 @@ implementation in `src/index.ts`.
 ### Key Components
 
 - **McpServer**: Core server from `@modelcontextprotocol/sdk` handling MCP protocol
-- **Tool**: `curl_execute` - Structured HTTP requests with typed parameters
+- **Tools**: `curl_execute` (HTTP requests), `jq_query` (query saved JSON files)
 - **Resources**: `curl://docs/api` - Built-in API documentation
 - **Prompts**: `api-test`, `api-discovery` - Reusable prompt templates
 - **Transports**: Stdio (default) or HTTP via Express with session management
@@ -32,7 +32,10 @@ implementation in `src/index.ts`.
 - `executeCommand()` - Spawns cURL process with size limits and timeout handling
 - `buildCurlArgs()` - Converts structured params to cURL CLI arguments
 - `processResponse()` - Handles jq filtering, size limits, and file saving
-- `applyJqFilter()` / `parseJqFilter()` - JSON path extraction (jq-like syntax)
+- `applyJqFilter()` / `applySingleJqFilter()` / `parseJqFilter()` - JSON path extraction (jq-like syntax)
+- `splitJqFilters()` - Splits comma-separated jq filters respecting brackets/quotes with validation
+- `resolveOutputDir()` / `validateOutputDir()` - Output directory resolution and validation
+- `validateFilePath()` - Security validation for jq_query file access
 - `runStdio()` / `runHTTP()` - Transport-specific startup
 
 ### HTTP Transport Sessions
@@ -47,21 +50,38 @@ The HTTP transport uses proper session management:
 ### Large Response Handling
 
 Responses are processed in stages:
+
 1. cURL fetches response (max 10MB processing limit)
-2. `jq_filter` extracts specific data if provided
-3. If result exceeds `max_result_size` (default 500KB), auto-saves to temp file
-4. Temp files use secure permissions (0o700/0o600) and are cleaned on shutdown
+2. `jq_filter` extracts specific data if provided:
+   - Dot notation for arrays: `.results.0` same as `.results[0]`
+   - Multiple paths: `.name,.email` returns array (max 20 paths)
+   - Negative indices: `.-1` for last element
+   - Validation: unclosed quotes/brackets, leading zeros, safe integer bounds
+3. If result exceeds `max_result_size` (default 500KB), auto-saves to file
+4. Output directory priority: `output_dir` param > `MCP_CURL_OUTPUT_DIR` env > system temp
+5. Temp files use secure permissions (0o700/0o600) and are cleaned on shutdown
+
+### jq_query Tool
+
+Query saved JSON files without new HTTP requests:
+
+- Only allows files in: temp directory, `MCP_CURL_OUTPUT_DIR`, or current working directory
+- 10MB file size limit (same as curl response limit)
+- Supports same jq_filter syntax as curl_execute
 
 ### Security Constraints
 
-- Only structured `curl_execute` (no arbitrary command execution)
+- Only structured `curl_execute` and `jq_query` tools (no arbitrary command execution)
 - Commands executed via `spawn()` without shell (prevents injection)
 - SSRF protection: blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x), link-local, internal TLDs
 - Rate limiting: 60 requests per minute per target host
 - CRLF injection protection: validates headers, user-agent, auth values
 - Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix
-- Max response size for processing: 10MB
+- `jq_query` file access restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd
+- `output_dir` validation: must exist, be writable, no path traversal (`..`)
+- Max response/file size for processing: 10MB
 - Max result size for inline return: 1MB (default 500KB)
+- Max jq_filter paths: 20 comma-separated expressions
 - Default timeout: 30 seconds
 - SSL verification enabled by default
 
@@ -71,3 +91,4 @@ Responses are processed in stages:
 - ESM modules (`"type": "module"` in package.json)
 - Zod for runtime schema validation
 - Prefer async/await, pure functions, early returns
+- Cross-platform: uses `path.isAbsolute()`, `path.basename()`, `path.resolve()` for Windows/Unix compatibility

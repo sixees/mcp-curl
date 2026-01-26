@@ -7,9 +7,13 @@ An MCP (Model Context Protocol) server that enables LLMs to execute cURL command
 - **Structured HTTP Requests**: Use `curl_execute` with typed parameters for safe, validated HTTP calls
 - **Multiple Auth Methods**: Basic auth, Bearer tokens, and custom headers
 - **Response Control**: Follow redirects, include headers, compressed responses
-- **Large Response Handling**: Auto-saves responses exceeding size limits to temp files
+- **Large Response Handling**: Auto-saves responses exceeding size limits to configurable output directory
 - **JSON Filtering**: Extract specific data with jq-like path expressions (`jq_filter`)
-- **Security**: SSRF protection, rate limiting, CRLF injection prevention
+    - Dot notation for arrays: `.results.0.name` or `.results[0].name`
+    - Multiple paths: `.name,.email,.id` returns array of values
+    - Negative indices: `.-1` for last element
+- **JSON File Querying**: Use `jq_query` to re-query saved files without new HTTP requests
+- **Security**: SSRF protection, rate limiting, CRLF injection prevention, file access restrictions
 - **Error Handling**: Clear error messages with exit codes and metadata
 - **Built-in Documentation**: MCP resources and prompts for discoverability
 - **Dual Transport**: Supports both stdio (for Claude Desktop/Code) and HTTP transports
@@ -97,8 +101,7 @@ TRANSPORT=http PORT=3000 npm start
 
 ### `curl_execute`
 
-Execute HTTP requests with structured parameters. This is the only tool available, providing a safe, validated interface
-for HTTP requests.
+Execute HTTP requests with structured parameters. Provides a safe, validated interface for HTTP requests.
 
 **Parameters:**
 
@@ -120,9 +123,10 @@ for HTTP requests.
 | `include_headers`  | boolean | No       | false   | Include response headers                                   |
 | `compressed`       | boolean | No       | true    | Request compressed response                                |
 | `include_metadata` | boolean | No       | false   | Wrap response in JSON metadata                             |
-| `jq_filter`        | string  | No       | -       | JSON path filter (e.g., `.data[0]`, `.[0:10]`)             |
+| `jq_filter`        | string  | No       | -       | JSON path filter (e.g., `.data[0]`, `.name,.email`)        |
 | `max_result_size`  | number  | No       | 500KB   | Max bytes inline before auto-save (1KB-1MB)                |
-| `save_to_file`     | boolean | No       | false   | Force save response to temp file                           |
+| `save_to_file`     | boolean | No       | false   | Force save response to file                                |
+| `output_dir`       | string  | No       | -       | Custom directory for saved files (overrides env var)       |
 
 **Examples:**
 
@@ -164,35 +168,92 @@ for HTTP requests.
   "jq_filter": ".name"
 }
 
+// Extract multiple fields (returns array)
+{
+  "url": "https://api.github.com/users/octocat",
+  "jq_filter": ".name,.email,.location"
+}
+
+// Dot notation for array access
+{
+  "url": "https://api.example.com/items",
+  "jq_filter": ".results.0.name"
+}
+
 // Get first 10 items from array
 {
   "url": "https://api.example.com/items",
   "jq_filter": ".results[0:10]"
 }
 
-// Force save large response to file
+// Save to custom directory (accessible by AI clients)
 {
   "url": "https://api.example.com/large-dataset",
-  "save_to_file": true
+  "save_to_file": true,
+  "output_dir": "/path/to/accessible/directory"
 }
 ```
 
 ### Large Response Handling
 
-Responses exceeding `max_result_size` (default: 500KB, max: 1MB) are automatically saved to a temporary file:
+Responses exceeding `max_result_size` (default: 500KB, max: 1MB) are automatically saved to a file.
 
-- File is saved with secure permissions (owner-only: 0o600)
+**Output Directory Priority:**
+
+1. `output_dir` parameter (if provided)
+2. `MCP_CURL_OUTPUT_DIR` environment variable (if set)
+3. System temp directory (cleaned up on shutdown)
+
+**File Properties:**
+
+- Saved with secure permissions (owner-only: 0o600)
 - Response includes `filepath` pointing to saved file
-- Temp files are cleaned up on graceful shutdown
+- Files in custom `output_dir` are NOT auto-cleaned (user-managed)
 
 Use `jq_filter` to reduce response size before the limit is checked:
 
-| Syntax | Description | Example |
-|--------|-------------|---------|
-| `.key` | Object property | `.data` |
-| `.[n]` | Array index (negative supported) | `.[0]`, `.[-1]` |
-| `.[n:m]` | Array slice | `.[0:10]` |
-| `.["key"]` | Bracket notation | `.["special-key"]` |
+| Syntax         | Description                          | Example             |
+|----------------|--------------------------------------|---------------------|
+| `.key`         | Object property                      | `.data`             |
+| `.[n]` or `.n` | Array index (dot notation supported) | `.[0]`, `.0`, `.-1` |
+| `.[n:m]`       | Array slice                          | `.[0:10]`           |
+| `.["key"]`     | Bracket notation                     | `.["special-key"]`  |
+| `.a,.b,.c`     | Multiple paths (returns array)       | `.name,.email`      |
+
+**Filter Validation:**
+- Maximum 20 comma-separated paths
+- Unclosed quotes and unmatched brackets throw clear errors
+- Leading zeros in indices are rejected (use `.0` not `.00`)
+- Indices must be within JavaScript safe integer range
+
+### jq_query Tool
+
+Query existing JSON files without making new HTTP requests. Useful for extracting different fields from saved responses.
+
+**Parameters:**
+
+| Parameter         | Type    | Required | Description                                      |
+|-------------------|---------|----------|--------------------------------------------------|
+| `filepath`        | string  | Yes      | Path to JSON file (must be in allowed directory) |
+| `jq_filter`       | string  | Yes      | JSON path filter expression                      |
+| `max_result_size` | number  | No       | Max bytes inline (default: 500KB)                |
+| `save_to_file`    | boolean | No       | Force save result to file                        |
+| `output_dir`      | string  | No       | Directory for saved result files                 |
+
+**Security:** Only files in these directories can be read:
+
+- Temp directory (files saved by curl_execute)
+- `MCP_CURL_OUTPUT_DIR` path
+- Current working directory and subdirectories
+
+**Example:**
+
+```json
+{
+  "filepath": "/path/to/saved_response.txt",
+  "jq_filter": ".users[0:5].name"
+}
+```
 
 ## MCP Resources
 
@@ -209,15 +270,19 @@ Two prompts are available for common use cases:
 
 ## Security Considerations
 
-- Only structured `curl_execute` is available (no arbitrary command execution)
+- Only structured `curl_execute` and `jq_query` tools available (no arbitrary command execution)
 - All parameters are validated using Zod schemas
 - Commands are executed without shell interpretation to prevent injection
-- **SSRF Protection**: Blocks requests to localhost, private IPs (10.x, 172.16-31.x, 192.168.x), link-local, and internal TLDs (.local, .internal, .corp, .lan)
+- **SSRF Protection**: Blocks requests to localhost, private IPs (10.x, 172.16-31.x, 192.168.x), link-local, and
+  internal TLDs (.local, .internal, .corp, .lan)
 - **Rate Limiting**: 60 requests per minute per target host
 - **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters
 - **File Exfiltration Prevention**: Uses `--data-raw` and `--form-string` to prevent `@` file reading
-- Maximum response size for processing: 10MB
+- **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd
+- **Path Traversal Prevention**: `output_dir` and `filepath` reject paths containing `..`
+- Maximum response/file size for processing: 10MB
 - Maximum result size for inline return: 1MB (default 500KB)
+- Maximum jq_filter paths: 20 comma-separated expressions
 - Default timeout: 30 seconds
 - SSL verification is enabled by default (use `insecure: true` only when necessary)
 

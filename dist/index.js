@@ -7,8 +7,8 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
-import { join } from "path";
-import { writeFile, mkdtemp, rm, chmod, readdir, stat } from "fs/promises";
+import { join, resolve, relative, isAbsolute, basename } from "path";
+import { readFile, writeFile, mkdtemp, rm, chmod, readdir, stat, access, constants as fsConstants } from "fs/promises";
 // Constants
 const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -50,7 +50,7 @@ const rateLimitCleanupInterval = setInterval(() => {
         }
     }
 }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
-// Prevent interval from keeping process alive during shutdown
+// Prevent an interval from keeping process alive during shutdown
 rateLimitCleanupInterval.unref();
 // Shared temp directory for saved responses (lazily initialized, cleaned up on shutdown)
 let sharedTempDir = null;
@@ -102,7 +102,110 @@ async function cleanupOrphanedTempDirs() {
         console.error("Error during orphaned temp dir cleanup:", error);
     }
 }
-// Check if content-type indicates JSON
+// Environment variable for a custom output directory
+const OUTPUT_DIR_ENV_VAR = "MCP_CURL_OUTPUT_DIR";
+// Resolve the output directory with priority: 1) parameter, 2) env var, 3) null (use temp)
+function resolveOutputDir(paramDir) {
+    const trimmedParam = paramDir?.trim();
+    if (trimmedParam) {
+        return trimmedParam;
+    }
+    const envDir = process.env[OUTPUT_DIR_ENV_VAR]?.trim();
+    if (envDir) {
+        return envDir;
+    }
+    return null;
+}
+// Validate output directory is safe to use
+async function validateOutputDir(dir) {
+    // Check for .. components in the original input (even if resolved path is valid)
+    if (dir.includes("..")) {
+        throw new Error(`Invalid output_dir: path contains ".." which is not allowed for security. ` +
+            `Please provide an absolute path without relative components.`);
+    }
+    // Check directory exists
+    try {
+        const stats = await stat(dir);
+        if (!stats.isDirectory()) {
+            throw new Error(`Invalid output_dir "${dir}": path exists but is not a directory`);
+        }
+    }
+    catch (error) {
+        if (error.code === "ENOENT") {
+            throw new Error(`Invalid output_dir "${dir}": directory does not exist. ` +
+                `Please create it first or use a different path.`);
+        }
+        throw error;
+    }
+    // Check directory is writable
+    try {
+        await access(dir, fsConstants.W_OK);
+    }
+    catch (error) {
+        throw new Error(`Invalid output_dir "${dir}": directory is not writable`);
+    }
+}
+// Maximum file size for jq_query tool (same as curl response limit)
+const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
+// Validate a file path for jq_query tool (security: restrict to allowed directories)
+async function validateFilePath(filepath) {
+    // Resolve to absolute path
+    const absolutePath = resolve(filepath);
+    // Check for path traversal attempts
+    if (filepath.includes("..")) {
+        throw new Error(`Invalid filepath: path contains ".." which is not allowed for security. ` +
+            `Please provide an absolute path without relative components.`);
+    }
+    // Build list of allowed directories
+    const allowedDirs = [];
+    // 1. Our temp directory
+    if (sharedTempDir) {
+        allowedDirs.push(sharedTempDir);
+    }
+    // 2. Configured output directory from env var
+    const envOutputDir = process.env[OUTPUT_DIR_ENV_VAR];
+    if (envOutputDir) {
+        allowedDirs.push(resolve(envOutputDir));
+    }
+    // 3. Current working directory
+    allowedDirs.push(process.cwd());
+    // Check if file is within any allowed directory
+    const isInAllowedDir = allowedDirs.some((dir) => {
+        const rel = relative(dir, absolutePath);
+        // File is in allowed dir if relative path doesn't start with .. and isn't absolute
+        // (absolute check handles Windows cross-drive paths like "D:\other")
+        return !rel.startsWith("..") && !isAbsolute(rel);
+    });
+    if (!isInAllowedDir) {
+        throw new Error(`Access denied: file "${filepath}" is not in an allowed directory. ` +
+            `Allowed directories: temp directory, MCP_CURL_OUTPUT_DIR, and current working directory.`);
+    }
+    // Check file exists and is readable
+    try {
+        const stats = await stat(absolutePath);
+        if (!stats.isFile()) {
+            throw new Error(`Invalid filepath "${filepath}": path exists but is not a file`);
+        }
+        // Check file size
+        if (stats.size > MAX_JQ_QUERY_FILE_SIZE) {
+            throw new Error(`File "${filepath}" is too large (${stats.size} bytes). ` +
+                `Maximum file size for jq_query is ${MAX_JQ_QUERY_FILE_SIZE / 1_000_000}MB.`);
+        }
+    }
+    catch (error) {
+        if (error.code === "ENOENT") {
+            throw new Error(`File "${filepath}" does not exist`);
+        }
+        throw error;
+    }
+    try {
+        await access(absolutePath, fsConstants.R_OK);
+    }
+    catch (error) {
+        throw new Error(`File "${filepath}" is not readable`);
+    }
+}
+// Check if the content-type indicates JSON
 function isJsonContentType(contentType) {
     if (!contentType)
         return false;
@@ -463,6 +566,7 @@ function parseBracketToken(filter, startIndex) {
 // Limits to prevent DoS via complex jq filters
 const MAX_JQ_FILTER_LENGTH = 500;
 const MAX_JQ_TOKENS = 50;
+const MAX_JQ_FILTERS = 20; // Maximum number of comma-separated filters
 // Parse a jq-like filter expression into tokens
 function parseJqFilter(filter) {
     if (filter.length > MAX_JQ_FILTER_LENGTH) {
@@ -484,14 +588,30 @@ function parseJqFilter(filter) {
             i = result.newIndex;
             continue;
         }
-        // Bare key
+        // Bare key (or numeric index via dot notation like .0 or .-1)
         let key = "";
         while (i < filter.length && filter[i] !== "." && filter[i] !== "[") {
             key += filter[i];
             i++;
         }
         if (key) {
-            tokens.push({ type: "key", value: key });
+            // Check if key is a numeric index (supports negative indices like .-1)
+            if (/^-?\d+$/.test(key)) {
+                const parsed = parseInt(key, 10);
+                // Validate: within safe integer range
+                if (!Number.isSafeInteger(parsed)) {
+                    throw new Error(`Invalid array index "${key}" in filter "${filter}": exceeds safe integer range`);
+                }
+                // Validate: no leading zeros (e.g., "007" should be rejected, but "0" and "-0" are ok)
+                const canonical = String(parsed);
+                if (key !== canonical && key !== `-0`) {
+                    throw new Error(`Invalid array index "${key}" in filter "${filter}": leading zeros are not allowed`);
+                }
+                tokens.push({ type: "index", value: parsed });
+            }
+            else {
+                tokens.push({ type: "key", value: key });
+            }
             if (tokens.length > MAX_JQ_TOKENS) {
                 throw new Error(`jq_filter exceeds maximum of ${MAX_JQ_TOKENS} path segments`);
             }
@@ -503,7 +623,133 @@ function parseJqFilter(filter) {
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-// Apply a jq-like filter to JSON data
+// Split jq filter on commas, respecting brackets and quotes
+// e.g., ".name,.address[0],.[\"key,with,commas\"]" -> [".name", ".address[0]", ".[\"key,with,commas\"]"]
+function splitJqFilters(filter) {
+    const filters = [];
+    let current = "";
+    let bracketDepth = 0;
+    let inQuote = null;
+    let escaped = false;
+    for (let i = 0; i < filter.length; i++) {
+        const ch = filter[i];
+        // Handle escape sequences inside quotes
+        if (escaped) {
+            current += ch;
+            escaped = false;
+            continue;
+        }
+        if (ch === "\\" && inQuote) {
+            current += ch;
+            escaped = true;
+            continue;
+        }
+        // Track quote state
+        if ((ch === '"' || ch === "'") && !inQuote) {
+            inQuote = ch;
+            current += ch;
+            continue;
+        }
+        if (ch === inQuote) {
+            inQuote = null;
+            current += ch;
+            continue;
+        }
+        // Skip bracket tracking while inside quotes
+        if (inQuote) {
+            current += ch;
+            continue;
+        }
+        // Track bracket depth
+        if (ch === "[") {
+            bracketDepth++;
+            current += ch;
+            continue;
+        }
+        if (ch === "]") {
+            bracketDepth--;
+            if (bracketDepth < 0) {
+                throw new Error(`Invalid jq_filter "${filter}": unmatched closing bracket "]"`);
+            }
+            current += ch;
+            continue;
+        }
+        // Split on comma only at top level (not inside brackets or quotes)
+        if (ch === "," && bracketDepth === 0) {
+            const trimmed = current.trim();
+            if (trimmed) {
+                filters.push(trimmed);
+            }
+            current = "";
+            continue;
+        }
+        current += ch;
+    }
+    // Check for unclosed quotes
+    if (inQuote) {
+        throw new Error(`Invalid jq_filter "${filter}": unclosed ${inQuote === '"' ? 'double' : 'single'} quote`);
+    }
+    // Check for unclosed brackets
+    if (bracketDepth > 0) {
+        throw new Error(`Invalid jq_filter "${filter}": unclosed bracket "["`);
+    }
+    // Don't forget the last segment
+    const trimmed = current.trim();
+    if (trimmed) {
+        filters.push(trimmed);
+    }
+    return filters;
+}
+// Apply a single jq-like filter path to parsed JSON data
+function applySingleJqFilter(data, filter) {
+    const tokens = parseJqFilter(filter);
+    // Reject empty or dots-only filters that produce no tokens
+    if (tokens.length === 0) {
+        throw new Error(`Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`);
+    }
+    let result = data;
+    for (const token of tokens) {
+        if (result === null || result === undefined) {
+            return null;
+        }
+        switch (token.type) {
+            case "key":
+                // Key access only works on plain objects, not arrays or primitives
+                if (!isRecord(result)) {
+                    return null;
+                }
+                result = result[token.value];
+                break;
+            case "index":
+                if (Array.isArray(result)) {
+                    // Support negative indices: -1 is last element, -2 is second-to-last, etc.
+                    const idx = token.value < 0 ? result.length + token.value : token.value;
+                    result = result[idx];
+                }
+                else {
+                    return null;
+                }
+                break;
+            case "slice":
+                if (Array.isArray(result)) {
+                    result = result.slice(token.start, token.end);
+                }
+                else {
+                    return null;
+                }
+                break;
+            case "iterate":
+                if (!Array.isArray(result)) {
+                    return null;
+                }
+                // For iterate, we just keep the array as-is for now
+                // (full jq would expand it, but for our purposes keeping array is fine)
+                break;
+        }
+    }
+    return result;
+}
+// Apply a jq-like filter to JSON data (supports comma-separated multiple paths)
 function applyJqFilter(jsonString, filter) {
     let data;
     try {
@@ -517,51 +763,22 @@ function applyJqFilter(jsonString, filter) {
         }
         throw error; // Re-throw unexpected errors
     }
-    const tokens = parseJqFilter(filter);
-    // Reject empty or dots-only filters that produce no tokens
-    if (tokens.length === 0) {
+    // Split into multiple filters (handles commas outside brackets/quotes)
+    const filters = splitJqFilters(filter);
+    if (filters.length === 0) {
         throw new Error(`Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`);
     }
-    for (const token of tokens) {
-        if (data === null || data === undefined) {
-            return "null";
-        }
-        switch (token.type) {
-            case "key":
-                // Key access only works on plain objects, not arrays or primitives
-                if (!isRecord(data)) {
-                    return "null";
-                }
-                data = data[token.value];
-                break;
-            case "index":
-                if (Array.isArray(data)) {
-                    // Support negative indices: -1 is last element, -2 is second-to-last, etc.
-                    const idx = token.value < 0 ? data.length + token.value : token.value;
-                    data = data[idx];
-                }
-                else {
-                    return "null";
-                }
-                break;
-            case "slice":
-                if (Array.isArray(data)) {
-                    data = data.slice(token.start, token.end);
-                }
-                else {
-                    return "null";
-                }
-                break;
-            case "iterate":
-                if (!Array.isArray(data)) {
-                    return "null";
-                }
-                // For iterate, we just keep the array as-is for now
-                // (full jq would expand it, but for our purposes keeping array is fine)
-                break;
-        }
+    if (filters.length > MAX_JQ_FILTERS) {
+        throw new Error(`jq_filter exceeds maximum of ${MAX_JQ_FILTERS} comma-separated paths`);
     }
-    return JSON.stringify(data, null, 2);
+    // Single filter: return value directly (backward compatible)
+    if (filters.length === 1) {
+        const result = applySingleJqFilter(data, filters[0]);
+        return JSON.stringify(result, null, 2);
+    }
+    // Multiple filters: return array of values
+    const results = filters.map((f) => applySingleJqFilter(data, f));
+    return JSON.stringify(results, null, 2);
 }
 // Windows reserved filenames that cannot be used as base names
 const WINDOWS_RESERVED_BASENAMES = new Set([
@@ -588,9 +805,10 @@ function createSafeFilenameBase(input, fallback = "response") {
     }
     return base;
 }
-// Save response content to a temporary file
-async function saveResponseToFile(content, url) {
-    const tempDir = await getOrCreateTempDir();
+// Save response content to a file (custom output dir or temp dir)
+async function saveResponseToFile(content, url, outputDir) {
+    // Use custom output dir if provided, otherwise use temp dir
+    const targetDir = outputDir ?? await getOrCreateTempDir();
     // Create a safe filename from URL (fall back to raw string if URL is invalid)
     let baseName;
     try {
@@ -608,7 +826,7 @@ async function saveResponseToFile(content, url) {
     }
     const safeName = createSafeFilenameBase(baseName);
     const filename = `${safeName}_${Date.now()}.txt`;
-    const filepath = join(tempDir, filename);
+    const filepath = join(targetDir, filename);
     await writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 }); // Owner-only access
     return filepath;
 }
@@ -646,7 +864,7 @@ async function processResponse(response, options) {
     // Step 3: Check if we need to save to file
     const shouldSave = options.saveToFile || contentBytes > maxSize;
     if (shouldSave) {
-        const filepath = await saveResponseToFile(content, options.url);
+        const filepath = await saveResponseToFile(content, options.url, options.outputDir);
         // Keep content as actual response data, capped to maxSize for preview
         const displayContent = contentBytes > maxSize ? content.slice(0, maxSize) : content;
         return {
@@ -723,7 +941,7 @@ const CurlExecuteSchema = z.object({
         .describe("Wrap response in JSON with metadata (exit code, success status)"),
     jq_filter: z.string()
         .optional()
-        .describe("JSON path filter to extract specific data (e.g., '.data.items[0]', '.users[0:5]'). Applied after receiving full response but before max_result_size check."),
+        .describe("JSON path filter to extract specific data. Supports: .key, .[n] or .n (array index), .[n:m] (slice), .[\"key\"] (bracket notation), .-1 (negative index), .a,.b (multiple paths return array). Max 20 paths. Applied after response, before max_result_size check."),
     max_result_size: z.number()
         .int()
         .min(1000)
@@ -733,6 +951,28 @@ const CurlExecuteSchema = z.object({
     save_to_file: z.boolean()
         .optional()
         .describe("Force save response to temp file. Returns filepath instead of content"),
+    output_dir: z.string()
+        .optional()
+        .describe("Directory to save response files (must exist and be writable). Overrides MCP_CURL_OUTPUT_DIR env var. Falls back to system temp directory."),
+});
+// Schema for jq_query tool (query JSON files without HTTP requests)
+const JqQuerySchema = z.object({
+    filepath: z.string()
+        .describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
+    jq_filter: z.string()
+        .describe("JSON path filter expression. Supports: .key, .[n] or .n (array index), .[n:m] (slice), .[\"key\"] (bracket notation), .-1 (negative index), .a,.b (multiple paths return array). Max 20 paths."),
+    max_result_size: z.number()
+        .int()
+        .min(1000)
+        .max(1_000_000)
+        .optional()
+        .describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger results auto-save to file"),
+    save_to_file: z.boolean()
+        .optional()
+        .describe("Force save result to file. Returns filepath instead of content"),
+    output_dir: z.string()
+        .optional()
+        .describe("Directory to save result files (must exist and be writable)"),
 });
 // Register all tools and resources on a server instance
 function registerToolsAndResources(server) {
@@ -761,9 +1001,23 @@ Args:
   - include_headers (boolean): Include response headers in output
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
-  - jq_filter (string): JSON path filter to extract specific data (e.g., ".data.items[0]", ".users[0:5]")
+  - jq_filter (string): JSON path filter to extract specific data
   - max_result_size (number): Max bytes to return inline (default: 500KB, max: 1MB). Auto-saves to file when exceeded
   - save_to_file (boolean): Force save response to temp file. Returns filepath instead of content
+  - output_dir (string): Custom directory to save files (overrides MCP_CURL_OUTPUT_DIR env var)
+
+jq_filter Syntax:
+  - .key - Object property access
+  - .[n] or .n - Array index (dot notation supported, e.g., .results.0)
+  - .[n:m] - Array slice from index n to m
+  - .["key"] - Bracket notation for special characters in keys
+  - .-1 - Negative index (last element)
+  - .a,.b,.c - Multiple paths (returns array of values, max 20 paths)
+
+jq_filter Validation:
+  - Unclosed quotes and brackets throw clear errors
+  - Leading zeros in indices rejected (use .0 not .00)
+  - Indices must be within safe integer range
 
 Returns:
   The HTTP response body, or JSON with metadata if include_metadata is true:
@@ -780,9 +1034,12 @@ Examples:
   - Simple GET: { "url": "https://api.example.com/data" }
   - POST JSON: { "url": "https://api.example.com/users", "method": "POST", "headers": {"Content-Type": "application/json"}, "data": "{\\"name\\": \\"John\\"}" }
   - With auth: { "url": "https://api.example.com/secure", "bearer_token": "your-token-here" }
-  - Extract data: { "url": "https://api.github.com/repos/octocat/hello-world", "jq_filter": ".name" }
-  - First 10 items: { "url": "https://api.example.com/items", "jq_filter": ".results[0:10]" }
-  - Force file save: { "url": "https://api.example.com/large", "save_to_file": true }
+  - Extract field: { "url": "https://api.github.com/repos/octocat/hello-world", "jq_filter": ".name" }
+  - Multiple fields: { "url": "https://api.example.com/user", "jq_filter": ".name,.email,.id" }
+  - Dot notation: { "url": "https://api.example.com/items", "jq_filter": ".results.0.name" }
+  - Array slice: { "url": "https://api.example.com/items", "jq_filter": ".results[0:10]" }
+  - Last element: { "url": "https://api.example.com/items", "jq_filter": ".results.-1" }
+  - Custom output: { "url": "https://api.example.com/large", "save_to_file": true, "output_dir": "/path/to/dir" }
 
 Error Handling:
   - Returns error message if cURL fails or times out
@@ -817,6 +1074,11 @@ Temp File Lifecycle:
             // Rate limit by target host to prevent abuse
             const targetHost = new URL(params.url).hostname;
             checkRateLimit(targetHost);
+            // Resolve and validate output directory
+            const resolvedOutputDir = resolveOutputDir(params.output_dir);
+            if (resolvedOutputDir) {
+                await validateOutputDir(resolvedOutputDir);
+            }
             const args = buildCurlArgs({
                 ...params,
                 silent: true,
@@ -831,6 +1093,7 @@ Temp File Lifecycle:
                 maxResultSize: params.max_result_size,
                 saveToFile: params.save_to_file,
                 contentType,
+                outputDir: resolvedOutputDir ?? undefined,
             });
             const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, { savedToFile: processed.savedToFile, filepath: processed.filepath, message: processed.message });
             return {
@@ -850,6 +1113,106 @@ Temp File Lifecycle:
                     {
                         type: "text",
                         text: `Error executing cURL request: ${errorMessage}`,
+                    },
+                ],
+                isError: true,
+            };
+        }
+    });
+    // Register the jq_query tool for querying JSON files
+    server.registerTool("jq_query", {
+        title: "Query JSON File",
+        description: `Query an existing JSON file with a jq-like filter expression.
+
+This tool allows you to extract data from saved JSON files without making new HTTP requests.
+Useful for:
+- Extracting different fields from a large saved response
+- Applying multiple queries to the same data
+- Processing any local JSON file within allowed directories
+
+Args:
+  - filepath (string, required): Path to a JSON file to query
+  - jq_filter (string, required): JSON path filter expression
+  - max_result_size (number): Max bytes inline (default: 500KB, max: 1MB)
+  - save_to_file (boolean): Force save result to file
+  - output_dir (string): Custom directory to save result files
+
+Filter Syntax:
+  - .key - Get object property
+  - .[n] - Get array element at index n (also .n with dot notation)
+  - .[n:m] - Array slice from n to m
+  - .["key"] - Bracket notation for keys with special chars
+  - .-1 - Get last array element (negative index)
+  - .name,.email - Multiple paths (returns array of values)
+
+Security:
+  - Only files in these directories can be read:
+    1. Our temp directory (files saved by curl_execute)
+    2. MCP_CURL_OUTPUT_DIR environment variable path
+    3. Current working directory and subdirectories
+  - Maximum file size: 10MB
+
+Examples:
+  - Extract name: { "filepath": "/path/to/response.txt", "jq_filter": ".name" }
+  - Multiple fields: { "filepath": "/path/to/data.json", "jq_filter": ".name,.email,.id" }
+  - Array slice: { "filepath": "/path/to/list.json", "jq_filter": ".items[0:5]" }`,
+        inputSchema: JqQuerySchema,
+        annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        },
+    }, async (params) => {
+        try {
+            // Validate file path (security check)
+            await validateFilePath(params.filepath);
+            // Resolve and validate output directory if saving
+            const resolvedOutputDir = resolveOutputDir(params.output_dir);
+            if (resolvedOutputDir) {
+                await validateOutputDir(resolvedOutputDir);
+            }
+            // Read the file
+            const content = await readFile(resolve(params.filepath), { encoding: "utf-8" });
+            // Apply jq filter
+            const filtered = applyJqFilter(content, params.jq_filter);
+            // Handle result size and file saving
+            const maxSize = params.max_result_size ?? DEFAULT_MAX_RESULT_SIZE;
+            const contentBytes = Buffer.byteLength(filtered, "utf8");
+            const shouldSave = params.save_to_file || contentBytes > maxSize;
+            if (shouldSave) {
+                // Generate a filename based on the source file
+                const sourceBasename = basename(params.filepath) || "query_result";
+                const safeName = createSafeFilenameBase(sourceBasename, "query_result");
+                const filename = `${safeName}_${Date.now()}.txt`;
+                const targetDir = resolvedOutputDir ?? await getOrCreateTempDir();
+                const filepath = join(targetDir, filename);
+                await writeFile(filepath, filtered, { encoding: "utf-8", mode: 0o600 });
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Result (${contentBytes} bytes) saved to: ${filepath}`,
+                        },
+                    ],
+                };
+            }
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: filtered,
+                    },
+                ],
+            };
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Error querying JSON file: ${errorMessage}`,
                     },
                 ],
                 isError: true,
@@ -889,21 +1252,30 @@ Execute HTTP requests with structured, validated parameters.
 | jq_filter | string | No | - | JSON path filter (e.g., ".data.items[0]") |
 | max_result_size | number | No | 500KB | Max bytes inline before auto-save (max: 1MB) |
 | save_to_file | boolean | No | false | Force save response to temp file |
+| output_dir | string | No | - | Custom directory for saved files (overrides MCP_CURL_OUTPUT_DIR) |
 
 ### Large Response Handling
 
-Responses larger than \`max_result_size\` (default: 500KB) are automatically saved to a temp file.
-This prevents issues with AI agent context limits while still allowing access to full data.
+Responses larger than \`max_result_size\` (default: 500KB) are automatically saved to a file.
+Files are saved to (in priority order):
+1. \`output_dir\` parameter if provided
+2. \`MCP_CURL_OUTPUT_DIR\` environment variable if set
+3. System temp directory (cleaned up on shutdown)
 
-The response will include:
-- \`saved_to_file: true\`
-- \`filepath\`: Path to the saved response file
+### jq_filter Syntax
 
-Use \`jq_filter\` to extract only the data you need, reducing response size:
+Extract data from JSON responses:
 - \`.key\` - Get object property
-- \`.[n]\` - Get array element at index n
+- \`.[n]\` or \`.n\` - Get array element at index n (dot notation supported)
 - \`.[n:m]\` - Array slice from n to m
 - \`.["key"]\` - Bracket notation for keys with special chars
+- \`.-1\` - Negative index (last element)
+- \`.name,.email\` - Multiple paths (returns array of values, max 20)
+
+**Validation:**
+- Unclosed quotes and unmatched brackets throw clear errors
+- Leading zeros in indices are rejected (use \`.0\` not \`.00\`)
+- Indices must be within JavaScript safe integer range
 
 ### Examples
 
@@ -912,41 +1284,62 @@ Use \`jq_filter\` to extract only the data you need, reducing response size:
 { "url": "https://api.github.com/users/octocat" }
 \`\`\`
 
-**POST with JSON body:**
+**Extract multiple fields:**
 \`\`\`json
 {
-  "url": "https://api.example.com/users",
-  "method": "POST",
-  "headers": { "Content-Type": "application/json" },
-  "data": "{\\"name\\": \\"John Doe\\"}"
+  "url": "https://api.github.com/users/octocat",
+  "jq_filter": ".name,.email,.location"
 }
 \`\`\`
 
-**Extract specific field:**
-\`\`\`json
-{
-  "url": "https://api.github.com/repos/octocat/hello-world",
-  "jq_filter": ".name"
-}
-\`\`\`
-
-**Get first 10 items from array:**
+**Using dot notation for arrays:**
 \`\`\`json
 {
   "url": "https://api.example.com/items",
-  "jq_filter": ".results[0:10]"
+  "jq_filter": ".results.0.name"
 }
 \`\`\`
 
-**Force save to file:**
+**Save to custom directory:**
 \`\`\`json
 {
-  "url": "https://api.example.com/large-response",
-  "save_to_file": true
+  "url": "https://api.example.com/large",
+  "save_to_file": true,
+  "output_dir": "/path/to/accessible/dir"
 }
 \`\`\`
 
-### Common Exit Codes
+## Tool: jq_query
+
+Query existing JSON files with jq_filter without making new HTTP requests.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| filepath | string | Yes | Path to JSON file (must be in allowed directory) |
+| jq_filter | string | Yes | JSON path filter expression |
+| max_result_size | number | No | Max bytes inline (default: 500KB) |
+| save_to_file | boolean | No | Force save result to file |
+| output_dir | string | No | Directory for saved result files |
+
+### Security
+
+Files can only be read from:
+- Our temp directory (files saved by curl_execute)
+- MCP_CURL_OUTPUT_DIR path
+- Current working directory and subdirectories
+
+### Example
+
+\`\`\`json
+{
+  "filepath": "/path/to/saved_response.txt",
+  "jq_filter": ".users[0:5].name"
+}
+\`\`\`
+
+## Common Exit Codes
 
 | Code | Meaning |
 |------|---------|
