@@ -1670,6 +1670,30 @@ Files can only be read from:
 }
 \`\`\`
 
+## Security
+
+### Network Protection
+- **SSRF Prevention**: Blocks private IPs, IPv4-mapped IPv6, internal TLDs
+- **DNS Rebinding Prevention**: DNS resolved before validation, cURL pinned via \`--resolve\`
+- **Protocol Whitelist**: Only http:// and https:// allowed
+- **Localhost**: Blocked by default (set MCP_CURL_ALLOW_LOCALHOST=true with port restrictions)
+
+### Rate Limits
+- Per-hostname: 60 requests/minute
+- Per-client: 300 requests/minute total
+
+### Resource Limits
+- Max response for processing: 10MB
+- Max inline result: 1MB (default 500KB)
+- Global memory limit: 100MB across concurrent requests
+- JQ parsing timeout: 100ms
+- Request timeout: 30 seconds (configurable up to 300s)
+
+### File Security
+- Symlinks resolved via realpath() before validation
+- Path traversal (\`..\`) blocked
+- jq_query restricted to temp dir, MCP_CURL_OUTPUT_DIR, and cwd
+
 ## Common Exit Codes
 
 | Code | Meaning |

@@ -284,9 +284,8 @@ Two prompts are available for common use cases:
 
 ## Security Considerations
 
-- Only structured `curl_execute` and `jq_query` tools available (no arbitrary command execution)
-- All parameters are validated using Zod schemas
-- Commands are executed without shell interpretation to prevent injection
+### Network Security
+
 - **SSRF Protection**: Blocks requests to private networks and internal hosts:
   - **Protocol whitelist**: Only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
   - **Windows UNC paths**: `\\server\share` patterns blocked to prevent internal network share access
@@ -300,11 +299,24 @@ Two prompts are available for common use cases:
   - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
     development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
     service ports like 22, 25, 3306 remain blocked)
-- **Rate Limiting**: Dual limits prevent abuse:
+
+### Rate Limiting
+
+- **Dual limits** prevent abuse:
   - Per-hostname: 60 requests/minute to any single host (protects target servers)
   - Per-client: 300 requests/minute total (prevents bypassing host limits via many hostnames)
+
+### Input Validation
+
+- Only structured `curl_execute` and `jq_query` tools available (no arbitrary command execution)
+- All parameters are validated using Zod schemas
+- Commands are executed without shell interpretation to prevent injection
 - **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters
 - **File Exfiltration Prevention**: Uses `--data-raw` and `--form-string` to prevent `@` file reading
+- **Response Injection Prevention**: Uses unique per-request separators for metadata to prevent crafted responses from injecting fake metadata
+
+### File Access Security
+
 - **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd (including all subdirectories - ensure cwd doesn't contain sensitive files)
 - **Symlink Escape Prevention**: All file paths and output directories are resolved via `realpath()` before
   validation. This prevents attacks where a symlink in an allowed directory points outside it:
@@ -315,13 +327,22 @@ Two prompts are available for common use cases:
   # With realpath: Resolves to "/etc/passwd", blocked as outside allowed dirs
   ```
 - **Path Traversal Prevention**: `output_dir` and `filepath` reject paths containing `..`
-- **HTTP Transport Authentication**: When running in HTTP mode, set `MCP_AUTH_TOKEN` to require bearer token
-  authentication. This prevents unauthorized clients from accessing the server.
+
+### Resource Limits
+
 - Maximum response/file size for processing: 10MB
 - Maximum result size for inline return: 1MB (default 500KB)
+- **Global memory limit**: 100MB across all concurrent requests (prevents memory exhaustion)
 - Maximum jq_filter paths: 20 comma-separated expressions
-- Default timeout: 30 seconds
+- **JQ parsing timeout**: 100ms (prevents ReDoS attacks via crafted filters)
+- Default request timeout: 30 seconds
 - SSL verification is enabled by default (use `insecure: true` only when necessary)
+
+### HTTP Transport Security
+
+- **Authentication**: Set `MCP_AUTH_TOKEN` environment variable to require bearer token authentication
+- **Session Management**: Maximum 100 concurrent sessions
+- **Session Timeout**: Idle sessions are cleaned up after 1 hour (cleanup runs every 5 minutes)
 
 ## License
 

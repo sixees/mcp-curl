@@ -45,7 +45,9 @@ The HTTP transport uses proper session management:
 - `sessions` Map tracks active sessions by ID (max 100 concurrent)
 - Each session has its own McpServer instance
 - POST creates/reuses sessions, GET handles SSE, DELETE terminates
+- Session idle timeout: 1 hour (cleanup runs every 5 minutes)
 - Graceful shutdown closes all sessions on SIGINT/SIGTERM
+- Optional authentication: `MCP_AUTH_TOKEN` env var enables bearer token requirement
 
 ### Large Response Handling
 
@@ -71,21 +73,42 @@ Query saved JSON files without new HTTP requests:
 
 ### Security Constraints
 
+**Network Security:**
+- SSRF protection: blocks private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.x), IPv4-mapped IPv6, internal TLDs
+- DNS rebinding prevention: DNS resolved before validation, cURL pinned to validated IP via `--resolve`
+- Protocol whitelist: only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
+- Windows UNC paths blocked (`\\server\share`)
+- Localhost: blocked by default; `MCP_CURL_ALLOW_LOCALHOST=true` enables with port restrictions (80, 443, >1024)
+
+**Rate Limiting:**
+- Per-hostname: 60 requests/minute to any single host
+- Per-client: 300 requests/minute total (prevents bypassing host limits via many hostnames)
+
+**Input Validation:**
 - Only structured `curl_execute` and `jq_query` tools (no arbitrary command execution)
 - Commands executed via `spawn()` without shell (prevents injection)
-- SSRF protection: blocks private IPs, IPv4-mapped IPv6, internal TLDs; DNS rebinding prevented via `--resolve`
-- Localhost: blocked by default; `MCP_CURL_ALLOW_LOCALHOST=true` enables with port restrictions (80, 443, >1024)
-- Rate limiting: 60/min per host + 300/min per client (dual limits prevent bypass)
-- CRLF injection protection: validates headers, user-agent, auth values
+- CRLF injection protection: validates headers, user-agent, auth values for newlines
 - Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix
-- `jq_query` file access restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd (including all subdirectories)
-- **Symlink handling**: All paths resolved via `realpath()` before validation - symlinks are followed to their actual destination
-- `output_dir` validation: must exist, be writable, no path traversal (`..`), symlinks resolved
+- Per-request unique metadata separator prevents response injection attacks
+
+**File Access:**
+- `jq_query` restricted to: temp dir, `MCP_CURL_OUTPUT_DIR`, cwd (including subdirectories)
+- **Symlink handling**: All paths resolved via `realpath()` before validation
+- `output_dir` validation: must exist, be writable, no path traversal (`..`)
+
+**Resource Limits:**
 - Max response/file size for processing: 10MB
 - Max result size for inline return: 1MB (default 500KB)
+- Global memory limit: 100MB across all concurrent requests
 - Max jq_filter paths: 20 comma-separated expressions
-- Default timeout: 30 seconds
+- JQ parsing timeout: 100ms (prevents ReDoS)
+- Default request timeout: 30 seconds
 - SSL verification enabled by default
+
+**HTTP Transport:**
+- Optional bearer token authentication via `MCP_AUTH_TOKEN` env var
+- Session idle timeout: 1 hour (cleanup every 5 minutes)
+- Max 100 concurrent sessions
 
 ## Code Style
 
