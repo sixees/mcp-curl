@@ -300,7 +300,9 @@ Two prompts are available for common use cases:
   - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
     development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
     service ports like 22, 25, 3306 remain blocked)
-- **Rate Limiting**: 60 requests per minute per target host
+- **Rate Limiting**: Dual limits prevent abuse:
+  - Per-hostname: 60 requests/minute to any single host (protects target servers)
+  - Per-client: 300 requests/minute total (prevents bypassing host limits via many hostnames)
 - **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters
 - **File Exfiltration Prevention**: Uses `--data-raw` and `--form-string` to prevent `@` file reading
 - **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd (including all subdirectories - ensure cwd doesn't contain sensitive files)

@@ -32,41 +32,90 @@ const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
 const sessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
 const MAX_SESSIONS = 100; // Limit concurrent sessions to prevent memory exhaustion
 
-// Rate limiting with fixed time windows and periodic cleanup (avoids per-request timers)
-const MAX_REQUESTS_PER_MINUTE = 60;
+/**
+ * Rate limiting with fixed time windows and periodic cleanup.
+ *
+ * Two separate limits are enforced:
+ * 1. Per-hostname: Protects individual target servers from being hammered
+ * 2. Per-client: Prevents a single client from making too many requests overall
+ *
+ * Without per-client limits, an attacker could bypass per-hostname limits by
+ * spreading requests across many different hostnames.
+ */
+const MAX_REQUESTS_PER_HOST_PER_MINUTE = 60;
+const MAX_REQUESTS_PER_CLIENT_PER_MINUTE = 300; // Higher limit across all hosts
 const RATE_LIMIT_WINDOW_MS = 60000;
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 10000; // Sweep every 10 seconds
+
+// Default client ID for stdio transport (single client)
+const STDIO_CLIENT_ID = "__stdio_client__";
 
 interface RateLimitEntry {
     count: number;
     windowStart: number;
 }
 
-const rateLimitMap = new Map<string, RateLimitEntry>();
+// Separate maps for hostname and client rate limiting
+const hostRateLimitMap = new Map<string, RateLimitEntry>();
+const clientRateLimitMap = new Map<string, RateLimitEntry>();
 
-function checkRateLimit(clientId: string): void {
+function checkRateLimitInternal(
+    map: Map<string, RateLimitEntry>,
+    key: string,
+    maxRequests: number,
+    errorPrefix: string
+): void {
     const now = Date.now();
-    const entry = rateLimitMap.get(clientId);
+    const entry = map.get(key);
 
     // Start new window if none exists or current window expired
     if (!entry || (now - entry.windowStart) >= RATE_LIMIT_WINDOW_MS) {
-        rateLimitMap.set(clientId, { count: 1, windowStart: now });
+        map.set(key, { count: 1, windowStart: now });
         return;
     }
 
-    if (entry.count >= MAX_REQUESTS_PER_MINUTE) {
-        throw new Error(`Rate limit exceeded. Maximum ${MAX_REQUESTS_PER_MINUTE} requests per minute.`);
+    if (entry.count >= maxRequests) {
+        throw new Error(`${errorPrefix}. Maximum ${maxRequests} requests per minute.`);
     }
 
     entry.count++;
 }
 
+/**
+ * Check both per-hostname and per-client rate limits.
+ *
+ * @param hostname - Target hostname (for per-host limit)
+ * @param clientId - Client identifier (session ID for HTTP, default for stdio)
+ */
+function checkRateLimits(hostname: string, clientId: string = STDIO_CLIENT_ID): void {
+    // Check per-hostname limit first (protects target servers)
+    checkRateLimitInternal(
+        hostRateLimitMap,
+        hostname,
+        MAX_REQUESTS_PER_HOST_PER_MINUTE,
+        `Rate limit exceeded for host "${hostname}"`
+    );
+
+    // Check per-client limit (prevents overall abuse)
+    checkRateLimitInternal(
+        clientRateLimitMap,
+        clientId,
+        MAX_REQUESTS_PER_CLIENT_PER_MINUTE,
+        "Client rate limit exceeded"
+    );
+}
+
 // Single cleanup interval instead of O(n) per-request timers
 const rateLimitCleanupInterval = setInterval(() => {
     const now = Date.now();
-    for (const [clientId, entry] of rateLimitMap) {
+    for (const [key, entry] of hostRateLimitMap) {
         if ((now - entry.windowStart) >= RATE_LIMIT_WINDOW_MS) {
-            rateLimitMap.delete(clientId);
+            hostRateLimitMap.delete(key);
+        }
+    }
+    for (const [key, entry] of clientRateLimitMap) {
+        if ((now - entry.windowStart) >= RATE_LIMIT_WINDOW_MS) {
+            clientRateLimitMap.delete(key);
         }
     }
 }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
@@ -1608,8 +1657,10 @@ Temp File Lifecycle:
                 // This returns the resolved IP which we pin with --resolve
                 const dnsResult = await validateUrlAndResolveDns(params.url);
 
-                // Rate limit by target host to prevent abuse
-                checkRateLimit(dnsResult.hostname);
+                // Rate limit by both target host and client to prevent abuse
+                // Per-host: protects individual targets from being hammered
+                // Per-client: prevents spreading requests across many hosts to bypass limits
+                checkRateLimits(dnsResult.hostname);
 
                 // Resolve and validate output directory (returns real path with symlinks resolved)
                 const resolvedOutputDir = resolveOutputDir(params.output_dir);

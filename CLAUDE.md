@@ -75,7 +75,7 @@ Query saved JSON files without new HTTP requests:
 - Commands executed via `spawn()` without shell (prevents injection)
 - SSRF protection: blocks private IPs, IPv4-mapped IPv6, internal TLDs; DNS rebinding prevented via `--resolve`
 - Localhost: blocked by default; `MCP_CURL_ALLOW_LOCALHOST=true` enables with port restrictions (80, 443, >1024)
-- Rate limiting: 60 requests per minute per target host
+- Rate limiting: 60/min per host + 300/min per client (dual limits prevent bypass)
 - CRLF injection protection: validates headers, user-agent, auth values
 - Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix
 - `jq_query` file access restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd (including all subdirectories)
