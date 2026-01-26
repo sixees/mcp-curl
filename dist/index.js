@@ -209,6 +209,11 @@ async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
         });
     });
 }
+// Validate session ID format (UUID v4) to prevent malformed session IDs as Map keys
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidSessionId(sessionId) {
+    return sessionId !== undefined && UUID_REGEX.test(sessionId);
+}
 // Validate that a string doesn't contain CRLF characters (prevents header injection/smuggling)
 function validateNoCRLF(value, fieldName) {
     if (value.includes("\r") || value.includes("\n")) {
@@ -1070,6 +1075,14 @@ async function runHTTP() {
     app.post("/mcp", async (req, res) => {
         try {
             const sessionId = req.headers["mcp-session-id"];
+            // Validate session ID format if provided
+            if (sessionId && !isValidSessionId(sessionId)) {
+                res.status(400).json({
+                    jsonrpc: "2.0",
+                    error: { code: -32600, message: "Invalid session ID format" },
+                });
+                return;
+            }
             // Check for existing session
             if (sessionId && sessions.has(sessionId)) {
                 const session = sessions.get(sessionId);
@@ -1119,8 +1132,12 @@ async function runHTTP() {
     app.get("/mcp", async (req, res, next) => {
         try {
             const sessionId = req.headers["mcp-session-id"];
-            if (!sessionId || !sessions.has(sessionId)) {
+            if (!isValidSessionId(sessionId)) {
                 res.status(400).json({ error: "Invalid or missing session ID" });
+                return;
+            }
+            if (!sessions.has(sessionId)) {
+                res.status(400).json({ error: "Session not found" });
                 return;
             }
             const session = sessions.get(sessionId);
@@ -1133,7 +1150,7 @@ async function runHTTP() {
     // DELETE /mcp - Terminate a session
     app.delete("/mcp", async (req, res, next) => {
         const sessionId = req.headers["mcp-session-id"];
-        if (sessionId && sessions.has(sessionId)) {
+        if (isValidSessionId(sessionId) && sessions.has(sessionId)) {
             const session = sessions.get(sessionId);
             try {
                 session.transport.close();
