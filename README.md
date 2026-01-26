@@ -277,6 +277,9 @@ Two prompts are available for common use cases:
 - **SSRF Protection**: Blocks requests to private networks and internal hosts:
   - **Protocol whitelist**: Only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
   - **Windows UNC paths**: `\\server\share` patterns blocked to prevent internal network share access
+  - **DNS Rebinding Prevention**: DNS is resolved before validation, and cURL is pinned to the validated
+    IP using `--resolve`. This prevents attacks where DNS returns a public IP during validation but a
+    private IP when cURL connects.
   - Private IPs: 10.x, 172.16-31.x, 192.168.x, 169.254.x (link-local)
   - IPv4-mapped IPv6: `::ffff:` prefixed versions of all blocked IPv4 ranges
   - IPv6 private: loopback (::1), link-local (fe80::), unique local (fc00::, fd00::)

@@ -10,6 +10,7 @@ import {randomUUID} from "crypto";
 import {tmpdir} from "os";
 import {join, resolve, relative, isAbsolute, basename} from "path";
 import {readFile, writeFile, mkdtemp, rm, chmod, readdir, stat, access, realpath, constants as fsConstants} from "fs/promises";
+import {lookup} from "dns/promises";
 
 // Constants
 const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
@@ -515,12 +516,47 @@ const BLOCKED_HOSTNAME_PATTERNS = [
     /^\\\\[^\\]+/,
 ];
 
-// Localhost patterns - separate so they can be conditionally allowed
-const LOCALHOST_PATTERNS = [
+// Localhost hostname patterns - separate so they can be conditionally allowed
+const LOCALHOST_HOSTNAME_PATTERNS = [
     /^localhost$/i,
+];
+
+// Patterns for validating resolved IP addresses (after DNS resolution)
+// These catch DNS rebinding attacks where hostname passes but resolves to blocked IP
+const BLOCKED_IP_PATTERNS = [
+    // IPv4 loopback
     /^127\.\d+\.\d+\.\d+$/,
-    /^\[?::ffff:127\.\d+\.\d+\.\d+\]?$/i,
-    /^\[?::1\]?$/,
+    // Private Class A
+    /^10\.\d+\.\d+\.\d+$/,
+    // Private Class B
+    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
+    // Private Class C
+    /^192\.168\.\d+\.\d+$/,
+    // Link-local
+    /^169\.254\.\d+\.\d+$/,
+    // All interfaces
+    /^0\.0\.0\.0$/,
+    // IPv6 loopback
+    /^::1$/,
+    // IPv6 link-local
+    /^fe80:/i,
+    // IPv6 unique local
+    /^fc00:/i,
+    /^fd[0-9a-f]{2}:/i,
+    // IPv4-mapped IPv6 (these resolve to the IPv4 form, but check anyway)
+    /^::ffff:127\./i,
+    /^::ffff:10\./i,
+    /^::ffff:172\.(1[6-9]|2\d|3[01])\./i,
+    /^::ffff:192\.168\./i,
+    /^::ffff:169\.254\./i,
+    /^::ffff:0\.0\.0\.0$/i,
+];
+
+// Localhost IP patterns
+const LOCALHOST_IP_PATTERNS = [
+    /^127\.\d+\.\d+\.\d+$/,
+    /^::1$/,
+    /^::ffff:127\./i,
 ];
 
 // Environment variable to allow localhost access (for local development/testing)
@@ -540,14 +576,56 @@ function isAllowedLocalhostPort(port: number): boolean {
     return ALLOWED_LOCALHOST_PORTS.has(port) || port > MIN_UNPRIVILEGED_PORT;
 }
 
-function validateUrlNotInternal(url: string): void {
+function isLocalhostIp(ip: string): boolean {
+    return LOCALHOST_IP_PATTERNS.some(pattern => pattern.test(ip));
+}
+
+function isBlockedIp(ip: string): boolean {
+    return BLOCKED_IP_PATTERNS.some(pattern => pattern.test(ip));
+}
+
+/**
+ * Resolve DNS for a hostname and return the IP address.
+ * This is used to pin DNS resolution and prevent DNS rebinding attacks.
+ */
+async function resolveDns(hostname: string): Promise<string> {
+    try {
+        const result = await lookup(hostname);
+        return result.address;
+    } catch (error) {
+        throw new Error(`DNS resolution failed for "${hostname}": ${(error as Error).message}`);
+    }
+}
+
+/**
+ * Result of URL validation including resolved IP for DNS pinning.
+ */
+interface UrlValidationResult {
+    hostname: string;
+    port: number;
+    resolvedIp: string;
+}
+
+/**
+ * Validate URL is not internal and resolve DNS to prevent rebinding attacks.
+ *
+ * DNS Rebinding Prevention: We resolve DNS ourselves and validate the IP BEFORE
+ * passing to cURL. We then use --resolve to pin cURL to our validated IP.
+ * This prevents attacks where:
+ *   1. Attacker's DNS returns public IP (passes hostname check)
+ *   2. DNS TTL expires or attacker rebinds
+ *   3. cURL re-resolves and gets private IP (127.0.0.1)
+ *   4. cURL connects to internal service
+ *
+ * By resolving once and pinning with --resolve, cURL uses our validated IP.
+ */
+async function validateUrlAndResolveDns(url: string): Promise<UrlValidationResult> {
     // Block file:// protocol which could read local files
     if (url.toLowerCase().startsWith("file://")) {
         throw new Error("file:// URLs are not allowed - they could be used to read local files");
     }
 
     // Block Windows UNC paths in raw URL (\\server\share)
-    // These might not parse correctly but cURL could still follow them
     if (url.startsWith("\\\\")) {
         throw new Error("UNC paths are not allowed - they could access internal network shares");
     }
@@ -561,14 +639,33 @@ function validateUrlNotInternal(url: string): void {
         throw new Error(`Protocol "${parsed.protocol}" is not allowed - only http:// and https:// are supported`);
     }
 
-    // Check if this is a localhost request
-    const isLocalhost = LOCALHOST_PATTERNS.some(pattern => pattern.test(hostname));
+    // Check hostname against blocked patterns (TLDs, UNC paths, etc.)
+    for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
+        if (pattern.test(hostname)) {
+            throw new Error(
+                `Requests to internal/private networks are not allowed: ${hostname}`
+            );
+        }
+    }
 
-    if (isLocalhost) {
+    // Check if hostname is "localhost" (special handling)
+    const isLocalhostHostname = LOCALHOST_HOSTNAME_PATTERNS.some(pattern => pattern.test(hostname));
+
+    // Resolve DNS to get actual IP (prevents DNS rebinding)
+    // For IP addresses, this just returns the IP itself
+    const resolvedIp = await resolveDns(hostname);
+
+    // Check if resolved IP is localhost
+    const isLocalhostResolved = isLocalhostIp(resolvedIp);
+
+    if (isLocalhostHostname || isLocalhostResolved) {
         if (!isLocalhostAllowed()) {
             throw new Error(
                 `Requests to localhost are blocked by default. ` +
-                `Set ${ALLOW_LOCALHOST_ENV_VAR}=true to enable local development/testing.`
+                `Set ${ALLOW_LOCALHOST_ENV_VAR}=true to enable local development/testing.` +
+                (isLocalhostResolved && !isLocalhostHostname
+                    ? ` (Note: "${hostname}" resolved to localhost IP ${resolvedIp})`
+                    : "")
             );
         }
         // Localhost is allowed, but check port restrictions
@@ -579,17 +676,18 @@ function validateUrlNotInternal(url: string): void {
             );
         }
         // Localhost request is allowed
-        return;
+        return { hostname, port, resolvedIp };
     }
 
-    // Check against other blocked patterns (private networks, internal TLDs, etc.)
-    for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
-        if (pattern.test(hostname)) {
-            throw new Error(
-                `Requests to internal/private networks are not allowed: ${hostname}`
-            );
-        }
+    // Check resolved IP against blocked patterns (catches DNS rebinding)
+    if (isBlockedIp(resolvedIp)) {
+        throw new Error(
+            `DNS rebinding attack detected: "${hostname}" resolved to blocked IP ${resolvedIp}. ` +
+            `Requests to internal/private networks are not allowed.`
+        );
     }
+
+    return { hostname, port, resolvedIp };
 }
 
 // Build cURL arguments from structured parameters
@@ -611,6 +709,8 @@ function buildCurlArgs(params: {
     max_redirects?: number;
     compressed?: boolean;
     silent?: boolean;
+    // DNS pinning to prevent rebinding attacks (see validateUrlAndResolveDns)
+    dnsResolve?: { hostname: string; port: number; resolvedIp: string };
 }): string[] {
     const args: string[] = [];
 
@@ -702,6 +802,14 @@ function buildCurlArgs(params: {
         args.push("-w", params.output_format + metadataSuffix);
     } else {
         args.push("-w", metadataSuffix);
+    }
+
+    // DNS pinning with --resolve to prevent DNS rebinding attacks
+    // Format: --resolve hostname:port:ip
+    // This forces cURL to use our pre-validated IP instead of doing its own DNS lookup
+    if (params.dnsResolve) {
+        const { hostname, port, resolvedIp } = params.dnsResolve;
+        args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
     }
 
     // URL must be last
@@ -1471,12 +1579,12 @@ Temp File Lifecycle:
                     );
                 }
 
-                // SSRF protection: block internal/private network requests
-                validateUrlNotInternal(params.url);
+                // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
+                // This returns the resolved IP which we pin with --resolve
+                const dnsResult = await validateUrlAndResolveDns(params.url);
 
                 // Rate limit by target host to prevent abuse
-                const targetHost = new URL(params.url).hostname;
-                checkRateLimit(targetHost);
+                checkRateLimit(dnsResult.hostname);
 
                 // Resolve and validate output directory (returns real path with symlinks resolved)
                 const resolvedOutputDir = resolveOutputDir(params.output_dir);
@@ -1487,6 +1595,7 @@ Temp File Lifecycle:
                 const args = buildCurlArgs({
                     ...params,
                     silent: true,
+                    dnsResolve: dnsResult,
                 });
 
                 const result = await executeCommand("curl", args, params.timeout * 1000);
