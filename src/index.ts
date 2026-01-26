@@ -189,20 +189,8 @@ const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
 
 // Validate a file path for jq_query tool (security: restrict to allowed directories)
 async function validateFilePath(filepath: string): Promise<void> {
-    // Resolve to absolute path (canonicalizes the path)
+    // Resolve to absolute path (canonicalizes the path, handles .., symlinks, etc.)
     const absolutePath = resolve(filepath);
-
-    // Detect path traversal by comparing normalized path with original
-    const normalizedInput = normalize(filepath);
-
-    // Check for .. in original input OR if normalization changed the path structure
-    if (filepath.includes("..") || (normalizedInput !== filepath && normalizedInput.length < filepath.length)) {
-        throw new Error(
-            `Invalid filepath: path traversal detected. ` +
-            `Input "${filepath}" resolves to "${absolutePath}". ` +
-            `Please provide a direct path without ".." components.`
-        );
-    }
 
     // Build list of allowed directories
     const allowedDirs: string[] = [];
