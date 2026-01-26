@@ -510,6 +510,9 @@ const BLOCKED_HOSTNAME_PATTERNS = [
     /\.corp$/i,
     /\.lan$/i,
     /\.localhost$/i,
+
+    // Windows UNC paths (\\server\share) - could access internal network shares
+    /^\\\\[^\\]+/,
 ];
 
 // Localhost patterns - separate so they can be conditionally allowed
@@ -538,9 +541,25 @@ function isAllowedLocalhostPort(port: number): boolean {
 }
 
 function validateUrlNotInternal(url: string): void {
+    // Block file:// protocol which could read local files
+    if (url.toLowerCase().startsWith("file://")) {
+        throw new Error("file:// URLs are not allowed - they could be used to read local files");
+    }
+
+    // Block Windows UNC paths in raw URL (\\server\share)
+    // These might not parse correctly but cURL could still follow them
+    if (url.startsWith("\\\\")) {
+        throw new Error("UNC paths are not allowed - they could access internal network shares");
+    }
+
     const parsed = new URL(url);
     const hostname = parsed.hostname.toLowerCase();
     const port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === "https:" ? 443 : 80);
+
+    // Only allow http:// and https:// protocols
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error(`Protocol "${parsed.protocol}" is not allowed - only http:// and https:// are supported`);
+    }
 
     // Check if this is a localhost request
     const isLocalhost = LOCALHOST_PATTERNS.some(pattern => pattern.test(hostname));

@@ -275,6 +275,8 @@ Two prompts are available for common use cases:
 - All parameters are validated using Zod schemas
 - Commands are executed without shell interpretation to prevent injection
 - **SSRF Protection**: Blocks requests to private networks and internal hosts:
+  - **Protocol whitelist**: Only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
+  - **Windows UNC paths**: `\\server\share` patterns blocked to prevent internal network share access
   - Private IPs: 10.x, 172.16-31.x, 192.168.x, 169.254.x (link-local)
   - IPv4-mapped IPv6: `::ffff:` prefixed versions of all blocked IPv4 ranges
   - IPv6 private: loopback (::1), link-local (fe80::), unique local (fc00::, fd00::)
