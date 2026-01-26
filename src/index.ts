@@ -2029,6 +2029,44 @@ async function runStdio(): Promise<void> {
     console.error("cURL MCP server running on stdio");
 }
 
+// Environment variable for HTTP authentication token (opt-in security)
+const HTTP_AUTH_TOKEN_ENV_VAR = "MCP_AUTH_TOKEN";
+
+/**
+ * Authentication middleware for HTTP transport.
+ *
+ * When MCP_AUTH_TOKEN is set, all HTTP requests must include a matching
+ * Bearer token in the Authorization header. This prevents unauthorized
+ * clients from accessing the MCP server when running in HTTP mode.
+ *
+ * Usage: Set MCP_AUTH_TOKEN=your-secret-token in the environment.
+ */
+function createAuthMiddleware(): (req: Request, res: Response, next: NextFunction) => void {
+    const authToken = process.env[HTTP_AUTH_TOKEN_ENV_VAR];
+
+    return (req: Request, res: Response, next: NextFunction): void => {
+        // If no token configured, allow all requests (backward compatible)
+        if (!authToken) {
+            next();
+            return;
+        }
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader || authHeader !== `Bearer ${authToken}`) {
+            res.status(401).json({
+                jsonrpc: "2.0",
+                error: {
+                    code: -32600,
+                    message: "Unauthorized: Invalid or missing authentication token",
+                },
+            });
+            return;
+        }
+
+        next();
+    };
+}
+
 // Run with HTTP transport
 async function runHTTP(): Promise<void> {
     // Clean up orphaned temp directories from previous runs
@@ -2037,6 +2075,10 @@ async function runHTTP(): Promise<void> {
     const app = express();
     // Limit request body size to prevent DoS
     app.use(express.json({ limit: "1mb" }));
+
+    // Apply authentication middleware to all /mcp routes when token is configured
+    const authMiddleware = createAuthMiddleware();
+    app.use("/mcp", authMiddleware);
 
     // POST /mcp - Handle MCP requests
     app.post("/mcp", async (req: Request, res: Response) => {

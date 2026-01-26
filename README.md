@@ -96,6 +96,19 @@ node dist/index.js
 TRANSPORT=http PORT=3000 npm start
 ```
 
+**HTTP Transport with Authentication:**
+
+When running in HTTP mode, you can require bearer token authentication to prevent unauthorized access:
+
+```bash
+TRANSPORT=http PORT=3000 MCP_AUTH_TOKEN=your-secret-token npm start
+```
+
+Clients must include the token in the Authorization header:
+```
+Authorization: Bearer your-secret-token
+```
+
 ## Tools
 
 ### `curl_execute`
@@ -300,6 +313,8 @@ Two prompts are available for common use cases:
   # With realpath: Resolves to "/etc/passwd", blocked as outside allowed dirs
   ```
 - **Path Traversal Prevention**: `output_dir` and `filepath` reject paths containing `..`
+- **HTTP Transport Authentication**: When running in HTTP mode, set `MCP_AUTH_TOKEN` to require bearer token
+  authentication. This prevents unauthorized clients from accessing the server.
 - Maximum response/file size for processing: 10MB
 - Maximum result size for inline return: 1MB (default 500KB)
 - Maximum jq_filter paths: 20 comma-separated expressions
