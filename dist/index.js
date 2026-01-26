@@ -7,7 +7,7 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
-import { join, resolve, relative, isAbsolute, basename } from "path";
+import { join, resolve, relative, isAbsolute, basename, normalize } from "path";
 import { readFile, writeFile, mkdtemp, rm, chmod, readdir, stat, access, constants as fsConstants } from "fs/promises";
 // Constants
 const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
@@ -118,14 +118,21 @@ function resolveOutputDir(paramDir) {
 }
 // Validate output directory is safe to use
 async function validateOutputDir(dir) {
-    // Check for .. components in the original input (even if resolved path is valid)
-    if (dir.includes("..")) {
-        throw new Error(`Invalid output_dir: path contains ".." which is not allowed for security. ` +
-            `Please provide an absolute path without relative components.`);
+    // Resolve to absolute path first (canonicalizes the path)
+    const absolutePath = resolve(dir);
+    // Detect path traversal by comparing normalized path with original
+    // normalize() collapses .. segments, so if the result differs significantly, traversal was attempted
+    const normalizedInput = normalize(dir);
+    // Check for .. in original input OR if normalization changed the path structure
+    // This catches both explicit ".." and edge cases
+    if (dir.includes("..") || (normalizedInput !== dir && normalizedInput.length < dir.length)) {
+        throw new Error(`Invalid output_dir: path traversal detected. ` +
+            `Input "${dir}" resolves to "${absolutePath}". ` +
+            `Please provide a direct path without ".." components.`);
     }
-    // Check directory exists
+    // Check directory exists using resolved absolute path
     try {
-        const stats = await stat(dir);
+        const stats = await stat(absolutePath);
         if (!stats.isDirectory()) {
             throw new Error(`Invalid output_dir "${dir}": path exists but is not a directory`);
         }
@@ -137,9 +144,9 @@ async function validateOutputDir(dir) {
         }
         throw error;
     }
-    // Check directory is writable
+    // Check directory is writable using resolved absolute path
     try {
-        await access(dir, fsConstants.W_OK);
+        await access(absolutePath, fsConstants.W_OK);
     }
     catch (error) {
         throw new Error(`Invalid output_dir "${dir}": directory is not writable`);
@@ -149,12 +156,15 @@ async function validateOutputDir(dir) {
 const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
 // Validate a file path for jq_query tool (security: restrict to allowed directories)
 async function validateFilePath(filepath) {
-    // Resolve to absolute path
+    // Resolve to absolute path (canonicalizes the path)
     const absolutePath = resolve(filepath);
-    // Check for path traversal attempts
-    if (filepath.includes("..")) {
-        throw new Error(`Invalid filepath: path contains ".." which is not allowed for security. ` +
-            `Please provide an absolute path without relative components.`);
+    // Detect path traversal by comparing normalized path with original
+    const normalizedInput = normalize(filepath);
+    // Check for .. in original input OR if normalization changed the path structure
+    if (filepath.includes("..") || (normalizedInput !== filepath && normalizedInput.length < filepath.length)) {
+        throw new Error(`Invalid filepath: path traversal detected. ` +
+            `Input "${filepath}" resolves to "${absolutePath}". ` +
+            `Please provide a direct path without ".." components.`);
     }
     // Build list of allowed directories
     const allowedDirs = [];
