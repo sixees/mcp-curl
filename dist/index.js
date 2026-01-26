@@ -106,12 +106,21 @@ async function cleanupOrphanedTempDirs() {
 const OUTPUT_DIR_ENV_VAR = "MCP_CURL_OUTPUT_DIR";
 // Resolve the output directory with priority: 1) parameter, 2) env var, 3) null (use temp)
 function resolveOutputDir(paramDir) {
-    const trimmedParam = paramDir?.trim();
-    if (trimmedParam) {
+    if (paramDir !== undefined) {
+        const trimmedParam = paramDir.trim();
+        if (!trimmedParam) {
+            throw new Error(`Invalid output_dir: value is empty or whitespace-only. ` +
+                `Remove it to use the environment variable or temp directory, or provide a valid path.`);
+        }
         return trimmedParam;
     }
-    const envDir = process.env[OUTPUT_DIR_ENV_VAR]?.trim();
-    if (envDir) {
+    const rawEnvDir = process.env[OUTPUT_DIR_ENV_VAR];
+    if (rawEnvDir !== undefined) {
+        const envDir = rawEnvDir.trim();
+        if (!envDir) {
+            throw new Error(`Environment variable ${OUTPUT_DIR_ENV_VAR} is set but empty or whitespace-only. ` +
+                `Unset it or provide a valid directory path.`);
+        }
         return envDir;
     }
     return null;
