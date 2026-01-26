@@ -25,9 +25,27 @@ function generateMetadataSeparator() {
 }
 const ERROR_PREVIEW_LENGTH = 200; // Characters to show in error previews
 const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
-// Session tracking for HTTP transport
 const sessions = new Map();
 const MAX_SESSIONS = 100; // Limit concurrent sessions to prevent memory exhaustion
+const SESSION_IDLE_TIMEOUT_MS = 3600000; // 1 hour idle timeout
+const SESSION_CLEANUP_INTERVAL_MS = 300000; // Check every 5 minutes
+// Periodically clean up idle sessions to prevent resource exhaustion
+const sessionCleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [id, session] of sessions) {
+        if (now - session.lastActivity > SESSION_IDLE_TIMEOUT_MS) {
+            try {
+                session.transport.close();
+            }
+            catch {
+                // Ignore errors during cleanup
+            }
+            sessions.delete(id);
+        }
+    }
+}, SESSION_CLEANUP_INTERVAL_MS);
+// Prevent interval from keeping process alive during shutdown
+sessionCleanupInterval.unref();
 /**
  * Rate limiting with fixed time windows and periodic cleanup.
  *
@@ -1796,6 +1814,7 @@ async function runHTTP() {
             // Check for existing session
             if (sessionId && sessions.has(sessionId)) {
                 const session = sessions.get(sessionId);
+                session.lastActivity = Date.now(); // Update activity timestamp
                 await session.transport.handleRequest(req, res, req.body);
                 return;
             }
@@ -1824,7 +1843,11 @@ async function runHTTP() {
             await server.connect(transport);
             // Store session after connection
             if (transport.sessionId) {
-                sessions.set(transport.sessionId, { server, transport });
+                sessions.set(transport.sessionId, {
+                    server,
+                    transport,
+                    lastActivity: Date.now(),
+                });
             }
             await transport.handleRequest(req, res, req.body);
         }
@@ -1851,6 +1874,7 @@ async function runHTTP() {
                 return;
             }
             const session = sessions.get(sessionId);
+            session.lastActivity = Date.now(); // Update activity timestamp
             await session.transport.handleRequest(req, res);
         }
         catch (error) {
