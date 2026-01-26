@@ -982,6 +982,7 @@ function parseBracketToken(filter: string, startIndex: number): { token: JqToken
 const MAX_JQ_FILTER_LENGTH = 500;
 const MAX_JQ_TOKENS = 50;
 const MAX_JQ_FILTERS = 20; // Maximum number of comma-separated filters
+const MAX_JQ_PARSE_TIME_MS = 100; // Maximum time for parsing operations
 
 // Parse a jq-like filter expression into tokens
 function parseJqFilter(filter: string): JqToken[] {
@@ -989,10 +990,16 @@ function parseJqFilter(filter: string): JqToken[] {
         throw new Error(`jq_filter exceeds maximum length of ${MAX_JQ_FILTER_LENGTH} characters`);
     }
 
+    const startTime = Date.now();
     const tokens: JqToken[] = [];
     let i = filter[0] === "." ? 1 : 0; // skip leading dot
 
     while (i < filter.length) {
+        // Timeout check to prevent DoS via complex filters
+        if (Date.now() - startTime > MAX_JQ_PARSE_TIME_MS) {
+            throw new Error("jq_filter parsing timeout - filter too complex");
+        }
+
         if (filter[i] === ".") {
             i++;
             continue;
@@ -1051,6 +1058,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // Split jq filter on commas, respecting brackets and quotes
 // e.g., ".name,.address[0],.[\"key,with,commas\"]" -> [".name", ".address[0]", ".[\"key,with,commas\"]"]
 function splitJqFilters(filter: string): string[] {
+    if (filter.length > MAX_JQ_FILTER_LENGTH) {
+        throw new Error(`jq_filter exceeds maximum length of ${MAX_JQ_FILTER_LENGTH} characters`);
+    }
+
+    const startTime = Date.now();
     const filters: string[] = [];
     let current = "";
     let bracketDepth = 0;
@@ -1058,6 +1070,11 @@ function splitJqFilters(filter: string): string[] {
     let escaped = false;
 
     for (let i = 0; i < filter.length; i++) {
+        // Timeout check to prevent DoS
+        if (Date.now() - startTime > MAX_JQ_PARSE_TIME_MS) {
+            throw new Error("jq_filter parsing timeout - filter too complex");
+        }
+
         const ch = filter[i];
 
         // Handle escape sequences inside quotes
