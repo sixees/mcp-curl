@@ -269,7 +269,7 @@ Query existing JSON files without making new HTTP requests. Useful for extractin
 ```json
 {
   "filepath": "/path/to/saved_response.txt",
-  "jq_filter": ".users[0:5].name"
+  "jq_filter": ".users[0:5]"
 }
 ```
 
@@ -299,7 +299,7 @@ Two prompts are available for common use cases:
     - Private IPs: 10.x, 172.16-31.x, 192.168.x, 169.254.x (link-local)
     - IPv4-mapped IPv6: `::ffff:` prefixed versions of all blocked IPv4 ranges
     - IPv6 private: loopback (::1), link-local (fe80::), unique local (fc00::, fd00::)
-    - Internal TLDs: .local, .internal, .corp, .lan, .localhost
+    - Internal TLDs (case-insensitive): .local, .internal, .corp, .lan, .localhost
     - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
       development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
       service ports like 22, 25, 3306 remain blocked)

@@ -58,10 +58,10 @@ Responses are processed in stages:
     - Dot notation for arrays: `.results.0` same as `.results[0]`
     - Multiple paths: `.name,.email` returns array (max 20 paths)
     - Validation: unclosed quotes/brackets, leading zeros, safe integer bounds
-    - Note: negative indices not supported (unlike real jq)
+    - Note: negative indices not supported (e.g., `[-1]` for last element)
 3. If result exceeds `max_result_size` (default 500KB), auto-saves to file
 4. Output directory priority: `output_dir` param > `MCP_CURL_OUTPUT_DIR` env > system temp
-5. Temp files use secure permissions (0o700/0o600) and are cleaned on shutdown
+5. Temp directories use 0o700, files use 0o600 (owner-only); cleaned on shutdown
 
 ### jq_query Tool
 

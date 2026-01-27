@@ -302,6 +302,14 @@ const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
  * MCP_CURL_OUTPUT_DIR are themselves symlinks.
  */
 async function validateFilePath(filepath: string): Promise<void> {
+    // Block path traversal in input string (defense-in-depth, matches validateOutputDir)
+    if (filepath.includes("..")) {
+        throw new Error(
+            `Invalid filepath: path traversal detected. ` +
+            `Please provide a direct path without ".." components.`
+        );
+    }
+
     // First, resolve to absolute path (does NOT follow symlinks)
     const absolutePath = resolve(filepath);
 
