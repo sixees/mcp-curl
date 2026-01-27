@@ -225,13 +225,13 @@ Responses exceeding `max_result_size` (default: 500KB, max: 1MB) are automatical
 
 Use `jq_filter` to reduce response size before the limit is checked:
 
-| Syntax         | Description                          | Example            |
-|----------------|--------------------------------------|--------------------|
-| `.key`         | Object property                      | `.data`            |
-| `.[n]` or `.n` | Array index (non-negative only)      | `.[0]`, `.0`       |
-| `.[n:m]`       | Array slice                          | `.[0:10]`          |
-| `.["key"]`     | Bracket notation                     | `.["special-key"]` |
-| `.a,.b,.c`     | Multiple paths (returns array)       | `.name,.email`     |
+| Syntax         | Description                     | Example            |
+|----------------|---------------------------------|--------------------|
+| `.key`         | Object property                 | `.data`            |
+| `.[n]` or `.n` | Array index (non-negative only) | `.[0]`, `.0`       |
+| `.[n:m]`       | Array slice                     | `.[0:10]`          |
+| `.["key"]`     | Bracket notation                | `.["special-key"]` |
+| `.a,.b,.c`     | Multiple paths (returns array)  | `.name,.email`     |
 
 **Filter Validation:**
 
