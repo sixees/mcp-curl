@@ -12,33 +12,59 @@ import {join, resolve, relative, isAbsolute, basename} from "path";
 import {readFile, writeFile, mkdtemp, rm, chmod, readdir, stat, access, realpath, constants as fsConstants} from "fs/promises";
 import {lookup} from "dns/promises";
 
-// Constants
-const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
-const DEFAULT_TIMEOUT = 30000; // 30 seconds
-const SERVER_NAME = "curl-mcp-server";
-const SERVER_VERSION = "1.1.5";
-const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
-const TEMP_DIR_PREFIX = "mcp-curl-";
-const ORPHAN_DIR_MIN_AGE_MS = 3600000; // 1 hour - only cleanup temp dirs older than this to avoid racing with other instances
-// Generate unique separator per request to prevent response injection attacks
-// An attacker could craft a response containing our separator to inject fake metadata
-function generateMetadataSeparator(): string {
-    return `\n---MCP-CURL-${randomUUID()}---\n`;
-}
-const ERROR_PREVIEW_LENGTH = 200; // Characters to show in error previews
-const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
+// Extracted modules
+import {
+    MAX_RESPONSE_SIZE,
+    DEFAULT_TIMEOUT,
+    SERVER_NAME,
+    SERVER_VERSION,
+    DEFAULT_MAX_RESULT_SIZE,
+    TEMP_DIR_PREFIX,
+    ORPHAN_DIR_MIN_AGE_MS,
+    ERROR_PREVIEW_LENGTH,
+    FILENAME_MAX_LENGTH,
+    MAX_SESSIONS,
+    SESSION_IDLE_TIMEOUT_MS,
+    SESSION_CLEANUP_INTERVAL_MS,
+    MAX_REQUESTS_PER_HOST_PER_MINUTE,
+    MAX_REQUESTS_PER_CLIENT_PER_MINUTE,
+    RATE_LIMIT_WINDOW_MS,
+    RATE_LIMIT_CLEANUP_INTERVAL_MS,
+    STDIO_CLIENT_ID,
+    MAX_JQ_FILTER_LENGTH,
+    MAX_JQ_TOKENS,
+    MAX_JQ_FILTERS,
+    MAX_JQ_PARSE_TIME_MS,
+    MAX_JQ_QUERY_FILE_SIZE,
+    UUID_REGEX,
+    OUTPUT_DIR_ENV_VAR,
+    ALLOW_LOCALHOST_ENV_VAR,
+    HTTP_AUTH_TOKEN_ENV_VAR,
+    BLOCKED_HOSTNAME_PATTERNS,
+    LOCALHOST_HOSTNAME_PATTERNS,
+    BLOCKED_IP_PATTERNS,
+    LOCALHOST_IP_PATTERNS,
+    ALLOWED_LOCALHOST_PORTS,
+    MIN_UNPRIVILEGED_PORT,
+    MAX_METADATA_TAIL_LENGTH,
+    WINDOWS_RESERVED_BASENAMES,
+    MAX_TOTAL_RESPONSE_MEMORY,
+} from "./lib/config/index.js";
 
-// Session tracking for HTTP transport
-interface Session {
-    server: McpServer;
-    transport: StreamableHTTPServerTransport;
-    lastActivity: number;
-}
+import {
+    generateMetadataSeparator,
+    type Session,
+    type RateLimitEntry,
+    type JqToken,
+    type UrlValidationResult,
+    type ProcessResponseOptions,
+    type ProcessedResponse,
+} from "./lib/types/index.js";
 
+// Constants and types are now imported from lib/config and lib/types
+
+// Session tracking for HTTP transport (Session type imported from lib/types)
 const sessions = new Map<string, Session>();
-const MAX_SESSIONS = 100; // Limit concurrent sessions to prevent memory exhaustion
-const SESSION_IDLE_TIMEOUT_MS = 3600000; // 1 hour idle timeout
-const SESSION_CLEANUP_INTERVAL_MS = 300000; // Check every 5 minutes
 
 // Periodically clean up idle sessions to prevent resource exhaustion
 const sessionCleanupInterval = setInterval(() => {
@@ -68,20 +94,7 @@ sessionCleanupInterval.unref();
  * Without per-client limits, an attacker could bypass per-hostname limits by
  * spreading requests across many different hostnames.
  */
-const MAX_REQUESTS_PER_HOST_PER_MINUTE = 60;
-const MAX_REQUESTS_PER_CLIENT_PER_MINUTE = 300; // Higher limit across all hosts
-const RATE_LIMIT_WINDOW_MS = 60000;
-const RATE_LIMIT_CLEANUP_INTERVAL_MS = 10000; // Sweep every 10 seconds
-
-// Default client ID for stdio transport (single client)
-const STDIO_CLIENT_ID = "__stdio_client__";
-
-interface RateLimitEntry {
-    count: number;
-    windowStart: number;
-}
-
-// Separate maps for hostname and client rate limiting
+// Separate maps for hostname and client rate limiting (constants imported from lib/config)
 const hostRateLimitMap = new Map<string, RateLimitEntry>();
 const clientRateLimitMap = new Map<string, RateLimitEntry>();
 
@@ -201,9 +214,6 @@ async function cleanupOrphanedTempDirs(): Promise<void> {
     }
 }
 
-// Environment variable for a custom output directory
-const OUTPUT_DIR_ENV_VAR = "MCP_CURL_OUTPUT_DIR";
-
 // Resolve the output directory with priority: 1) parameter, 2) env var, 3) null (use temp)
 function resolveOutputDir(paramDir?: string): string | null {
     if (paramDir !== undefined) {
@@ -283,9 +293,6 @@ async function validateOutputDir(dir: string): Promise<string> {
 
     return realPath;
 }
-
-// Maximum file size for jq_query tool (same as curl response limit)
-const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
 
 /**
  * Validate a file path for jq_query tool (security: restrict to allowed directories).
@@ -414,10 +421,6 @@ function isJsonContentType(contentType: string | undefined): boolean {
     return ct.includes("application/json") || ct.includes("+json");
 }
 
-// Maximum distance from end where we expect to find the metadata separator
-// Content-type headers are typically short, so 200 chars is plenty
-const MAX_METADATA_TAIL_LENGTH = 200;
-
 // Parse curl response to extract body and content-type
 // The separator must be the same unique value used in the -w format string
 function parseResponseWithMetadata(rawResponse: string, separator: string): { body: string; contentType?: string } {
@@ -468,7 +471,6 @@ function createServer(): McpServer {
  * requests could exhaust memory. This tracks total memory across all active
  * requests and rejects new data when the limit is reached.
  */
-const MAX_TOTAL_RESPONSE_MEMORY = 100_000_000; // 100MB total across all requests
 let totalResponseMemory = 0;
 
 // Helper function to execute a command
@@ -576,8 +578,6 @@ async function executeCommand(
 }
 
 // Validate session ID format (UUID v4) to prevent malformed session IDs as Map keys
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function isValidSessionId(sessionId: string | undefined): sessionId is string {
     return sessionId !== undefined && UUID_REGEX.test(sessionId);
 }
@@ -594,107 +594,8 @@ function validateNoCRLF(value: string, fieldName: string): void {
 
 /**
  * SSRF protection: block requests to private/internal networks.
- *
- * This includes IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) which could otherwise
- * bypass IPv4-only blocklists. For example, ::ffff:127.0.0.1 maps to 127.0.0.1.
+ * Constants and patterns are now imported from lib/config.
  */
-const BLOCKED_HOSTNAME_PATTERNS = [
-    // IPv4 loopback and mapped IPv6
-    /^127\.\d+\.\d+\.\d+$/,
-    /^\[?::ffff:127\.\d+\.\d+\.\d+\]?$/i,
-
-    // Private Class A (10.x.x.x) and mapped IPv6
-    /^10\.\d+\.\d+\.\d+$/,
-    /^\[?::ffff:10\.\d+\.\d+\.\d+\]?$/i,
-
-    // Private Class B (172.16-31.x.x) and mapped IPv6
-    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
-    /^\[?::ffff:172\.(1[6-9]|2\d|3[01])\.\d+\.\d+\]?$/i,
-
-    // Private Class C (192.168.x.x) and mapped IPv6
-    /^192\.168\.\d+\.\d+$/,
-    /^\[?::ffff:192\.168\.\d+\.\d+\]?$/i,
-
-    // Link-local (169.254.x.x) and mapped IPv6
-    /^169\.254\.\d+\.\d+$/,
-    /^\[?::ffff:169\.254\.\d+\.\d+\]?$/i,
-
-    // All interfaces
-    /^0\.0\.0\.0$/,
-    /^\[?::ffff:0\.0\.0\.0\]?$/i,
-
-    // IPv6 loopback
-    /^\[?::1\]?$/,
-
-    // IPv6 link-local
-    /^\[?fe80:/i,
-
-    // IPv6 unique local (fc00::/7)
-    /^\[?fc00:/i,
-    /^\[?fd[0-9a-f]{2}:/i,
-
-    // Internal TLDs
-    /\.local$/i,
-    /\.internal$/i,
-    /\.corp$/i,
-    /\.lan$/i,
-    /\.localhost$/i,
-
-    // Windows UNC paths (\\server\share) - could access internal network shares
-    /^\\\\[^\\]+/,
-];
-
-// Localhost hostname patterns - separate so they can be conditionally allowed
-const LOCALHOST_HOSTNAME_PATTERNS = [
-    /^localhost$/i,
-];
-
-// Patterns for validating resolved IP addresses (after DNS resolution)
-// These catch DNS rebinding attacks where hostname passes but resolves to blocked IP
-const BLOCKED_IP_PATTERNS = [
-    // IPv4 loopback
-    /^127\.\d+\.\d+\.\d+$/,
-    // Private Class A
-    /^10\.\d+\.\d+\.\d+$/,
-    // Private Class B
-    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
-    // Private Class C
-    /^192\.168\.\d+\.\d+$/,
-    // Link-local
-    /^169\.254\.\d+\.\d+$/,
-    // All interfaces
-    /^0\.0\.0\.0$/,
-    // IPv6 loopback
-    /^::1$/,
-    // IPv6 link-local
-    /^fe80:/i,
-    // IPv6 unique local
-    /^fc00:/i,
-    /^fd[0-9a-f]{2}:/i,
-    // IPv4-mapped IPv6 (these resolve to the IPv4 form, but check anyway)
-    /^::ffff:127\./i,
-    /^::ffff:10\./i,
-    /^::ffff:172\.(1[6-9]|2\d|3[01])\./i,
-    /^::ffff:192\.168\./i,
-    /^::ffff:169\.254\./i,
-    /^::ffff:0\.0\.0\.0$/i,
-];
-
-// Localhost IP patterns
-const LOCALHOST_IP_PATTERNS = [
-    /^127\.\d+\.\d+\.\d+$/,
-    /^::1$/,
-    /^::ffff:127\./i,
-];
-
-// Environment variable to allow localhost access (for local development/testing)
-const ALLOW_LOCALHOST_ENV_VAR = "MCP_CURL_ALLOW_LOCALHOST";
-
-// Allowed ports when localhost is enabled: 80, 443, and unprivileged ports (>1024)
-// This prevents access to privileged services like SSH (22), SMTP (25), databases, etc.
-const ALLOWED_LOCALHOST_PORTS = new Set([80, 443]);
-const MIN_UNPRIVILEGED_PORT = 1024;
-
 function isLocalhostAllowed(): boolean {
     const value = process.env[ALLOW_LOCALHOST_ENV_VAR]?.toLowerCase();
     return value === "true" || value === "1" || value === "yes";
@@ -726,16 +627,8 @@ async function resolveDns(hostname: string): Promise<string> {
 }
 
 /**
- * Result of URL validation including resolved IP for DNS pinning.
- */
-interface UrlValidationResult {
-    hostname: string;
-    port: number;
-    resolvedIp: string;
-}
-
-/**
  * Validate URL is not internal and resolve DNS to prevent rebinding attacks.
+ * (UrlValidationResult type imported from lib/types)
  *
  * DNS Rebinding Prevention: We resolve DNS ourselves and validate the IP BEFORE
  * passing to cURL. We then use --resolve to pin cURL to our validated IP.
@@ -988,14 +881,7 @@ function formatResponse(
     return stdout;
 }
 
-// Token types for jq filter parsing
-type JqToken =
-    | { type: "key"; value: string }
-    | { type: "index"; value: number }
-    | { type: "slice"; start?: number; end?: number }
-    | { type: "iterate" };
-
-// Parse bracket notation: [], ["key"], [n], [n:m]
+// Parse bracket notation: [], ["key"], [n], [n:m] (JqToken type imported from lib/types)
 function parseBracketToken(filter: string, startIndex: number): { token: JqToken; newIndex: number } {
     let i = startIndex + 1; // skip opening [
 
@@ -1101,13 +987,7 @@ function parseBracketToken(filter: string, startIndex: number): { token: JqToken
     return { token: { type: "index", value: index }, newIndex: i };
 }
 
-// Limits to prevent DoS via complex jq filters
-const MAX_JQ_FILTER_LENGTH = 500;
-const MAX_JQ_TOKENS = 50;
-const MAX_JQ_FILTERS = 20; // Maximum number of comma-separated filters
-const MAX_JQ_PARSE_TIME_MS = 100; // Maximum time for parsing operations
-
-// Parse a jq-like filter expression into tokens
+// Parse a jq-like filter expression into tokens (JQ limits imported from lib/config)
 function parseJqFilter(filter: string): JqToken[] {
     if (filter.length > MAX_JQ_FILTER_LENGTH) {
         throw new Error(`jq_filter exceeds maximum length of ${MAX_JQ_FILTER_LENGTH} characters`);
@@ -1393,14 +1273,7 @@ function applyJqFilter(jsonString: string, filter: string): string {
     return JSON.stringify(results, null, 2);
 }
 
-// Windows reserved filenames that cannot be used as base names
-const WINDOWS_RESERVED_BASENAMES = new Set([
-    "CON", "PRN", "AUX", "NUL",
-    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-]);
-
-// Create a safe filename base from arbitrary input
+// Create a safe filename base from arbitrary input (WINDOWS_RESERVED_BASENAMES imported from lib/config)
 function createSafeFilenameBase(input: string, fallback = "response"): string {
     // Replace non-alphanumeric characters with underscores
     let base = input.replace(/[^a-zA-Z0-9]/g, "_");
@@ -1446,23 +1319,7 @@ async function saveResponseToFile(content: string, url: string, outputDir?: stri
     return filepath;
 }
 
-// Process response with filtering and size handling
-interface ProcessResponseOptions {
-    url: string;
-    jqFilter?: string;
-    maxResultSize?: number;
-    saveToFile?: boolean;
-    contentType?: string;
-    outputDir?: string; // Custom output directory for saved files
-}
-
-interface ProcessedResponse {
-    content: string;
-    savedToFile: boolean;
-    filepath?: string;
-    message?: string; // Human-readable message when savedToFile is true
-}
-
+// Process response with filtering and size handling (types imported from lib/types)
 async function processResponse(
     response: string,
     options: ProcessResponseOptions
@@ -2198,11 +2055,9 @@ async function runStdio(): Promise<void> {
     console.error("cURL MCP server running on stdio");
 }
 
-// Environment variable for HTTP authentication token (opt-in security)
-const HTTP_AUTH_TOKEN_ENV_VAR = "MCP_AUTH_TOKEN";
-
 /**
  * Authentication middleware for HTTP transport.
+ * (HTTP_AUTH_TOKEN_ENV_VAR imported from lib/config)
  *
  * When MCP_AUTH_TOKEN is set, all HTTP requests must include a matching
  * Bearer token in the Authorization header. This prevents unauthorized
