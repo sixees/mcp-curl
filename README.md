@@ -228,7 +228,7 @@ Use `jq_filter` to reduce response size before the limit is checked:
 | Syntax         | Description                          | Example            |
 |----------------|--------------------------------------|--------------------|
 | `.key`         | Object property                      | `.data`            |
-| `.[n]` or `.n` | Array index (dot notation supported) | `.[0]`, `.0`       |
+| `.[n]` or `.n` | Array index (non-negative only)      | `.[0]`, `.0`       |
 | `.[n:m]`       | Array slice                          | `.[0:10]`          |
 | `.["key"]`     | Bracket notation                     | `.["special-key"]` |
 | `.a,.b,.c`     | Multiple paths (returns array)       | `.name,.email`     |
@@ -238,6 +238,7 @@ Use `jq_filter` to reduce response size before the limit is checked:
 - Maximum 20 comma-separated paths
 - Unclosed quotes and unmatched brackets throw clear errors
 - Leading zeros in indices are rejected (use `.0` not `.00`)
+- Negative indices are not supported (unlike real `jq`, `[-1]` will error)
 - Indices must be within JavaScript safe integer range
 
 ### jq_query Tool

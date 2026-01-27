@@ -1581,7 +1581,7 @@ const CurlExecuteSchema = z.object({
         .describe("Wrap response in JSON with metadata (exit code, success status)"),
     jq_filter: z.string()
         .optional()
-        .describe("JSON path filter to extract specific data. Supports: .key, .[n] or .n (array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple paths return array). Max 20 paths. Applied after response, before max_result_size check."),
+        .describe("JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check."),
     max_result_size: z.number()
         .int()
         .min(1000)
@@ -1603,7 +1603,7 @@ const JqQuerySchema = z.object({
     filepath: z.string()
         .describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
     jq_filter: z.string()
-        .describe("JSON path filter expression. Supports: .key, .[n] or .n (array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple paths return array). Max 20 paths."),
+        .describe("JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported."),
     max_result_size: z.number()
         .int()
         .min(1000)
@@ -1656,14 +1656,15 @@ Args:
 
 jq_filter Syntax:
   - .key - Object property access
-  - .[n] or .n - Array index (dot notation supported, e.g., .results.0)
+  - .[n] or .n - Array index (non-negative only, e.g., .results.0)
   - .[n:m] - Array slice from index n to m
   - .["key"] - Bracket notation for special characters in keys
-  - .a,.b,.c - Multiple paths (returns array of values, max 20 paths)
+  - .a,.b,.c - Multiple comma-separated paths (returns array of values, max 20)
 
 jq_filter Validation:
   - Unclosed quotes and brackets throw clear errors
   - Leading zeros in indices rejected (use .0 not .00)
+  - Negative indices not supported (unlike real jq)
   - Indices must be within safe integer range
 
 Returns:
@@ -1813,10 +1814,11 @@ Args:
 
 Filter Syntax:
   - .key - Get object property
-  - .[n] - Get array element at index n (also .n with dot notation)
+  - .[n] - Get array element at index n (non-negative only, also .n with dot notation)
   - .[n:m] - Array slice from n to m
   - .["key"] - Bracket notation for keys with special chars
-  - .name,.email - Multiple paths (returns array of values)
+  - .name,.email - Multiple comma-separated paths (returns array of values, max 20)
+  - Note: Negative indices not supported (unlike real jq)
 
 Security:
   - Only files in these directories can be read:
@@ -1953,14 +1955,15 @@ Files are saved to (in priority order):
 
 Extract data from JSON responses:
 - \`.key\` - Get object property
-- \`.[n]\` or \`.n\` - Get array element at index n (dot notation supported)
+- \`.[n]\` or \`.n\` - Get array element at index n (non-negative only)
 - \`.[n:m]\` - Array slice from n to m
 - \`.["key"]\` - Bracket notation for keys with special chars
-- \`.name,.email\` - Multiple paths (returns array of values, max 20)
+- \`.name,.email\` - Multiple comma-separated paths (returns array of values, max 20)
 
 **Validation:**
 - Unclosed quotes and unmatched brackets throw clear errors
 - Leading zeros in indices are rejected (use \`.0\` not \`.00\`)
+- Negative indices are not supported (unlike real \`jq\`)
 - Indices must be within JavaScript safe integer range
 
 ### Examples
