@@ -16,7 +16,7 @@ import {lookup} from "dns/promises";
 const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
 const SERVER_NAME = "curl-mcp-server";
-const SERVER_VERSION = "1.1.0";
+const SERVER_VERSION = "1.1.5";
 const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
 const TEMP_DIR_PREFIX = "mcp-curl-";
 const ORPHAN_DIR_MIN_AGE_MS = 3600000; // 1 hour - only cleanup temp dirs older than this to avoid racing with other instances
