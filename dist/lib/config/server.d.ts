@@ -1,2 +1,4 @@
-export declare const SERVER_NAME = "curl-mcp-server";
-export declare const SERVER_VERSION = "1.1.5";
+export declare const SERVER: {
+    readonly NAME: "curl-mcp-server";
+    readonly VERSION: "1.1.5";
+};
