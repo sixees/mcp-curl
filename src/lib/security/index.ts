@@ -11,7 +11,8 @@ export {
     checkRateLimits,
     startRateLimitCleanup,
     stopRateLimitCleanup,
-    clearRateLimitMaps,
+    // Note: clearRateLimitMaps intentionally not exported here (test-only).
+    // Tests should import directly from "./rate-limiter.js" if needed.
 } from "./rate-limiter.js";
 
 export {
