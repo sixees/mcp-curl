@@ -1,4 +1,11 @@
 /**
+ * Clear the allowed directories cache.
+ * Exposed for testing purposes only.
+ *
+ * @internal
+ */
+export declare function clearAllowedDirsCache(): void;
+/**
  * Validate a file path for jq_query tool (security: restrict to allowed directories).
  *
  * Security: We use realpath() to resolve symlinks before checking directory containment.

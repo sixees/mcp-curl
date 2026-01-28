@@ -8,6 +8,120 @@ import { getSharedTempDir } from "../files/temp-manager.js";
 import { getErrorMessage } from "../utils/index.js";
 
 /**
+ * Cache for allowed directories list to avoid repeated I/O operations.
+ * Stores resolved real paths for MCP_CURL_OUTPUT_DIR and cwd.
+ */
+interface AllowedDirsCache {
+    /** Resolved real path of MCP_CURL_OUTPUT_DIR (null if not set or invalid) */
+    envOutputDir: string | null;
+    /** Resolved real path of current working directory */
+    cwd: string;
+    /** Timestamp when cache was populated */
+    timestamp: number;
+}
+
+let allowedDirsCache: AllowedDirsCache | null = null;
+
+/**
+ * Get the list of allowed directories for file validation.
+ * Uses caching with TTL to avoid repeated I/O operations.
+ *
+ * @throws Error if cwd or MCP_CURL_OUTPUT_DIR cannot be resolved
+ */
+async function getAllowedDirectories(): Promise<string[]> {
+    const now = Date.now();
+
+    // Check if cache is valid
+    if (allowedDirsCache && (now - allowedDirsCache.timestamp) < JQ.ALLOWED_DIRS_CACHE_TTL_MS) {
+        const dirs: string[] = [];
+
+        // Temp directory (check fresh each time as it may be created after cache)
+        const tempDir = getSharedTempDir();
+        if (tempDir) {
+            dirs.push(tempDir);
+        }
+
+        // Cached directories
+        if (allowedDirsCache.envOutputDir) {
+            dirs.push(allowedDirsCache.envOutputDir);
+        }
+        dirs.push(allowedDirsCache.cwd);
+
+        return dirs;
+    }
+
+    // Build fresh cache
+    let envOutputDirResolved: string | null = null;
+
+    // Resolve MCP_CURL_OUTPUT_DIR if set
+    const envOutputDir = process.env[ENV.OUTPUT_DIR];
+    if (envOutputDir) {
+        try {
+            const realEnvDir = await realpath(resolve(envOutputDir));
+            const envDirStats = await stat(realEnvDir);
+            if (!envDirStats.isDirectory()) {
+                throw new Error(
+                    `Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": path exists but is not a directory`
+                );
+            }
+            envOutputDirResolved = realEnvDir;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+                throw new Error(
+                    `Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory does not exist`
+                );
+            }
+            throw new Error(
+                `Failed to validate ${ENV.OUTPUT_DIR} "${envOutputDir}": ${getErrorMessage(error)}`
+            );
+        }
+    }
+
+    // Resolve cwd (required)
+    let cwdResolved: string;
+    try {
+        cwdResolved = await realpath(process.cwd());
+    } catch (error) {
+        throw new Error(
+            `Failed to resolve current working directory: ${getErrorMessage(error)}. ` +
+            `This is required for secure file validation.`
+        );
+    }
+
+    // Update cache
+    allowedDirsCache = {
+        envOutputDir: envOutputDirResolved,
+        cwd: cwdResolved,
+        timestamp: now,
+    };
+
+    // Build result array
+    const dirs: string[] = [];
+
+    const tempDir = getSharedTempDir();
+    if (tempDir) {
+        dirs.push(tempDir);
+    }
+
+    if (envOutputDirResolved) {
+        dirs.push(envOutputDirResolved);
+    }
+    dirs.push(cwdResolved);
+
+    return dirs;
+}
+
+/**
+ * Clear the allowed directories cache.
+ * Exposed for testing purposes only.
+ *
+ * @internal
+ */
+export function clearAllowedDirsCache(): void {
+    allowedDirsCache = null;
+}
+
+/**
  * Validate a file path for jq_query tool (security: restrict to allowed directories).
  *
  * Security: We use realpath() to resolve symlinks before checking directory containment.
@@ -66,53 +180,8 @@ export async function validateFilePath(filepath: string): Promise<void> {
         throw new Error(`File "${filepath}" is not readable`);
     }
 
-    // Build list of allowed directories (using real paths to handle symlinks consistently)
-    const allowedDirs: string[] = [];
-
-    // 1. Our temp directory (use getter to access module-level singleton)
-    const tempDir = getSharedTempDir();
-    if (tempDir) {
-        allowedDirs.push(tempDir);
-    }
-
-    // 2. Configured output directory from env var (for reading files saved there)
-    const envOutputDir = process.env[ENV.OUTPUT_DIR];
-    if (envOutputDir) {
-        try {
-            // Use realpath to get actual directory path
-            const realEnvDir = await realpath(resolve(envOutputDir));
-            const envDirStats = await stat(realEnvDir);
-            if (!envDirStats.isDirectory()) {
-                throw new Error(
-                    `Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": path exists but is not a directory`
-                );
-            }
-            // Note: No write check here - this is for read operations (jq_query).
-            // The file's readability is checked separately.
-            allowedDirs.push(realEnvDir);
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-                throw new Error(
-                    `Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory does not exist`
-                );
-            }
-            // Unexpected error (permission denied, I/O error, etc.) - include context
-            throw new Error(
-                `Failed to validate ${ENV.OUTPUT_DIR} "${envOutputDir}": ${getErrorMessage(error)}`
-            );
-        }
-    }
-
-    // 3. Current working directory (use realpath in case cwd itself is a symlink)
-    try {
-        allowedDirs.push(await realpath(process.cwd()));
-    } catch (error) {
-        // Fail closed: refuse to proceed if we can't resolve cwd for symlink protection
-        throw new Error(
-            `Failed to resolve current working directory: ${getErrorMessage(error)}. ` +
-            `This is required for secure file validation.`
-        );
-    }
+    // Get allowed directories (cached with TTL to avoid repeated I/O)
+    const allowedDirs = await getAllowedDirectories();
 
     // Check if REAL file path is within any allowed directory
     // This prevents symlink escapes: a symlink in cwd pointing to /etc would be blocked
