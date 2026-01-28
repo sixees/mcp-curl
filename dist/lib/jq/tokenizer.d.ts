@@ -1,4 +1,9 @@
 import type { JqToken } from "../types/index.js";
+/** Result type for bracket token parsing */
+type BracketParseResult = {
+    token: JqToken;
+    newIndex: number;
+};
 /**
  * Parse bracket notation: [], ["key"], [n], [n:m]
  *
@@ -7,7 +12,5 @@ import type { JqToken } from "../types/index.js";
  * @returns The parsed token and the new index position
  * @throws Error for malformed bracket expressions
  */
-export declare function parseBracketToken(filter: string, startIndex: number): {
-    token: JqToken;
-    newIndex: number;
-};
+export declare function parseBracketToken(filter: string, startIndex: number): BracketParseResult;
+export {};
