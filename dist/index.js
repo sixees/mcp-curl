@@ -10,30 +10,18 @@ import { tmpdir } from "os";
 import { join, resolve, relative, isAbsolute, basename } from "path";
 import { readFile, writeFile, mkdtemp, rm, chmod, readdir, stat, access, realpath, constants as fsConstants } from "fs/promises";
 import { lookup } from "dns/promises";
-// Constants
-const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing (jq_filter can reduce before output)
-const DEFAULT_TIMEOUT = 30000; // 30 seconds
-const SERVER_NAME = "curl-mcp-server";
-const SERVER_VERSION = "1.1.5";
-const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
-const TEMP_DIR_PREFIX = "mcp-curl-";
-const ORPHAN_DIR_MIN_AGE_MS = 3600000; // 1 hour - only cleanup temp dirs older than this to avoid racing with other instances
-// Generate unique separator per request to prevent response injection attacks
-// An attacker could craft a response containing our separator to inject fake metadata
-function generateMetadataSeparator() {
-    return `\n---MCP-CURL-${randomUUID()}---\n`;
-}
-const ERROR_PREVIEW_LENGTH = 200; // Characters to show in error previews
-const FILENAME_MAX_LENGTH = 50; // Max length for generated filenames
+// Extracted modules - grouped constants with `as const`
+import { LIMITS, SERVER, SESSION, RATE_LIMIT, TEMP_DIR, JQ, ENV, UUID_REGEX, isWindowsReservedBasename, 
+// SSRF protection helpers
+isBlockedHostname, isLocalhostHostname, isBlockedIp, isLocalhostIp, isAllowedLocalhostPort, } from "./lib/config/index.js";
+import { generateMetadataSeparator, } from "./lib/types/index.js";
+// Session tracking for HTTP transport (Session type imported from lib/types)
 const sessions = new Map();
-const MAX_SESSIONS = 100; // Limit concurrent sessions to prevent memory exhaustion
-const SESSION_IDLE_TIMEOUT_MS = 3600000; // 1 hour idle timeout
-const SESSION_CLEANUP_INTERVAL_MS = 300000; // Check every 5 minutes
 // Periodically clean up idle sessions to prevent resource exhaustion
 const sessionCleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [id, session] of sessions) {
-        if (now - session.lastActivity > SESSION_IDLE_TIMEOUT_MS) {
+        if (now - session.lastActivity > SESSION.IDLE_TIMEOUT_MS) {
             try {
                 session.transport.close();
             }
@@ -43,7 +31,7 @@ const sessionCleanupInterval = setInterval(() => {
             sessions.delete(id);
         }
     }
-}, SESSION_CLEANUP_INTERVAL_MS);
+}, SESSION.CLEANUP_INTERVAL_MS);
 // Prevent interval from keeping process alive during shutdown
 sessionCleanupInterval.unref();
 /**
@@ -56,20 +44,14 @@ sessionCleanupInterval.unref();
  * Without per-client limits, an attacker could bypass per-hostname limits by
  * spreading requests across many different hostnames.
  */
-const MAX_REQUESTS_PER_HOST_PER_MINUTE = 60;
-const MAX_REQUESTS_PER_CLIENT_PER_MINUTE = 300; // Higher limit across all hosts
-const RATE_LIMIT_WINDOW_MS = 60000;
-const RATE_LIMIT_CLEANUP_INTERVAL_MS = 10000; // Sweep every 10 seconds
-// Default client ID for stdio transport (single client)
-const STDIO_CLIENT_ID = "__stdio_client__";
-// Separate maps for hostname and client rate limiting
+// Separate maps for hostname and client rate limiting (constants imported from lib/config)
 const hostRateLimitMap = new Map();
 const clientRateLimitMap = new Map();
 function checkRateLimitInternal(map, key, maxRequests, errorPrefix) {
     const now = Date.now();
     const entry = map.get(key);
     // Start new window if none exists or current window expired
-    if (!entry || (now - entry.windowStart) >= RATE_LIMIT_WINDOW_MS) {
+    if (!entry || (now - entry.windowStart) >= RATE_LIMIT.WINDOW_MS) {
         map.set(key, { count: 1, windowStart: now });
         return;
     }
@@ -84,26 +66,26 @@ function checkRateLimitInternal(map, key, maxRequests, errorPrefix) {
  * @param hostname - Target hostname (for per-host limit)
  * @param clientId - Client identifier (session ID for HTTP, default for stdio)
  */
-function checkRateLimits(hostname, clientId = STDIO_CLIENT_ID) {
+function checkRateLimits(hostname, clientId = RATE_LIMIT.STDIO_CLIENT_ID) {
     // Check per-hostname limit first (protects target servers)
-    checkRateLimitInternal(hostRateLimitMap, hostname, MAX_REQUESTS_PER_HOST_PER_MINUTE, `Rate limit exceeded for host "${hostname}"`);
+    checkRateLimitInternal(hostRateLimitMap, hostname, RATE_LIMIT.MAX_PER_HOST_PER_MINUTE, `Rate limit exceeded for host "${hostname}"`);
     // Check per-client limit (prevents overall abuse)
-    checkRateLimitInternal(clientRateLimitMap, clientId, MAX_REQUESTS_PER_CLIENT_PER_MINUTE, "Client rate limit exceeded");
+    checkRateLimitInternal(clientRateLimitMap, clientId, RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE, "Client rate limit exceeded");
 }
 // Single cleanup interval instead of O(n) per-request timers
 const rateLimitCleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of hostRateLimitMap) {
-        if ((now - entry.windowStart) >= RATE_LIMIT_WINDOW_MS) {
+        if ((now - entry.windowStart) >= RATE_LIMIT.WINDOW_MS) {
             hostRateLimitMap.delete(key);
         }
     }
     for (const [key, entry] of clientRateLimitMap) {
-        if ((now - entry.windowStart) >= RATE_LIMIT_WINDOW_MS) {
+        if ((now - entry.windowStart) >= RATE_LIMIT.WINDOW_MS) {
             clientRateLimitMap.delete(key);
         }
     }
-}, RATE_LIMIT_CLEANUP_INTERVAL_MS);
+}, RATE_LIMIT.CLEANUP_INTERVAL_MS);
 // Prevent an interval from keeping process alive during shutdown
 rateLimitCleanupInterval.unref();
 // Shared temp directory for saved responses (lazily initialized, cleaned up on shutdown)
@@ -115,7 +97,7 @@ async function getOrCreateTempDir() {
         return tempDirPromise;
     }
     tempDirPromise = (async () => {
-        const dir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
+        const dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
         await chmod(dir, 0o700); // Owner-only access
         sharedTempDir = dir;
         return dir;
@@ -130,7 +112,7 @@ async function cleanupOrphanedTempDirs() {
         const entries = await readdir(tempBase);
         const now = Date.now();
         for (const entry of entries) {
-            if (entry.startsWith(TEMP_DIR_PREFIX)) {
+            if (entry.startsWith(TEMP_DIR.PREFIX)) {
                 const dirPath = join(tempBase, entry);
                 // Skip our current session's directory
                 if (dirPath === sharedTempDir)
@@ -139,7 +121,7 @@ async function cleanupOrphanedTempDirs() {
                     // Only delete directories older than threshold to avoid racing with other instances
                     const stats = await stat(dirPath);
                     const ageMs = now - stats.mtimeMs;
-                    if (ageMs < ORPHAN_DIR_MIN_AGE_MS) {
+                    if (ageMs < TEMP_DIR.ORPHAN_MIN_AGE_MS) {
                         continue; // Too recent, might belong to another live instance
                     }
                     await rm(dirPath, { recursive: true, force: true });
@@ -156,8 +138,6 @@ async function cleanupOrphanedTempDirs() {
         console.error("Error during orphaned temp dir cleanup:", error);
     }
 }
-// Environment variable for a custom output directory
-const OUTPUT_DIR_ENV_VAR = "MCP_CURL_OUTPUT_DIR";
 // Resolve the output directory with priority: 1) parameter, 2) env var, 3) null (use temp)
 function resolveOutputDir(paramDir) {
     if (paramDir !== undefined) {
@@ -168,11 +148,11 @@ function resolveOutputDir(paramDir) {
         }
         return trimmedParam;
     }
-    const rawEnvDir = process.env[OUTPUT_DIR_ENV_VAR];
+    const rawEnvDir = process.env[ENV.OUTPUT_DIR];
     if (rawEnvDir !== undefined) {
         const envDir = rawEnvDir.trim();
         if (!envDir) {
-            throw new Error(`Environment variable ${OUTPUT_DIR_ENV_VAR} is set but empty or whitespace-only. ` +
+            throw new Error(`Environment variable ${ENV.OUTPUT_DIR} is set but empty or whitespace-only. ` +
                 `Unset it or provide a valid directory path.`);
         }
         return envDir;
@@ -221,8 +201,6 @@ async function validateOutputDir(dir) {
     }
     return realPath;
 }
-// Maximum file size for jq_query tool (same as curl response limit)
-const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
 /**
  * Validate a file path for jq_query tool (security: restrict to allowed directories).
  *
@@ -255,9 +233,9 @@ async function validateFilePath(filepath) {
             throw new Error(`Invalid filepath "${filepath}": path exists but is not a file`);
         }
         // Check file size
-        if (stats.size > MAX_JQ_QUERY_FILE_SIZE) {
+        if (stats.size > JQ.MAX_QUERY_FILE_SIZE) {
             throw new Error(`File "${filepath}" is too large (${stats.size} bytes). ` +
-                `Maximum file size for jq_query is ${MAX_JQ_QUERY_FILE_SIZE / 1_000_000}MB.`);
+                `Maximum file size for jq_query is ${JQ.MAX_QUERY_FILE_SIZE / 1_000_000}MB.`);
         }
     }
     catch (error) {
@@ -280,14 +258,14 @@ async function validateFilePath(filepath) {
         allowedDirs.push(sharedTempDir);
     }
     // 2. Configured output directory from env var
-    const envOutputDir = process.env[OUTPUT_DIR_ENV_VAR];
+    const envOutputDir = process.env[ENV.OUTPUT_DIR];
     if (envOutputDir) {
         try {
             // Use realpath to get actual directory path
             const realEnvDir = await realpath(resolve(envOutputDir));
             const envDirStats = await stat(realEnvDir);
             if (!envDirStats.isDirectory()) {
-                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": path exists but is not a directory`);
+                throw new Error(`Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": path exists but is not a directory`);
             }
             await access(realEnvDir, fsConstants.W_OK);
             allowedDirs.push(realEnvDir);
@@ -295,10 +273,10 @@ async function validateFilePath(filepath) {
         catch (error) {
             const err = error;
             if (err.code === "ENOENT") {
-                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": directory does not exist`);
+                throw new Error(`Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory does not exist`);
             }
             if (err.code === "EACCES") {
-                throw new Error(`Invalid ${OUTPUT_DIR_ENV_VAR} value "${envOutputDir}": directory is not writable`);
+                throw new Error(`Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory is not writable`);
             }
             throw error;
         }
@@ -331,15 +309,12 @@ function isJsonContentType(contentType) {
     const ct = contentType.toLowerCase();
     return ct.includes("application/json") || ct.includes("+json");
 }
-// Maximum distance from end where we expect to find the metadata separator
-// Content-type headers are typically short, so 200 chars is plenty
-const MAX_METADATA_TAIL_LENGTH = 200;
 // Parse curl response to extract body and content-type
 // The separator must be the same unique value used in the -w format string
 function parseResponseWithMetadata(rawResponse, separator) {
     // Only search for separator near the end as a defense-in-depth measure
     // The unique per-request separator is the primary protection against injection
-    const searchStart = Math.max(0, rawResponse.length - MAX_METADATA_TAIL_LENGTH);
+    const searchStart = Math.max(0, rawResponse.length - LIMITS.MAX_METADATA_TAIL_LENGTH);
     const tailSection = rawResponse.slice(searchStart);
     const separatorIndexInTail = tailSection.lastIndexOf(separator);
     if (separatorIndexInTail === -1) {
@@ -368,21 +343,20 @@ function sanitizeErrorMessage(message, includeDetails) {
 // Create a new MCP server instance
 function createServer() {
     return new McpServer({
-        name: SERVER_NAME,
-        version: SERVER_VERSION,
+        name: SERVER.NAME,
+        version: SERVER.VERSION,
     });
 }
 /**
  * Global memory tracking for concurrent response handling.
  *
- * While each request is limited to MAX_RESPONSE_SIZE (10MB), multiple concurrent
+ * While each request is limited to LIMITS.MAX_RESPONSE_SIZE (10MB), multiple concurrent
  * requests could exhaust memory. This tracks total memory across all active
  * requests and rejects new data when the limit is reached.
  */
-const MAX_TOTAL_RESPONSE_MEMORY = 100_000_000; // 100MB total across all requests
 let totalResponseMemory = 0;
 // Helper function to execute a command
-async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
+async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS) {
     // Track this request's memory usage for cleanup
     let requestMemoryUsage = 0;
     return new Promise((resolve, reject) => {
@@ -405,7 +379,7 @@ async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
         childProcess.stdout?.on("data", (data) => {
             const dataSize = Buffer.byteLength(data, "utf8");
             // Check global memory limit
-            if (totalResponseMemory + dataSize > MAX_TOTAL_RESPONSE_MEMORY && !killed) {
+            if (totalResponseMemory + dataSize > LIMITS.MAX_TOTAL_RESPONSE_MEMORY && !killed) {
                 killed = true;
                 clearTimeout(timeoutId);
                 releaseMemory();
@@ -417,23 +391,23 @@ async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
             requestMemoryUsage += dataSize;
             totalResponseMemory += dataSize;
             // Check per-request limit
-            if (Buffer.byteLength(stdout, "utf8") > MAX_RESPONSE_SIZE && !killed) {
+            if (Buffer.byteLength(stdout, "utf8") > LIMITS.MAX_RESPONSE_SIZE && !killed) {
                 killed = true;
                 clearTimeout(timeoutId);
                 releaseMemory();
                 childProcess.kill();
-                reject(new Error(`Response exceeded maximum processing size of ${MAX_RESPONSE_SIZE / 1_000_000}MB. ` +
+                reject(new Error(`Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / 1_000_000}MB. ` +
                     `Consider using a more specific API endpoint or adding query parameters to reduce response size.`));
             }
         });
         childProcess.stderr?.on("data", (data) => {
             const stderrBytes = Buffer.byteLength(stderr, "utf8");
-            if (stderrBytes < MAX_RESPONSE_SIZE) {
+            if (stderrBytes < LIMITS.MAX_RESPONSE_SIZE) {
                 stderr += data.toString();
-                if (Buffer.byteLength(stderr, "utf8") > MAX_RESPONSE_SIZE) {
+                if (Buffer.byteLength(stderr, "utf8") > LIMITS.MAX_RESPONSE_SIZE) {
                     // Truncate efficiently using Buffer slice
                     const truncateMsg = "\n[stderr truncated]";
-                    const maxBytes = MAX_RESPONSE_SIZE - Buffer.byteLength(truncateMsg, "utf8");
+                    const maxBytes = LIMITS.MAX_RESPONSE_SIZE - Buffer.byteLength(truncateMsg, "utf8");
                     const buf = Buffer.from(stderr, "utf8").subarray(0, maxBytes);
                     stderr = buf.toString("utf8") + truncateMsg;
                 }
@@ -465,7 +439,6 @@ async function executeCommand(command, args, timeout = DEFAULT_TIMEOUT) {
     });
 }
 // Validate session ID format (UUID v4) to prevent malformed session IDs as Map keys
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isValidSessionId(sessionId) {
     return sessionId !== undefined && UUID_REGEX.test(sessionId);
 }
@@ -479,102 +452,18 @@ function validateNoCRLF(value, fieldName) {
 /**
  * SSRF protection: block requests to private/internal networks.
  *
- * This includes IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) which could otherwise
- * bypass IPv4-only blocklists. For example, ::ffff:127.0.0.1 maps to 127.0.0.1.
+ * See lib/config/security/ssrf.ts for detailed security rationale covering:
+ * - IPv4-mapped IPv6 bypass prevention (::ffff:x.x.x.x)
+ * - DNS rebinding attack mitigation
+ * - Protocol and TLD restrictions
+ * - Defense-in-depth strategy (hostname + resolved IP checks)
+ *
+ * Helper functions (isBlockedHostname, isLocalhostHostname, isBlockedIp,
+ * isLocalhostIp, isAllowedLocalhostPort) are imported from lib/config.
  */
-const BLOCKED_HOSTNAME_PATTERNS = [
-    // IPv4 loopback and mapped IPv6
-    /^127\.\d+\.\d+\.\d+$/,
-    /^\[?::ffff:127\.\d+\.\d+\.\d+\]?$/i,
-    // Private Class A (10.x.x.x) and mapped IPv6
-    /^10\.\d+\.\d+\.\d+$/,
-    /^\[?::ffff:10\.\d+\.\d+\.\d+\]?$/i,
-    // Private Class B (172.16-31.x.x) and mapped IPv6
-    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
-    /^\[?::ffff:172\.(1[6-9]|2\d|3[01])\.\d+\.\d+\]?$/i,
-    // Private Class C (192.168.x.x) and mapped IPv6
-    /^192\.168\.\d+\.\d+$/,
-    /^\[?::ffff:192\.168\.\d+\.\d+\]?$/i,
-    // Link-local (169.254.x.x) and mapped IPv6
-    /^169\.254\.\d+\.\d+$/,
-    /^\[?::ffff:169\.254\.\d+\.\d+\]?$/i,
-    // All interfaces
-    /^0\.0\.0\.0$/,
-    /^\[?::ffff:0\.0\.0\.0\]?$/i,
-    // IPv6 loopback
-    /^\[?::1\]?$/,
-    // IPv6 link-local
-    /^\[?fe80:/i,
-    // IPv6 unique local (fc00::/7)
-    /^\[?fc00:/i,
-    /^\[?fd[0-9a-f]{2}:/i,
-    // Internal TLDs
-    /\.local$/i,
-    /\.internal$/i,
-    /\.corp$/i,
-    /\.lan$/i,
-    /\.localhost$/i,
-    // Windows UNC paths (\\server\share) - could access internal network shares
-    /^\\\\[^\\]+/,
-];
-// Localhost hostname patterns - separate so they can be conditionally allowed
-const LOCALHOST_HOSTNAME_PATTERNS = [
-    /^localhost$/i,
-];
-// Patterns for validating resolved IP addresses (after DNS resolution)
-// These catch DNS rebinding attacks where hostname passes but resolves to blocked IP
-const BLOCKED_IP_PATTERNS = [
-    // IPv4 loopback
-    /^127\.\d+\.\d+\.\d+$/,
-    // Private Class A
-    /^10\.\d+\.\d+\.\d+$/,
-    // Private Class B
-    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
-    // Private Class C
-    /^192\.168\.\d+\.\d+$/,
-    // Link-local
-    /^169\.254\.\d+\.\d+$/,
-    // All interfaces
-    /^0\.0\.0\.0$/,
-    // IPv6 loopback
-    /^::1$/,
-    // IPv6 link-local
-    /^fe80:/i,
-    // IPv6 unique local
-    /^fc00:/i,
-    /^fd[0-9a-f]{2}:/i,
-    // IPv4-mapped IPv6 (these resolve to the IPv4 form, but check anyway)
-    /^::ffff:127\./i,
-    /^::ffff:10\./i,
-    /^::ffff:172\.(1[6-9]|2\d|3[01])\./i,
-    /^::ffff:192\.168\./i,
-    /^::ffff:169\.254\./i,
-    /^::ffff:0\.0\.0\.0$/i,
-];
-// Localhost IP patterns
-const LOCALHOST_IP_PATTERNS = [
-    /^127\.\d+\.\d+\.\d+$/,
-    /^::1$/,
-    /^::ffff:127\./i,
-];
-// Environment variable to allow localhost access (for local development/testing)
-const ALLOW_LOCALHOST_ENV_VAR = "MCP_CURL_ALLOW_LOCALHOST";
-// Allowed ports when localhost is enabled: 80, 443, and unprivileged ports (>1024)
-// This prevents access to privileged services like SSH (22), SMTP (25), databases, etc.
-const ALLOWED_LOCALHOST_PORTS = new Set([80, 443]);
-const MIN_UNPRIVILEGED_PORT = 1024;
 function isLocalhostAllowed() {
-    const value = process.env[ALLOW_LOCALHOST_ENV_VAR]?.toLowerCase();
+    const value = process.env[ENV.ALLOW_LOCALHOST]?.toLowerCase();
     return value === "true" || value === "1" || value === "yes";
-}
-function isAllowedLocalhostPort(port) {
-    return ALLOWED_LOCALHOST_PORTS.has(port) || port > MIN_UNPRIVILEGED_PORT;
-}
-function isLocalhostIp(ip) {
-    return LOCALHOST_IP_PATTERNS.some(pattern => pattern.test(ip));
-}
-function isBlockedIp(ip) {
-    return BLOCKED_IP_PATTERNS.some(pattern => pattern.test(ip));
 }
 /**
  * Resolve DNS for a hostname and return the IP address.
@@ -591,6 +480,7 @@ async function resolveDns(hostname) {
 }
 /**
  * Validate URL is not internal and resolve DNS to prevent rebinding attacks.
+ * (UrlValidationResult type imported from lib/types)
  *
  * DNS Rebinding Prevention: We resolve DNS ourselves and validate the IP BEFORE
  * passing to cURL. We then use --resolve to pin cURL to our validated IP.
@@ -619,23 +509,21 @@ async function validateUrlAndResolveDns(url) {
         throw new Error(`Protocol "${parsed.protocol}" is not allowed - only http:// and https:// are supported`);
     }
     // Check hostname against blocked patterns (TLDs, UNC paths, etc.)
-    for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
-        if (pattern.test(hostname)) {
-            throw new Error(`Requests to internal/private networks are not allowed: ${hostname}`);
-        }
+    if (isBlockedHostname(hostname)) {
+        throw new Error(`Requests to internal/private networks are not allowed: ${hostname}`);
     }
     // Check if hostname is "localhost" (special handling)
-    const isLocalhostHostname = LOCALHOST_HOSTNAME_PATTERNS.some(pattern => pattern.test(hostname));
+    const hostnameIsLocalhost = isLocalhostHostname(hostname);
     // Resolve DNS to get actual IP (prevents DNS rebinding)
     // For IP addresses, this just returns the IP itself
     const resolvedIp = await resolveDns(hostname);
     // Check if resolved IP is localhost
-    const isLocalhostResolved = isLocalhostIp(resolvedIp);
-    if (isLocalhostHostname || isLocalhostResolved) {
+    const ipIsLocalhost = isLocalhostIp(resolvedIp);
+    if (hostnameIsLocalhost || ipIsLocalhost) {
         if (!isLocalhostAllowed()) {
             throw new Error(`Requests to localhost are blocked by default. ` +
-                `Set ${ALLOW_LOCALHOST_ENV_VAR}=true to enable local development/testing.` +
-                (isLocalhostResolved && !isLocalhostHostname
+                `Set ${ENV.ALLOW_LOCALHOST}=true to enable local development/testing.` +
+                (ipIsLocalhost && !hostnameIsLocalhost
                     ? ` (Note: "${hostname}" resolved to localhost IP ${resolvedIp})`
                     : ""));
         }
@@ -778,7 +666,7 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo)
     }
     return stdout;
 }
-// Parse bracket notation: [], ["key"], [n], [n:m]
+// Parse bracket notation: [], ["key"], [n], [n:m] (JqToken type imported from lib/types)
 function parseBracketToken(filter, startIndex) {
     let i = startIndex + 1; // skip opening [
     if (i >= filter.length) {
@@ -877,22 +765,17 @@ function parseBracketToken(filter, startIndex) {
     }
     return { token: { type: "index", value: index }, newIndex: i };
 }
-// Limits to prevent DoS via complex jq filters
-const MAX_JQ_FILTER_LENGTH = 500;
-const MAX_JQ_TOKENS = 50;
-const MAX_JQ_FILTERS = 20; // Maximum number of comma-separated filters
-const MAX_JQ_PARSE_TIME_MS = 100; // Maximum time for parsing operations
-// Parse a jq-like filter expression into tokens
+// Parse a jq-like filter expression into tokens (JQ limits imported from lib/config)
 function parseJqFilter(filter) {
-    if (filter.length > MAX_JQ_FILTER_LENGTH) {
-        throw new Error(`jq_filter exceeds maximum length of ${MAX_JQ_FILTER_LENGTH} characters`);
+    if (filter.length > JQ.MAX_FILTER_LENGTH) {
+        throw new Error(`jq_filter exceeds maximum length of ${JQ.MAX_FILTER_LENGTH} characters`);
     }
     const startTime = Date.now();
     const tokens = [];
     let i = filter[0] === "." ? 1 : 0; // skip leading dot
     while (i < filter.length) {
         // Timeout check to prevent DoS via complex filters
-        if (Date.now() - startTime > MAX_JQ_PARSE_TIME_MS) {
+        if (Date.now() - startTime > JQ.MAX_PARSE_TIME_MS) {
             throw new Error("jq_filter parsing timeout - filter too complex");
         }
         if (filter[i] === ".") {
@@ -902,8 +785,8 @@ function parseJqFilter(filter) {
         if (filter[i] === "[") {
             const result = parseBracketToken(filter, i);
             tokens.push(result.token);
-            if (tokens.length > MAX_JQ_TOKENS) {
-                throw new Error(`jq_filter exceeds maximum of ${MAX_JQ_TOKENS} path segments`);
+            if (tokens.length > JQ.MAX_TOKENS) {
+                throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_TOKENS} path segments`);
             }
             i = result.newIndex;
             continue;
@@ -931,8 +814,8 @@ function parseJqFilter(filter) {
             else {
                 tokens.push({ type: "key", value: key });
             }
-            if (tokens.length > MAX_JQ_TOKENS) {
-                throw new Error(`jq_filter exceeds maximum of ${MAX_JQ_TOKENS} path segments`);
+            if (tokens.length > JQ.MAX_TOKENS) {
+                throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_TOKENS} path segments`);
             }
         }
     }
@@ -945,8 +828,8 @@ function isRecord(value) {
 // Split jq filter on commas, respecting brackets and quotes
 // e.g., ".name,.address[0],.[\"key,with,commas\"]" -> [".name", ".address[0]", ".[\"key,with,commas\"]"]
 function splitJqFilters(filter) {
-    if (filter.length > MAX_JQ_FILTER_LENGTH) {
-        throw new Error(`jq_filter exceeds maximum length of ${MAX_JQ_FILTER_LENGTH} characters`);
+    if (filter.length > JQ.MAX_FILTER_LENGTH) {
+        throw new Error(`jq_filter exceeds maximum length of ${JQ.MAX_FILTER_LENGTH} characters`);
     }
     const startTime = Date.now();
     const filters = [];
@@ -956,7 +839,7 @@ function splitJqFilters(filter) {
     let escaped = false;
     for (let i = 0; i < filter.length; i++) {
         // Timeout check to prevent DoS
-        if (Date.now() - startTime > MAX_JQ_PARSE_TIME_MS) {
+        if (Date.now() - startTime > JQ.MAX_PARSE_TIME_MS) {
             throw new Error("jq_filter parsing timeout - filter too complex");
         }
         const ch = filter[i];
@@ -1090,8 +973,8 @@ function applyJqFilter(jsonString, filter) {
     catch (error) {
         // SyntaxError indicates invalid JSON
         if (error instanceof SyntaxError) {
-            const preview = jsonString.slice(0, ERROR_PREVIEW_LENGTH);
-            throw new Error(`Response is not valid JSON. Cannot apply jq_filter.\nPreview: ${preview}${jsonString.length > ERROR_PREVIEW_LENGTH ? "..." : ""}`);
+            const preview = jsonString.slice(0, LIMITS.ERROR_PREVIEW_LENGTH);
+            throw new Error(`Response is not valid JSON. Cannot apply jq_filter.\nPreview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`);
         }
         throw error; // Re-throw unexpected errors
     }
@@ -1100,8 +983,8 @@ function applyJqFilter(jsonString, filter) {
     if (filters.length === 0) {
         throw new Error(`Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`);
     }
-    if (filters.length > MAX_JQ_FILTERS) {
-        throw new Error(`jq_filter exceeds maximum of ${MAX_JQ_FILTERS} comma-separated paths`);
+    if (filters.length > JQ.MAX_FILTERS) {
+        throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_FILTERS} comma-separated paths`);
     }
     // Single filter: return value directly (backward compatible)
     if (filters.length === 1) {
@@ -1112,12 +995,6 @@ function applyJqFilter(jsonString, filter) {
     const results = filters.map((f) => applySingleJqFilter(data, f));
     return JSON.stringify(results, null, 2);
 }
-// Windows reserved filenames that cannot be used as base names
-const WINDOWS_RESERVED_BASENAMES = new Set([
-    "CON", "PRN", "AUX", "NUL",
-    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-]);
 // Create a safe filename base from arbitrary input
 function createSafeFilenameBase(input, fallback = "response") {
     // Replace non-alphanumeric characters with underscores
@@ -1129,11 +1006,11 @@ function createSafeFilenameBase(input, fallback = "response") {
         base = fallback;
     }
     // Enforce maximum length
-    base = base.slice(0, FILENAME_MAX_LENGTH);
-    const upper = base.toUpperCase();
+    base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
     // Avoid reserved or problematic base names across platforms
-    if (WINDOWS_RESERVED_BASENAMES.has(upper) || upper === "." || upper === "..") {
-        base = `${fallback}_${base}`.slice(0, FILENAME_MAX_LENGTH);
+    // (isWindowsReservedBasename handles case-insensitivity internally)
+    if (isWindowsReservedBasename(base) || base === "." || base === "..") {
+        base = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
     }
     return base;
 }
@@ -1162,6 +1039,7 @@ async function saveResponseToFile(content, url, outputDir) {
     await writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 }); // Owner-only access
     return filepath;
 }
+// Process response with filtering and size handling (types imported from lib/types)
 async function processResponse(response, options) {
     let content = response;
     // Step 1: Apply jq filter if provided AND response is JSON
@@ -1173,7 +1051,7 @@ async function processResponse(response, options) {
             const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
             if (!looksLikeJson) {
                 throw new Error(`Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"}).\n` +
-                    `Preview: ${content.slice(0, ERROR_PREVIEW_LENGTH)}${content.length > ERROR_PREVIEW_LENGTH ? "..." : ""}`);
+                    `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`);
             }
             // Actually try to parse it to verify it's valid JSON
             try {
@@ -1183,7 +1061,7 @@ async function processResponse(response, options) {
                 // SyntaxError indicates invalid JSON
                 if (error instanceof SyntaxError) {
                     throw new Error(`Cannot apply jq_filter: Response does not appear to be valid JSON.\n` +
-                        `Preview: ${content.slice(0, ERROR_PREVIEW_LENGTH)}${content.length > ERROR_PREVIEW_LENGTH ? "..." : ""}`);
+                        `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`);
                 }
                 throw error; // Re-throw unexpected errors
             }
@@ -1191,7 +1069,7 @@ async function processResponse(response, options) {
         content = applyJqFilter(content, options.jqFilter);
     }
     // Step 2: Determine max size
-    const maxSize = options.maxResultSize ?? DEFAULT_MAX_RESULT_SIZE;
+    const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const contentBytes = Buffer.byteLength(content, "utf8");
     // Step 3: Check if we need to save to file
     const shouldSave = options.saveToFile || contentBytes > maxSize;
@@ -1383,7 +1261,7 @@ Temp File Lifecycle:
   - Stored in a secure temp directory (owner-only access: 0o700/0o600)
   - Deleted on graceful server shutdown (SIGINT/SIGTERM)
   - Orphaned files from crashed sessions are cleaned on next server start
-  - Check ${TEMP_DIR_PREFIX}* in system temp dir if files persist after crash`,
+  - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash`,
         inputSchema: CurlExecuteSchema,
         annotations: {
             readOnlyHint: false,
@@ -1432,7 +1310,11 @@ Temp File Lifecycle:
                 contentType,
                 outputDir: validatedOutputDir,
             });
-            const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, { savedToFile: processed.savedToFile, filepath: processed.filepath, message: processed.message });
+            const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, {
+                savedToFile: processed.savedToFile,
+                filepath: processed.savedToFile ? processed.filepath : undefined,
+                message: processed.message,
+            });
             return {
                 content: [
                     {
@@ -1514,7 +1396,7 @@ Examples:
             // Apply jq filter
             const filtered = applyJqFilter(content, params.jq_filter);
             // Handle result size and file saving
-            const maxSize = params.max_result_size ?? DEFAULT_MAX_RESULT_SIZE;
+            const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
             const contentBytes = Buffer.byteLength(filtered, "utf8");
             const shouldSave = params.save_to_file || contentBytes > maxSize;
             if (shouldSave) {
@@ -1820,10 +1702,9 @@ async function runStdio() {
     await server.connect(transport);
     console.error("cURL MCP server running on stdio");
 }
-// Environment variable for HTTP authentication token (opt-in security)
-const HTTP_AUTH_TOKEN_ENV_VAR = "MCP_AUTH_TOKEN";
 /**
  * Authentication middleware for HTTP transport.
+ * (ENV.AUTH_TOKEN imported from lib/config)
  *
  * When MCP_AUTH_TOKEN is set, all HTTP requests must include a matching
  * Bearer token in the Authorization header. This prevents unauthorized
@@ -1832,7 +1713,7 @@ const HTTP_AUTH_TOKEN_ENV_VAR = "MCP_AUTH_TOKEN";
  * Usage: Set MCP_AUTH_TOKEN=your-secret-token in the environment.
  */
 function createAuthMiddleware() {
-    const authToken = process.env[HTTP_AUTH_TOKEN_ENV_VAR];
+    const authToken = process.env[ENV.AUTH_TOKEN];
     return (req, res, next) => {
         // If no token configured, allow all requests (backward compatible)
         if (!authToken) {
@@ -1883,7 +1764,7 @@ async function runHTTP() {
                 return;
             }
             // Check session limit before creating new session
-            if (sessions.size >= MAX_SESSIONS) {
+            if (sessions.size >= SESSION.MAX_SESSIONS) {
                 res.status(503).json({
                     jsonrpc: "2.0",
                     error: { code: -32603, message: "Server at capacity. Try again later." },
