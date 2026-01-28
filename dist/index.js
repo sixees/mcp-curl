@@ -14,7 +14,7 @@ import { generateMetadataSeparator, } from "./lib/types/index.js";
 // Phase 2: Files module
 import { getOrCreateTempDir, cleanupOrphanedTempDirs, cleanupTempDir, resolveOutputDir, validateOutputDir, } from "./lib/files/index.js";
 // Phase 2: Security module
-import { validateUrlAndResolveDns, checkRateLimits, startRateLimitCleanup, isValidSessionId, validateNoCRLF, validateFilePath, } from "./lib/security/index.js";
+import { validateUrlAndResolveDns, checkRateLimits, startRateLimitCleanup, stopRateLimitCleanup, isValidSessionId, validateNoCRLF, validateFilePath, } from "./lib/security/index.js";
 // Phase 2: JQ module
 import { applyJqFilter } from "./lib/jq/index.js";
 // Session tracking for HTTP transport (Session type imported from lib/types)
@@ -981,6 +981,9 @@ async function shutdown(signal) {
         }
         sessions.delete(sessionId);
     }
+    // Stop cleanup intervals
+    clearInterval(sessionCleanupInterval);
+    stopRateLimitCleanup(rateLimitCleanupInterval);
     // Clean up temp directory (extracted to files module)
     try {
         await cleanupTempDir();

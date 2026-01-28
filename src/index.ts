@@ -41,6 +41,7 @@ import {
     validateUrlAndResolveDns,
     checkRateLimits,
     startRateLimitCleanup,
+    stopRateLimitCleanup,
     isValidSessionId,
     validateNoCRLF,
     validateFilePath,
@@ -1162,6 +1163,10 @@ async function shutdown(signal: string): Promise<void> {
         }
         sessions.delete(sessionId);
     }
+
+    // Stop cleanup intervals
+    clearInterval(sessionCleanupInterval);
+    stopRateLimitCleanup(rateLimitCleanupInterval);
 
     // Clean up temp directory (extracted to files module)
     try {
