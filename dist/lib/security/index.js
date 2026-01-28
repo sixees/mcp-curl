@@ -6,4 +6,7 @@ export { checkRateLimits, startRateLimitCleanup, stopRateLimitCleanup,
 // Tests should import directly from "./rate-limiter.js" if needed.
  } from "./rate-limiter.js";
 export { isValidSessionId, validateNoCRLF, } from "./input-validation.js";
-export { validateFilePath, } from "./file-validation.js";
+export { validateFilePath,
+// Note: clearAllowedDirsCache intentionally not exported here (test-only).
+// Tests should import directly from "./file-validation.js" if needed.
+ } from "./file-validation.js";

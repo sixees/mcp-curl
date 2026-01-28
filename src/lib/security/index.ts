@@ -22,4 +22,6 @@ export {
 
 export {
     validateFilePath,
+    // Note: clearAllowedDirsCache intentionally not exported here (test-only).
+    // Tests should import directly from "./file-validation.js" if needed.
 } from "./file-validation.js";
