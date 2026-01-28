@@ -4,7 +4,7 @@ import { resolve, relative, isAbsolute } from "path";
 import { stat, access, realpath, constants as fsConstants } from "fs/promises";
 import { JQ, BYTES_PER_MB, ENV } from "../config/index.js";
 import { getSharedTempDir } from "../files/temp-manager.js";
-import { getErrorMessage } from "../utils/index.js";
+import { getErrorMessage, createValidationError, createConfigError, createFileError, } from "../utils/index.js";
 let allowedDirsCache = null;
 /**
  * Get the list of allowed directories for file validation.
@@ -38,15 +38,15 @@ async function getAllowedDirectories() {
             const realEnvDir = await realpath(resolve(envOutputDir));
             const envDirStats = await stat(realEnvDir);
             if (!envDirStats.isDirectory()) {
-                throw new Error(`Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": path exists but is not a directory`);
+                throw createConfigError(ENV.OUTPUT_DIR, envOutputDir, "path exists but is not a directory");
             }
             envOutputDirResolved = realEnvDir;
         }
         catch (error) {
             if (error.code === "ENOENT") {
-                throw new Error(`Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory does not exist`);
+                throw createConfigError(ENV.OUTPUT_DIR, envOutputDir, "directory does not exist");
             }
-            throw new Error(`Failed to validate ${ENV.OUTPUT_DIR} "${envOutputDir}": ${getErrorMessage(error)}`);
+            throw createConfigError(ENV.OUTPUT_DIR, envOutputDir, getErrorMessage(error));
         }
     }
     // Resolve cwd (required)
@@ -104,8 +104,7 @@ export function clearAllowedDirsCache() {
 export async function validateFilePath(filepath) {
     // Block path traversal in input string (defense-in-depth, matches validateOutputDir)
     if (filepath.includes("..")) {
-        throw new Error(`Invalid filepath: path traversal detected. ` +
-            `Please provide a direct path without ".." components.`);
+        throw createValidationError("filepath", "path traversal detected", "Please provide a direct path without '..' components");
     }
     // First, resolve to absolute path (does NOT follow symlinks)
     const absolutePath = resolve(filepath);
@@ -126,7 +125,7 @@ export async function validateFilePath(filepath) {
     }
     catch (error) {
         if (error.code === "ENOENT") {
-            throw new Error(`File "${filepath}" does not exist`);
+            throw createFileError(filepath, "does not exist");
         }
         throw error;
     }
@@ -135,7 +134,7 @@ export async function validateFilePath(filepath) {
         await access(realFilePath, fsConstants.R_OK);
     }
     catch (error) {
-        throw new Error(`File "${filepath}" is not readable`);
+        throw createFileError(filepath, "is not readable");
     }
     // Get allowed directories (cached with TTL to avoid repeated I/O)
     const allowedDirs = await getAllowedDirectories();
