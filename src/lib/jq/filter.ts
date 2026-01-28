@@ -10,7 +10,7 @@ import { parseJqFilter, splitJqFilters } from "./parser.js";
  * Internal helper - not exported from module.
  */
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
