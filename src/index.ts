@@ -13,6 +13,7 @@ import {readFile, writeFile} from "fs/promises";
 // Phase 1: Configuration and types
 import {
     LIMITS,
+    BYTES_PER_MB,
     SERVER,
     SESSION,
     TEMP_DIR,
@@ -192,7 +193,7 @@ async function executeCommand(
                 releaseMemory();
                 childProcess.kill();
                 reject(new Error(
-                    `Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / 1_000_000}MB. ` +
+                    `Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. ` +
                     `Consider using a more specific API endpoint or adding query parameters to reduce response size.`
                 ));
             }

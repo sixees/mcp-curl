@@ -2,8 +2,7 @@
 // File path validation for jq_query tool
 import { resolve, relative, isAbsolute } from "path";
 import { stat, access, realpath, constants as fsConstants } from "fs/promises";
-import { JQ } from "../config/jq.js";
-import { ENV } from "../config/environment.js";
+import { JQ, BYTES_PER_MB, ENV } from "../config/index.js";
 import { getSharedTempDir } from "../files/temp-manager.js";
 import { getErrorMessage } from "../utils/index.js";
 /**
@@ -42,7 +41,7 @@ export async function validateFilePath(filepath) {
         // Check file size
         if (stats.size > JQ.MAX_QUERY_FILE_SIZE) {
             throw new Error(`File "${filepath}" is too large (${stats.size} bytes). ` +
-                `Maximum file size for jq_query is ${JQ.MAX_QUERY_FILE_SIZE / 1_000_000}MB.`);
+                `Maximum file size for jq_query is ${JQ.MAX_QUERY_FILE_SIZE / BYTES_PER_MB}MB.`);
         }
     }
     catch (error) {

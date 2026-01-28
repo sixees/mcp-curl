@@ -1,3 +1,5 @@
+/** Bytes per megabyte (for human-readable size formatting) */
+export declare const BYTES_PER_MB = 1000000;
 export declare const LIMITS: {
     /** Maximum response size for processing (10MB) */
     readonly MAX_RESPONSE_SIZE: 10000000;

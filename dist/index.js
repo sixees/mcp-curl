@@ -9,7 +9,7 @@ import { randomUUID } from "crypto";
 import { join, resolve, basename } from "path";
 import { readFile, writeFile } from "fs/promises";
 // Phase 1: Configuration and types
-import { LIMITS, SERVER, SESSION, TEMP_DIR, ENV, isWindowsReservedBasename, } from "./lib/config/index.js";
+import { LIMITS, BYTES_PER_MB, SERVER, SESSION, TEMP_DIR, ENV, isWindowsReservedBasename, } from "./lib/config/index.js";
 import { generateMetadataSeparator, } from "./lib/types/index.js";
 // Phase 2: Files module
 import { getOrCreateTempDir, cleanupOrphanedTempDirs, cleanupTempDir, resolveOutputDir, validateOutputDir, } from "./lib/files/index.js";
@@ -134,7 +134,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
                 clearTimeout(timeoutId);
                 releaseMemory();
                 childProcess.kill();
-                reject(new Error(`Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / 1_000_000}MB. ` +
+                reject(new Error(`Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. ` +
                     `Consider using a more specific API endpoint or adding query parameters to reduce response size.`));
             }
         });
