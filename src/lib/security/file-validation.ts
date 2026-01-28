@@ -167,10 +167,15 @@ export async function validateFilePath(filepath: string): Promise<void> {
             );
         }
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        const errno = (error as NodeJS.ErrnoException).code;
+        if (errno === "ENOENT") {
             throw createFileError(filepath, "does not exist");
         }
-        // Preserve context for unexpected errors
+        // Re-throw our own validation errors (no errno) directly to avoid double-wrapping
+        if (error instanceof Error && !errno) {
+            throw error;
+        }
+        // Wrap unexpected system errors with context
         throw new Error(`Error validating file "${filepath}": ${getErrorMessage(error)}`);
     }
 
