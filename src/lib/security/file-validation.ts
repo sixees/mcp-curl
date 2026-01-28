@@ -75,7 +75,7 @@ export async function validateFilePath(filepath: string): Promise<void> {
         allowedDirs.push(tempDir);
     }
 
-    // 2. Configured output directory from env var
+    // 2. Configured output directory from env var (for reading files saved there)
     const envOutputDir = process.env[ENV.OUTPUT_DIR];
     if (envOutputDir) {
         try {
@@ -87,18 +87,14 @@ export async function validateFilePath(filepath: string): Promise<void> {
                     `Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": path exists but is not a directory`
                 );
             }
-            await access(realEnvDir, fsConstants.W_OK);
+            // Note: No write check here - this is for read operations (jq_query).
+            // The file's readability is checked separately.
             allowedDirs.push(realEnvDir);
         } catch (error) {
             const err = error as NodeJS.ErrnoException;
             if (err.code === "ENOENT") {
                 throw new Error(
                     `Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory does not exist`
-                );
-            }
-            if (err.code === "EACCES") {
-                throw new Error(
-                    `Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory is not writable`
                 );
             }
             throw error;
