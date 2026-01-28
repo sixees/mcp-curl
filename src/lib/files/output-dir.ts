@@ -4,6 +4,7 @@
 import { resolve } from "path";
 import { stat, access, realpath, constants as fsConstants } from "fs/promises";
 import { ENV } from "../config/environment.js";
+import { getErrorMessage } from "../utils/index.js";
 
 /**
  * Resolve the output directory with priority:
@@ -75,7 +76,7 @@ export async function validateOutputDir(dir: string): Promise<string> {
                 `Please create it first or use a different path.`
             );
         }
-        throw new Error(`Error validating output_dir "${dir}": ${(error as Error).message || String(error)}`);
+        throw new Error(`Error validating output_dir "${dir}": ${getErrorMessage(error)}`);
     }
 
     // Resolve symlinks to get the real filesystem path
