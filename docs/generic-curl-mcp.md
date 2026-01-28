@@ -27,7 +27,7 @@ specialized API MCP servers for any API (PageSpeed, Stripe, GitHub, etc.).
 | Phase | Status        | Description                                      |
 |-------|---------------|--------------------------------------------------|
 | 1     | ✅ Complete    | Foundation - Types, Constants, Configuration     |
-| 2     | ⬜ Not Started | Core Utilities - Security, JQ, Files             |
+| 2     | ✅ Complete    | Core Utilities - Security, JQ, Files             |
 | 3     | ⬜ Not Started | Execution Layer - cURL, Response Processing      |
 | 4     | ⬜ Not Started | Server Components - Tools, Resources, Transports |
 | 5     | ⬜ Not Started | Extension System - McpCurlServer Class, Hooks    |
@@ -44,23 +44,27 @@ internal dependencies.
 ### Design Principle: Separation of Concerns
 
 Constants are split by domain rather than in a single file. This follows SRP and makes it easier to:
+
 - Find related configuration in one place
 - Understand what each module controls
 - Test domain-specific behavior in isolation
 
 **Key distinction from Phase 2:**
+
 - `config/security/` contains **pure predicate functions** and patterns (no I/O, no state)
 - `lib/security/` (Phase 2) contains **stateful functions** (DNS resolution, rate limit maps, file system access)
 
 ### Design Patterns
 
 **Immutability for Security-Critical Data:**
+
 - Private arrays with `Object.freeze()`: `const PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([...])`
 - Private Sets with `Object.freeze()`: `const ALLOWED_PORTS: ReadonlySet<number> = Object.freeze(new Set([...]))`
 - Exported pure predicate functions instead of raw patterns: `isBlockedHostname()`, `isAllowedLocalhostPort()`
 - This prevents runtime mutation that could weaken security
 
 **Type Design:**
+
 - `as const` objects for grouped configuration (provides literal type inference)
 - Discriminated unions for result types with mutually exclusive fields (e.g., `ProcessedResponse`)
 - `export type *` for modules containing only types (reduces runtime code)
@@ -93,15 +97,15 @@ src/
 
 ### Module Responsibilities
 
-| Module                    | Contents                                                                   |
-|---------------------------|----------------------------------------------------------------------------|
-| `config/limits.ts`        | MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, FILENAME_MAX_LENGTH, etc.              |
-| `config/server.ts`        | SERVER_NAME, SERVER_VERSION                                                |
-| `config/session.ts`       | MAX_SESSIONS, SESSION_IDLE_TIMEOUT_MS, RATE_LIMIT_*, TEMP_DIR_PREFIX       |
-| `config/jq.ts`            | MAX_JQ_FILTER_LENGTH, MAX_JQ_TOKENS, MAX_JQ_FILTERS, MAX_JQ_PARSE_TIME_MS  |
-| `config/environment.ts`   | OUTPUT_DIR_ENV_VAR, ALLOW_LOCALHOST_ENV_VAR, HTTP_AUTH_TOKEN_ENV_VAR       |
-| `config/security/ssrf.ts` | SSRF patterns (private) + isBlockedHostname(), isLocalhostIp(), etc.       |
-| `config/security/validation.ts` | UUID_REGEX, isWindowsReservedBasename()                              |
+| Module                          | Contents                                                                  |
+|---------------------------------|---------------------------------------------------------------------------|
+| `config/limits.ts`              | MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, FILENAME_MAX_LENGTH, etc.             |
+| `config/server.ts`              | SERVER_NAME, SERVER_VERSION                                               |
+| `config/session.ts`             | MAX_SESSIONS, SESSION_IDLE_TIMEOUT_MS, RATE_LIMIT_*, TEMP_DIR_PREFIX      |
+| `config/jq.ts`                  | MAX_JQ_FILTER_LENGTH, MAX_JQ_TOKENS, MAX_JQ_FILTERS, MAX_JQ_PARSE_TIME_MS |
+| `config/environment.ts`         | OUTPUT_DIR_ENV_VAR, ALLOW_LOCALHOST_ENV_VAR, HTTP_AUTH_TOKEN_ENV_VAR      |
+| `config/security/ssrf.ts`       | SSRF patterns (private) + isBlockedHostname(), isLocalhostIp(), etc.      |
+| `config/security/validation.ts` | UUID_REGEX, isWindowsReservedBasename()                                   |
 
 ### Verification
 
@@ -123,6 +127,7 @@ src/
 ### Design Principle: Stateful vs Pure
 
 This phase extracts functions that have **side effects or state**:
+
 - DNS resolution (network I/O)
 - Rate limiting (stateful maps)
 - File system access (I/O)
@@ -154,29 +159,30 @@ src/
 
 ### Module Responsibilities
 
-| Module                       | Type     | Contents                                           |
-|------------------------------|----------|---------------------------------------------------|
-| `security/ssrf.ts`           | Stateful | resolveDns (DNS I/O), validateUrlAndResolveDns    |
-| `security/rate-limiter.ts`   | Stateful | checkRateLimits, hostRateLimitMap, clientRateLimitMap |
-| `security/input-validation.ts` | Pure   | isValidSessionId, validateNoCRLF                  |
-| `security/file-validation.ts`| Stateful | validateFilePath (fs access, realpath)            |
-| `jq/tokenizer.ts`            | Pure     | parseBracketToken                                 |
-| `jq/parser.ts`               | Pure     | parseJqFilter, splitJqFilters                     |
-| `jq/filter.ts`               | Pure     | isRecord, applySingleJqFilter, applyJqFilter      |
-| `files/temp-manager.ts`      | Stateful | getOrCreateTempDir, cleanupOrphanedTempDirs       |
-| `files/output-dir.ts`        | Stateful | resolveOutputDir, validateOutputDir               |
+| Module                         | Type     | Contents                                              |
+|--------------------------------|----------|-------------------------------------------------------|
+| `security/ssrf.ts`             | Stateful | resolveDns (DNS I/O), validateUrlAndResolveDns        |
+| `security/rate-limiter.ts`     | Stateful | checkRateLimits, hostRateLimitMap, clientRateLimitMap |
+| `security/input-validation.ts` | Pure     | isValidSessionId, validateNoCRLF                      |
+| `security/file-validation.ts`  | Stateful | validateFilePath (fs access, realpath)                |
+| `jq/tokenizer.ts`              | Pure     | parseBracketToken                                     |
+| `jq/parser.ts`                 | Pure     | parseJqFilter, splitJqFilters                         |
+| `jq/filter.ts`                 | Pure     | isRecord, applySingleJqFilter, applyJqFilter          |
+| `files/temp-manager.ts`        | Stateful | getOrCreateTempDir, cleanupOrphanedTempDirs           |
+| `files/output-dir.ts`          | Stateful | resolveOutputDir, validateOutputDir                   |
 
 **Note:** `lib/security/ssrf.ts` imports predicates from `config/security/ssrf.ts`:
+
 - `isBlockedHostname()`, `isLocalhostHostname()` - hostname pattern matching
 - `isBlockedIp()`, `isLocalhostIp()` - IP pattern matching
 - `isAllowedLocalhostPort()` - port validation
 
 ### Verification
 
-- [ ] All security functions work independently
-- [ ] JQ filtering works with same test cases
-- [ ] File operations maintain security constraints
-- [ ] `npm run build && npm start` works
+- [x] All security functions work independently
+- [x] JQ filtering works with same test cases
+- [x] File operations maintain security constraints
+- [x] `npm run build && npm start` works
 
 ---
 
