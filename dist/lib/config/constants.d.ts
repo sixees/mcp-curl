@@ -10,6 +10,7 @@ export declare const TEMP_DIR_PREFIX = "mcp-curl-";
 export declare const ORPHAN_DIR_MIN_AGE_MS = 3600000;
 export declare const FILENAME_MAX_LENGTH = 50;
 export declare const WINDOWS_RESERVED_BASENAMES: ReadonlyArray<string>;
+/** Check if a name is a Windows reserved basename (case-insensitive) */
 export declare function isWindowsReservedBasename(name: string): boolean;
 export declare const MAX_SESSIONS = 100;
 export declare const SESSION_IDLE_TIMEOUT_MS = 3600000;

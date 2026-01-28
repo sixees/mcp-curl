@@ -33,9 +33,9 @@ const WINDOWS_RESERVED_BASENAMES_SET = new Set([
 ]);
 // Immutable array export for documentation/iteration purposes
 export const WINDOWS_RESERVED_BASENAMES = Object.freeze(Array.from(WINDOWS_RESERVED_BASENAMES_SET));
-// Helper function for checking reserved names
+/** Check if a name is a Windows reserved basename (case-insensitive) */
 export function isWindowsReservedBasename(name) {
-    return WINDOWS_RESERVED_BASENAMES_SET.has(name);
+    return WINDOWS_RESERVED_BASENAMES_SET.has(name.toUpperCase());
 }
 // ============================================================================
 // Session Management (HTTP Transport)

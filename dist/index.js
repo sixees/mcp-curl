@@ -1008,9 +1008,9 @@ function createSafeFilenameBase(input, fallback = "response") {
     }
     // Enforce maximum length
     base = base.slice(0, FILENAME_MAX_LENGTH);
-    const upper = base.toUpperCase();
     // Avoid reserved or problematic base names across platforms
-    if (isWindowsReservedBasename(upper) || upper === "." || upper === "..") {
+    // (isWindowsReservedBasename handles case-insensitivity internally)
+    if (isWindowsReservedBasename(base) || base === "." || base === "..") {
         base = `${fallback}_${base}`.slice(0, FILENAME_MAX_LENGTH);
     }
     return base;

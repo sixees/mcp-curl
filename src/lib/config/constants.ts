@@ -43,9 +43,9 @@ export const WINDOWS_RESERVED_BASENAMES: ReadonlyArray<string> = Object.freeze(
     Array.from(WINDOWS_RESERVED_BASENAMES_SET),
 );
 
-// Helper function for checking reserved names
+/** Check if a name is a Windows reserved basename (case-insensitive) */
 export function isWindowsReservedBasename(name: string): boolean {
-    return WINDOWS_RESERVED_BASENAMES_SET.has(name);
+    return WINDOWS_RESERVED_BASENAMES_SET.has(name.toUpperCase());
 }
 
 // ============================================================================
