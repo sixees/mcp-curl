@@ -170,14 +170,16 @@ export async function validateFilePath(filepath: string): Promise<void> {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
             throw createFileError(filepath, "does not exist");
         }
-        throw error;
+        // Preserve context for unexpected errors
+        throw new Error(`Error validating file "${filepath}": ${getErrorMessage(error)}`);
     }
 
     // Check file is readable
     try {
         await access(realFilePath, fsConstants.R_OK);
     } catch (error) {
-        throw createFileError(filepath, "is not readable");
+        const errno = (error as NodeJS.ErrnoException).code;
+        throw createFileError(filepath, `is not readable (${errno || 'unknown error'})`);
     }
 
     // Get allowed directories (cached with TTL to avoid repeated I/O)

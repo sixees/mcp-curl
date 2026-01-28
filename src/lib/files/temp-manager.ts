@@ -83,8 +83,13 @@ export async function cleanupOrphanedTempDirs(): Promise<void> {
                     }
                     await rm(dirPath, { recursive: true, force: true });
                 } catch (error) {
-                    // Log but don't fail - dir may have been deleted by another instance
-                    console.error("Error cleaning up orphaned temp dir:", dirPath, error);
+                    const errno = (error as NodeJS.ErrnoException).code;
+                    // ENOENT: already deleted by another instance - expected
+                    // EBUSY: in use by another process - expected for active instances
+                    if (errno !== 'ENOENT' && errno !== 'EBUSY') {
+                        // Unexpected error - log at error level for visibility
+                        console.error(`Unexpected error cleaning orphaned temp dir ${dirPath}:`, error);
+                    }
                 }
             }
         }
@@ -104,7 +109,16 @@ export async function cleanupTempDir(): Promise<void> {
         try {
             await rm(sharedTempDir, { recursive: true, force: true });
         } catch (error) {
-            console.error("Warning: Failed to clean up temp directory:", error);
+            const errno = (error as NodeJS.ErrnoException).code;
+            // ENOENT: already deleted - not a concern
+            // EBUSY/EPERM/EACCES: may indicate tampering or security issue
+            if (errno === 'ENOENT') {
+                // Directory already gone - fine
+            } else if (errno === 'EBUSY' || errno === 'EPERM' || errno === 'EACCES') {
+                console.error(`Security warning: Failed to clean temp directory (${errno}):`, sharedTempDir, error);
+            } else {
+                console.error("Warning: Failed to clean up temp directory:", error);
+            }
         } finally {
             // Always reset state, even if rm fails
             sharedTempDir = null;

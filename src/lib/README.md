@@ -5,9 +5,18 @@ Extracted utility modules organized by domain.
 ## Dependency Graph
 
 ```
-config/ → types/ → files/ → security/ → jq/ → utils/
-                                              ↓
-                                          index.ts
+Foundational (no deps):
+  config/    - Constants and configuration
+  types/     - TypeScript type definitions
+  utils/     - Error message helpers
+
+Dependent modules:
+  files/     → config/
+  jq/        → config/, types/
+  security/  → config/, types/, files/, utils/
+
+Entry point:
+  index.ts   → all modules
 ```
 
 No circular dependencies.
@@ -16,7 +25,7 @@ No circular dependencies.
 
 | Module | Purpose |
 |--------|---------|
-| `config/` | Constants: limits, server info, session settings, SSRF patterns |
+| `config/` | Constants: limits, server info, session settings, environment variables, SSRF patterns, validation rules |
 | `types/` | TypeScript type definitions |
 | `files/` | Temp directory lifecycle, output directory validation |
 | `security/` | SSRF protection, rate limiting, file/input validation |

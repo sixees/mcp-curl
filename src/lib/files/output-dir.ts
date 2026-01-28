@@ -75,7 +75,7 @@ export async function validateOutputDir(dir: string): Promise<string> {
                 `Please create it first or use a different path.`
             );
         }
-        throw error;
+        throw new Error(`Error validating output_dir "${dir}": ${(error as Error).message || String(error)}`);
     }
 
     // Resolve symlinks to get the real filesystem path
@@ -86,9 +86,14 @@ export async function validateOutputDir(dir: string): Promise<string> {
     try {
         await access(realPath, fsConstants.W_OK);
     } catch (error) {
-        throw new Error(
-            `Invalid output_dir "${dir}": directory is not writable`
-        );
+        const errno = (error as NodeJS.ErrnoException).code;
+        let reason = "directory is not writable";
+        if (errno === 'EROFS') {
+            reason = "filesystem is mounted read-only";
+        } else if (errno === 'EACCES') {
+            reason = "permission denied";
+        }
+        throw new Error(`Invalid output_dir "${dir}": ${reason}`);
     }
 
     return realPath;
