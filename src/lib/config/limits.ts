@@ -1,6 +1,9 @@
 // src/lib/config/limits.ts
 // Response sizes, timeouts, and file handling limits
 
+/** Bytes per megabyte (for human-readable size formatting) */
+export const BYTES_PER_MB = 1_000_000;
+
 export const LIMITS = {
     /** Maximum response size for processing (10MB) */
     MAX_RESPONSE_SIZE: 10_000_000,

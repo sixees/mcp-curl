@@ -9,4 +9,6 @@ export declare const JQ: {
     readonly MAX_PARSE_TIME_MS: 100;
     /** Maximum file size for jq_query tool (same as response limit) */
     readonly MAX_QUERY_FILE_SIZE: 10000000;
+    /** TTL for allowed directories cache in file validation (1 minute) */
+    readonly ALLOWED_DIRS_CACHE_TTL_MS: 60000;
 };

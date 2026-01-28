@@ -23,4 +23,6 @@ export declare const TEMP_DIR: {
     readonly PREFIX: "mcp-curl-";
     /** Minimum age before orphaned temp dirs are cleaned (1 hour) */
     readonly ORPHAN_MIN_AGE_MS: 3600000;
+    /** Backoff period before retrying temp directory creation after failure (1 second) */
+    readonly RETRY_BACKOFF_MS: 1000;
 };
