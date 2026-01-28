@@ -11,7 +11,9 @@ import { join, resolve, relative, isAbsolute, basename } from "path";
 import { readFile, writeFile, mkdtemp, rm, chmod, readdir, stat, access, realpath, constants as fsConstants } from "fs/promises";
 import { lookup } from "dns/promises";
 // Extracted modules
-import { MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, SERVER_NAME, SERVER_VERSION, DEFAULT_MAX_RESULT_SIZE, TEMP_DIR_PREFIX, ORPHAN_DIR_MIN_AGE_MS, ERROR_PREVIEW_LENGTH, FILENAME_MAX_LENGTH, MAX_SESSIONS, SESSION_IDLE_TIMEOUT_MS, SESSION_CLEANUP_INTERVAL_MS, MAX_REQUESTS_PER_HOST_PER_MINUTE, MAX_REQUESTS_PER_CLIENT_PER_MINUTE, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_CLEANUP_INTERVAL_MS, STDIO_CLIENT_ID, MAX_JQ_FILTER_LENGTH, MAX_JQ_TOKENS, MAX_JQ_FILTERS, MAX_JQ_PARSE_TIME_MS, MAX_JQ_QUERY_FILE_SIZE, UUID_REGEX, OUTPUT_DIR_ENV_VAR, ALLOW_LOCALHOST_ENV_VAR, HTTP_AUTH_TOKEN_ENV_VAR, BLOCKED_HOSTNAME_PATTERNS, LOCALHOST_HOSTNAME_PATTERNS, BLOCKED_IP_PATTERNS, LOCALHOST_IP_PATTERNS, ALLOWED_LOCALHOST_PORTS, MIN_UNPRIVILEGED_PORT, MAX_METADATA_TAIL_LENGTH, WINDOWS_RESERVED_BASENAMES, MAX_TOTAL_RESPONSE_MEMORY, } from "./lib/config/index.js";
+import { MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, SERVER_NAME, SERVER_VERSION, DEFAULT_MAX_RESULT_SIZE, TEMP_DIR_PREFIX, ORPHAN_DIR_MIN_AGE_MS, ERROR_PREVIEW_LENGTH, FILENAME_MAX_LENGTH, MAX_SESSIONS, SESSION_IDLE_TIMEOUT_MS, SESSION_CLEANUP_INTERVAL_MS, MAX_REQUESTS_PER_HOST_PER_MINUTE, MAX_REQUESTS_PER_CLIENT_PER_MINUTE, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_CLEANUP_INTERVAL_MS, STDIO_CLIENT_ID, MAX_JQ_FILTER_LENGTH, MAX_JQ_TOKENS, MAX_JQ_FILTERS, MAX_JQ_PARSE_TIME_MS, MAX_JQ_QUERY_FILE_SIZE, UUID_REGEX, OUTPUT_DIR_ENV_VAR, ALLOW_LOCALHOST_ENV_VAR, HTTP_AUTH_TOKEN_ENV_VAR, MAX_METADATA_TAIL_LENGTH, isWindowsReservedBasename, MAX_TOTAL_RESPONSE_MEMORY, 
+// SSRF protection helpers
+isBlockedHostname, isLocalhostHostname, isBlockedIp, isLocalhostIp, isAllowedLocalhostPort, } from "./lib/config/index.js";
 import { generateMetadataSeparator, } from "./lib/types/index.js";
 // Constants and types are now imported from lib/config and lib/types
 // Session tracking for HTTP transport (Session type imported from lib/types)
@@ -450,20 +452,19 @@ function validateNoCRLF(value, fieldName) {
 }
 /**
  * SSRF protection: block requests to private/internal networks.
- * Constants and patterns are now imported from lib/config.
+ *
+ * See lib/config/constants.ts for detailed security rationale covering:
+ * - IPv4-mapped IPv6 bypass prevention (::ffff:x.x.x.x)
+ * - DNS rebinding attack mitigation
+ * - Protocol and TLD restrictions
+ * - Defense-in-depth strategy (hostname + resolved IP checks)
+ *
+ * Helper functions (isBlockedHostname, isLocalhostHostname, isBlockedIp,
+ * isLocalhostIp, isAllowedLocalhostPort) are imported from lib/config.
  */
 function isLocalhostAllowed() {
     const value = process.env[ALLOW_LOCALHOST_ENV_VAR]?.toLowerCase();
     return value === "true" || value === "1" || value === "yes";
-}
-function isAllowedLocalhostPort(port) {
-    return ALLOWED_LOCALHOST_PORTS.has(port) || port > MIN_UNPRIVILEGED_PORT;
-}
-function isLocalhostIp(ip) {
-    return LOCALHOST_IP_PATTERNS.some(pattern => pattern.test(ip));
-}
-function isBlockedIp(ip) {
-    return BLOCKED_IP_PATTERNS.some(pattern => pattern.test(ip));
 }
 /**
  * Resolve DNS for a hostname and return the IP address.
@@ -509,23 +510,21 @@ async function validateUrlAndResolveDns(url) {
         throw new Error(`Protocol "${parsed.protocol}" is not allowed - only http:// and https:// are supported`);
     }
     // Check hostname against blocked patterns (TLDs, UNC paths, etc.)
-    for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
-        if (pattern.test(hostname)) {
-            throw new Error(`Requests to internal/private networks are not allowed: ${hostname}`);
-        }
+    if (isBlockedHostname(hostname)) {
+        throw new Error(`Requests to internal/private networks are not allowed: ${hostname}`);
     }
     // Check if hostname is "localhost" (special handling)
-    const isLocalhostHostname = LOCALHOST_HOSTNAME_PATTERNS.some(pattern => pattern.test(hostname));
+    const hostnameIsLocalhost = isLocalhostHostname(hostname);
     // Resolve DNS to get actual IP (prevents DNS rebinding)
     // For IP addresses, this just returns the IP itself
     const resolvedIp = await resolveDns(hostname);
     // Check if resolved IP is localhost
-    const isLocalhostResolved = isLocalhostIp(resolvedIp);
-    if (isLocalhostHostname || isLocalhostResolved) {
+    const ipIsLocalhost = isLocalhostIp(resolvedIp);
+    if (hostnameIsLocalhost || ipIsLocalhost) {
         if (!isLocalhostAllowed()) {
             throw new Error(`Requests to localhost are blocked by default. ` +
                 `Set ${ALLOW_LOCALHOST_ENV_VAR}=true to enable local development/testing.` +
-                (isLocalhostResolved && !isLocalhostHostname
+                (ipIsLocalhost && !hostnameIsLocalhost
                     ? ` (Note: "${hostname}" resolved to localhost IP ${resolvedIp})`
                     : ""));
         }
@@ -997,7 +996,7 @@ function applyJqFilter(jsonString, filter) {
     const results = filters.map((f) => applySingleJqFilter(data, f));
     return JSON.stringify(results, null, 2);
 }
-// Create a safe filename base from arbitrary input (WINDOWS_RESERVED_BASENAMES imported from lib/config)
+// Create a safe filename base from arbitrary input
 function createSafeFilenameBase(input, fallback = "response") {
     // Replace non-alphanumeric characters with underscores
     let base = input.replace(/[^a-zA-Z0-9]/g, "_");
@@ -1011,7 +1010,7 @@ function createSafeFilenameBase(input, fallback = "response") {
     base = base.slice(0, FILENAME_MAX_LENGTH);
     const upper = base.toUpperCase();
     // Avoid reserved or problematic base names across platforms
-    if (WINDOWS_RESERVED_BASENAMES.has(upper) || upper === "." || upper === "..") {
+    if (isWindowsReservedBasename(upper) || upper === "." || upper === "..") {
         base = `${fallback}_${base}`.slice(0, FILENAME_MAX_LENGTH);
     }
     return base;

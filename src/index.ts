@@ -40,15 +40,15 @@ import {
     OUTPUT_DIR_ENV_VAR,
     ALLOW_LOCALHOST_ENV_VAR,
     HTTP_AUTH_TOKEN_ENV_VAR,
-    BLOCKED_HOSTNAME_PATTERNS,
-    LOCALHOST_HOSTNAME_PATTERNS,
-    BLOCKED_IP_PATTERNS,
-    LOCALHOST_IP_PATTERNS,
-    ALLOWED_LOCALHOST_PORTS,
-    MIN_UNPRIVILEGED_PORT,
     MAX_METADATA_TAIL_LENGTH,
-    WINDOWS_RESERVED_BASENAMES,
+    isWindowsReservedBasename,
     MAX_TOTAL_RESPONSE_MEMORY,
+    // SSRF protection helpers
+    isBlockedHostname,
+    isLocalhostHostname,
+    isBlockedIp,
+    isLocalhostIp,
+    isAllowedLocalhostPort,
 } from "./lib/config/index.js";
 
 import {
@@ -594,23 +594,19 @@ function validateNoCRLF(value: string, fieldName: string): void {
 
 /**
  * SSRF protection: block requests to private/internal networks.
- * Constants and patterns are now imported from lib/config.
+ *
+ * See lib/config/constants.ts for detailed security rationale covering:
+ * - IPv4-mapped IPv6 bypass prevention (::ffff:x.x.x.x)
+ * - DNS rebinding attack mitigation
+ * - Protocol and TLD restrictions
+ * - Defense-in-depth strategy (hostname + resolved IP checks)
+ *
+ * Helper functions (isBlockedHostname, isLocalhostHostname, isBlockedIp,
+ * isLocalhostIp, isAllowedLocalhostPort) are imported from lib/config.
  */
 function isLocalhostAllowed(): boolean {
     const value = process.env[ALLOW_LOCALHOST_ENV_VAR]?.toLowerCase();
     return value === "true" || value === "1" || value === "yes";
-}
-
-function isAllowedLocalhostPort(port: number): boolean {
-    return ALLOWED_LOCALHOST_PORTS.has(port) || port > MIN_UNPRIVILEGED_PORT;
-}
-
-function isLocalhostIp(ip: string): boolean {
-    return LOCALHOST_IP_PATTERNS.some(pattern => pattern.test(ip));
-}
-
-function isBlockedIp(ip: string): boolean {
-    return BLOCKED_IP_PATTERNS.some(pattern => pattern.test(ip));
 }
 
 /**
@@ -661,30 +657,28 @@ async function validateUrlAndResolveDns(url: string): Promise<UrlValidationResul
     }
 
     // Check hostname against blocked patterns (TLDs, UNC paths, etc.)
-    for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
-        if (pattern.test(hostname)) {
-            throw new Error(
-                `Requests to internal/private networks are not allowed: ${hostname}`
-            );
-        }
+    if (isBlockedHostname(hostname)) {
+        throw new Error(
+            `Requests to internal/private networks are not allowed: ${hostname}`
+        );
     }
 
     // Check if hostname is "localhost" (special handling)
-    const isLocalhostHostname = LOCALHOST_HOSTNAME_PATTERNS.some(pattern => pattern.test(hostname));
+    const hostnameIsLocalhost = isLocalhostHostname(hostname);
 
     // Resolve DNS to get actual IP (prevents DNS rebinding)
     // For IP addresses, this just returns the IP itself
     const resolvedIp = await resolveDns(hostname);
 
     // Check if resolved IP is localhost
-    const isLocalhostResolved = isLocalhostIp(resolvedIp);
+    const ipIsLocalhost = isLocalhostIp(resolvedIp);
 
-    if (isLocalhostHostname || isLocalhostResolved) {
+    if (hostnameIsLocalhost || ipIsLocalhost) {
         if (!isLocalhostAllowed()) {
             throw new Error(
                 `Requests to localhost are blocked by default. ` +
                 `Set ${ALLOW_LOCALHOST_ENV_VAR}=true to enable local development/testing.` +
-                (isLocalhostResolved && !isLocalhostHostname
+                (ipIsLocalhost && !hostnameIsLocalhost
                     ? ` (Note: "${hostname}" resolved to localhost IP ${resolvedIp})`
                     : "")
             );
@@ -1273,7 +1267,7 @@ function applyJqFilter(jsonString: string, filter: string): string {
     return JSON.stringify(results, null, 2);
 }
 
-// Create a safe filename base from arbitrary input (WINDOWS_RESERVED_BASENAMES imported from lib/config)
+// Create a safe filename base from arbitrary input
 function createSafeFilenameBase(input: string, fallback = "response"): string {
     // Replace non-alphanumeric characters with underscores
     let base = input.replace(/[^a-zA-Z0-9]/g, "_");
@@ -1287,7 +1281,7 @@ function createSafeFilenameBase(input: string, fallback = "response"): string {
     base = base.slice(0, FILENAME_MAX_LENGTH);
     const upper = base.toUpperCase();
     // Avoid reserved or problematic base names across platforms
-    if (WINDOWS_RESERVED_BASENAMES.has(upper) || upper === "." || upper === "..") {
+    if (isWindowsReservedBasename(upper) || upper === "." || upper === "..") {
         base = `${fallback}_${base}`.slice(0, FILENAME_MAX_LENGTH);
     }
     return base;

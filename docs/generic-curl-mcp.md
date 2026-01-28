@@ -2,9 +2,11 @@
 
 ## Overview
 
-Transform the monolithic `src/index.ts` (2,390 lines) into a modular, extensible base library that can be used to build specialized API MCP servers for any API (PageSpeed, Stripe, GitHub, etc.).
+Transform the monolithic `src/index.ts` (2,390 lines) into a modular, extensible base library that can be used to build
+specialized API MCP servers for any API (PageSpeed, Stripe, GitHub, etc.).
 
 ### Goals
+
 1. **SRP**: Each file/module has a single, clear responsibility
 2. **DRY**: Shared utilities extracted and reusable
 3. **Extensible**: Base library can be imported and extended for any API
@@ -12,6 +14,7 @@ Transform the monolithic `src/index.ts` (2,390 lines) into a modular, extensible
 5. **Backward Compatible**: Current CLI functionality preserved throughout
 
 ### Key Architectural Decisions
+
 - **Pattern**: Composition with Builder (not inheritance) for flexibility
 - **Hooks**: Request/response middleware chain for custom processing
 - **Tool Registry**: Pluggable tool registration for custom/generated tools
@@ -21,25 +24,26 @@ Transform the monolithic `src/index.ts` (2,390 lines) into a modular, extensible
 
 ## Progress Tracking
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| 1 | ⬜ Not Started | Foundation - Types, Constants, Configuration |
-| 2 | ⬜ Not Started | Core Utilities - Security, JQ, Files |
-| 3 | ⬜ Not Started | Execution Layer - cURL, Response Processing |
-| 4 | ⬜ Not Started | Server Components - Tools, Resources, Transports |
-| 5 | ⬜ Not Started | Extension System - McpCurlServer Class, Hooks |
-| 6 | ⬜ Not Started | API Schema System - YAML Loader, Tool Generator |
-| 7 | ⬜ Not Started | Documentation & Examples |
+| Phase | Status        | Description                                      |
+|-------|---------------|--------------------------------------------------|
+| 1     | ✅ Complete    | Foundation - Types, Constants, Configuration     |
+| 2     | ⬜ Not Started | Core Utilities - Security, JQ, Files             |
+| 3     | ⬜ Not Started | Execution Layer - cURL, Response Processing      |
+| 4     | ⬜ Not Started | Server Components - Tools, Resources, Transports |
+| 5     | ⬜ Not Started | Extension System - McpCurlServer Class, Hooks    |
+| 6     | ⬜ Not Started | API Schema System - YAML Loader, Tool Generator  |
+| 7     | ⬜ Not Started | Documentation & Examples                         |
 
 ---
 
 ## Phase 1: Foundation - Types, Constants, Configuration
 
-**Goal**: Extract all types, interfaces, and constants into dedicated modules. This creates the foundation with zero internal dependencies.
+**Goal**: Extract all types, interfaces, and constants into dedicated modules. This creates the foundation with zero
+internal dependencies.
 
 ### Files to Create
 
-```
+```text
 src/
 ├── lib/
 │   ├── config/
@@ -56,22 +60,23 @@ src/
 
 ### Extract from index.ts
 
-| Source Lines | Target File | Content |
-|--------------|-------------|---------|
-| 15-29 | `config/constants.ts` | MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, SERVER_NAME, etc. |
-| 25-27 | `types/common.ts` | generateMetadataSeparator() |
-| 32-36 | `types/session.ts` | Session interface |
-| 39-42, 71-82 | `config/constants.ts` | Session/rate limit constants |
-| 79-82 | `types/rate-limit.ts` | RateLimitEntry interface |
-| 992-996 | `types/jq.ts` | JqToken type |
-| 731-735, 1450-1464 | `types/response.ts` | UrlValidationResult, ProcessResponseOptions, ProcessedResponse |
-| 579, 601-688 | `config/constants.ts` | UUID_REGEX, BLOCKED_* patterns, LOCALHOST_* patterns |
+| Source Lines       | Target File           | Content                                                        |
+|--------------------|-----------------------|----------------------------------------------------------------|
+| 15-29              | `config/constants.ts` | MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, SERVER_NAME, etc.          |
+| 25-27              | `types/common.ts`     | generateMetadataSeparator()                                    |
+| 32-36              | `types/session.ts`    | Session interface                                              |
+| 39-42, 71-82       | `config/constants.ts` | Session/rate limit constants                                   |
+| 79-82              | `types/rate-limit.ts` | RateLimitEntry interface                                       |
+| 992-996            | `types/jq.ts`         | JqToken type                                                   |
+| 731-735, 1450-1464 | `types/response.ts`   | UrlValidationResult, ProcessResponseOptions, ProcessedResponse |
+| 579, 601-688       | `config/constants.ts` | UUID_REGEX, BLOCKED_* patterns, LOCALHOST_* patterns           |
 
 ### Verification
-- [ ] `npm run build` succeeds
-- [ ] `npm start` runs server correctly
-- [ ] Types are exported from `lib/types/index.ts`
-- [ ] Constants are exported from `lib/config/index.ts`
+
+- [x] `npm run build` succeeds
+- [x] `npm start` runs server correctly
+- [x] Types are exported from `lib/types/index.ts`
+- [x] Constants are exported from `lib/config/index.ts`
 
 ---
 
@@ -103,19 +108,20 @@ src/
 
 ### Extract from index.ts
 
-| Source Lines | Target File | Content |
-|--------------|-------------|---------|
-| 581-593 | `security/input-validation.ts` | isValidSessionId, validateNoCRLF |
-| 698-818 | `security/ssrf.ts` | resolveDns, validateUrlAndResolveDns, isLocalhost*, isBlocked* |
-| 88-150 | `security/rate-limiter.ts` | checkRateLimits, rate limit maps |
-| 304-408 | `security/file-validation.ts` | validateFilePath |
-| 999-1102 | `jq/tokenizer.ts` | parseBracketToken |
-| 1111-1174, 1183-1296 | `jq/parser.ts` | parseJqFilter, splitJqFilters |
-| 1177-1179, 1299-1394 | `jq/filter.ts` | isRecord, applySingleJqFilter, applyJqFilter |
-| 156-202 | `files/temp-manager.ts` | getOrCreateTempDir, cleanupOrphanedTempDirs |
-| 208-285 | `files/output-dir.ts` | resolveOutputDir, validateOutputDir |
+| Source Lines         | Target File                    | Content                                                        |
+|----------------------|--------------------------------|----------------------------------------------------------------|
+| 581-593              | `security/input-validation.ts` | isValidSessionId, validateNoCRLF                               |
+| 698-818              | `security/ssrf.ts`             | resolveDns, validateUrlAndResolveDns, isLocalhost*, isBlocked* |
+| 88-150               | `security/rate-limiter.ts`     | checkRateLimits, rate limit maps                               |
+| 304-408              | `security/file-validation.ts`  | validateFilePath                                               |
+| 999-1102             | `jq/tokenizer.ts`              | parseBracketToken                                              |
+| 1111-1174, 1183-1296 | `jq/parser.ts`                 | parseJqFilter, splitJqFilters                                  |
+| 1177-1179, 1299-1394 | `jq/filter.ts`                 | isRecord, applySingleJqFilter, applyJqFilter                   |
+| 156-202              | `files/temp-manager.ts`        | getOrCreateTempDir, cleanupOrphanedTempDirs                    |
+| 208-285              | `files/output-dir.ts`          | resolveOutputDir, validateOutputDir                            |
 
 ### Verification
+
 - [ ] All security functions work independently
 - [ ] JQ filtering works with same test cases
 - [ ] File operations maintain security constraints
@@ -146,17 +152,18 @@ src/
 
 ### Extract from index.ts
 
-| Source Lines | Target File | Content |
-|--------------|-------------|---------|
-| 475-576 | `execution/command-executor.ts` | executeCommand, memory tracking |
-| 822-950 | `execution/curl-args-builder.ts` | buildCurlArgs |
-| 411-438 | `response/parser.ts` | isJsonContentType, parseResponseWithMetadata |
-| 441-454 | `response/parser.ts` | sanitizeErrorMessage |
-| 953-989 | `response/formatter.ts` | formatResponse |
-| 1396-1447 | `response/file-saver.ts` | createSafeFilenameBase, saveResponseToFile |
-| 1466-1525 | `response/processor.ts` | processResponse |
+| Source Lines | Target File                      | Content                                      |
+|--------------|----------------------------------|----------------------------------------------|
+| 475-576      | `execution/command-executor.ts`  | executeCommand, memory tracking              |
+| 822-950      | `execution/curl-args-builder.ts` | buildCurlArgs                                |
+| 411-438      | `response/parser.ts`             | isJsonContentType, parseResponseWithMetadata |
+| 441-454      | `response/parser.ts`             | sanitizeErrorMessage                         |
+| 953-989      | `response/formatter.ts`          | formatResponse                               |
+| 1396-1447    | `response/file-saver.ts`         | createSafeFilenameBase, saveResponseToFile   |
+| 1466-1525    | `response/processor.ts`          | processResponse                              |
 
 ### Verification
+
 - [ ] cURL execution works with all parameter combinations
 - [ ] Response processing handles large files correctly
 - [ ] JQ filtering integration works
@@ -200,39 +207,41 @@ src/
 
 ### Extract from index.ts
 
-| Source Lines | Target File | Content |
-|--------------|-------------|---------|
-| 1528-1629 | `server/schemas.ts` | CurlExecuteSchema, JqQuerySchema, types |
-| 457-462 | `server/server-factory.ts` | createServer |
-| 2148-2186 | `server/lifecycle.ts` | shutdown, signal handlers |
-| 31-60 | `session/session-manager.ts` | sessions Map, cleanup interval |
-| 1719-1801 | `tools/curl-execute.ts` | curl_execute handler |
-| 1850-1912 | `tools/jq-query.ts` | jq_query handler |
-| 1916-2078 | `resources/documentation.ts` | API docs |
-| 2081-2141 | `prompts/*.ts` | api-test, api-discovery |
-| 2189-2199 | `transports/stdio.ts` | runStdio |
-| 2213-2376 | `transports/http.ts` | runHTTP, auth middleware |
+| Source Lines | Target File                  | Content                                 |
+|--------------|------------------------------|-----------------------------------------|
+| 1528-1629    | `server/schemas.ts`          | CurlExecuteSchema, JqQuerySchema, types |
+| 457-462      | `server/server-factory.ts`   | createServer                            |
+| 2148-2186    | `server/lifecycle.ts`        | shutdown, signal handlers               |
+| 31-60        | `session/session-manager.ts` | sessions Map, cleanup interval          |
+| 1719-1801    | `tools/curl-execute.ts`      | curl_execute handler                    |
+| 1850-1912    | `tools/jq-query.ts`          | jq_query handler                        |
+| 1916-2078    | `resources/documentation.ts` | API docs                                |
+| 2081-2141    | `prompts/*.ts`               | api-test, api-discovery                 |
+| 2189-2199    | `transports/stdio.ts`        | runStdio                                |
+| 2213-2376    | `transports/http.ts`         | runHTTP, auth middleware                |
 
 ### Update index.ts
+
 After this phase, `src/index.ts` becomes a thin entry point:
 
 ```typescript
 // src/index.ts - Entry point only
-import { runStdio } from "./transports/stdio.js";
-import { runHTTP } from "./transports/http.js";
-import { registerShutdownHandlers } from "./lib/server/lifecycle.js";
+import {runStdio} from "./transports/stdio.js";
+import {runHTTP} from "./transports/http.js";
+import {registerShutdownHandlers} from "./lib/server/lifecycle.js";
 
 registerShutdownHandlers();
 
 const transport = process.env.TRANSPORT || "stdio";
 if (transport === "http") {
-  runHTTP().catch(console.error);
+    runHTTP().catch(console.error);
 } else {
-  runStdio().catch(console.error);
+    runStdio().catch(console.error);
 }
 ```
 
 ### Verification
+
 - [ ] CLI still works: `npm start`
 - [ ] HTTP transport works: `TRANSPORT=http npm start`
 - [ ] All tools respond correctly
@@ -260,28 +269,34 @@ src/
 
 ```typescript
 export class McpCurlServer {
-  constructor(config?: McpCurlConfig);
+    constructor(config?: McpCurlConfig);
 
-  // Configuration
-  configure(config: Partial<McpCurlConfig>): this;
-  getConfig(): Readonly<McpCurlConfig>;
+    // Configuration
+    configure(config: Partial<McpCurlConfig>): this;
 
-  // Hooks
-  beforeRequest(hook: BeforeRequestHook): this;
-  afterResponse(hook: AfterResponseHook): this;
-  onError(hook: OnErrorHook): this;
+    getConfig(): Readonly<McpCurlConfig>;
 
-  // Custom Tools
-  registerTool<T extends z.ZodObject<any>>(definition: CustomToolDefinition<T>): this;
-  disableCurlExecute(): this;
-  disableJqQuery(): this;
+    // Hooks
+    beforeRequest(hook: BeforeRequestHook): this;
 
-  // Utilities (static)
-  static get utilities(): CurlUtilities;
+    afterResponse(hook: AfterResponseHook): this;
 
-  // Lifecycle
-  async start(transport?: "stdio" | "http"): Promise<void>;
-  getMcpServer(): McpServer;
+    onError(hook: OnErrorHook): this;
+
+    // Custom Tools
+    registerTool<T extends z.ZodObject<any>>(definition: CustomToolDefinition<T>): this;
+
+    disableCurlExecute(): this;
+
+    disableJqQuery(): this;
+
+    // Utilities (static)
+    static get utilities(): CurlUtilities;
+
+    // Lifecycle
+    async start(transport?: "stdio" | "http"): Promise<void>;
+
+    getMcpServer(): McpServer;
 }
 ```
 
@@ -289,17 +304,17 @@ export class McpCurlServer {
 
 ```typescript
 export interface McpCurlConfig {
-  name?: string;
-  version?: string;
-  baseUrl?: string;                          // Prepended to relative URLs
-  defaultHeaders?: Record<string, string>;   // Added to all requests
-  defaultTimeout?: number;
-  maxResponseSize?: number;
-  maxResultSize?: number;
-  outputDir?: string;
-  allowLocalhost?: boolean;
-  rateLimits?: { perHost?: number; perClient?: number };
-  authToken?: string;                        // For HTTP transport
+    name?: string;
+    version?: string;
+    baseUrl?: string;                          // Prepended to relative URLs
+    defaultHeaders?: Record<string, string>;   // Added to all requests
+    defaultTimeout?: number;
+    maxResponseSize?: number;
+    maxResultSize?: number;
+    outputDir?: string;
+    allowLocalhost?: boolean;
+    rateLimits?: { perHost?: number; perClient?: number };
+    authToken?: string;                        // For HTTP transport
 }
 ```
 
@@ -307,13 +322,13 @@ export interface McpCurlConfig {
 
 ```typescript
 export interface RequestHookContext {
-  server: McpServer;
-  config: McpCurlConfig;
-  originalUrl: string;
-  method: string;
-  headers: Record<string, string>;  // Mutable
-  data?: string;
-  form?: Record<string, string>;
+    server: McpServer;
+    config: McpCurlConfig;
+    originalUrl: string;
+    method: string;
+    headers: Record<string, string>;  // Mutable
+    data?: string;
+    form?: Record<string, string>;
 }
 
 export type BeforeRequestHook = (ctx: RequestHookContext) => Promise<RequestHookContext | void>;
@@ -322,6 +337,7 @@ export type OnErrorHook = (error: Error, ctx: HookContext) => Promise<Error | vo
 ```
 
 ### Verification
+
 - [ ] Can create server: `new McpCurlServer()`
 - [ ] Can configure: `.configure({ baseUrl: "..." })`
 - [ ] Can add hooks: `.beforeRequest(async ctx => { ... })`
@@ -395,15 +411,16 @@ endpoints:
 
 ```typescript
 export async function createApiServer(options: {
-  definitionPath: string;
-  config?: Partial<McpCurlConfig>;
-  customTools?: CustomToolDefinition<any>[];
-  beforeRequest?: BeforeRequestHook;
-  afterResponse?: AfterResponseHook;
+    definitionPath: string;
+    config?: Partial<McpCurlConfig>;
+    customTools?: CustomToolDefinition<any>[];
+    beforeRequest?: BeforeRequestHook;
+    afterResponse?: AfterResponseHook;
 }): Promise<McpCurlServer>;
 ```
 
 ### Verification
+
 - [ ] Can load YAML definition
 - [ ] Validates schema correctly
 - [ ] Generates tools from endpoints
@@ -464,11 +481,15 @@ examples/
   "bin": {
     "curl-mcp": "./dist/cli.js"
   },
-  "files": ["dist/", "docs/"]
+  "files": [
+    "dist/",
+    "docs/"
+  ]
 }
 ```
 
 ### Verification
+
 - [ ] All examples run successfully
 - [ ] Documentation is accurate
 - [ ] Types are exported correctly
@@ -575,26 +596,26 @@ mcp-curl/
 ### 1. Basic Extension
 
 ```typescript
-import { McpCurlServer } from "mcp-curl";
-import { z } from "zod";
+import {McpCurlServer} from "mcp-curl";
+import {z} from "zod";
 
 const server = new McpCurlServer({
-  name: "my-api-server",
-  baseUrl: "https://api.example.com/v1",
+    name: "my-api-server",
+    baseUrl: "https://api.example.com/v1",
 });
 
 server.registerTool({
-  name: "get_user",
-  title: "Get User",
-  description: "Fetch user by ID",
-  inputSchema: z.object({
-    id: z.string().describe("User ID"),
-  }),
-  handler: async (params, ctx) => {
-    const { validateUrlAndResolveDns, buildCurlArgs, executeCommand } =
-      McpCurlServer.utilities;
-    // ... implementation
-  },
+    name: "get_user",
+    title: "Get User",
+    description: "Fetch user by ID",
+    inputSchema: z.object({
+        id: z.string().describe("User ID"),
+    }),
+    handler: async (params, ctx) => {
+        const {validateUrlAndResolveDns, buildCurlArgs, executeCommand} =
+            McpCurlServer.utilities;
+        // ... implementation
+    },
 });
 
 server.start();
@@ -603,10 +624,10 @@ server.start();
 ### 2. From YAML Schema
 
 ```typescript
-import { createApiServer } from "mcp-curl/schema";
+import {createApiServer} from "mcp-curl/schema";
 
 const server = await createApiServer({
-  definitionPath: "./my-api.yaml",
+    definitionPath: "./my-api.yaml",
 });
 
 server.start();
@@ -618,14 +639,14 @@ server.start();
 const server = new McpCurlServer();
 
 server.beforeRequest(async (ctx) => {
-  ctx.headers["Authorization"] = `Bearer ${await getToken()}`;
-  return ctx;
+    ctx.headers["Authorization"] = `Bearer ${await getToken()}`;
+    return ctx;
 });
 
 server.afterResponse(async (ctx) => {
-  // Unwrap API envelope
-  const data = JSON.parse(ctx.body);
-  return JSON.stringify(data.result);
+    // Unwrap API envelope
+    const data = JSON.parse(ctx.body);
+    return JSON.stringify(data.result);
 });
 
 server.start();
@@ -636,6 +657,7 @@ server.start();
 ## Testing Strategy
 
 ### Per-Phase Testing
+
 Each phase must pass these tests before proceeding:
 
 1. **Build**: `npm run build` succeeds
@@ -645,12 +667,14 @@ Each phase must pass these tests before proceeding:
 5. **Security**: SSRF protection, rate limiting, file validation work
 
 ### Integration Tests (After Phase 5+)
+
 - Create custom server with registered tool
 - Verify hooks are called in order
 - Verify configuration is applied
 - Test tool disable functionality
 
 ### Schema Tests (After Phase 6)
+
 - Load and validate sample YAML
 - Generate tools from endpoints
 - Verify auth injection
@@ -663,7 +687,8 @@ Each phase must pass these tests before proceeding:
 ```json
 {
   "dependencies": {
-    "js-yaml": "^4.1.0"  // For YAML schema loading
+    "js-yaml": "^4.1.0"
+    // For YAML schema loading
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9"
@@ -675,13 +700,13 @@ Each phase must pass these tests before proceeding:
 
 ## Risk Mitigation
 
-| Risk | Mitigation |
-|------|------------|
-| Breaking existing users | Maintain backward-compatible CLI entry point |
-| Circular dependencies | Strict layered architecture with barrel exports |
-| Type export issues | Test imports from consuming project after each phase |
-| Memory leaks from hooks | Document hook cleanup requirements |
-| Schema versioning | Include `apiVersion` field for future changes |
+| Risk                    | Mitigation                                           |
+|-------------------------|------------------------------------------------------|
+| Breaking existing users | Maintain backward-compatible CLI entry point         |
+| Circular dependencies   | Strict layered architecture with barrel exports      |
+| Type export issues      | Test imports from consuming project after each phase |
+| Memory leaks from hooks | Document hook cleanup requirements                   |
+| Schema versioning       | Include `apiVersion` field for future changes        |
 
 ---
 

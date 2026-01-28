@@ -9,7 +9,8 @@ export declare const DEFAULT_TIMEOUT = 30000;
 export declare const TEMP_DIR_PREFIX = "mcp-curl-";
 export declare const ORPHAN_DIR_MIN_AGE_MS = 3600000;
 export declare const FILENAME_MAX_LENGTH = 50;
-export declare const WINDOWS_RESERVED_BASENAMES: Set<string>;
+export declare const WINDOWS_RESERVED_BASENAMES: ReadonlyArray<string>;
+export declare function isWindowsReservedBasename(name: string): boolean;
 export declare const MAX_SESSIONS = 100;
 export declare const SESSION_IDLE_TIMEOUT_MS = 3600000;
 export declare const SESSION_CLEANUP_INTERVAL_MS = 300000;
@@ -27,9 +28,14 @@ export declare const UUID_REGEX: RegExp;
 export declare const OUTPUT_DIR_ENV_VAR = "MCP_CURL_OUTPUT_DIR";
 export declare const ALLOW_LOCALHOST_ENV_VAR = "MCP_CURL_ALLOW_LOCALHOST";
 export declare const HTTP_AUTH_TOKEN_ENV_VAR = "MCP_AUTH_TOKEN";
-export declare const BLOCKED_HOSTNAME_PATTERNS: RegExp[];
-export declare const LOCALHOST_HOSTNAME_PATTERNS: RegExp[];
-export declare const BLOCKED_IP_PATTERNS: RegExp[];
-export declare const LOCALHOST_IP_PATTERNS: RegExp[];
-export declare const ALLOWED_LOCALHOST_PORTS: Set<number>;
+/** Check if a hostname matches any blocked pattern (internal networks, reserved TLDs, etc.) */
+export declare function isBlockedHostname(hostname: string): boolean;
+/** Check if a hostname is a localhost variant */
+export declare function isLocalhostHostname(hostname: string): boolean;
+/** Check if an IP address matches any blocked pattern (private networks, link-local, etc.) */
+export declare function isBlockedIp(ip: string): boolean;
+/** Check if an IP address is a localhost address */
+export declare function isLocalhostIp(ip: string): boolean;
 export declare const MIN_UNPRIVILEGED_PORT = 1024;
+/** Check if a port is allowed for localhost connections (80, 443, or >1024) */
+export declare function isAllowedLocalhostPort(port: number): boolean;
