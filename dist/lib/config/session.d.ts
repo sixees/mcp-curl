@@ -1,0 +1,10 @@
+export declare const MAX_SESSIONS = 100;
+export declare const SESSION_IDLE_TIMEOUT_MS = 3600000;
+export declare const SESSION_CLEANUP_INTERVAL_MS = 300000;
+export declare const MAX_REQUESTS_PER_HOST_PER_MINUTE = 60;
+export declare const MAX_REQUESTS_PER_CLIENT_PER_MINUTE = 300;
+export declare const RATE_LIMIT_WINDOW_MS = 60000;
+export declare const RATE_LIMIT_CLEANUP_INTERVAL_MS = 10000;
+export declare const STDIO_CLIENT_ID = "__stdio_client__";
+export declare const TEMP_DIR_PREFIX = "mcp-curl-";
+export declare const ORPHAN_DIR_MIN_AGE_MS = 3600000;

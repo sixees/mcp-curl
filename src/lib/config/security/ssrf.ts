@@ -1,93 +1,6 @@
-// src/lib/config/constants.ts
+// src/lib/config/security/ssrf.ts
+// SSRF protection patterns and pure predicate functions
 
-// ============================================================================
-// Response & Processing Limits
-// ============================================================================
-export const MAX_RESPONSE_SIZE = 10_000_000; // 10MB max response for processing
-export const DEFAULT_MAX_RESULT_SIZE = 500_000; // 500KB default for AI agent responses
-export const MAX_TOTAL_RESPONSE_MEMORY = 100_000_000; // 100MB total across all requests
-export const ERROR_PREVIEW_LENGTH = 200; // Characters to show in error previews
-export const MAX_METADATA_TAIL_LENGTH = 200; // Max distance from end for metadata separator
-
-// ============================================================================
-// Server Identity
-// ============================================================================
-export const SERVER_NAME = "curl-mcp-server";
-export const SERVER_VERSION = "1.1.5";
-
-// ============================================================================
-// Timeouts
-// ============================================================================
-export const DEFAULT_TIMEOUT = 30000; // 30 seconds
-
-// ============================================================================
-// Temp Directory Management
-// ============================================================================
-export const TEMP_DIR_PREFIX = "mcp-curl-";
-export const ORPHAN_DIR_MIN_AGE_MS = 3600000; // 1 hour
-
-// ============================================================================
-// File Handling
-// ============================================================================
-export const FILENAME_MAX_LENGTH = 50;
-
-// Private Set for efficient lookup - not exported to prevent runtime mutation
-const WINDOWS_RESERVED_BASENAMES_SET = new Set<string>([
-    "CON", "PRN", "AUX", "NUL",
-    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-]);
-
-// Immutable array export for documentation/iteration purposes
-export const WINDOWS_RESERVED_BASENAMES: ReadonlyArray<string> = Object.freeze(
-    Array.from(WINDOWS_RESERVED_BASENAMES_SET),
-);
-
-/** Check if a name is a Windows reserved basename (case-insensitive) */
-export function isWindowsReservedBasename(name: string): boolean {
-    return WINDOWS_RESERVED_BASENAMES_SET.has(name.toUpperCase());
-}
-
-// ============================================================================
-// Session Management (HTTP Transport)
-// ============================================================================
-export const MAX_SESSIONS = 100;
-export const SESSION_IDLE_TIMEOUT_MS = 3600000; // 1 hour
-export const SESSION_CLEANUP_INTERVAL_MS = 300000; // 5 minutes
-
-// ============================================================================
-// Rate Limiting
-// ============================================================================
-export const MAX_REQUESTS_PER_HOST_PER_MINUTE = 60;
-export const MAX_REQUESTS_PER_CLIENT_PER_MINUTE = 300;
-export const RATE_LIMIT_WINDOW_MS = 60000;
-export const RATE_LIMIT_CLEANUP_INTERVAL_MS = 10000; // 10 seconds
-export const STDIO_CLIENT_ID = "__stdio_client__";
-
-// ============================================================================
-// JQ Filter Limits (DoS prevention)
-// ============================================================================
-export const MAX_JQ_FILTER_LENGTH = 500;
-export const MAX_JQ_TOKENS = 50;
-export const MAX_JQ_FILTERS = 20;
-export const MAX_JQ_PARSE_TIME_MS = 100;
-export const MAX_JQ_QUERY_FILE_SIZE = MAX_RESPONSE_SIZE; // 10MB
-
-// ============================================================================
-// Input Validation
-// ============================================================================
-export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// ============================================================================
-// Environment Variables
-// ============================================================================
-export const OUTPUT_DIR_ENV_VAR = "MCP_CURL_OUTPUT_DIR";
-export const ALLOW_LOCALHOST_ENV_VAR = "MCP_CURL_ALLOW_LOCALHOST";
-export const HTTP_AUTH_TOKEN_ENV_VAR = "MCP_AUTH_TOKEN";
-
-// ============================================================================
-// SSRF Protection - Security Rationale
-// ============================================================================
 /**
  * SSRF (Server-Side Request Forgery) Protection
  *
@@ -133,7 +46,7 @@ export const HTTP_AUTH_TOKEN_ENV_VAR = "MCP_AUTH_TOKEN";
  */
 
 // ============================================================================
-// SSRF Protection - Blocked Hostname Patterns
+// Blocked Hostname Patterns
 // ============================================================================
 
 // Private array - not exported to prevent runtime mutation
@@ -179,7 +92,7 @@ export function isBlockedHostname(hostname: string): boolean {
 }
 
 // ============================================================================
-// SSRF Protection - Localhost Patterns (conditionally allowed)
+// Localhost Hostname Patterns (conditionally allowed)
 // ============================================================================
 
 // Private array - not exported to prevent runtime mutation
@@ -193,7 +106,7 @@ export function isLocalhostHostname(hostname: string): boolean {
 }
 
 // ============================================================================
-// SSRF Protection - Blocked IP Patterns (after DNS resolution)
+// Blocked IP Patterns (after DNS resolution)
 // ============================================================================
 
 // Private array - not exported to prevent runtime mutation
@@ -222,7 +135,7 @@ export function isBlockedIp(ip: string): boolean {
 }
 
 // ============================================================================
-// SSRF Protection - Localhost IP Patterns
+// Localhost IP Patterns
 // ============================================================================
 
 // Private array - not exported to prevent runtime mutation
@@ -238,7 +151,7 @@ export function isLocalhostIp(ip: string): boolean {
 }
 
 // ============================================================================
-// SSRF Protection - Localhost Port Restrictions
+// Localhost Port Restrictions
 // ============================================================================
 
 // Private set - not exported to prevent runtime mutation

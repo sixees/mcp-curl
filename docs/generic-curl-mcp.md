@@ -41,35 +41,53 @@ specialized API MCP servers for any API (PageSpeed, Stripe, GitHub, etc.).
 **Goal**: Extract all types, interfaces, and constants into dedicated modules. This creates the foundation with zero
 internal dependencies.
 
+### Design Principle: Separation of Concerns
+
+Constants are split by domain rather than in a single file. This follows SRP and makes it easier to:
+- Find related configuration in one place
+- Understand what each module controls
+- Test domain-specific behavior in isolation
+
+**Key distinction from Phase 2:**
+- `config/security/` contains **pure predicate functions** and patterns (no I/O, no state)
+- `lib/security/` (Phase 2) contains **stateful functions** (DNS resolution, rate limit maps, file system access)
+
 ### Files to Create
 
 ```text
 src/
 ├── lib/
 │   ├── config/
-│   │   ├── index.ts          # Barrel export
-│   │   └── constants.ts      # All constants
+│   │   ├── index.ts           # Barrel export (re-exports all config modules)
+│   │   ├── limits.ts          # Response sizes, timeouts, file size limits
+│   │   ├── server.ts          # Server identity (name, version)
+│   │   ├── session.ts         # Session management & rate-limit window constants
+│   │   ├── jq.ts              # JQ filter DoS prevention limits
+│   │   ├── environment.ts     # Environment variable names
+│   │   └── security/
+│   │       ├── index.ts       # Barrel export for security config
+│   │       ├── ssrf.ts        # SSRF patterns + pure predicate functions
+│   │       └── validation.ts  # Input validation patterns (UUID_REGEX)
 │   └── types/
-│       ├── index.ts          # Barrel export
-│       ├── common.ts         # Shared types (generateMetadataSeparator)
-│       ├── session.ts        # Session interface
-│       ├── rate-limit.ts     # RateLimitEntry interface
-│       ├── jq.ts             # JqToken type
-│       └── response.ts       # UrlValidationResult, ProcessResponseOptions, etc.
+│       ├── index.ts           # Barrel export (type-only for most)
+│       ├── common.ts          # generateMetadataSeparator()
+│       ├── session.ts         # Session interface
+│       ├── rate-limit.ts      # RateLimitEntry interface
+│       ├── jq.ts              # JqToken type
+│       └── response.ts        # UrlValidationResult, ProcessResponseOptions, etc.
 ```
 
-### Extract from index.ts
+### Module Responsibilities
 
-| Source Lines       | Target File           | Content                                                        |
-|--------------------|-----------------------|----------------------------------------------------------------|
-| 15-29              | `config/constants.ts` | MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, SERVER_NAME, etc.          |
-| 25-27              | `types/common.ts`     | generateMetadataSeparator()                                    |
-| 32-36              | `types/session.ts`    | Session interface                                              |
-| 39-42, 71-82       | `config/constants.ts` | Session/rate limit constants                                   |
-| 79-82              | `types/rate-limit.ts` | RateLimitEntry interface                                       |
-| 992-996            | `types/jq.ts`         | JqToken type                                                   |
-| 731-735, 1450-1464 | `types/response.ts`   | UrlValidationResult, ProcessResponseOptions, ProcessedResponse |
-| 579, 601-688       | `config/constants.ts` | UUID_REGEX, BLOCKED_* patterns, LOCALHOST_* patterns           |
+| Module                    | Contents                                                                   |
+|---------------------------|----------------------------------------------------------------------------|
+| `config/limits.ts`        | MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, FILENAME_MAX_LENGTH, etc.              |
+| `config/server.ts`        | SERVER_NAME, SERVER_VERSION                                                |
+| `config/session.ts`       | MAX_SESSIONS, SESSION_IDLE_TIMEOUT_MS, RATE_LIMIT_*, TEMP_DIR_PREFIX       |
+| `config/jq.ts`            | MAX_JQ_FILTER_LENGTH, MAX_JQ_TOKENS, MAX_JQ_FILTERS, MAX_JQ_PARSE_TIME_MS  |
+| `config/environment.ts`   | OUTPUT_DIR_ENV_VAR, ALLOW_LOCALHOST_ENV_VAR, HTTP_AUTH_TOKEN_ENV_VAR       |
+| `config/security/ssrf.ts` | SSRF patterns (private) + isBlockedHostname(), isLocalhostIp(), etc.       |
+| `config/security/validation.ts` | UUID_REGEX, isWindowsReservedBasename()                              |
 
 ### Verification
 
@@ -77,24 +95,35 @@ src/
 - [x] `npm start` runs server correctly
 - [x] Types are exported from `lib/types/index.ts`
 - [x] Constants are exported from `lib/config/index.ts`
+- [x] Security predicates are pure functions (no I/O dependencies)
 
 ---
 
 ## Phase 2: Core Utilities - Security, JQ, Files
 
-**Goal**: Extract stateless utility functions into dedicated modules.
+**Goal**: Extract stateful utility functions into dedicated modules.
+
+### Design Principle: Stateful vs Pure
+
+This phase extracts functions that have **side effects or state**:
+- DNS resolution (network I/O)
+- Rate limiting (stateful maps)
+- File system access (I/O)
+- Environment variable reads
+
+Pure predicate functions (pattern matching) remain in `config/security/` from Phase 1.
 
 ### Files to Create
 
-```
+```text
 src/
 ├── lib/
 │   ├── security/
 │   │   ├── index.ts              # Barrel export
-│   │   ├── ssrf.ts               # URL validation, DNS resolution
-│   │   ├── rate-limiter.ts       # Rate limiting logic
+│   │   ├── ssrf.ts               # DNS resolution, validateUrlAndResolveDns, isLocalhostAllowed
+│   │   ├── rate-limiter.ts       # Rate limiting logic with stateful maps
 │   │   ├── input-validation.ts   # CRLF, session ID validation
-│   │   └── file-validation.ts    # File path validation
+│   │   └── file-validation.ts    # File path validation (fs access)
 │   ├── jq/
 │   │   ├── index.ts              # Barrel export
 │   │   ├── tokenizer.ts          # parseBracketToken
@@ -106,19 +135,24 @@ src/
 │       └── output-dir.ts         # Output directory validation
 ```
 
-### Extract from index.ts
+### Module Responsibilities
 
-| Source Lines         | Target File                    | Content                                                        |
-|----------------------|--------------------------------|----------------------------------------------------------------|
-| 581-593              | `security/input-validation.ts` | isValidSessionId, validateNoCRLF                               |
-| 698-818              | `security/ssrf.ts`             | resolveDns, validateUrlAndResolveDns, isLocalhost*, isBlocked* |
-| 88-150               | `security/rate-limiter.ts`     | checkRateLimits, rate limit maps                               |
-| 304-408              | `security/file-validation.ts`  | validateFilePath                                               |
-| 999-1102             | `jq/tokenizer.ts`              | parseBracketToken                                              |
-| 1111-1174, 1183-1296 | `jq/parser.ts`                 | parseJqFilter, splitJqFilters                                  |
-| 1177-1179, 1299-1394 | `jq/filter.ts`                 | isRecord, applySingleJqFilter, applyJqFilter                   |
-| 156-202              | `files/temp-manager.ts`        | getOrCreateTempDir, cleanupOrphanedTempDirs                    |
-| 208-285              | `files/output-dir.ts`          | resolveOutputDir, validateOutputDir                            |
+| Module                       | Type     | Contents                                           |
+|------------------------------|----------|---------------------------------------------------|
+| `security/ssrf.ts`           | Stateful | resolveDns (DNS I/O), validateUrlAndResolveDns    |
+| `security/rate-limiter.ts`   | Stateful | checkRateLimits, hostRateLimitMap, clientRateLimitMap |
+| `security/input-validation.ts` | Pure   | isValidSessionId, validateNoCRLF                  |
+| `security/file-validation.ts`| Stateful | validateFilePath (fs access, realpath)            |
+| `jq/tokenizer.ts`            | Pure     | parseBracketToken                                 |
+| `jq/parser.ts`               | Pure     | parseJqFilter, splitJqFilters                     |
+| `jq/filter.ts`               | Pure     | isRecord, applySingleJqFilter, applyJqFilter      |
+| `files/temp-manager.ts`      | Stateful | getOrCreateTempDir, cleanupOrphanedTempDirs       |
+| `files/output-dir.ts`        | Stateful | resolveOutputDir, validateOutputDir               |
+
+**Note:** `lib/security/ssrf.ts` imports predicates from `config/security/ssrf.ts`:
+- `isBlockedHostname()`, `isLocalhostHostname()` - hostname pattern matching
+- `isBlockedIp()`, `isLocalhostIp()` - IP pattern matching
+- `isAllowedLocalhostPort()` - port validation
 
 ### Verification
 
@@ -509,8 +543,16 @@ mcp-curl/
 │   ├── lib/
 │   │   ├── index.ts                  # Library exports
 │   │   ├── config/
-│   │   │   ├── index.ts
-│   │   │   └── constants.ts
+│   │   │   ├── index.ts              # Barrel export
+│   │   │   ├── limits.ts             # Response sizes, timeouts
+│   │   │   ├── server.ts             # Server identity
+│   │   │   ├── session.ts            # Session & rate-limit constants
+│   │   │   ├── jq.ts                 # JQ filter limits
+│   │   │   ├── environment.ts        # Env var names
+│   │   │   └── security/
+│   │   │       ├── index.ts          # Security config barrel
+│   │   │       ├── ssrf.ts           # SSRF patterns + predicates
+│   │   │       └── validation.ts     # Input validation patterns
 │   │   ├── types/
 │   │   │   ├── index.ts
 │   │   │   ├── common.ts
@@ -688,7 +730,6 @@ Each phase must pass these tests before proceeding:
 {
   "dependencies": {
     "js-yaml": "^4.1.0"
-    // For YAML schema loading
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9"
