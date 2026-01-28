@@ -90,8 +90,10 @@ export async function validateFilePath(filepath) {
     try {
         allowedDirs.push(await realpath(process.cwd()));
     }
-    catch {
-        // If cwd can't be resolved (unlikely), use it as-is
+    catch (error) {
+        // Log warning - this fallback reduces security guarantees for symlink resolution
+        console.error("Warning: Could not resolve realpath for cwd, using unresolved path. " +
+            "Symlink-based attacks may not be fully prevented:", error);
         allowedDirs.push(process.cwd());
     }
     // Check if REAL file path is within any allowed directory

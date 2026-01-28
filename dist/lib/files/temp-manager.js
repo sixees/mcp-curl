@@ -20,10 +20,17 @@ export async function getOrCreateTempDir() {
         return tempDirPromise;
     }
     tempDirPromise = (async () => {
-        const dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
-        await chmod(dir, 0o700); // Owner-only access
-        sharedTempDir = dir;
-        return dir;
+        try {
+            const dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
+            await chmod(dir, 0o700); // Owner-only access
+            sharedTempDir = dir;
+            return dir;
+        }
+        catch (error) {
+            // Reset promise to allow retry on next call
+            tempDirPromise = null;
+            throw error;
+        }
     })();
     return tempDirPromise;
 }

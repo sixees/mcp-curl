@@ -60,8 +60,8 @@ const sessionCleanupInterval = setInterval(() => {
         if (now - session.lastActivity > SESSION.IDLE_TIMEOUT_MS) {
             try {
                 session.transport.close();
-            } catch {
-                // Ignore errors during cleanup
+            } catch (error) {
+                console.error(`Warning: Error closing idle session ${id}:`, error);
             }
             sessions.delete(id);
         }
@@ -1145,12 +1145,16 @@ async function shutdown(signal: string): Promise<void> {
 
     // Close HTTP server if running
     if (httpServer) {
-        await new Promise<void>((resolve, reject) => {
-            httpServer!.close((err) => {
-                if (err) reject(err);
-                else resolve();
+        try {
+            await new Promise<void>((resolve, reject) => {
+                httpServer!.close((err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
             });
-        });
+        } catch (error) {
+            console.error("Warning: Error closing HTTP server:", error);
+        }
     }
 
     // Close all active sessions
@@ -1158,8 +1162,8 @@ async function shutdown(signal: string): Promise<void> {
         try {
             session.transport.close();
             await session.server.close();
-        } catch {
-            // Ignore errors during shutdown
+        } catch (error) {
+            console.error(`Warning: Error closing session ${sessionId} during shutdown:`, error);
         }
         sessions.delete(sessionId);
     }
@@ -1171,8 +1175,8 @@ async function shutdown(signal: string): Promise<void> {
     // Clean up temp directory (extracted to files module)
     try {
         await cleanupTempDir();
-    } catch {
-        // Ignore errors during cleanup
+    } catch (error) {
+        console.error("Warning: Failed to clean up temp directory:", error);
     }
 
     process.exit(0);
