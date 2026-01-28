@@ -1,8 +1,4 @@
 /**
- * Type guard for plain objects (not arrays or null).
- */
-export declare function isRecord(value: unknown): value is Record<string, unknown>;
-/**
  * Apply a single jq-like filter path to parsed JSON data.
  *
  * @param data - The parsed JSON data

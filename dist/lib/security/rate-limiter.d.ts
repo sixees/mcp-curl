@@ -18,6 +18,12 @@ export declare function startRateLimitCleanup(): NodeJS.Timeout;
  */
 export declare function stopRateLimitCleanup(interval: NodeJS.Timeout): void;
 /**
- * Clear all rate limit maps (for testing purposes).
+ * Clear all rate limit maps.
+ *
+ * **WARNING: For testing purposes only.** Do not call in production code.
+ * This bypasses rate limiting protections and should only be used in test
+ * suites to reset state between test cases.
+ *
+ * @internal
  */
 export declare function clearRateLimitMaps(): void;

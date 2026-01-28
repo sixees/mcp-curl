@@ -5,8 +5,9 @@ import { LIMITS } from "../config/limits.js";
 import { parseJqFilter, splitJqFilters } from "./parser.js";
 /**
  * Type guard for plain objects (not arrays or null).
+ * Internal helper - not exported from module.
  */
-export function isRecord(value) {
+function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 /**

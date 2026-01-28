@@ -7,8 +7,9 @@ import { parseJqFilter, splitJqFilters } from "./parser.js";
 
 /**
  * Type guard for plain objects (not arrays or null).
+ * Internal helper - not exported from module.
  */
-export function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
