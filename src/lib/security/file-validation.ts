@@ -105,13 +105,12 @@ export async function validateFilePath(filepath: string): Promise<void> {
     try {
         allowedDirs.push(await realpath(process.cwd()));
     } catch (error) {
-        // Log warning - this fallback reduces security guarantees for symlink resolution
-        console.error(
-            "Warning: Could not resolve realpath for cwd, using unresolved path. " +
-            "Symlink-based attacks may not be fully prevented:",
-            error
+        // Fail closed: refuse to proceed if we can't resolve cwd for symlink protection
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+            `Failed to resolve current working directory: ${message}. ` +
+            `This is required for secure file validation.`
         );
-        allowedDirs.push(process.cwd());
     }
 
     // Check if REAL file path is within any allowed directory
