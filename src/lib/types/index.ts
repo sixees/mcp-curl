@@ -1,6 +1,10 @@
 // src/lib/types/index.ts
-export * from "./common.js";
-export * from "./session.js";
-export * from "./rate-limit.js";
-export * from "./jq.js";
-export * from "./response.js";
+
+// Value export (function)
+export { generateMetadataSeparator } from "./common.js";
+
+// Type-only exports (no runtime code emitted)
+export type * from "./session.js";
+export type * from "./rate-limit.js";
+export type * from "./jq.js";
+export type * from "./response.js";
