@@ -1,6 +1,7 @@
 /**
  * Get or create the shared temp directory for this session.
  * Uses lazy initialization with promise caching to prevent race conditions.
+ * Implements backoff on failure to prevent rapid retry storms.
  */
 export declare function getOrCreateTempDir(): Promise<string>;
 /**

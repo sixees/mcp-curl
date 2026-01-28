@@ -28,4 +28,6 @@ export const TEMP_DIR = {
     PREFIX: "mcp-curl-",
     /** Minimum age before orphaned temp dirs are cleaned (1 hour) */
     ORPHAN_MIN_AGE_MS: 3_600_000,
+    /** Backoff period before retrying temp directory creation after failure (1 second) */
+    RETRY_BACKOFF_MS: 1_000,
 } as const;

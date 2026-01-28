@@ -12,15 +12,26 @@ import { TEMP_DIR } from "../config/session.js";
  */
 let sharedTempDir: string | null = null;
 let tempDirPromise: Promise<string> | null = null;
+let lastFailureTime: number = 0;
 
 /**
  * Get or create the shared temp directory for this session.
  * Uses lazy initialization with promise caching to prevent race conditions.
+ * Implements backoff on failure to prevent rapid retry storms.
  */
 export async function getOrCreateTempDir(): Promise<string> {
-    // Return cached promise to prevent race condition with concurrent requests
+    // Return cached promise if we have one (success or in-flight)
     if (tempDirPromise) {
         return tempDirPromise;
+    }
+
+    // Prevent rapid retries after failure - enforce backoff period
+    const now = Date.now();
+    if (lastFailureTime && (now - lastFailureTime) < TEMP_DIR.RETRY_BACKOFF_MS) {
+        const waitMs = TEMP_DIR.RETRY_BACKOFF_MS - (now - lastFailureTime);
+        throw new Error(
+            `Temp directory creation failed recently. Retry in ${waitMs}ms.`
+        );
     }
 
     tempDirPromise = (async () => {
@@ -28,9 +39,11 @@ export async function getOrCreateTempDir(): Promise<string> {
             const dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
             await chmod(dir, 0o700); // Owner-only access
             sharedTempDir = dir;
+            lastFailureTime = 0; // Clear failure state on success
             return dir;
         } catch (error) {
-            // Reset promise to allow retry on next call
+            // Record failure time and reset promise to allow retry after backoff
+            lastFailureTime = Date.now();
             tempDirPromise = null;
             throw error;
         }
@@ -91,4 +104,5 @@ export async function cleanupTempDir(): Promise<void> {
         sharedTempDir = null;
         tempDirPromise = null;
     }
+    lastFailureTime = 0; // Reset failure state to allow fresh start
 }
