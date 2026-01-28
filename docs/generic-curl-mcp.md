@@ -52,6 +52,20 @@ Constants are split by domain rather than in a single file. This follows SRP and
 - `config/security/` contains **pure predicate functions** and patterns (no I/O, no state)
 - `lib/security/` (Phase 2) contains **stateful functions** (DNS resolution, rate limit maps, file system access)
 
+### Design Patterns
+
+**Immutability for Security-Critical Data:**
+- Private arrays with `Object.freeze()`: `const PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([...])`
+- Private Sets with `Object.freeze()`: `const ALLOWED_PORTS: ReadonlySet<number> = Object.freeze(new Set([...]))`
+- Exported pure predicate functions instead of raw patterns: `isBlockedHostname()`, `isAllowedLocalhostPort()`
+- This prevents runtime mutation that could weaken security
+
+**Type Design:**
+- `as const` objects for grouped configuration (provides literal type inference)
+- Discriminated unions for result types with mutually exclusive fields (e.g., `ProcessedResponse`)
+- `export type *` for modules containing only types (reduces runtime code)
+- Field-level JSDoc comments on interface properties for documentation
+
 ### Files to Create
 
 ```text
@@ -74,7 +88,7 @@ src/
 │       ├── session.ts         # Session interface
 │       ├── rate-limit.ts      # RateLimitEntry interface
 │       ├── jq.ts              # JqToken type
-│       └── response.ts        # UrlValidationResult, ProcessResponseOptions, etc.
+│       └── response.ts        # UrlValidationResult, ProcessResponseOptions, ProcessedResponse
 ```
 
 ### Module Responsibilities
@@ -96,6 +110,9 @@ src/
 - [x] Types are exported from `lib/types/index.ts`
 - [x] Constants are exported from `lib/config/index.ts`
 - [x] Security predicates are pure functions (no I/O dependencies)
+- [x] All security-critical arrays AND sets are frozen with `Object.freeze()`
+- [x] `ProcessedResponse` uses discriminated union (filepath only when savedToFile=true)
+- [x] All interface fields have JSDoc documentation
 
 ---
 

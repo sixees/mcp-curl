@@ -41,8 +41,6 @@ import {
     type ProcessedResponse,
 } from "./lib/types/index.js";
 
-// Constants and types are now imported from lib/config and lib/types
-
 // Session tracking for HTTP transport (Session type imported from lib/types)
 const sessions = new Map<string, Session>();
 
@@ -575,7 +573,7 @@ function validateNoCRLF(value: string, fieldName: string): void {
 /**
  * SSRF protection: block requests to private/internal networks.
  *
- * See lib/config/constants.ts for detailed security rationale covering:
+ * See lib/config/security/ssrf.ts for detailed security rationale covering:
  * - IPv4-mapped IPv6 bypass prevention (::ffff:x.x.x.x)
  * - DNS rebinding attack mitigation
  * - Protocol and TLD restrictions
@@ -1604,7 +1602,11 @@ Temp File Lifecycle:
                     result.stderr,
                     result.exitCode,
                     params.include_metadata,
-                    { savedToFile: processed.savedToFile, filepath: processed.filepath, message: processed.message }
+                    {
+                        savedToFile: processed.savedToFile,
+                        filepath: processed.savedToFile ? processed.filepath : undefined,
+                        message: processed.message,
+                    }
                 );
 
                 return {

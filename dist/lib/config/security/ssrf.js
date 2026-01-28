@@ -32,16 +32,20 @@
  *    These are used for local network configuration (APIPA, NDP) and could
  *    expose cloud metadata services (e.g., AWS 169.254.169.254).
  *
- * 6. Unique Local Addresses (fc00::/7, fd00::/8)
+ * 6. Unique Local Addresses (fc00::/7)
  *    IPv6 equivalent of private address ranges - used for internal networks.
+ *    The fc00::/7 block covers both fc00::/8 and fd00::/8. We block these with
+ *    two patterns: /^fc00:/i for the fc00:: prefix and /^fd[0-9a-f]{2}:/i for
+ *    the fd00::/8 range (which is the commonly used subset for local networks).
  *
  * DEFENSE IN DEPTH:
  * We check BOTH hostnames AND resolved IPs because:
  * - Hostname check catches obvious internal addresses before DNS lookup
  * - IP check catches DNS rebinding and hostnames that resolve to internal IPs
  *
- * TODO: Consider adding cloud metadata endpoint blocking (169.254.169.254,
- * fd00:ec2::254, metadata.google.internal, etc.) as explicit patterns.
+ * TODO: Consider adding cloud metadata HOSTNAME blocking (metadata.google.internal,
+ * instance-data.ec2.internal, etc.). Cloud metadata IPs like 169.254.169.254 and
+ * fd00:ec2::254 are already blocked via link-local and unique local patterns.
  */
 // ============================================================================
 // Blocked Hostname Patterns
@@ -70,9 +74,9 @@ const BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
     /^\[?::1\]?$/,
     // IPv6 link-local
     /^\[?fe80:/i,
-    // IPv6 unique local (fc00::/7)
-    /^\[?fc00:/i,
-    /^\[?fd[0-9a-f]{2}:/i,
+    // IPv6 unique local (fc00::/7 covers fc00::/8 and fd00::/8)
+    /^\[?fc00:/i, // fc00::/8 prefix (not yet assigned by IANA)
+    /^\[?fd[0-9a-f]{2}:/i, // fd00::/8 prefix (locally assigned)
     // Internal TLDs
     /\.local$/i,
     /\.internal$/i,
@@ -139,8 +143,8 @@ export function isLocalhostIp(ip) {
 // ============================================================================
 // Localhost Port Restrictions
 // ============================================================================
-// Private set - not exported to prevent runtime mutation
-const ALLOWED_LOCALHOST_PORTS_INTERNAL = new Set([80, 443]);
+// Private frozen set - not exported to prevent runtime mutation
+const ALLOWED_LOCALHOST_PORTS_INTERNAL = Object.freeze(new Set([80, 443]));
 export const MIN_UNPRIVILEGED_PORT = 1024;
 /** Check if a port is allowed for localhost connections (80, 443, or >1024) */
 export function isAllowedLocalhostPort(port) {

@@ -4,18 +4,22 @@
 // ============================================================================
 // UUID Validation
 // ============================================================================
+
+/** Validates UUID v4 format for session IDs (case-insensitive) */
 export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ============================================================================
 // Windows Reserved Basenames
 // ============================================================================
 
-// Private Set for efficient lookup - not exported to prevent runtime mutation
-const WINDOWS_RESERVED_BASENAMES_SET = new Set<string>([
-    "CON", "PRN", "AUX", "NUL",
-    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-]);
+// Private frozen Set for efficient lookup - not exported to prevent runtime mutation
+const WINDOWS_RESERVED_BASENAMES_SET: ReadonlySet<string> = Object.freeze(
+    new Set<string>([
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ]),
+);
 
 // Immutable array export for documentation/iteration purposes
 export const WINDOWS_RESERVED_BASENAMES: ReadonlyArray<string> = Object.freeze(

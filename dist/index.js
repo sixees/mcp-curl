@@ -15,7 +15,6 @@ import { LIMITS, SERVER, SESSION, RATE_LIMIT, TEMP_DIR, JQ, ENV, UUID_REGEX, isW
 // SSRF protection helpers
 isBlockedHostname, isLocalhostHostname, isBlockedIp, isLocalhostIp, isAllowedLocalhostPort, } from "./lib/config/index.js";
 import { generateMetadataSeparator, } from "./lib/types/index.js";
-// Constants and types are now imported from lib/config and lib/types
 // Session tracking for HTTP transport (Session type imported from lib/types)
 const sessions = new Map();
 // Periodically clean up idle sessions to prevent resource exhaustion
@@ -453,7 +452,7 @@ function validateNoCRLF(value, fieldName) {
 /**
  * SSRF protection: block requests to private/internal networks.
  *
- * See lib/config/constants.ts for detailed security rationale covering:
+ * See lib/config/security/ssrf.ts for detailed security rationale covering:
  * - IPv4-mapped IPv6 bypass prevention (::ffff:x.x.x.x)
  * - DNS rebinding attack mitigation
  * - Protocol and TLD restrictions
@@ -1311,7 +1310,11 @@ Temp File Lifecycle:
                 contentType,
                 outputDir: validatedOutputDir,
             });
-            const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, { savedToFile: processed.savedToFile, filepath: processed.filepath, message: processed.message });
+            const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, {
+                savedToFile: processed.savedToFile,
+                filepath: processed.savedToFile ? processed.filepath : undefined,
+                message: processed.message,
+            });
             return {
                 content: [
                     {
