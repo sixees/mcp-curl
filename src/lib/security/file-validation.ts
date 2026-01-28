@@ -92,13 +92,15 @@ export async function validateFilePath(filepath: string): Promise<void> {
             // The file's readability is checked separately.
             allowedDirs.push(realEnvDir);
         } catch (error) {
-            const err = error as NodeJS.ErrnoException;
-            if (err.code === "ENOENT") {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
                 throw new Error(
                     `Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory does not exist`
                 );
             }
-            throw error;
+            // Unexpected error (permission denied, I/O error, etc.) - include context
+            throw new Error(
+                `Failed to validate ${ENV.OUTPUT_DIR} "${envOutputDir}": ${getErrorMessage(error)}`
+            );
         }
     }
 

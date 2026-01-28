@@ -80,11 +80,11 @@ export async function validateFilePath(filepath) {
             allowedDirs.push(realEnvDir);
         }
         catch (error) {
-            const err = error;
-            if (err.code === "ENOENT") {
+            if (error.code === "ENOENT") {
                 throw new Error(`Invalid ${ENV.OUTPUT_DIR} value "${envOutputDir}": directory does not exist`);
             }
-            throw error;
+            // Unexpected error (permission denied, I/O error, etc.) - include context
+            throw new Error(`Failed to validate ${ENV.OUTPUT_DIR} "${envOutputDir}": ${getErrorMessage(error)}`);
         }
     }
     // 3. Current working directory (use realpath in case cwd itself is a symlink)
