@@ -5,6 +5,7 @@ import { stat, access, realpath, constants as fsConstants } from "fs/promises";
 import { JQ } from "../config/jq.js";
 import { ENV } from "../config/environment.js";
 import { getSharedTempDir } from "../files/temp-manager.js";
+import { getErrorMessage } from "../utils/index.js";
 /**
  * Validate a file path for jq_query tool (security: restrict to allowed directories).
  *
@@ -92,8 +93,7 @@ export async function validateFilePath(filepath) {
     }
     catch (error) {
         // Fail closed: refuse to proceed if we can't resolve cwd for symlink protection
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to resolve current working directory: ${message}. ` +
+        throw new Error(`Failed to resolve current working directory: ${getErrorMessage(error)}. ` +
             `This is required for secure file validation.`);
     }
     // Check if REAL file path is within any allowed directory

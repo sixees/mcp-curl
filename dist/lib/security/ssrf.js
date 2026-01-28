@@ -3,6 +3,7 @@
 import { lookup } from "dns/promises";
 import { ENV } from "../config/environment.js";
 import { isBlockedHostname, isLocalhostHostname, isBlockedIp, isLocalhostIp, isAllowedLocalhostPort, } from "../config/security/ssrf.js";
+import { getErrorMessage } from "../utils/index.js";
 /**
  * Check if localhost requests are allowed via environment variable.
  */
@@ -22,7 +23,7 @@ export async function resolveDns(hostname) {
         return result.address;
     }
     catch (error) {
-        throw new Error(`DNS resolution failed for "${hostname}": ${error.message}`);
+        throw new Error(`DNS resolution failed for "${hostname}": ${getErrorMessage(error)}`);
     }
 }
 /**

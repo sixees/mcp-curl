@@ -11,6 +11,7 @@ import {
     isAllowedLocalhostPort,
 } from "../config/security/ssrf.js";
 import type { UrlValidationResult } from "../types/index.js";
+import { getErrorMessage } from "../utils/index.js";
 
 /**
  * Check if localhost requests are allowed via environment variable.
@@ -31,7 +32,7 @@ export async function resolveDns(hostname: string): Promise<string> {
         const result = await lookup(hostname);
         return result.address;
     } catch (error) {
-        throw new Error(`DNS resolution failed for "${hostname}": ${(error as Error).message}`);
+        throw new Error(`DNS resolution failed for "${hostname}": ${getErrorMessage(error)}`);
     }
 }
 

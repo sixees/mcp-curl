@@ -17,6 +17,8 @@ import { getOrCreateTempDir, cleanupOrphanedTempDirs, cleanupTempDir, resolveOut
 import { validateUrlAndResolveDns, checkRateLimits, startRateLimitCleanup, stopRateLimitCleanup, isValidSessionId, validateNoCRLF, validateFilePath, } from "./lib/security/index.js";
 // Phase 2: JQ module
 import { applyJqFilter } from "./lib/jq/index.js";
+// Phase 2: Utils module
+import { getErrorMessage } from "./lib/utils/index.js";
 // Session tracking for HTTP transport (Session type imported from lib/types)
 const sessions = new Map();
 // Periodically clean up idle sessions to prevent resource exhaustion
@@ -628,7 +630,7 @@ Temp File Lifecycle:
             };
         }
         catch (error) {
-            const rawMessage = error instanceof Error ? error.message : String(error);
+            const rawMessage = getErrorMessage(error);
             const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
             return {
                 content: [
@@ -729,7 +731,7 @@ Examples:
             };
         }
         catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
+            const errorMessage = getErrorMessage(error);
             return {
                 content: [
                     {
