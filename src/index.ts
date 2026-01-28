@@ -1176,12 +1176,8 @@ async function shutdown(signal: string): Promise<void> {
     clearInterval(sessionCleanupInterval);
     stopRateLimitCleanup(rateLimitCleanupInterval);
 
-    // Clean up temp directory (extracted to files module)
-    try {
-        await cleanupTempDir();
-    } catch (error) {
-        console.error("Warning: Failed to clean up temp directory:", error);
-    }
+    // Clean up temp directory (handles errors internally)
+    await cleanupTempDir();
 
     process.exit(0);
 }

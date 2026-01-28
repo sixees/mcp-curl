@@ -89,13 +89,22 @@ export async function cleanupOrphanedTempDirs() {
 }
 /**
  * Clean up the current session's temp directory.
- * Called during graceful shutdown.
+ * Called during graceful shutdown. Handles errors internally to avoid
+ * halting shutdown - consistent with cleanupOrphanedTempDirs behavior.
  */
 export async function cleanupTempDir() {
     if (sharedTempDir) {
-        await rm(sharedTempDir, { recursive: true, force: true });
-        sharedTempDir = null;
-        tempDirPromise = null;
+        try {
+            await rm(sharedTempDir, { recursive: true, force: true });
+        }
+        catch (error) {
+            console.error("Warning: Failed to clean up temp directory:", error);
+        }
+        finally {
+            // Always reset state, even if rm fails
+            sharedTempDir = null;
+            tempDirPromise = null;
+        }
     }
     lastFailureTime = 0; // Reset failure state to allow fresh start
 }

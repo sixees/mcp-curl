@@ -16,6 +16,7 @@ export declare function getSharedTempDir(): string | null;
 export declare function cleanupOrphanedTempDirs(): Promise<void>;
 /**
  * Clean up the current session's temp directory.
- * Called during graceful shutdown.
+ * Called during graceful shutdown. Handles errors internally to avoid
+ * halting shutdown - consistent with cleanupOrphanedTempDirs behavior.
  */
 export declare function cleanupTempDir(): Promise<void>;
