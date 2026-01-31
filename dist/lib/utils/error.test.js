@@ -8,6 +8,7 @@ describe('getErrorMessage', () => {
         expect(getErrorMessage('string error')).toBe('string error');
         expect(getErrorMessage(42)).toBe('42');
         expect(getErrorMessage(null)).toBe('null');
+        expect(getErrorMessage(undefined)).toBe('undefined');
     });
 });
 describe('createValidationError', () => {
@@ -22,6 +23,10 @@ describe('createValidationError', () => {
     it('adds period to suggestion if missing', () => {
         const err = createValidationError('field', 'reason', 'Try this');
         expect(err.message).toMatch(/Try this\.$/);
+    });
+    it('does not add extra period when suggestion already has one', () => {
+        const err = createValidationError('field', 'reason', 'Try this.');
+        expect(err.message).toBe('Invalid field: reason. Try this.');
     });
 });
 describe('createAccessError', () => {

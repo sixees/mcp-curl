@@ -8,7 +8,7 @@ import { parseJqFilter, splitJqFilters } from "./parser.js";
  * Internal helper - not exported from module.
  */
 function isRecord(value) {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 /**
  * Apply a single jq-like filter path to parsed JSON data.

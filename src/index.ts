@@ -5,7 +5,6 @@ import {StreamableHTTPServerTransport} from "@modelcontextprotocol/sdk/server/st
 import express, {Request, Response, NextFunction} from "express";
 import {Server} from "http";
 import {z} from "zod";
-import {spawn, ChildProcess} from "child_process";
 import {randomUUID} from "crypto";
 import {join, resolve, basename} from "path";
 import {readFile, writeFile} from "fs/promises";
@@ -13,19 +12,15 @@ import {readFile, writeFile} from "fs/promises";
 // Phase 1: Configuration and types
 import {
     LIMITS,
-    BYTES_PER_MB,
     SERVER,
     SESSION,
     TEMP_DIR,
     ENV,
-    isWindowsReservedBasename,
 } from "./lib/config/index.js";
 
 import {
     generateMetadataSeparator,
     type Session,
-    type ProcessResponseOptions,
-    type ProcessedResponse,
 } from "./lib/types/index.js";
 
 // Phase 2: Files module
@@ -44,7 +39,6 @@ import {
     startRateLimitCleanup,
     stopRateLimitCleanup,
     isValidSessionId,
-    validateNoCRLF,
     validateFilePath,
 } from "./lib/security/index.js";
 
@@ -53,6 +47,21 @@ import { applyJqFilter } from "./lib/jq/index.js";
 
 // Phase 2: Utils module
 import { getErrorMessage } from "./lib/utils/index.js";
+
+// Phase 3: Execution module
+import {
+    executeCommand,
+    buildCurlArgs,
+} from "./lib/execution/index.js";
+
+// Phase 3: Response module
+import {
+    parseResponseWithMetadata,
+    sanitizeErrorMessage,
+    formatResponse,
+    createSafeFilenameBase,
+    processResponse,
+} from "./lib/response/index.js";
 
 // Session tracking for HTTP transport (Session type imported from lib/types)
 const sessions = new Map<string, Session>();
@@ -78,445 +87,12 @@ sessionCleanupInterval.unref();
 // Start rate limit cleanup (encapsulated in security module)
 const rateLimitCleanupInterval = startRateLimitCleanup();
 
-// Check if the content-type indicates JSON
-function isJsonContentType(contentType: string | undefined): boolean {
-    if (!contentType) return false;
-    const ct = contentType.toLowerCase();
-    return ct.includes("application/json") || ct.includes("+json");
-}
-
-// Parse curl response to extract body and content-type
-// The separator must be the same unique value used in the -w format string
-function parseResponseWithMetadata(rawResponse: string, separator: string): { body: string; contentType?: string } {
-    // Only search for separator near the end as a defense-in-depth measure
-    // The unique per-request separator is the primary protection against injection
-    const searchStart = Math.max(0, rawResponse.length - LIMITS.MAX_METADATA_TAIL_LENGTH);
-    const tailSection = rawResponse.slice(searchStart);
-    const separatorIndexInTail = tailSection.lastIndexOf(separator);
-
-    if (separatorIndexInTail === -1) {
-        return { body: rawResponse };
-    }
-
-    const separatorIndex = searchStart + separatorIndexInTail;
-    const body = rawResponse.slice(0, separatorIndex);
-    const contentType = rawResponse.slice(separatorIndex + separator.length).trim();
-    return { body, contentType: contentType || undefined };
-}
-
-// Sanitize error messages to prevent information disclosure
-function sanitizeErrorMessage(message: string, includeDetails: boolean): string {
-    if (includeDetails) {
-        return message;
-    }
-    // Remove response previews (could contain sensitive API data)
-    let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
-    // Remove file paths (could leak system information)
-    sanitized = sanitized.replace(/\/[^\s:]+/g, "[PATH]");
-    // Add hint about getting more details
-    if (sanitized !== message) {
-        sanitized += " (use include_metadata: true for details)";
-    }
-    return sanitized;
-}
-
 // Create a new MCP server instance
 function createServer(): McpServer {
     return new McpServer({
         name: SERVER.NAME,
         version: SERVER.VERSION,
     });
-}
-
-/**
- * Global memory tracking for concurrent response handling.
- *
- * While each request is limited to LIMITS.MAX_RESPONSE_SIZE (10MB), multiple concurrent
- * requests could exhaust memory. This tracks total memory across all active
- * requests and rejects new data when the limit is reached.
- */
-let totalResponseMemory = 0;
-
-// Helper function to execute a command
-async function executeCommand(
-    command: string,
-    args: string[],
-    timeout: number = LIMITS.DEFAULT_TIMEOUT_MS
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    // Track this request's memory usage for cleanup
-    let requestMemoryUsage = 0;
-
-    return new Promise((resolve, reject) => {
-        // Use AbortController for process-level timeout (spawn ignores timeout option)
-        const abortController = new AbortController();
-        const timeoutId = setTimeout(() => {
-            abortController.abort();
-        }, timeout);
-
-        const childProcess: ChildProcess = spawn(command, args, {
-            signal: abortController.signal,
-        });
-
-        let stdout = "";
-        let stderr = "";
-        let killed = false;
-
-        // Cleanup function to release memory tracking
-        const releaseMemory = () => {
-            totalResponseMemory -= requestMemoryUsage;
-            requestMemoryUsage = 0;
-        };
-
-        childProcess.stdout?.on("data", (data: Buffer) => {
-            const dataSize = Buffer.byteLength(data, "utf8");
-
-            // Check global memory limit
-            if (totalResponseMemory + dataSize > LIMITS.MAX_TOTAL_RESPONSE_MEMORY && !killed) {
-                killed = true;
-                clearTimeout(timeoutId);
-                releaseMemory();
-                childProcess.kill();
-                reject(new Error(
-                    "Server memory limit reached due to concurrent requests. Please try again later."
-                ));
-                return;
-            }
-
-            stdout += data.toString();
-            requestMemoryUsage += dataSize;
-            totalResponseMemory += dataSize;
-
-            // Check per-request limit
-            if (Buffer.byteLength(stdout, "utf8") > LIMITS.MAX_RESPONSE_SIZE && !killed) {
-                killed = true;
-                clearTimeout(timeoutId);
-                releaseMemory();
-                childProcess.kill();
-                reject(new Error(
-                    `Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. ` +
-                    `Consider using a more specific API endpoint or adding query parameters to reduce response size.`
-                ));
-            }
-        });
-
-        childProcess.stderr?.on("data", (data: Buffer) => {
-            const stderrBytes = Buffer.byteLength(stderr, "utf8");
-            if (stderrBytes < LIMITS.MAX_RESPONSE_SIZE) {
-                stderr += data.toString();
-                if (Buffer.byteLength(stderr, "utf8") > LIMITS.MAX_RESPONSE_SIZE) {
-                    // Truncate efficiently using Buffer slice
-                    const truncateMsg = "\n[stderr truncated]";
-                    const maxBytes = LIMITS.MAX_RESPONSE_SIZE - Buffer.byteLength(truncateMsg, "utf8");
-                    const buf = Buffer.from(stderr, "utf8").subarray(0, maxBytes);
-                    stderr = buf.toString("utf8") + truncateMsg;
-                }
-            }
-        });
-
-        childProcess.on("close", (code: number | null) => {
-            clearTimeout(timeoutId);
-            releaseMemory(); // Release memory tracking on completion
-            if (!killed) {
-                resolve({
-                    stdout,
-                    stderr,
-                    exitCode: code ?? 0,
-                });
-            }
-        });
-
-        childProcess.on("error", (error: Error) => {
-            clearTimeout(timeoutId);
-            releaseMemory(); // Release memory tracking on error
-            // AbortError means our timeout triggered
-            if (error.name === "AbortError") {
-                reject(new Error(
-                    `Request timed out after ${timeout / 1000} seconds. ` +
-                    `The server may be slow or unresponsive.`
-                ));
-            } else {
-                reject(error);
-            }
-        });
-    });
-}
-
-// Build cURL arguments from structured parameters
-function buildCurlArgs(params: {
-    url: string;
-    method?: string;
-    headers?: Record<string, string>;
-    data?: string;
-    form?: Record<string, string>;
-    output_format?: string;
-    follow_redirects?: boolean;
-    insecure?: boolean;
-    timeout?: number;
-    user_agent?: string;
-    basic_auth?: string;
-    bearer_token?: string;
-    verbose?: boolean;
-    include_headers?: boolean;
-    max_redirects?: number;
-    compressed?: boolean;
-    silent?: boolean;
-    // DNS pinning to prevent rebinding attacks (see validateUrlAndResolveDns)
-    dnsResolve?: { hostname: string; port: number; resolvedIp: string };
-    // Unique per-request separator for extracting metadata (prevents injection)
-    metadataSeparator: string;
-}): string[] {
-    const args: string[] = [];
-
-    // Method
-    if (params.method) {
-        args.push("-X", params.method.toUpperCase());
-    }
-
-    // Headers - validate against CRLF injection
-    if (params.headers) {
-        for (const [key, value] of Object.entries(params.headers)) {
-            validateNoCRLF(key, "header name");
-            validateNoCRLF(value, `header value for "${key}"`);
-            args.push("-H", `${key}: ${value}`);
-        }
-    }
-
-    // Data/body - use --data-raw to prevent @/< file reading (security: prevents local file exfiltration)
-    if (params.data) {
-        args.push("--data-raw", params.data);
-    }
-
-    // Form data - use --form-string to prevent @/< file reading (security: prevents local file exfiltration)
-    if (params.form) {
-        for (const [key, value] of Object.entries(params.form)) {
-            args.push("--form-string", `${key}=${value}`);
-        }
-    }
-
-    // Follow redirects
-    if (params.follow_redirects !== false) {
-        args.push("-L");
-        if (params.max_redirects !== undefined) {
-            args.push("--max-redirs", params.max_redirects.toString());
-        }
-    }
-
-    // Insecure (skip SSL verification)
-    if (params.insecure) {
-        args.push("-k");
-    }
-
-    // Timeout
-    if (params.timeout) {
-        args.push("--max-time", params.timeout.toString());
-    }
-
-    // User agent - validate against CRLF injection
-    if (params.user_agent) {
-        validateNoCRLF(params.user_agent, "user_agent");
-        args.push("-A", params.user_agent);
-    }
-
-    // Basic auth - validate against CRLF injection
-    if (params.basic_auth) {
-        validateNoCRLF(params.basic_auth, "basic_auth");
-        args.push("-u", params.basic_auth);
-    }
-
-    // Bearer token - validate against CRLF injection
-    if (params.bearer_token) {
-        validateNoCRLF(params.bearer_token, "bearer_token");
-        args.push("-H", `Authorization: Bearer ${params.bearer_token}`);
-    }
-
-    // Verbose mode
-    if (params.verbose) {
-        args.push("-v");
-    }
-
-    // Include response headers
-    if (params.include_headers) {
-        args.push("-i");
-    }
-
-    // Compressed response
-    if (params.compressed) {
-        args.push("--compressed");
-    }
-
-    // Silent mode (no progress)
-    if (params.silent !== false) {
-        args.push("-s");
-    }
-
-    // Output format for response info (custom format + metadata separator for content-type)
-    // The separator is unique per-request to prevent response injection attacks
-    const metadataSuffix = params.metadataSeparator.replace(/\n/g, "\\n") + "%{content_type}";
-    if (params.output_format) {
-        args.push("-w", params.output_format + metadataSuffix);
-    } else {
-        args.push("-w", metadataSuffix);
-    }
-
-    // DNS pinning with --resolve to prevent DNS rebinding attacks
-    // Format: --resolve hostname:port:ip
-    // This forces cURL to use our pre-validated IP instead of doing its own DNS lookup
-    if (params.dnsResolve) {
-        const { hostname, port, resolvedIp } = params.dnsResolve;
-        args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
-    }
-
-    // URL must be last
-    args.push(params.url);
-
-    return args;
-}
-
-// Format the response for output
-function formatResponse(
-    stdout: string,
-    stderr: string,
-    exitCode: number,
-    includeMetadata: boolean,
-    fileSaveInfo?: { savedToFile: boolean; filepath?: string; message?: string }
-): string {
-    // If file was saved, always indicate the filepath (user needs to know where data is)
-    if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
-        if (includeMetadata) {
-            // Full JSON metadata
-            const output: Record<string, unknown> = {
-                success: exitCode === 0,
-                exit_code: exitCode,
-                saved_to_file: true,
-                filepath: fileSaveInfo.filepath,
-                message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents.",
-            };
-            if (stderr) output.stderr = stderr;
-            return JSON.stringify(output, null, 2);
-        }
-        // Plain text - just return the message or fallback to filepath
-        return fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-    }
-
-    // Normal response
-    if (includeMetadata) {
-        const output: Record<string, unknown> = {
-            success: exitCode === 0,
-            exit_code: exitCode,
-            response: stdout,
-        };
-        if (stderr) output.stderr = stderr;
-        return JSON.stringify(output, null, 2);
-    }
-    return stdout;
-}
-
-// Create a safe filename base from arbitrary input
-function createSafeFilenameBase(input: string, fallback = "response"): string {
-    // Replace non-alphanumeric characters with underscores
-    let base = input.replace(/[^a-zA-Z0-9]/g, "_");
-    // Trim leading and trailing underscores to avoid names like "___"
-    base = base.replace(/^_+|_+$/g, "");
-    // Ensure we have a non-empty base
-    if (!base) {
-        base = fallback;
-    }
-    // Enforce maximum length
-    base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-    // Avoid reserved or problematic base names across platforms
-    // (isWindowsReservedBasename handles case-insensitivity internally)
-    if (isWindowsReservedBasename(base) || base === "." || base === "..") {
-        base = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-    }
-    return base;
-}
-
-// Save response content to a file (custom output dir or temp dir)
-async function saveResponseToFile(content: string, url: string, outputDir?: string): Promise<string> {
-    // Use custom output dir if provided, otherwise use temp dir
-    const targetDir = outputDir ?? await getOrCreateTempDir();
-
-    // Create a safe filename from URL (fall back to raw string if URL is invalid)
-    let baseName: string;
-    try {
-        const urlObj = new URL(url);
-        baseName = urlObj.hostname + urlObj.pathname;
-    } catch (error) {
-        // TypeError indicates invalid URL format; fall back to raw string
-        if (error instanceof TypeError) {
-            baseName = url;
-        } else {
-            throw error; // Re-throw unexpected errors
-        }
-    }
-    const safeName = createSafeFilenameBase(baseName);
-    const filename = `${safeName}_${Date.now()}.txt`;
-    const filepath = join(targetDir, filename);
-
-    await writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 }); // Owner-only access
-    return filepath;
-}
-
-// Process response with filtering and size handling (types imported from lib/types)
-async function processResponse(
-    response: string,
-    options: ProcessResponseOptions
-): Promise<ProcessedResponse> {
-    let content = response;
-
-    // Step 1: Apply jq filter if provided AND response is JSON
-    if (options.jqFilter) {
-        const isJson = isJsonContentType(options.contentType);
-        if (!isJson) {
-            // Check if it looks like JSON despite content-type (some APIs don't set correct headers)
-            const trimmed = content.trim();
-            const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
-            if (!looksLikeJson) {
-                throw new Error(
-                    `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"}).\n` +
-                    `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
-                );
-            }
-            // Actually try to parse it to verify it's valid JSON
-            try {
-                JSON.parse(trimmed);
-            } catch (error) {
-                // SyntaxError indicates invalid JSON
-                if (error instanceof SyntaxError) {
-                    throw new Error(
-                        `Cannot apply jq_filter: Response does not appear to be valid JSON.\n` +
-                        `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
-                    );
-                }
-                throw error; // Re-throw unexpected errors
-            }
-        }
-        content = applyJqFilter(content, options.jqFilter);
-    }
-
-    // Step 2: Determine max size
-    const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-    const contentBytes = Buffer.byteLength(content, "utf8");
-
-    // Step 3: Check if we need to save to file
-    const shouldSave = options.saveToFile || contentBytes > maxSize;
-
-    if (shouldSave) {
-        const filepath = await saveResponseToFile(content, options.url, options.outputDir);
-        // Keep content as actual response data, capped to maxSize for preview
-        const displayContent = contentBytes > maxSize ? content.slice(0, maxSize) : content;
-        return {
-            content: displayContent,
-            savedToFile: true,
-            filepath,
-            message: `Response (${contentBytes} bytes) saved to: ${filepath}`,
-        };
-    }
-
-    return {
-        content,
-        savedToFile: false,
-    };
 }
 
 // Schema for structured cURL execution

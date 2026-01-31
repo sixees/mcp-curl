@@ -20,6 +20,18 @@ const hostRateLimitMap = new Map<string, RateLimitEntry>();
 const clientRateLimitMap = new Map<string, RateLimitEntry>();
 
 /**
+ * Clean up expired entries from a rate limit map.
+ */
+function cleanupExpiredEntries(map: Map<string, RateLimitEntry>): void {
+    const now = Date.now();
+    for (const [key, entry] of map) {
+        if ((now - entry.windowStart) >= RATE_LIMIT.WINDOW_MS) {
+            map.delete(key);
+        }
+    }
+}
+
+/**
  * Internal rate limit check for a single map.
  */
 function checkRateLimitInternal(
@@ -77,17 +89,8 @@ export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.
  */
 export function startRateLimitCleanup(): NodeJS.Timeout {
     const interval = setInterval(() => {
-        const now = Date.now();
-        for (const [key, entry] of hostRateLimitMap) {
-            if ((now - entry.windowStart) >= RATE_LIMIT.WINDOW_MS) {
-                hostRateLimitMap.delete(key);
-            }
-        }
-        for (const [key, entry] of clientRateLimitMap) {
-            if ((now - entry.windowStart) >= RATE_LIMIT.WINDOW_MS) {
-                clientRateLimitMap.delete(key);
-            }
-        }
+        cleanupExpiredEntries(hostRateLimitMap);
+        cleanupExpiredEntries(clientRateLimitMap);
     }, RATE_LIMIT.CLEANUP_INTERVAL_MS);
 
     // Prevent interval from keeping process alive during shutdown

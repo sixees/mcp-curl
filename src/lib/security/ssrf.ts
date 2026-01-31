@@ -62,7 +62,12 @@ export async function validateUrlAndResolveDns(url: string): Promise<UrlValidati
         throw new Error("UNC paths are not allowed - they could access internal network shares");
     }
 
-    const parsed = new URL(url);
+    let parsed: URL;
+    try {
+        parsed = new URL(url);
+    } catch (error) {
+        throw new Error(`Invalid URL format: ${getErrorMessage(error)}`);
+    }
     const hostname = parsed.hostname.toLowerCase();
     const port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === "https:" ? 443 : 80);
 

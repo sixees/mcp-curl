@@ -3,6 +3,7 @@
 import { resolve } from "path";
 import { stat, access, realpath, constants as fsConstants } from "fs/promises";
 import { ENV } from "../config/environment.js";
+import { getErrorMessage } from "../utils/index.js";
 /**
  * Resolve the output directory with priority:
  * 1) parameter (if provided)
@@ -61,7 +62,7 @@ export async function validateOutputDir(dir) {
             throw new Error(`Invalid output_dir "${dir}": directory does not exist. ` +
                 `Please create it first or use a different path.`);
         }
-        throw error;
+        throw new Error(`Error validating output_dir "${dir}": ${getErrorMessage(error)}`);
     }
     // Resolve symlinks to get the real filesystem path
     // This ensures we validate and use the actual destination, not just the symlink
@@ -71,7 +72,15 @@ export async function validateOutputDir(dir) {
         await access(realPath, fsConstants.W_OK);
     }
     catch (error) {
-        throw new Error(`Invalid output_dir "${dir}": directory is not writable`);
+        const errno = error.code;
+        let reason = "directory is not writable";
+        if (errno === 'EROFS') {
+            reason = "filesystem is mounted read-only";
+        }
+        else if (errno === 'EACCES') {
+            reason = "permission denied";
+        }
+        throw new Error(`Invalid output_dir "${dir}": ${reason}`);
     }
     return realPath;
 }
