@@ -1,0 +1,14 @@
+// src/lib/server/registration.ts
+// Orchestrates registration of all tools, resources, and prompts
+import { registerAllTools } from "../tools/index.js";
+import { registerAllResources } from "../resources/index.js";
+import { registerAllPrompts } from "../prompts/index.js";
+/**
+ * Registers all tools, resources, and prompts on the MCP server.
+ * This is the main orchestration function that delegates to individual modules.
+ */
+export function registerToolsAndResources(server) {
+    registerAllTools(server);
+    registerAllResources(server);
+    registerAllPrompts(server);
+}
