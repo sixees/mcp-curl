@@ -2,7 +2,6 @@
 // Response module barrel export
 
 export {
-    isJsonContentType,
     parseResponseWithMetadata,
     sanitizeErrorMessage,
     type ParsedResponse,

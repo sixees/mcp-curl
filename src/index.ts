@@ -56,7 +56,6 @@ import {
 
 // Phase 3: Response module
 import {
-    isJsonContentType,
     parseResponseWithMetadata,
     sanitizeErrorMessage,
     formatResponse,
