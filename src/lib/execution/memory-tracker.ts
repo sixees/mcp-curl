@@ -33,6 +33,9 @@ export function getMemoryLimit(): number {
  * @returns true if allocation succeeded, false if it would exceed the global limit
  */
 export function allocateMemory(bytes: number): boolean {
+    if (!Number.isFinite(bytes) || bytes < 0) {
+        return false; // Invalid input, refuse allocation
+    }
     if (totalResponseMemory + bytes > LIMITS.MAX_TOTAL_RESPONSE_MEMORY) {
         return false;
     }
@@ -46,6 +49,9 @@ export function allocateMemory(bytes: number): boolean {
  * @param bytes - Number of bytes to release
  */
 export function releaseMemory(bytes: number): void {
+    if (!Number.isFinite(bytes) || bytes < 0) {
+        return; // Invalid input, ignore
+    }
     totalResponseMemory -= bytes;
     // Ensure we don't go negative due to accounting errors
     if (totalResponseMemory < 0) {

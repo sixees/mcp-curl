@@ -41,9 +41,15 @@ async function getAllowedDirectories(): Promise<string[]> {
         const dirs: string[] = [];
 
         // Temp directory (check fresh each time as it may be created after cache)
+        // Resolve via realpath() for consistent symlink handling
         const tempDir = getSharedTempDir();
         if (tempDir) {
-            dirs.push(tempDir);
+            try {
+                const tempDirResolved = await realpath(tempDir);
+                dirs.push(tempDirResolved);
+            } catch {
+                // Temp dir may not exist yet, ignore
+            }
         }
 
         // Cached directories
@@ -97,9 +103,15 @@ async function getAllowedDirectories(): Promise<string[]> {
     // Build result array
     const dirs: string[] = [];
 
+    // Resolve temp directory via realpath() for consistent symlink handling
     const tempDir = getSharedTempDir();
     if (tempDir) {
-        dirs.push(tempDir);
+        try {
+            const tempDirResolved = await realpath(tempDir);
+            dirs.push(tempDirResolved);
+        } catch {
+            // Temp dir may not exist yet, ignore
+        }
     }
 
     if (envOutputDirResolved) {

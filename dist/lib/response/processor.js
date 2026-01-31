@@ -53,7 +53,11 @@ export async function processResponse(response, options) {
     if (shouldSave) {
         const filepath = await saveResponseToFile(content, options.url, options.outputDir);
         // Keep content as actual response data, capped to maxSize for preview
-        const displayContent = contentBytes > maxSize ? content.slice(0, maxSize) : content;
+        // Use byte-aware truncation to handle multi-byte UTF-8 characters correctly
+        let displayContent = content;
+        if (contentBytes > maxSize) {
+            displayContent = Buffer.from(content, "utf8").subarray(0, maxSize).toString("utf8");
+        }
         return {
             content: displayContent,
             savedToFile: true,

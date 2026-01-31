@@ -18,9 +18,16 @@ async function getAllowedDirectories() {
     if (allowedDirsCache && (now - allowedDirsCache.timestamp) < JQ.ALLOWED_DIRS_CACHE_TTL_MS) {
         const dirs = [];
         // Temp directory (check fresh each time as it may be created after cache)
+        // Resolve via realpath() for consistent symlink handling
         const tempDir = getSharedTempDir();
         if (tempDir) {
-            dirs.push(tempDir);
+            try {
+                const tempDirResolved = await realpath(tempDir);
+                dirs.push(tempDirResolved);
+            }
+            catch {
+                // Temp dir may not exist yet, ignore
+            }
         }
         // Cached directories
         if (allowedDirsCache.envOutputDir) {
@@ -66,9 +73,16 @@ async function getAllowedDirectories() {
     };
     // Build result array
     const dirs = [];
+    // Resolve temp directory via realpath() for consistent symlink handling
     const tempDir = getSharedTempDir();
     if (tempDir) {
-        dirs.push(tempDir);
+        try {
+            const tempDirResolved = await realpath(tempDir);
+            dirs.push(tempDirResolved);
+        }
+        catch {
+            // Temp dir may not exist yet, ignore
+        }
     }
     if (envOutputDirResolved) {
         dirs.push(envOutputDirResolved);
@@ -124,17 +138,24 @@ export async function validateFilePath(filepath) {
         }
     }
     catch (error) {
-        if (error.code === "ENOENT") {
+        const errno = error.code;
+        if (errno === "ENOENT") {
             throw createFileError(filepath, "does not exist");
         }
-        throw error;
+        // Re-throw our own validation errors (no errno) directly to avoid double-wrapping
+        if (error instanceof Error && !errno) {
+            throw error;
+        }
+        // Wrap unexpected system errors with context
+        throw new Error(`Error validating file "${filepath}": ${getErrorMessage(error)}`);
     }
     // Check file is readable
     try {
         await access(realFilePath, fsConstants.R_OK);
     }
     catch (error) {
-        throw createFileError(filepath, "is not readable");
+        const errno = error.code;
+        throw createFileError(filepath, `is not readable (${errno || 'unknown error'})`);
     }
     // Get allowed directories (cached with TTL to avoid repeated I/O)
     const allowedDirs = await getAllowedDirectories();

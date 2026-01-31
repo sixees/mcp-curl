@@ -61,8 +61,8 @@ export function sanitizeErrorMessage(message, includeDetails) {
     }
     // Remove response previews (could contain sensitive API data)
     let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
-    // Remove file paths (could leak system information)
-    sanitized = sanitized.replace(/\/[^\s:]+/g, "[PATH]");
+    // Remove file paths - handles both Unix (/path/to/file) and Windows (C:\path\to\file)
+    sanitized = sanitized.replace(/(?:\/[^\s:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
     // Add hint about getting more details
     if (sanitized !== message) {
         sanitized += " (use include_metadata: true for details)";

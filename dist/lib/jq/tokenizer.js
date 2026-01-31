@@ -88,6 +88,13 @@ function parseSlice(numStr, filter, newIndex) {
         if (Number.isNaN(parsedStart)) {
             throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}"`);
         }
+        if (!Number.isSafeInteger(parsedStart)) {
+            throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": exceeds safe integer range`);
+        }
+        // Check for leading zeros (e.g., "007" should be rejected, but "0" is ok)
+        if (parts[0] !== String(parsedStart)) {
+            throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": leading zeros are not allowed`);
+        }
         start = parsedStart;
     }
     let end;
@@ -95,6 +102,13 @@ function parseSlice(numStr, filter, newIndex) {
         const parsedEnd = parseInt(parts[1], 10);
         if (Number.isNaN(parsedEnd)) {
             throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}"`);
+        }
+        if (!Number.isSafeInteger(parsedEnd)) {
+            throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": exceeds safe integer range`);
+        }
+        // Check for leading zeros
+        if (parts[1] !== String(parsedEnd)) {
+            throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": leading zeros are not allowed`);
         }
         end = parsedEnd;
     }
@@ -110,6 +124,13 @@ function parseIndex(numStr, filter, newIndex) {
     }
     if (index < 0) {
         throw new Error(`Invalid array index "${numStr}" in filter "${filter}": negative indices are not supported`);
+    }
+    if (!Number.isSafeInteger(index)) {
+        throw new Error(`Invalid array index "${numStr}" in filter "${filter}": exceeds safe integer range`);
+    }
+    // Check for leading zeros (e.g., "007" should be rejected, but "0" is ok)
+    if (numStr !== String(index)) {
+        throw new Error(`Invalid array index "${numStr}" in filter "${filter}": leading zeros are not allowed`);
     }
     return { token: { type: "index", value: index }, newIndex };
 }
