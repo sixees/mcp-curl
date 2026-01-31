@@ -54,6 +54,7 @@ export async function executeCommand(
 
         let stdout = "";
         let stderr = "";
+        let stderrMemoryUsage = 0;
         let killed = false;
 
         // Cleanup function to release memory tracking
@@ -81,7 +82,7 @@ export async function executeCommand(
             requestMemoryUsage += dataSize;
 
             // Check per-request limit
-            if (Buffer.byteLength(stdout, "utf8") > LIMITS.MAX_RESPONSE_SIZE && !killed) {
+            if (requestMemoryUsage > LIMITS.MAX_RESPONSE_SIZE && !killed) {
                 killed = true;
                 clearTimeout(timeoutId);
                 releaseRequestMemory();
@@ -94,15 +95,18 @@ export async function executeCommand(
         });
 
         childProcess.stderr?.on("data", (data: Buffer) => {
-            const stderrBytes = Buffer.byteLength(stderr, "utf8");
-            if (stderrBytes < LIMITS.MAX_RESPONSE_SIZE) {
-                stderr += data.toString();
-                if (Buffer.byteLength(stderr, "utf8") > LIMITS.MAX_RESPONSE_SIZE) {
+            if (stderrMemoryUsage < LIMITS.MAX_RESPONSE_SIZE) {
+                const dataStr = data.toString();
+                stderr += dataStr;
+                stderrMemoryUsage += Buffer.byteLength(data, "utf8");
+
+                if (stderrMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
                     // Truncate efficiently using Buffer slice
                     const truncateMsg = "\n[stderr truncated]";
                     const maxBytes = LIMITS.MAX_RESPONSE_SIZE - Buffer.byteLength(truncateMsg, "utf8");
                     const buf = Buffer.from(stderr, "utf8").subarray(0, maxBytes);
                     stderr = buf.toString("utf8") + truncateMsg;
+                    stderrMemoryUsage = Buffer.byteLength(stderr, "utf8");
                 }
             }
         });

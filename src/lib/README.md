@@ -15,10 +15,10 @@ Layer 1 (depends on config only):
 
 Layer 2 (depends on layer 1):
   jq/        → config/, types/
-  execution/ → config/, security/ (for validateNoCRLF)
+  security/  → config/, types/, files/, utils/
 
 Layer 3 (depends on layer 2):
-  security/  → config/, types/, files/, utils/
+  execution/ → config/, security/ (for validateNoCRLF)
   response/  → config/, files/, jq/
 
 Entry point:
