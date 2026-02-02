@@ -28,7 +28,7 @@ implementation in `src/index.ts`.
 ### Code Organization
 
 - `createServer()` - Factory function for MCP server instances
-- `registerToolsAndResources(server)` - Registers tool, resources, and prompts
+- `registerAllCapabilities(server)` - Registers tools, resources, and prompts
 - `executeCommand()` - Spawns cURL process with size limits and timeout handling
 - `buildCurlArgs()` - Converts structured params to cURL CLI arguments
 - `processResponse()` - Handles jq filtering, size limits, and file saving

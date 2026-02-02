@@ -15,3 +15,8 @@ export {
     WINDOWS_RESERVED_BASENAMES,
     isWindowsReservedBasename,
 } from "./validation.js";
+
+export {
+    isBlockedSystemDirectory,
+    createBlockedDirectoryError,
+} from "./blocked-dirs.js";

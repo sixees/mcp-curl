@@ -6,23 +6,44 @@ Extracted utility modules organized by domain.
 
 ```
 Foundational (no lib deps):
-  config/    - Constants and configuration
-  types/     - TypeScript type definitions
-  utils/     - Error message helpers
+  config/     - Constants and configuration
+  types/      - TypeScript type definitions
+  utils/      - Error message helpers
 
 Layer 1 (depends on config only):
-  files/     → config/
+  files/      → config/
 
 Layer 2 (depends on layer 1):
-  jq/        → config/, types/
-  security/  → config/, types/, files/, utils/
+  jq/         → config/, types/
+  security/   → config/, types/, files/, utils/
 
 Layer 3 (depends on layer 2):
-  execution/ → config/, security/ (for validateNoCRLF)
-  response/  → config/, files/, jq/
+  execution/  → config/, security/ (for validateNoCRLF)
+  response/   → config/, files/, jq/
+
+Layer 4 (server foundations):
+  server/schemas        → (zod only)
+  server/server-factory → config/
+
+Layer 5 (registration modules):
+  tools/      → server/schemas, config/, types/, files/, security/, jq/, utils/, execution/, response/
+  resources/  → (no lib deps)
+  prompts/    → (zod only)
+
+Layer 6 (orchestration):
+  server/registration → tools/, resources/, prompts/
+
+Layer 7 (session management):
+  session/    → types/, config/
+
+Layer 8 (lifecycle):
+  server/lifecycle → session/, security/, files/
+
+Layer 9 (transports):
+  transports/ → files/, security/, session/, server/
 
 Entry point:
-  index.ts   → all modules
+  index.ts    → server/lifecycle, transports/
 ```
 
 No circular dependencies.
@@ -39,6 +60,12 @@ No circular dependencies.
 | `utils/` | Error message helpers |
 | `execution/` | Command execution with memory tracking, cURL argument building |
 | `response/` | Response parsing, formatting, file saving, and processing orchestration |
+| `server/` | Server factory, schemas, registration orchestration, lifecycle management |
+| `session/` | HTTP transport session management with auto-cleanup |
+| `tools/` | Tool registration (curl_execute, jq_query) |
+| `resources/` | Resource registration (documentation) |
+| `prompts/` | Prompt registration (api-test, api-discovery) |
+| `transports/` | Transport runners (stdio, HTTP with SSE) |
 
 ## Barrel Exports
 
