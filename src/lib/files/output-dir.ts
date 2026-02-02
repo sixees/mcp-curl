@@ -4,6 +4,7 @@
 import { resolve } from "path";
 import { stat, access, realpath, constants as fsConstants } from "fs/promises";
 import { ENV } from "../config/environment.js";
+import { isBlockedSystemDirectory, createBlockedDirectoryError } from "../config/security/index.js";
 import { getErrorMessage } from "../utils/index.js";
 
 /**
@@ -82,6 +83,11 @@ export async function validateOutputDir(dir: string): Promise<string> {
     // Resolve symlinks to get the real filesystem path
     // This ensures we validate and use the actual destination, not just the symlink
     const realPath = await realpath(absolutePath);
+
+    // Block sensitive system directories (check after realpath to prevent symlink bypass)
+    if (isBlockedSystemDirectory(realPath)) {
+        throw createBlockedDirectoryError(dir, realPath);
+    }
 
     // Check directory is writable using the real path
     try {
