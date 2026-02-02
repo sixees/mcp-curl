@@ -61,6 +61,16 @@ export async function shutdown(signal) {
  * Should be called once at application startup.
  */
 export function registerShutdownHandlers() {
-    process.on("SIGINT", () => shutdown("SIGINT"));
-    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => {
+        void shutdown("SIGINT").catch((error) => {
+            console.error("Warning: Shutdown failed:", error);
+            process.exit(1);
+        });
+    });
+    process.on("SIGTERM", () => {
+        void shutdown("SIGTERM").catch((error) => {
+            console.error("Warning: Shutdown failed:", error);
+            process.exit(1);
+        });
+    });
 }

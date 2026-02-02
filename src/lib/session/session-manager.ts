@@ -70,8 +70,11 @@ export class SessionManager {
                     try {
                         session.transport.close();
                     } catch (error) {
-                        console.error(`Warning: Error closing idle session ${id}:`, error);
+                        console.error(`Warning: Error closing idle session ${id} transport:`, error);
                     }
+                    void session.server.close().catch((error) => {
+                        console.error(`Warning: Error closing idle session ${id} server:`, error);
+                    });
                     this.sessions.delete(id);
                 }
             }

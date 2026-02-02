@@ -6,8 +6,8 @@ import { runStdio } from "./lib/transports/stdio.js";
 import { runHTTP } from "./lib/transports/http.js";
 // Register shutdown handlers for graceful cleanup
 registerShutdownHandlers();
-// Select transport based on environment
-const transport = process.env.TRANSPORT || "stdio";
+// Select transport based on environment (case-insensitive)
+const transport = (process.env.TRANSPORT || "stdio").toLowerCase();
 if (transport === "http") {
     runHTTP().catch((error) => {
         console.error("Server error:", error);

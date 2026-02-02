@@ -7,7 +7,7 @@ import { cleanupOrphanedTempDirs } from "../files/index.js";
 import { startRateLimitCleanup, isValidSessionId } from "../security/index.js";
 import { SessionManager } from "../session/index.js";
 import { SESSION, ENV } from "../config/index.js";
-import { createServer, registerToolsAndResources, initializeLifecycle, setHttpServer, } from "../server/index.js";
+import { createServer, registerAllCapabilities, initializeLifecycle, setHttpServer, } from "../server/index.js";
 /**
  * Authentication middleware for HTTP transport.
  *
@@ -61,7 +61,8 @@ export async function runHTTP() {
     // POST /mcp - Handle MCP requests
     app.post("/mcp", async (req, res) => {
         try {
-            const sessionId = req.headers["mcp-session-id"];
+            const rawSessionId = req.headers["mcp-session-id"];
+            const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
             // Validate session ID format if provided
             if (sessionId && !isValidSessionId(sessionId)) {
                 res.status(400).json({
@@ -87,7 +88,7 @@ export async function runHTTP() {
             }
             // Create new session
             const server = createServer();
-            registerToolsAndResources(server);
+            registerAllCapabilities(server);
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: () => randomUUID(),
                 enableJsonResponse: true,
@@ -123,7 +124,8 @@ export async function runHTTP() {
     // GET /mcp - Handle SSE streams for existing sessions
     app.get("/mcp", async (req, res, next) => {
         try {
-            const sessionId = req.headers["mcp-session-id"];
+            const rawSessionId = req.headers["mcp-session-id"];
+            const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
             if (!isValidSessionId(sessionId)) {
                 res.status(400).json({ error: "Invalid or missing session ID" });
                 return;
@@ -142,8 +144,17 @@ export async function runHTTP() {
     });
     // DELETE /mcp - Terminate a session
     app.delete("/mcp", async (req, res, next) => {
-        const sessionId = req.headers["mcp-session-id"];
-        if (isValidSessionId(sessionId) && sessionManager.has(sessionId)) {
+        const rawSessionId = req.headers["mcp-session-id"];
+        const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
+        // Validate session ID format if provided
+        if (sessionId && !isValidSessionId(sessionId)) {
+            res.status(400).json({
+                jsonrpc: "2.0",
+                error: { code: -32600, message: "Invalid session ID format" },
+            });
+            return;
+        }
+        if (sessionId && sessionManager.has(sessionId)) {
             const session = sessionManager.get(sessionId);
             try {
                 session.transport.close();
@@ -169,9 +180,19 @@ export async function runHTTP() {
             });
         }
     });
-    const port = parseInt(process.env.PORT || "3000");
-    const httpServer = app.listen(port, () => {
+    const port = parseInt(process.env.PORT || "3000", 10);
+    const httpServer = app.listen(port);
+    httpServer.on("listening", () => {
         console.error(`cURL MCP server running on http://localhost:${port}/mcp`);
+    });
+    httpServer.on("error", (err) => {
+        if (err.code === "EADDRINUSE") {
+            console.error(`Error: Port ${port} is already in use`);
+        }
+        else {
+            console.error("Server error:", err);
+        }
+        process.exit(1);
     });
     // Register for graceful shutdown
     setHttpServer(httpServer);

@@ -1,7 +1,7 @@
 // src/lib/tools/jq-query.ts
 // Registers the jq_query tool for querying JSON files
 import { readFile, writeFile } from "fs/promises";
-import { join, resolve, basename } from "path";
+import { join, basename } from "path";
 import { JqQuerySchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
@@ -59,15 +59,15 @@ Examples:
         },
     }, async (params) => {
         try {
-            // Validate file path (security check)
-            await validateFilePath(params.filepath);
+            // Validate file path and get the real path (prevents TOCTOU attacks)
+            const validatedFilePath = await validateFilePath(params.filepath);
             // Resolve and validate output directory if saving (returns real path with symlinks resolved)
             const resolvedOutputDir = resolveOutputDir(params.output_dir);
             const validatedOutputDir = resolvedOutputDir
                 ? await validateOutputDir(resolvedOutputDir)
                 : undefined;
-            // Read the file
-            const content = await readFile(resolve(params.filepath), { encoding: "utf-8" });
+            // Read the file using the validated real path
+            const content = await readFile(validatedFilePath, { encoding: "utf-8" });
             // Apply jq filter
             const filtered = applyJqFilter(content, params.jq_filter);
             // Handle result size and file saving
@@ -75,8 +75,8 @@ Examples:
             const contentBytes = Buffer.byteLength(filtered, "utf8");
             const shouldSave = params.save_to_file || contentBytes > maxSize;
             if (shouldSave) {
-                // Generate a filename based on the source file
-                const sourceBasename = basename(params.filepath) || "query_result";
+                // Generate a filename based on the source file (use validated path)
+                const sourceBasename = basename(validatedFilePath) || "query_result";
                 const safeName = createSafeFilenameBase(sourceBasename, "query_result");
                 const filename = `${safeName}_${Date.now()}.txt`;
                 const targetDir = validatedOutputDir ?? await getOrCreateTempDir();

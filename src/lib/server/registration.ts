@@ -7,10 +7,10 @@ import { registerAllResources } from "../resources/index.js";
 import { registerAllPrompts } from "../prompts/index.js";
 
 /**
- * Registers all tools, resources, and prompts on the MCP server.
+ * Registers all capabilities (tools, resources, and prompts) on the MCP server.
  * This is the main orchestration function that delegates to individual modules.
  */
-export function registerToolsAndResources(server: McpServer): void {
+export function registerAllCapabilities(server: McpServer): void {
     registerAllTools(server);
     registerAllResources(server);
     registerAllPrompts(server);

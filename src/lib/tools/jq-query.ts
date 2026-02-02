@@ -65,8 +65,8 @@ Examples:
         },
         async (params: JqQueryInput) => {
             try {
-                // Validate file path (security check)
-                await validateFilePath(params.filepath);
+                // Validate file path and get the real path (prevents TOCTOU attacks)
+                const validatedFilePath = await validateFilePath(params.filepath);
 
                 // Resolve and validate output directory if saving (returns real path with symlinks resolved)
                 const resolvedOutputDir = resolveOutputDir(params.output_dir);
@@ -74,8 +74,8 @@ Examples:
                     ? await validateOutputDir(resolvedOutputDir)
                     : undefined;
 
-                // Read the file
-                const content = await readFile(resolve(params.filepath), { encoding: "utf-8" });
+                // Read the file using the validated real path
+                const content = await readFile(validatedFilePath, { encoding: "utf-8" });
 
                 // Apply jq filter
                 const filtered = applyJqFilter(content, params.jq_filter);
@@ -86,8 +86,8 @@ Examples:
                 const shouldSave = params.save_to_file || contentBytes > maxSize;
 
                 if (shouldSave) {
-                    // Generate a filename based on the source file
-                    const sourceBasename = basename(params.filepath) || "query_result";
+                    // Generate a filename based on the source file (use validated path)
+                    const sourceBasename = basename(validatedFilePath) || "query_result";
                     const safeName = createSafeFilenameBase(sourceBasename, "query_result");
                     const filename = `${safeName}_${Date.now()}.txt`;
                     const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
