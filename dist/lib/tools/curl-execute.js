@@ -9,13 +9,12 @@ import { getErrorMessage } from "../utils/index.js";
 import { executeCommand, buildCurlArgs } from "../execution/index.js";
 import { parseResponseWithMetadata, sanitizeErrorMessage, formatResponse, processResponse, } from "../response/index.js";
 /**
- * Registers the curl_execute tool on the MCP server.
- * This tool provides safe, structured HTTP request execution.
+ * Tool metadata for curl_execute.
+ * Exported for use by McpCurlServer to register with hooks.
  */
-export function registerCurlExecuteTool(server) {
-    server.registerTool("curl_execute", {
-        title: "Execute cURL Request",
-        description: `Execute an HTTP request using cURL with structured parameters.
+export const CURL_EXECUTE_TOOL_META = {
+    title: "Execute cURL Request",
+    description: `Execute an HTTP request using cURL with structured parameters.
 
 This tool provides a safe, structured way to make HTTP requests with common cURL options.
 It handles URL encoding, header formatting, and response processing automatically.
@@ -88,80 +87,96 @@ Temp File Lifecycle:
   - Deleted on graceful server shutdown (SIGINT/SIGTERM)
   - Orphaned files from crashed sessions are cleaned on next server start
   - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash`,
-        inputSchema: CurlExecuteSchema,
-        annotations: {
-            readOnlyHint: false,
-            destructiveHint: false,
-            idempotentHint: false,
-            openWorldHint: true,
-        },
-    }, async (params) => {
-        try {
-            // Validate incompatible options: include_headers prepends HTTP headers to response,
-            // making it non-JSON and breaking jq_filter parsing
-            if (params.include_headers && params.jq_filter) {
-                throw new Error("Cannot use jq_filter with include_headers. " +
-                    "HTTP headers in the response make it non-JSON. " +
-                    "Remove include_headers to use jq_filter, or remove jq_filter to see headers.");
-            }
-            // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
-            // This returns the resolved IP which we pin with --resolve
-            const dnsResult = await validateUrlAndResolveDns(params.url);
-            // Rate limit by both target host and client to prevent abuse
-            // Per-host: protects individual targets from being hammered
-            // Per-client: prevents spreading requests across many hosts to bypass limits
-            checkRateLimits(dnsResult.hostname);
-            // Resolve and validate output directory (returns real path with symlinks resolved)
-            const resolvedOutputDir = resolveOutputDir(params.output_dir);
-            const validatedOutputDir = resolvedOutputDir
-                ? await validateOutputDir(resolvedOutputDir)
-                : undefined;
-            // Generate unique separator for this request to prevent response injection
-            const metadataSeparator = generateMetadataSeparator();
-            const args = buildCurlArgs({
-                ...params,
-                silent: true,
-                dnsResolve: dnsResult,
-                metadataSeparator,
-            });
-            const result = await executeCommand("curl", args, params.timeout * 1000);
-            // Parse response using the same unique separator
-            const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);
-            // Process response with filtering and size handling
-            const processed = await processResponse(body, {
-                url: params.url,
-                jqFilter: params.jq_filter,
-                maxResultSize: params.max_result_size,
-                saveToFile: params.save_to_file,
-                contentType,
-                outputDir: validatedOutputDir,
-            });
-            const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, {
-                savedToFile: processed.savedToFile,
-                filepath: processed.savedToFile ? processed.filepath : undefined,
-                message: processed.message,
-            });
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: output,
-                    },
-                ],
-            };
+    inputSchema: CurlExecuteSchema,
+    annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+    },
+};
+/**
+ * Execute a cURL request with the given parameters.
+ * This is the core handler logic extracted for reuse by McpCurlServer.
+ *
+ * @param params - Validated curl_execute parameters
+ * @param extra - Additional context (sessionId for rate limiting)
+ * @returns Tool result with response content
+ */
+export async function executeCurlRequest(params, extra) {
+    try {
+        // Validate incompatible options: include_headers prepends HTTP headers to response,
+        // making it non-JSON and breaking jq_filter parsing
+        if (params.include_headers && params.jq_filter) {
+            throw new Error("Cannot use jq_filter with include_headers. " +
+                "HTTP headers in the response make it non-JSON. " +
+                "Remove include_headers to use jq_filter, or remove jq_filter to see headers.");
         }
-        catch (error) {
-            const rawMessage = getErrorMessage(error);
-            const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error executing cURL request: ${errorMessage}`,
-                    },
-                ],
-                isError: true,
-            };
-        }
-    });
+        // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
+        // This returns the resolved IP which we pin with --resolve
+        const dnsResult = await validateUrlAndResolveDns(params.url);
+        // Rate limit by both target host and client to prevent abuse
+        // Per-host: protects individual targets from being hammered
+        // Per-client: prevents spreading requests across many hosts to bypass limits
+        // For HTTP transport, extra.sessionId identifies the client; for stdio it's undefined (uses default)
+        checkRateLimits(dnsResult.hostname, extra.sessionId);
+        // Resolve and validate output directory (returns real path with symlinks resolved)
+        const resolvedOutputDir = resolveOutputDir(params.output_dir);
+        const validatedOutputDir = resolvedOutputDir
+            ? await validateOutputDir(resolvedOutputDir)
+            : undefined;
+        // Generate unique separator for this request to prevent response injection
+        const metadataSeparator = generateMetadataSeparator();
+        const args = buildCurlArgs({
+            ...params,
+            silent: true,
+            dnsResolve: dnsResult,
+            metadataSeparator,
+        });
+        const result = await executeCommand("curl", args, params.timeout * 1000);
+        // Parse response using the same unique separator
+        const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);
+        // Process response with filtering and size handling
+        const processed = await processResponse(body, {
+            url: params.url,
+            jqFilter: params.jq_filter,
+            maxResultSize: params.max_result_size,
+            saveToFile: params.save_to_file,
+            contentType,
+            outputDir: validatedOutputDir,
+        });
+        const output = formatResponse(processed.content, result.stderr, result.exitCode, params.include_metadata, {
+            savedToFile: processed.savedToFile,
+            filepath: processed.savedToFile ? processed.filepath : undefined,
+            message: processed.message,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: output,
+                },
+            ],
+        };
+    }
+    catch (error) {
+        const rawMessage = getErrorMessage(error);
+        const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Error executing cURL request: ${errorMessage}`,
+                },
+            ],
+            isError: true,
+        };
+    }
+}
+/**
+ * Registers the curl_execute tool on the MCP server.
+ * This tool provides safe, structured HTTP request execution.
+ */
+export function registerCurlExecuteTool(server) {
+    server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, ((params, extra) => executeCurlRequest(params, extra)));
 }

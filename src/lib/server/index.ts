@@ -11,3 +11,7 @@ export {
     shutdown,
     registerShutdownHandlers,
 } from "./lifecycle.js";
+
+// Extensible server class and related exports
+export { McpCurlServer } from "../extensible/index.js";
+export type { InstanceUtilities, ExecuteRequestParams } from "../extensible/index.js";

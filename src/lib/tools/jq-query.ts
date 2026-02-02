@@ -3,7 +3,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readFile, writeFile } from "fs/promises";
-import { join, resolve, basename } from "path";
+import { join, basename } from "path";
 import { JqQuerySchema, type JqQueryInput } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
@@ -12,16 +12,25 @@ import { applyJqFilter } from "../jq/index.js";
 import { getErrorMessage } from "../utils/index.js";
 import { createSafeFilenameBase } from "../response/index.js";
 
+/** Tool result type returned by executeJqQuery */
+export interface JqQueryResult {
+    [key: string]: unknown;
+    content: Array<{ type: "text"; text: string }>;
+    isError?: boolean;
+}
+
+/** Extra context passed to tool handler */
+export interface JqQueryExtra {
+    sessionId?: string;
+}
+
 /**
- * Registers the jq_query tool on the MCP server.
- * This tool allows querying JSON files without making new HTTP requests.
+ * Tool metadata for jq_query.
+ * Exported for use by McpCurlServer to register with hooks.
  */
-export function registerJqQueryTool(server: McpServer): void {
-    server.registerTool(
-        "jq_query",
-        {
-            title: "Query JSON File",
-            description: `Query an existing JSON file with a jq-like filter expression.
+export const JQ_QUERY_TOOL_META = {
+    title: "Query JSON File",
+    description: `Query an existing JSON file with a jq-like filter expression.
 
 This tool allows you to extract data from saved JSON files without making new HTTP requests.
 Useful for:
@@ -55,76 +64,98 @@ Examples:
   - Extract name: { "filepath": "/path/to/response.txt", "jq_filter": ".name" }
   - Multiple fields: { "filepath": "/path/to/data.json", "jq_filter": ".name,.email,.id" }
   - Array slice: { "filepath": "/path/to/list.json", "jq_filter": ".items[0:5]" }`,
-            inputSchema: JqQuerySchema,
-            annotations: {
-                readOnlyHint: true,
-                destructiveHint: false,
-                idempotentHint: true,
-                openWorldHint: false,
-            },
-        },
-        async (params: JqQueryInput) => {
-            try {
-                // Validate file path and get the real path (prevents TOCTOU attacks)
-                const validatedFilePath = await validateFilePath(params.filepath);
+    inputSchema: JqQuerySchema,
+    annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+    },
+};
 
-                // Resolve and validate output directory if saving (returns real path with symlinks resolved)
-                const resolvedOutputDir = resolveOutputDir(params.output_dir);
-                const validatedOutputDir = resolvedOutputDir
-                    ? await validateOutputDir(resolvedOutputDir)
-                    : undefined;
+/**
+ * Execute a jq query on a JSON file.
+ * This is the core handler logic extracted for reuse by McpCurlServer.
+ *
+ * @param params - Validated jq_query parameters
+ * @param _extra - Additional context (sessionId, unused but kept for consistency)
+ * @returns Tool result with query result content
+ */
+export async function executeJqQuery(
+    params: JqQueryInput,
+    _extra: JqQueryExtra
+): Promise<JqQueryResult> {
+    try {
+        // Validate file path and get the real path (prevents TOCTOU attacks)
+        const validatedFilePath = await validateFilePath(params.filepath);
 
-                // Read the file using the validated real path
-                const content = await readFile(validatedFilePath, { encoding: "utf-8" });
+        // Resolve and validate output directory if saving (returns real path with symlinks resolved)
+        const resolvedOutputDir = resolveOutputDir(params.output_dir);
+        const validatedOutputDir = resolvedOutputDir
+            ? await validateOutputDir(resolvedOutputDir)
+            : undefined;
 
-                // Apply jq filter
-                const filtered = applyJqFilter(content, params.jq_filter);
+        // Read the file using the validated real path
+        const content = await readFile(validatedFilePath, { encoding: "utf-8" });
 
-                // Handle result size and file saving
-                const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-                const contentBytes = Buffer.byteLength(filtered, "utf8");
-                const shouldSave = params.save_to_file || contentBytes > maxSize;
+        // Apply jq filter
+        const filtered = applyJqFilter(content, params.jq_filter);
 
-                if (shouldSave) {
-                    // Generate a filename based on the source file (use validated path)
-                    const sourceBasename = basename(validatedFilePath) || "query_result";
-                    const safeName = createSafeFilenameBase(sourceBasename, "query_result");
-                    const filename = `${safeName}_${Date.now()}.txt`;
-                    const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
-                    const filepath = join(targetDir, filename);
+        // Handle result size and file saving
+        const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
+        const contentBytes = Buffer.byteLength(filtered, "utf8");
+        const shouldSave = params.save_to_file || contentBytes > maxSize;
 
-                    await writeFile(filepath, filtered, { encoding: "utf-8", mode: 0o600 });
+        if (shouldSave) {
+            // Generate a filename based on the source file (use validated path)
+            const sourceBasename = basename(validatedFilePath) || "query_result";
+            const safeName = createSafeFilenameBase(sourceBasename, "query_result");
+            const filename = `${safeName}_${Date.now()}.txt`;
+            const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
+            const filepath = join(targetDir, filename);
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Result (${contentBytes} bytes) saved to: ${filepath}`,
-                            },
-                        ],
-                    };
-                }
+            await writeFile(filepath, filtered, { encoding: "utf-8", mode: 0o600 });
 
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: filtered,
-                        },
-                    ],
-                };
-            } catch (error) {
-                const errorMessage = getErrorMessage(error);
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: `Error querying JSON file: ${errorMessage}`,
-                        },
-                    ],
-                    isError: true,
-                };
-            }
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Result (${contentBytes} bytes) saved to: ${filepath}`,
+                    },
+                ],
+            };
         }
+
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: filtered,
+                },
+            ],
+        };
+    } catch (error) {
+        const errorMessage = getErrorMessage(error);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Error querying JSON file: ${errorMessage}`,
+                },
+            ],
+            isError: true,
+        };
+    }
+}
+
+/**
+ * Registers the jq_query tool on the MCP server.
+ * This tool allows querying JSON files without making new HTTP requests.
+ */
+export function registerJqQueryTool(server: McpServer): void {
+    server.registerTool(
+        "jq_query",
+        JQ_QUERY_TOOL_META,
+        async (params: JqQueryInput, extra: JqQueryExtra) => executeJqQuery(params, extra)
     );
 }

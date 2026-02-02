@@ -79,14 +79,14 @@ export declare const JqQuerySchema: z.ZodObject<{
     save_to_file: z.ZodOptional<z.ZodBoolean>;
     output_dir: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    filepath: string;
     jq_filter: string;
+    filepath: string;
     max_result_size?: number | undefined;
     save_to_file?: boolean | undefined;
     output_dir?: string | undefined;
 }, {
-    filepath: string;
     jq_filter: string;
+    filepath: string;
     max_result_size?: number | undefined;
     save_to_file?: boolean | undefined;
     output_dir?: string | undefined;
