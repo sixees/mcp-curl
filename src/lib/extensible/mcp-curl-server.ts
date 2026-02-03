@@ -151,11 +151,20 @@ export class McpCurlServer {
 
     /**
      * Get the current (frozen after start) configuration.
+     * Returns a deep-frozen snapshot to prevent mutation of nested objects.
      *
      * @returns Readonly configuration object
      */
     getConfig(): Readonly<McpCurlConfig> {
-        return this._frozenConfig ?? Object.freeze({ ...this._config });
+        if (this._frozenConfig) return this._frozenConfig;
+        // Deep freeze to prevent mutation of nested objects like defaultHeaders
+        const snapshot: McpCurlConfig = {
+            ...this._config,
+            defaultHeaders: this._config.defaultHeaders
+                ? Object.freeze({ ...this._config.defaultHeaders })
+                : undefined,
+        };
+        return Object.freeze(snapshot);
     }
 
     /**
@@ -199,22 +208,40 @@ export class McpCurlServer {
             throw new Error("Server already started. Create a new McpCurlServer instance for a new server.");
         }
         this._started = true;
-        this._frozenConfig = Object.freeze({ ...this._config });
+        // Deep freeze to prevent mutation of nested objects like defaultHeaders
+        this._frozenConfig = Object.freeze({
+            ...this._config,
+            defaultHeaders: this._config.defaultHeaders
+                ? Object.freeze({ ...this._config.defaultHeaders })
+                : undefined,
+        });
 
-        // Clean up orphaned temp directories from previous runs
-        await cleanupOrphanedTempDirs();
+        try {
+            // Clean up orphaned temp directories from previous runs
+            await cleanupOrphanedTempDirs();
 
-        // Start rate limit cleanup
-        this._rateLimitInterval = startRateLimitCleanup();
+            // Start rate limit cleanup
+            this._rateLimitInterval = startRateLimitCleanup();
 
-        // Create and configure MCP server
-        this._server = this.createConfiguredServer();
+            // Create and configure MCP server
+            this._server = this.createConfiguredServer();
 
-        // Start appropriate transport
-        if (transport === "http") {
-            await this.startHttp();
-        } else {
-            await this.startStdio();
+            // Start appropriate transport
+            if (transport === "http") {
+                await this.startHttp();
+            } else {
+                await this.startStdio();
+            }
+        } catch (error) {
+            // Rollback state on failure to allow retry with new instance
+            if (this._rateLimitInterval) {
+                stopRateLimitCleanup(this._rateLimitInterval);
+                this._rateLimitInterval = null;
+            }
+            this._server = null;
+            this._started = false;
+            this._frozenConfig = null;
+            throw error;
         }
     }
 
@@ -241,10 +268,25 @@ export class McpCurlServer {
             });
         }
 
-        // Close all active sessions
+        // Close all active sessions (with error handling)
         if (this._sessionManager) {
             this._sessionManager.stopCleanup();
-            await this._sessionManager.closeAll();
+            try {
+                await this._sessionManager.closeAll();
+            } catch (error) {
+                console.error("Warning: Error closing sessions:", error);
+            }
+        }
+
+        // Close main MCP server
+        if (this._server) {
+            try {
+                await this._server.close();
+            } catch (error) {
+                console.error("Warning: Error closing MCP server:", error);
+            } finally {
+                this._server = null;
+            }
         }
 
         // Stop rate limit cleanup

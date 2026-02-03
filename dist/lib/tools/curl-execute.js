@@ -103,7 +103,7 @@ Temp File Lifecycle:
  * @param extra - Additional context (sessionId for rate limiting)
  * @returns Tool result with response content
  */
-export async function executeCurlRequest(params, extra) {
+export async function executeCurlRequest(params, extra = {}) {
     try {
         // Validate incompatible options: include_headers prepends HTTP headers to response,
         // making it non-JSON and breaking jq_filter parsing

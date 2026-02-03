@@ -21,11 +21,18 @@ export interface InstanceUtilities {
     /**
      * Execute a cURL request with config defaults applied.
      * Can use `path` with `baseUrl` or provide a full `url`.
+     *
+     * NOTE: This method calls executeCurlRequest directly and bypasses the hook
+     * system (beforeRequest, afterResponse, onError). Use MCP tool invocation
+     * if you need hooks to execute.
      */
     executeRequest(params: ExecuteRequestParams): Promise<CurlExecuteResult>;
 
     /**
      * Query a JSON file with config defaults applied.
+     *
+     * NOTE: This method calls executeJqQuery directly and bypasses the hook
+     * system. Use MCP tool invocation if you need hooks to execute.
      */
     queryFile(filepath: string, jqFilter: string): Promise<JqQueryResult>;
 }

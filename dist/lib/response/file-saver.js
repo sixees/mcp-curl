@@ -34,7 +34,9 @@ export function createSafeFilenameBase(input, fallback = "response") {
     if (isWindowsReservedBasename(base) || base === "." || base === "..") {
         const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
         // Re-check after slicing in case truncation produced a reserved name
-        base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}` : prefixed;
+        base = isWindowsReservedBasename(prefixed)
+            ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH)
+            : prefixed;
     }
     return base;
 }

@@ -11,6 +11,16 @@
  * 3. Run afterResponse hooks sequentially
  * 4. On error, run onError hooks instead of afterResponse
  *
+ * Error Handling (fail-fast behavior):
+ * Hooks use fail-fast semantics. If a hook throws an error:
+ * - For afterResponse: subsequent afterResponse hooks won't run, and the error
+ *   propagates to the caller (onError hooks are NOT called for hook errors)
+ * - For onError: subsequent onError hooks won't run, and the hook's error
+ *   replaces the original tool error
+ *
+ * This is intentional - hooks should not throw. For logging/metrics use cases,
+ * wrap your hook logic in try-catch internally to ensure it doesn't throw.
+ *
  * @param tool - Name of the tool being executed
  * @param params - Tool parameters (will be modified by hooks)
  * @param config - Frozen server configuration

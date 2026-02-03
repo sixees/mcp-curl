@@ -99,7 +99,7 @@ export declare const CURL_EXECUTE_TOOL_META: {
  * @param extra - Additional context (sessionId for rate limiting)
  * @returns Tool result with response content
  */
-export declare function executeCurlRequest(params: CurlExecuteInput, extra: CurlExecuteExtra): Promise<CurlExecuteResult>;
+export declare function executeCurlRequest(params: CurlExecuteInput, extra?: CurlExecuteExtra): Promise<CurlExecuteResult>;
 /**
  * Registers the curl_execute tool on the MCP server.
  * This tool provides safe, structured HTTP request execution.

@@ -47,8 +47,9 @@ export async function getOrCreateTempDir(): Promise<string> {
             if (dir) {
                 try {
                     await rm(dir, { recursive: true, force: true });
-                } catch {
-                    // Best-effort cleanup - ignore errors
+                } catch (cleanupError) {
+                    // Log cleanup failure for debugging, but don't throw
+                    console.warn("Failed to cleanup temp directory after chmod failure:", cleanupError);
                 }
             }
             // Record failure time and reset promise to allow retry after backoff

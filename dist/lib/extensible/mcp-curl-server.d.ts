@@ -84,6 +84,7 @@ export declare class McpCurlServer {
     onError(hook: OnErrorHook): this;
     /**
      * Get the current (frozen after start) configuration.
+     * Returns a deep-frozen snapshot to prevent mutation of nested objects.
      *
      * @returns Readonly configuration object
      */

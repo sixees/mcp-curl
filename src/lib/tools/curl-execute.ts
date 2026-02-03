@@ -126,7 +126,7 @@ Temp File Lifecycle:
  */
 export async function executeCurlRequest(
     params: CurlExecuteInput,
-    extra: CurlExecuteExtra
+    extra: CurlExecuteExtra = {}
 ): Promise<CurlExecuteResult> {
     try {
         // Validate incompatible options: include_headers prepends HTTP headers to response,
