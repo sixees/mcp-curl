@@ -3,7 +3,7 @@
 
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
-import { TEMP_DIR } from "../config/index.js";
+import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
@@ -19,7 +19,7 @@ import {
 /** Tool result type returned by executeCurlRequest */
 export interface CurlExecuteResult {
     [key: string]: unknown;
-    content: Array<{ type: "text"; text: string }>;
+    content: [{ type: "text"; text: string }];
     isError?: boolean;
 }
 
@@ -165,7 +165,9 @@ export async function executeCurlRequest(
             metadataSeparator,
         });
 
-        const result = await executeCommand("curl", args, params.timeout * 1000);
+        // Use timeout from params, or fall back to system default
+        const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
+        const result = await executeCommand("curl", args, timeoutMs);
 
         // Parse response using the same unique separator
         const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);

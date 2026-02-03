@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 import { cleanupOrphanedTempDirs } from "../files/index.js";
 import { startRateLimitCleanup, isValidSessionId } from "../security/index.js";
 import { SessionManager } from "../session/index.js";
-import { SESSION, ENV } from "../config/index.js";
+import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
 import { createServer, registerAllCapabilities, initializeLifecycle, setHttpServer, } from "../server/index.js";
 /**
  * Authentication middleware for HTTP transport.
@@ -127,11 +127,17 @@ export async function runHTTP() {
             const rawSessionId = req.headers["mcp-session-id"];
             const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
             if (!isValidSessionId(sessionId)) {
-                res.status(400).json({ error: "Invalid or missing session ID" });
+                res.status(400).json({
+                    jsonrpc: "2.0",
+                    error: { code: -32600, message: "Invalid or missing session ID" },
+                });
                 return;
             }
             if (!sessionManager.has(sessionId)) {
-                res.status(400).json({ error: "Session not found" });
+                res.status(400).json({
+                    jsonrpc: "2.0",
+                    error: { code: -32600, message: "Session not found" },
+                });
                 return;
             }
             const session = sessionManager.get(sessionId);
@@ -180,7 +186,7 @@ export async function runHTTP() {
             });
         }
     });
-    const port = parseInt(process.env.PORT || "3000", 10);
+    const port = parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);
     const httpServer = app.listen(port);
     httpServer.on("listening", () => {
         console.error(`cURL MCP server running on http://localhost:${port}/mcp`);

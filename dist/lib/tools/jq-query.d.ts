@@ -3,10 +3,10 @@ import { type JqQueryInput } from "../server/schemas.js";
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
     [key: string]: unknown;
-    content: Array<{
+    content: [{
         type: "text";
         text: string;
-    }>;
+    }];
     isError?: boolean;
 }
 /** Extra context passed to tool handler */

@@ -48,7 +48,8 @@ export async function executeWithHooks(tool, params, config, hooks, sessionId, e
         // Execute the tool with potentially modified params
         const response = await executor(ctx.params, { sessionId });
         // Run afterResponse hooks sequentially
-        const responseText = response.content[0]?.text ?? "";
+        // content[0] is guaranteed by ToolResult tuple type
+        const responseText = response.content[0].text;
         for (const hook of hooks.afterResponse) {
             await hook({
                 ...ctx,
@@ -60,13 +61,15 @@ export async function executeWithHooks(tool, params, config, hooks, sessionId, e
     }
     catch (error) {
         // Run onError hooks sequentially
+        // Preserve non-Error thrown values by wrapping them
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
         for (const hook of hooks.onError) {
             await hook({
                 ...ctx,
-                error: error,
+                error: normalizedError,
             });
         }
-        // Re-throw the error to be handled by the caller
+        // Re-throw the original error to preserve stack trace
         throw error;
     }
 }

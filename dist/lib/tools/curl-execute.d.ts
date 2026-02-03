@@ -3,10 +3,10 @@ import { type CurlExecuteInput } from "../server/schemas.js";
 /** Tool result type returned by executeCurlRequest */
 export interface CurlExecuteResult {
     [key: string]: unknown;
-    content: Array<{
+    content: [{
         type: "text";
         text: string;
-    }>;
+    }];
     isError?: boolean;
 }
 /** Extra context passed to tool handler */
@@ -29,7 +29,7 @@ export declare const CURL_EXECUTE_TOOL_META: {
         follow_redirects: import("zod").ZodDefault<import("zod").ZodBoolean>;
         max_redirects: import("zod").ZodOptional<import("zod").ZodNumber>;
         insecure: import("zod").ZodDefault<import("zod").ZodBoolean>;
-        timeout: import("zod").ZodDefault<import("zod").ZodNumber>;
+        timeout: import("zod").ZodOptional<import("zod").ZodNumber>;
         user_agent: import("zod").ZodOptional<import("zod").ZodString>;
         basic_auth: import("zod").ZodOptional<import("zod").ZodString>;
         bearer_token: import("zod").ZodOptional<import("zod").ZodString>;
@@ -45,7 +45,6 @@ export declare const CURL_EXECUTE_TOOL_META: {
         url: string;
         follow_redirects: boolean;
         insecure: boolean;
-        timeout: number;
         verbose: boolean;
         include_headers: boolean;
         compressed: boolean;
@@ -55,6 +54,7 @@ export declare const CURL_EXECUTE_TOOL_META: {
         data?: string | undefined;
         form?: Record<string, string> | undefined;
         max_redirects?: number | undefined;
+        timeout?: number | undefined;
         user_agent?: string | undefined;
         basic_auth?: string | undefined;
         bearer_token?: string | undefined;

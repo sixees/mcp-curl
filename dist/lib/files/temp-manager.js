@@ -28,14 +28,24 @@ export async function getOrCreateTempDir() {
         throw new Error(`Temp directory creation failed recently. Retry in ${waitMs}ms.`);
     }
     tempDirPromise = (async () => {
+        let dir = null;
         try {
-            const dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
+            dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
             await chmod(dir, 0o700); // Owner-only access
             sharedTempDir = dir;
             lastFailureTime = 0; // Clear failure state on success
             return dir;
         }
         catch (error) {
+            // Clean up orphaned directory if mkdtemp succeeded but chmod failed
+            if (dir) {
+                try {
+                    await rm(dir, { recursive: true, force: true });
+                }
+                catch {
+                    // Best-effort cleanup - ignore errors
+                }
+            }
             // Record failure time and reset promise to allow retry after backoff
             lastFailureTime = Date.now();
             tempDirPromise = null;

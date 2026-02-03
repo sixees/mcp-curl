@@ -3,6 +3,7 @@
 import { executeWithHooks } from "./hook-executor.js";
 import { CURL_EXECUTE_TOOL_META, } from "../tools/curl-execute.js";
 import { JQ_QUERY_TOOL_META, } from "../tools/jq-query.js";
+import { LIMITS } from "../config/index.js";
 /**
  * Apply configuration transforms to curl_execute parameters.
  * - Prepend baseUrl to relative URLs
@@ -23,10 +24,11 @@ function applyConfigTransformsCurl(params, config) {
     if (config.defaultHeaders) {
         transformed.headers = { ...config.defaultHeaders, ...params.headers };
     }
-    // Apply defaultTimeout only if the user didn't provide a timeout explicitly.
-    // When timeout equals the schema default (30s), it indicates no explicit value was set.
-    if (config.defaultTimeout && params.timeout === 30) {
-        transformed.timeout = config.defaultTimeout;
+    // Apply timeout defaults if the user didn't provide a timeout explicitly.
+    // Since timeout is optional (no schema default), undefined means no explicit value.
+    // Fallback chain: config.defaultTimeout -> system default (30s)
+    if (params.timeout === undefined) {
+        transformed.timeout = config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000;
     }
     // Apply outputDir if not specified
     if (config.outputDir && !params.output_dir) {
@@ -119,10 +121,17 @@ export function registerJqToolWithHooks(server, options) {
  * @param options - Tool registration options
  */
 export function registerToolWithHooks(server, toolName, options) {
-    if (toolName === "curl_execute") {
-        registerCurlToolWithHooks(server, options);
-    }
-    else {
-        registerJqToolWithHooks(server, options);
+    switch (toolName) {
+        case "curl_execute":
+            registerCurlToolWithHooks(server, options);
+            break;
+        case "jq_query":
+            registerJqToolWithHooks(server, options);
+            break;
+        default: {
+            // Exhaustive check - TypeScript will error if a ToolName case is missed
+            const _exhaustive = toolName;
+            throw new Error(`Unknown tool: ${_exhaustive}`);
+        }
     }
 }

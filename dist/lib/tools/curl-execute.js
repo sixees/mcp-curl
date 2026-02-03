@@ -1,7 +1,7 @@
 // src/lib/tools/curl-execute.ts
 // Registers the curl_execute tool for making HTTP requests
 import { CurlExecuteSchema } from "../server/schemas.js";
-import { TEMP_DIR } from "../config/index.js";
+import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
@@ -133,7 +133,9 @@ export async function executeCurlRequest(params, extra) {
             dnsResolve: dnsResult,
             metadataSeparator,
         });
-        const result = await executeCommand("curl", args, params.timeout * 1000);
+        // Use timeout from params, or fall back to system default
+        const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
+        const result = await executeCommand("curl", args, timeoutMs);
         // Parse response using the same unique separator
         const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);
         // Process response with filtering and size handling

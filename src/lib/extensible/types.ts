@@ -13,10 +13,13 @@ import type {
 /**
  * Result returned by tool executor functions.
  * Includes index signature for MCP SDK compatibility.
+ *
+ * Note: content is a tuple type guaranteeing exactly one text element.
+ * All tool implementations return single-element content arrays.
  */
 export interface ToolResult {
     [key: string]: unknown;
-    content: Array<{ type: "text"; text: string }>;
+    content: [{ type: "text"; text: string }];
     isError?: boolean;
 }
 

@@ -31,10 +31,12 @@ export function allocateMemory(bytes) {
     if (!Number.isFinite(bytes) || bytes < 0) {
         return false; // Invalid input, refuse allocation
     }
-    if (totalResponseMemory + bytes > LIMITS.MAX_TOTAL_RESPONSE_MEMORY) {
+    // Compute newTotal first to reduce TOCTOU window in async contexts
+    const newTotal = totalResponseMemory + bytes;
+    if (newTotal > LIMITS.MAX_TOTAL_RESPONSE_MEMORY) {
         return false;
     }
-    totalResponseMemory += bytes;
+    totalResponseMemory = newTotal;
     return true;
 }
 /**

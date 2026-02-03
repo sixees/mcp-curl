@@ -12,6 +12,7 @@ import {
 import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
+import { LIMITS } from "../config/index.js";
 
 /**
  * Apply configuration transforms to curl_execute parameters.
@@ -39,10 +40,11 @@ function applyConfigTransformsCurl(
         transformed.headers = { ...config.defaultHeaders, ...params.headers };
     }
 
-    // Apply defaultTimeout only if the user didn't provide a timeout explicitly.
-    // When timeout equals the schema default (30s), it indicates no explicit value was set.
-    if (config.defaultTimeout && params.timeout === 30) {
-        transformed.timeout = config.defaultTimeout;
+    // Apply timeout defaults if the user didn't provide a timeout explicitly.
+    // Since timeout is optional (no schema default), undefined means no explicit value.
+    // Fallback chain: config.defaultTimeout -> system default (30s)
+    if (params.timeout === undefined) {
+        transformed.timeout = config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000;
     }
 
     // Apply outputDir if not specified
@@ -186,9 +188,17 @@ export function registerToolWithHooks(
     toolName: ToolName,
     options: CurlRegisterToolOptions | JqRegisterToolOptions
 ): void {
-    if (toolName === "curl_execute") {
-        registerCurlToolWithHooks(server, options as CurlRegisterToolOptions);
-    } else {
-        registerJqToolWithHooks(server, options as JqRegisterToolOptions);
+    switch (toolName) {
+        case "curl_execute":
+            registerCurlToolWithHooks(server, options as CurlRegisterToolOptions);
+            break;
+        case "jq_query":
+            registerJqToolWithHooks(server, options as JqRegisterToolOptions);
+            break;
+        default: {
+            // Exhaustive check - TypeScript will error if a ToolName case is missed
+            const _exhaustive: never = toolName;
+            throw new Error(`Unknown tool: ${_exhaustive}`);
+        }
     }
 }

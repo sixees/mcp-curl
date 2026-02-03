@@ -119,6 +119,7 @@ export declare class McpCurlServer {
     /**
      * Gracefully shutdown the server.
      * Closes all connections and cleans up resources.
+     * Safe to call even if server was never started.
      */
     shutdown(): Promise<void>;
     /**

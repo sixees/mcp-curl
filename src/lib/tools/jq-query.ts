@@ -15,7 +15,7 @@ import { createSafeFilenameBase } from "../response/index.js";
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
     [key: string]: unknown;
-    content: Array<{ type: "text"; text: string }>;
+    content: [{ type: "text"; text: string }];
     isError?: boolean;
 }
 

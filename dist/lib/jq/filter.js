@@ -65,6 +65,33 @@ export function applySingleJqFilter(data, filter) {
     return result;
 }
 /**
+ * Apply a jq-like filter to pre-parsed JSON data (supports comma-separated multiple paths).
+ * Use this when you've already parsed the JSON to avoid double parsing.
+ *
+ * @param data - The pre-parsed JSON data
+ * @param filter - The filter expression, possibly with comma-separated paths
+ * @returns JSON string of the result (single value or array for multiple paths)
+ * @throws Error for malformed filters
+ */
+export function applyJqFilterToParsed(data, filter) {
+    // Split into multiple filters (handles commas outside brackets/quotes)
+    const filters = splitJqFilters(filter);
+    if (filters.length === 0) {
+        throw new Error(`Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`);
+    }
+    if (filters.length > JQ.MAX_FILTERS) {
+        throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_FILTERS} comma-separated paths`);
+    }
+    // Single filter: return value directly (backward compatible)
+    if (filters.length === 1) {
+        const result = applySingleJqFilter(data, filters[0]);
+        return JSON.stringify(result, null, 2);
+    }
+    // Multiple filters: return array of values
+    const results = filters.map((f) => applySingleJqFilter(data, f));
+    return JSON.stringify(results, null, 2);
+}
+/**
  * Apply a jq-like filter to JSON data (supports comma-separated multiple paths).
  *
  * @param jsonString - The raw JSON string
@@ -85,20 +112,5 @@ export function applyJqFilter(jsonString, filter) {
         }
         throw error; // Re-throw unexpected errors
     }
-    // Split into multiple filters (handles commas outside brackets/quotes)
-    const filters = splitJqFilters(filter);
-    if (filters.length === 0) {
-        throw new Error(`Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`);
-    }
-    if (filters.length > JQ.MAX_FILTERS) {
-        throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_FILTERS} comma-separated paths`);
-    }
-    // Single filter: return value directly (backward compatible)
-    if (filters.length === 1) {
-        const result = applySingleJqFilter(data, filters[0]);
-        return JSON.stringify(result, null, 2);
-    }
-    // Multiple filters: return array of values
-    const results = filters.map((f) => applySingleJqFilter(data, f));
-    return JSON.stringify(results, null, 2);
+    return applyJqFilterToParsed(data, filter);
 }

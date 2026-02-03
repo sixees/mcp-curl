@@ -160,5 +160,10 @@ export function splitJqFilters(filter) {
     if (trimmed) {
         filters.push(trimmed);
     }
+    // Enforce maximum number of comma-separated filters
+    if (filters.length > JQ.MAX_FILTERS) {
+        throw new Error(`jq_filter has too many comma-separated paths (${filters.length}). ` +
+            `Maximum allowed is ${JQ.MAX_FILTERS}.`);
+    }
     return filters;
 }

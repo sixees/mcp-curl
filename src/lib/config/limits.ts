@@ -22,3 +22,19 @@ export const LIMITS = {
     /** Default HTTP transport port */
     DEFAULT_HTTP_PORT: 3000,
 } as const;
+
+/**
+ * Parse and validate a port number from string input.
+ *
+ * @param value - Port string to parse (e.g., from process.env.PORT)
+ * @param defaultPort - Default port if value is undefined or empty
+ * @returns Validated port number
+ * @throws Error if port is not a valid integer in range 1-65535
+ */
+export function parsePort(value: string | undefined, defaultPort: number): number {
+    const port = parseInt(value || String(defaultPort), 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
+    }
+    return port;
+}

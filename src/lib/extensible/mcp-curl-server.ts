@@ -27,7 +27,7 @@ import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import { startRateLimitCleanup, stopRateLimitCleanup, isValidSessionId } from "../security/index.js";
 import { SessionManager } from "../session/index.js";
-import { SESSION, ENV, LIMITS } from "../config/index.js";
+import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
 import type { Session } from "../types/session.js";
 
 /**
@@ -221,8 +221,12 @@ export class McpCurlServer {
     /**
      * Gracefully shutdown the server.
      * Closes all connections and cleans up resources.
+     * Safe to call even if server was never started.
      */
     async shutdown(): Promise<void> {
+        if (!this._started) {
+            return; // Nothing to shut down
+        }
         console.error("Shutting down McpCurlServer...");
 
         // Close HTTP server if running
@@ -364,7 +368,7 @@ export class McpCurlServer {
                         server: sessionServer,
                         transport: sessionTransport,
                         lastActivity: Date.now(),
-                    } as Session);
+                    });
                 }
 
                 await sessionTransport.handleRequest(req, res, req.body);
@@ -385,11 +389,17 @@ export class McpCurlServer {
                 const rawSessionId = req.headers["mcp-session-id"];
                 const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
                 if (!isValidSessionId(sessionId)) {
-                    res.status(400).json({ error: "Invalid or missing session ID" });
+                    res.status(400).json({
+                        jsonrpc: "2.0",
+                        error: { code: -32600, message: "Invalid or missing session ID" },
+                    });
                     return;
                 }
                 if (!this._sessionManager!.has(sessionId)) {
-                    res.status(400).json({ error: "Session not found" });
+                    res.status(400).json({
+                        jsonrpc: "2.0",
+                        error: { code: -32600, message: "Session not found" },
+                    });
                     return;
                 }
                 const session = this._sessionManager!.get(sessionId)!;
@@ -439,7 +449,7 @@ export class McpCurlServer {
             }
         });
 
-        const port = this._frozenConfig!.port ?? parseInt(process.env.PORT || String(LIMITS.DEFAULT_HTTP_PORT), 10);
+        const port = this._frozenConfig!.port ?? parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);
 
         return new Promise((resolve, reject) => {
             this._httpServer = app.listen(port);

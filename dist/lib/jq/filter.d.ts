@@ -8,6 +8,16 @@
  */
 export declare function applySingleJqFilter(data: unknown, filter: string): unknown;
 /**
+ * Apply a jq-like filter to pre-parsed JSON data (supports comma-separated multiple paths).
+ * Use this when you've already parsed the JSON to avoid double parsing.
+ *
+ * @param data - The pre-parsed JSON data
+ * @param filter - The filter expression, possibly with comma-separated paths
+ * @returns JSON string of the result (single value or array for multiple paths)
+ * @throws Error for malformed filters
+ */
+export declare function applyJqFilterToParsed(data: unknown, filter: string): string;
+/**
  * Apply a jq-like filter to JSON data (supports comma-separated multiple paths).
  *
  * @param jsonString - The raw JSON string
