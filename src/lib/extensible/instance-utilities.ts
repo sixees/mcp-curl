@@ -4,6 +4,7 @@
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
 import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
 import { executeJqQuery, type JqQueryResult } from "../tools/jq-query.js";
+import { LIMITS } from "../config/index.js";
 
 /**
  * Partial curl_execute input with optional path for baseUrl resolution.
@@ -67,7 +68,7 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 follow_redirects: params.follow_redirects ?? true,
                 max_redirects: params.max_redirects,
                 insecure: params.insecure ?? false,
-                timeout: params.timeout ?? config.defaultTimeout ?? 30,
+                timeout: params.timeout ?? config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000,
                 user_agent: params.user_agent,
                 basic_auth: params.basic_auth,
                 bearer_token: params.bearer_token,

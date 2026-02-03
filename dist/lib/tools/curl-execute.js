@@ -178,5 +178,5 @@ export async function executeCurlRequest(params, extra) {
  * This tool provides safe, structured HTTP request execution.
  */
 export function registerCurlExecuteTool(server) {
-    server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, ((params, extra) => executeCurlRequest(params, extra)));
+    server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, (params, extra) => executeCurlRequest(params, extra));
 }

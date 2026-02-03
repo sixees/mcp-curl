@@ -14,7 +14,7 @@ import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import { startRateLimitCleanup, stopRateLimitCleanup, isValidSessionId } from "../security/index.js";
 import { SessionManager } from "../session/index.js";
-import { SESSION, ENV } from "../config/index.js";
+import { SESSION, ENV, LIMITS } from "../config/index.js";
 /**
  * Extensible MCP cURL server with fluent builder API.
  *
@@ -179,12 +179,7 @@ export class McpCurlServer {
         // Start rate limit cleanup
         this._rateLimitInterval = startRateLimitCleanup();
         // Create and configure MCP server
-        this._server = createServer();
-        // Register resources and prompts (not affected by hooks)
-        registerAllResources(this._server);
-        registerAllPrompts(this._server);
-        // Register tools with hooks
-        this.registerToolsWithHooks();
+        this._server = this.createConfiguredServer();
         // Start appropriate transport
         if (transport === "http") {
             await this.startHttp();
@@ -225,19 +220,33 @@ export class McpCurlServer {
         await cleanupTempDir();
     }
     /**
-     * Register tools with hooks applied.
+     * Create a fully configured MCP server instance.
+     * Registers resources, prompts, and tools with hooks applied.
+     * Used by both main server initialization and HTTP session creation.
+     *
+     * @returns Configured McpServer instance
      */
-    registerToolsWithHooks() {
+    createConfiguredServer() {
+        const server = createServer();
+        registerAllResources(server);
+        registerAllPrompts(server);
+        this.registerToolsOnServer(server);
+        return server;
+    }
+    /**
+     * Register tools with hooks applied on a given server.
+     *
+     * @param server - MCP server to register tools on
+     */
+    registerToolsOnServer(server) {
         const config = this._frozenConfig;
-        // Register curl_execute
-        registerCurlToolWithHooks(this._server, {
+        registerCurlToolWithHooks(server, {
             executor: executeCurlRequest,
             enabled: this._tools.curl_execute,
             config,
             hooks: this._hooks,
         });
-        // Register jq_query
-        registerJqToolWithHooks(this._server, {
+        registerJqToolWithHooks(server, {
             executor: executeJqQuery,
             enabled: this._tools.jq_query,
             config,
@@ -288,23 +297,8 @@ export class McpCurlServer {
                     });
                     return;
                 }
-                // Create new session with a new server instance
-                const sessionServer = createServer();
-                registerAllResources(sessionServer);
-                registerAllPrompts(sessionServer);
-                // Register tools with hooks for this session
-                registerCurlToolWithHooks(sessionServer, {
-                    executor: executeCurlRequest,
-                    enabled: this._tools.curl_execute,
-                    config: this._frozenConfig,
-                    hooks: this._hooks,
-                });
-                registerJqToolWithHooks(sessionServer, {
-                    executor: executeJqQuery,
-                    enabled: this._tools.jq_query,
-                    config: this._frozenConfig,
-                    hooks: this._hooks,
-                });
+                // Create new session with a configured server instance
+                const sessionServer = this.createConfiguredServer();
                 const sessionTransport = new StreamableHTTPServerTransport({
                     sessionIdGenerator: () => randomUUID(),
                     enableJsonResponse: true,
@@ -393,7 +387,7 @@ export class McpCurlServer {
                 });
             }
         });
-        const port = this._frozenConfig.port ?? parseInt(process.env.PORT || "3000", 10);
+        const port = this._frozenConfig.port ?? parseInt(process.env.PORT || String(LIMITS.DEFAULT_HTTP_PORT), 10);
         return new Promise((resolve, reject) => {
             this._httpServer = app.listen(port);
             this._httpServer.on("listening", () => {

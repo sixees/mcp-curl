@@ -15,4 +15,6 @@ export declare const LIMITS: {
     readonly DEFAULT_TIMEOUT_MS: 30000;
     /** Maximum filename length for saved files */
     readonly FILENAME_MAX_LENGTH: 50;
+    /** Default HTTP transport port */
+    readonly DEFAULT_HTTP_PORT: 3000;
 };

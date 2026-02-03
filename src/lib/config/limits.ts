@@ -19,4 +19,6 @@ export const LIMITS = {
     DEFAULT_TIMEOUT_MS: 30_000,
     /** Maximum filename length for saved files */
     FILENAME_MAX_LENGTH: 50,
+    /** Default HTTP transport port */
+    DEFAULT_HTTP_PORT: 3000,
 } as const;

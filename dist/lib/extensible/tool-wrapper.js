@@ -23,7 +23,8 @@ function applyConfigTransformsCurl(params, config) {
     if (config.defaultHeaders) {
         transformed.headers = { ...config.defaultHeaders, ...params.headers };
     }
-    // Apply defaultTimeout if using the schema default (30)
+    // Apply defaultTimeout only if the user didn't provide a timeout explicitly.
+    // When timeout equals the schema default (30s), it indicates no explicit value was set.
     if (config.defaultTimeout && params.timeout === 30) {
         transformed.timeout = config.defaultTimeout;
     }

@@ -223,7 +223,7 @@ export function registerCurlExecuteTool(server: McpServer): void {
     server.registerTool(
         "curl_execute",
         CURL_EXECUTE_TOOL_META,
-        ((params: CurlExecuteInput, extra: CurlExecuteExtra) =>
-            executeCurlRequest(params, extra)) as ToolCallback<typeof CurlExecuteSchema>
+        (params: CurlExecuteInput, extra: CurlExecuteExtra) =>
+            executeCurlRequest(params, extra)
     );
 }

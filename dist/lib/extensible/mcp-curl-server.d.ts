@@ -122,9 +122,19 @@ export declare class McpCurlServer {
      */
     shutdown(): Promise<void>;
     /**
-     * Register tools with hooks applied.
+     * Create a fully configured MCP server instance.
+     * Registers resources, prompts, and tools with hooks applied.
+     * Used by both main server initialization and HTTP session creation.
+     *
+     * @returns Configured McpServer instance
      */
-    private registerToolsWithHooks;
+    private createConfiguredServer;
+    /**
+     * Register tools with hooks applied on a given server.
+     *
+     * @param server - MCP server to register tools on
+     */
+    private registerToolsOnServer;
     /**
      * Start stdio transport.
      */

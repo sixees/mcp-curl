@@ -47,7 +47,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
 
     // Run beforeRequest hooks sequentially
     for (const hook of hooks.beforeRequest) {
-        const result = (await hook(ctx as HookContext)) as BeforeRequestResult<T> | undefined;
+        const result = (await hook(ctx)) as BeforeRequestResult<T> | undefined;
 
         if (result) {
             // Check for short-circuit
@@ -76,7 +76,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
                 ...ctx,
                 response: responseText,
                 isError: !!response.isError,
-            } as HookContext & { response: string; isError: boolean });
+            });
         }
 
         return response;
@@ -86,7 +86,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
             await hook({
                 ...ctx,
                 error: error as Error,
-            } as HookContext & { error: Error });
+            });
         }
 
         // Re-throw the error to be handled by the caller

@@ -2,6 +2,7 @@
 // Config-aware utility methods for direct tool execution
 import { executeCurlRequest } from "../tools/curl-execute.js";
 import { executeJqQuery } from "../tools/jq-query.js";
+import { LIMITS } from "../config/index.js";
 /**
  * Create instance utilities that apply config defaults.
  *
@@ -39,7 +40,7 @@ export function createInstanceUtilities(config) {
                 follow_redirects: params.follow_redirects ?? true,
                 max_redirects: params.max_redirects,
                 insecure: params.insecure ?? false,
-                timeout: params.timeout ?? config.defaultTimeout ?? 30,
+                timeout: params.timeout ?? config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000,
                 user_agent: params.user_agent,
                 basic_auth: params.basic_auth,
                 bearer_token: params.bearer_token,
