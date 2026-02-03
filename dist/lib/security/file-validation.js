@@ -122,7 +122,9 @@ export function clearAllowedDirsCache() {
  */
 export async function validateFilePath(filepath) {
     // Block path traversal in input string (defense-in-depth, matches validateOutputDir)
-    if (filepath.includes("..")) {
+    // Use regex to detect actual ".." path components, not just ".." anywhere in the string
+    // This allows filenames like "my..file.json" while blocking "foo/../bar"
+    if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(filepath)) {
         throw createValidationError("filepath", "path traversal detected", "Please provide a direct path without '..' components");
     }
     // First, resolve to absolute path (does NOT follow symlinks)

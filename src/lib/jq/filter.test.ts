@@ -83,6 +83,6 @@ describe('applyJqFilter', () => {
     it('throws on too many filters', () => {
         const manyFilters = Array(25).fill('.x').join(',');
         expect(() => applyJqFilter(jsonStr, manyFilters))
-            .toThrow('exceeds maximum of 20');
+            .toThrow('Maximum allowed is 20');
     });
 });

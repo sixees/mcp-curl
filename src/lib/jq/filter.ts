@@ -77,28 +77,15 @@ export function applySingleJqFilter(data: unknown, filter: string): unknown {
 }
 
 /**
- * Apply a jq-like filter to JSON data (supports comma-separated multiple paths).
+ * Apply a jq-like filter to pre-parsed JSON data (supports comma-separated multiple paths).
+ * Use this when you've already parsed the JSON to avoid double parsing.
  *
- * @param jsonString - The raw JSON string
+ * @param data - The pre-parsed JSON data
  * @param filter - The filter expression, possibly with comma-separated paths
  * @returns JSON string of the result (single value or array for multiple paths)
- * @throws Error for invalid JSON or malformed filters
+ * @throws Error for malformed filters
  */
-export function applyJqFilter(jsonString: string, filter: string): string {
-    let data: unknown;
-    try {
-        data = JSON.parse(jsonString);
-    } catch (error) {
-        // SyntaxError indicates invalid JSON
-        if (error instanceof SyntaxError) {
-            const preview = jsonString.slice(0, LIMITS.ERROR_PREVIEW_LENGTH);
-            throw new Error(
-                `Response is not valid JSON. Cannot apply jq_filter.\nPreview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
-            );
-        }
-        throw error; // Re-throw unexpected errors
-    }
-
+export function applyJqFilterToParsed(data: unknown, filter: string): string {
     // Split into multiple filters (handles commas outside brackets/quotes)
     const filters = splitJqFilters(filter);
 
@@ -123,4 +110,30 @@ export function applyJqFilter(jsonString: string, filter: string): string {
     // Multiple filters: return array of values
     const results = filters.map((f) => applySingleJqFilter(data, f));
     return JSON.stringify(results, null, 2);
+}
+
+/**
+ * Apply a jq-like filter to JSON data (supports comma-separated multiple paths).
+ *
+ * @param jsonString - The raw JSON string
+ * @param filter - The filter expression, possibly with comma-separated paths
+ * @returns JSON string of the result (single value or array for multiple paths)
+ * @throws Error for invalid JSON or malformed filters
+ */
+export function applyJqFilter(jsonString: string, filter: string): string {
+    let data: unknown;
+    try {
+        data = JSON.parse(jsonString);
+    } catch (error) {
+        // SyntaxError indicates invalid JSON
+        if (error instanceof SyntaxError) {
+            const preview = jsonString.slice(0, LIMITS.ERROR_PREVIEW_LENGTH);
+            throw new Error(
+                `Response is not valid JSON. Cannot apply jq_filter.\nPreview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
+            );
+        }
+        throw error; // Re-throw unexpected errors
+    }
+
+    return applyJqFilterToParsed(data, filter);
 }

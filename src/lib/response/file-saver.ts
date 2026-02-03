@@ -34,7 +34,11 @@ export function createSafeFilenameBase(input: string, fallback = "response"): st
     // Avoid reserved or problematic base names across platforms
     // (isWindowsReservedBasename handles case-insensitivity internally)
     if (isWindowsReservedBasename(base) || base === "." || base === "..") {
-        base = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+        const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+        // Re-check after slicing in case truncation produced a reserved name
+        base = isWindowsReservedBasename(prefixed)
+            ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH)
+            : prefixed;
     }
     return base;
 }

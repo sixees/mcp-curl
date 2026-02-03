@@ -31,10 +31,15 @@ export function allocateMemory(bytes) {
     if (!Number.isFinite(bytes) || bytes < 0) {
         return false; // Invalid input, refuse allocation
     }
-    if (totalResponseMemory + bytes > LIMITS.MAX_TOTAL_RESPONSE_MEMORY) {
+    // Compute newTotal before assignment for clarity.
+    // Note: This doesn't fix race conditions in async contexts since check-and-assign
+    // remain separate operations. True atomicity would require locks, but Node.js's
+    // single-threaded event loop makes the race window extremely small in practice.
+    const newTotal = totalResponseMemory + bytes;
+    if (newTotal > LIMITS.MAX_TOTAL_RESPONSE_MEMORY) {
         return false;
     }
-    totalResponseMemory += bytes;
+    totalResponseMemory = newTotal;
     return true;
 }
 /**

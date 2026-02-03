@@ -64,7 +64,8 @@ export async function executeCommand(
         };
 
         childProcess.stdout?.on("data", (data: Buffer) => {
-            const dataSize = Buffer.byteLength(data, "utf8");
+            // data is already a Buffer, so .length gives byte count directly
+            const dataSize = data.length;
 
             // Check global memory limit
             if (!allocateMemory(dataSize) && !killed) {
@@ -98,7 +99,8 @@ export async function executeCommand(
             if (stderrMemoryUsage < LIMITS.MAX_RESPONSE_SIZE) {
                 const dataStr = data.toString();
                 stderr += dataStr;
-                stderrMemoryUsage += Buffer.byteLength(data, "utf8");
+                // data is already a Buffer, so .length gives byte count directly
+                stderrMemoryUsage += data.length;
 
                 if (stderrMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
                     // Truncate efficiently using Buffer slice

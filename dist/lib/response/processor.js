@@ -1,7 +1,7 @@
 // src/lib/response/processor.ts
 // Orchestrate response processing with filtering and size handling
 import { LIMITS } from "../config/limits.js";
-import { applyJqFilter } from "../jq/index.js";
+import { applyJqFilterToParsed } from "../jq/index.js";
 import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
 /**
@@ -22,28 +22,31 @@ export async function processResponse(response, options) {
     // Step 1: Apply jq filter if provided AND response is JSON
     if (options.jqFilter) {
         const isJson = isJsonContentType(options.contentType);
+        const trimmed = content.trim();
+        // Parse JSON once and reuse for both validation and filtering
+        let parsedData;
         if (!isJson) {
             // Check if it looks like JSON despite content-type (some APIs don't set correct headers)
-            const trimmed = content.trim();
             const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
             if (!looksLikeJson) {
                 throw new Error(`Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"}).\n` +
                     `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`);
             }
-            // Actually try to parse it to verify it's valid JSON
-            try {
-                JSON.parse(trimmed);
-            }
-            catch (error) {
-                // SyntaxError indicates invalid JSON
-                if (error instanceof SyntaxError) {
-                    throw new Error(`Cannot apply jq_filter: Response does not appear to be valid JSON.\n` +
-                        `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`);
-                }
-                throw error; // Re-throw unexpected errors
-            }
         }
-        content = applyJqFilter(content, options.jqFilter);
+        // Parse once - reuse for filter application
+        try {
+            parsedData = JSON.parse(trimmed);
+        }
+        catch (error) {
+            // SyntaxError indicates invalid JSON
+            if (error instanceof SyntaxError) {
+                throw new Error(`Cannot apply jq_filter: Response does not appear to be valid JSON.\n` +
+                    `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`);
+            }
+            throw error; // Re-throw unexpected errors
+        }
+        // Apply filter to pre-parsed data (avoids double parse)
+        content = applyJqFilterToParsed(parsedData, options.jqFilter);
     }
     // Step 2: Determine max size
     const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;

@@ -3,7 +3,7 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { cleanupOrphanedTempDirs } from "../files/index.js";
-import { startRateLimitCleanup } from "../security/index.js";
+import { startRateLimitCleanup, stopRateLimitCleanup } from "../security/index.js";
 import { createServer, registerAllCapabilities, initializeLifecycle } from "../server/index.js";
 
 /**
@@ -18,10 +18,16 @@ export async function runStdio(): Promise<void> {
     const rateLimitInterval = startRateLimitCleanup();
     initializeLifecycle(null, rateLimitInterval);
 
-    const server = createServer();
-    registerAllCapabilities(server);
+    try {
+        const server = createServer();
+        registerAllCapabilities(server);
 
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    console.error("cURL MCP server running on stdio");
+        const transport = new StdioServerTransport();
+        await server.connect(transport);
+        console.error("cURL MCP server running on stdio");
+    } catch (error) {
+        // Clean up rate limit interval on startup failure
+        stopRateLimitCleanup(rateLimitInterval);
+        throw error;
+    }
 }

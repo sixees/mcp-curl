@@ -33,8 +33,11 @@ export function buildCurlArgs(params) {
         args.push("--data-raw", params.data);
     }
     // Form data - use --form-string to prevent @/< file reading (security: prevents local file exfiltration)
+    // Also validate against CRLF injection like headers
     if (params.form) {
         for (const [key, value] of Object.entries(params.form)) {
+            validateNoCRLF(key, "form field name");
+            validateNoCRLF(value, `form field value for "${key}"`);
             args.push("--form-string", `${key}=${value}`);
         }
     }

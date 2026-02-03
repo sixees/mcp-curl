@@ -91,7 +91,7 @@ Query saved JSON files without new HTTP requests:
 
 - Only structured `curl_execute` and `jq_query` tools (no arbitrary command execution)
 - Commands executed via `spawn()` without shell (prevents injection)
-- CRLF injection protection: validates headers, user-agent, auth values for newlines
+- CRLF injection protection: validates headers, user-agent, auth values, and form fields for newlines
 - Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix
 - Per-request unique metadata separator prevents response injection attacks
 
@@ -110,6 +110,15 @@ Query saved JSON files without new HTTP requests:
 - JQ parsing timeout: 100ms (prevents ReDoS)
 - Default request timeout: 30 seconds
 - SSL verification enabled by default
+
+**Timeout Handling:**
+
+The `timeout` parameter is optional in the schema. When not provided, defaults are applied in order:
+
+1. `McpCurlConfig.defaultTimeout` (if configured via extensible API)
+2. System default: 30 seconds (`LIMITS.DEFAULT_TIMEOUT_MS / 1000`)
+
+This design allows distinguishing between "user explicitly passed 30" vs "user didn't provide a value".
 
 **HTTP Transport:**
 

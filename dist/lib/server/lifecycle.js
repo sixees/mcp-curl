@@ -27,6 +27,7 @@ export function setHttpServer(server) {
  */
 export async function shutdown(signal) {
     console.error(`\nReceived ${signal}, shutting down gracefully...`);
+    let hasError = false;
     // Close HTTP server if running
     if (httpServer) {
         try {
@@ -41,12 +42,19 @@ export async function shutdown(signal) {
         }
         catch (error) {
             console.error("Warning: Error closing HTTP server:", error);
+            hasError = true;
         }
     }
     // Close all active sessions
     if (sessionManager) {
         sessionManager.stopCleanup();
-        await sessionManager.closeAll();
+        try {
+            await sessionManager.closeAll();
+        }
+        catch (error) {
+            console.error("Warning: Error closing sessions:", error);
+            hasError = true;
+        }
     }
     // Stop rate limit cleanup interval
     if (rateLimitCleanupInterval) {
@@ -54,7 +62,8 @@ export async function shutdown(signal) {
     }
     // Clean up temp directory (handles errors internally)
     await cleanupTempDir();
-    process.exit(0);
+    // Reflect partial failures in exit code
+    process.exit(hasError ? 1 : 0);
 }
 /**
  * Register process shutdown handlers.

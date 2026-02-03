@@ -42,11 +42,20 @@ export const CurlExecuteSchema = z.object({
     insecure: z.boolean()
         .default(false)
         .describe("Skip SSL certificate verification (default: false)"),
+    /**
+     * Request timeout in seconds.
+     * Optional - if not provided, defaults are applied in this order:
+     * 1. McpCurlConfig.defaultTimeout (if configured)
+     * 2. LIMITS.DEFAULT_TIMEOUT_MS / 1000 (30 seconds)
+     *
+     * Note: This field intentionally has no .default() to distinguish between
+     * "user explicitly passed 30" vs "user didn't provide a value".
+     */
     timeout: z.number()
         .int()
         .min(1)
         .max(300)
-        .default(30)
+        .optional()
         .describe("Request timeout in seconds (default: 30, max: 300)"),
     user_agent: z.string()
         .optional()

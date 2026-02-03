@@ -12,7 +12,16 @@ export declare const CurlExecuteSchema: z.ZodObject<{
     follow_redirects: z.ZodDefault<z.ZodBoolean>;
     max_redirects: z.ZodOptional<z.ZodNumber>;
     insecure: z.ZodDefault<z.ZodBoolean>;
-    timeout: z.ZodDefault<z.ZodNumber>;
+    /**
+     * Request timeout in seconds.
+     * Optional - if not provided, defaults are applied in this order:
+     * 1. McpCurlConfig.defaultTimeout (if configured)
+     * 2. LIMITS.DEFAULT_TIMEOUT_MS / 1000 (30 seconds)
+     *
+     * Note: This field intentionally has no .default() to distinguish between
+     * "user explicitly passed 30" vs "user didn't provide a value".
+     */
+    timeout: z.ZodOptional<z.ZodNumber>;
     user_agent: z.ZodOptional<z.ZodString>;
     basic_auth: z.ZodOptional<z.ZodString>;
     bearer_token: z.ZodOptional<z.ZodString>;
@@ -28,7 +37,6 @@ export declare const CurlExecuteSchema: z.ZodObject<{
     url: string;
     follow_redirects: boolean;
     insecure: boolean;
-    timeout: number;
     verbose: boolean;
     include_headers: boolean;
     compressed: boolean;
@@ -38,6 +46,7 @@ export declare const CurlExecuteSchema: z.ZodObject<{
     data?: string | undefined;
     form?: Record<string, string> | undefined;
     max_redirects?: number | undefined;
+    timeout?: number | undefined;
     user_agent?: string | undefined;
     basic_auth?: string | undefined;
     bearer_token?: string | undefined;
@@ -79,14 +88,14 @@ export declare const JqQuerySchema: z.ZodObject<{
     save_to_file: z.ZodOptional<z.ZodBoolean>;
     output_dir: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    filepath: string;
     jq_filter: string;
+    filepath: string;
     max_result_size?: number | undefined;
     save_to_file?: boolean | undefined;
     output_dir?: string | undefined;
 }, {
-    filepath: string;
     jq_filter: string;
+    filepath: string;
     max_result_size?: number | undefined;
     save_to_file?: boolean | undefined;
     output_dir?: string | undefined;

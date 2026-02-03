@@ -41,7 +41,8 @@ export async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIM
             requestMemoryUsage = 0;
         };
         childProcess.stdout?.on("data", (data) => {
-            const dataSize = Buffer.byteLength(data, "utf8");
+            // data is already a Buffer, so .length gives byte count directly
+            const dataSize = data.length;
             // Check global memory limit
             if (!allocateMemory(dataSize) && !killed) {
                 killed = true;
@@ -67,7 +68,8 @@ export async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIM
             if (stderrMemoryUsage < LIMITS.MAX_RESPONSE_SIZE) {
                 const dataStr = data.toString();
                 stderr += dataStr;
-                stderrMemoryUsage += Buffer.byteLength(data, "utf8");
+                // data is already a Buffer, so .length gives byte count directly
+                stderrMemoryUsage += data.length;
                 if (stderrMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
                     // Truncate efficiently using Buffer slice
                     const truncateMsg = "\n[stderr truncated]";

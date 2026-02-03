@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-export { registerApiTestPrompt } from "./api-test.js";
-export { registerApiDiscoveryPrompt } from "./api-discovery.js";
+import { registerApiTestPrompt } from "./api-test.js";
+import { registerApiDiscoveryPrompt } from "./api-discovery.js";
+export { registerApiTestPrompt, registerApiDiscoveryPrompt };
 /**
  * Registers all prompts on the MCP server.
  */

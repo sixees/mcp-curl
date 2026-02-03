@@ -35,13 +35,23 @@ export async function getOrCreateTempDir(): Promise<string> {
     }
 
     tempDirPromise = (async () => {
+        let dir: string | null = null;
         try {
-            const dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
+            dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
             await chmod(dir, 0o700); // Owner-only access
             sharedTempDir = dir;
             lastFailureTime = 0; // Clear failure state on success
             return dir;
         } catch (error) {
+            // Clean up orphaned directory if mkdtemp succeeded but chmod failed
+            if (dir) {
+                try {
+                    await rm(dir, { recursive: true, force: true });
+                } catch (cleanupError) {
+                    // Log cleanup failure for debugging, but don't throw
+                    console.warn("Failed to cleanup temp directory after chmod failure:", cleanupError);
+                }
+            }
             // Record failure time and reset promise to allow retry after backoff
             lastFailureTime = Date.now();
             tempDirPromise = null;

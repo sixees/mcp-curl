@@ -72,10 +72,15 @@ describe('splitJqFilters', () => {
         expect(result).toEqual(['.["a,b"]', '.name']);
     });
     it('handles many filters within limit', () => {
-        // splitJqFilters doesn't enforce the max filters limit - that's done in applyJqFilter
-        const manyFilters = Array(25).fill('.x').join(',');
+        // splitJqFilters now enforces the max filters limit
+        const manyFilters = Array(20).fill('.x').join(',');
         const result = splitJqFilters(manyFilters);
-        expect(result.length).toBe(25);
+        expect(result.length).toBe(20);
+    });
+    it('rejects too many filters', () => {
+        const tooManyFilters = Array(21).fill('.x').join(',');
+        expect(() => splitJqFilters(tooManyFilters))
+            .toThrow('Maximum allowed is 20');
     });
     it('rejects leading comma', () => {
         expect(() => splitJqFilters(',.name'))
