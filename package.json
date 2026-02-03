@@ -2,8 +2,19 @@
   "name": "mcp-curl",
   "version": "1.1.5",
   "description": "MCP server for executing cURL commands",
-  "main": "dist/index.js",
+  "main": "dist/lib.js",
+  "types": "dist/lib.d.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "import": "./dist/lib.js"
+    },
+    "./cli": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
     "curl-mcp": "./dist/index.js"
   },

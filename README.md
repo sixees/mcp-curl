@@ -110,6 +110,246 @@ Clients must include the token in the Authorization header:
 Authorization: Bearer your-secret-token
 ```
 
+## Programmatic API
+
+The `McpCurlServer` class provides a fluent builder API for creating custom MCP servers with cURL capabilities.
+This is useful for embedding mcp-curl in your own applications or extending it with custom behavior.
+
+### Installation
+
+```bash
+npm install mcp-curl
+```
+
+### Basic Usage
+
+```typescript
+import { McpCurlServer } from "mcp-curl";
+
+const server = new McpCurlServer()
+  .configure({
+    baseUrl: "https://api.example.com",
+    defaultTimeout: 60,
+  })
+  .start("stdio");
+```
+
+### Configuration Options
+
+The `configure()` method accepts a `McpCurlConfig` object:
+
+| Option           | Type                      | Description                                                   |
+|------------------|---------------------------|---------------------------------------------------------------|
+| `baseUrl`        | `string`                  | Base URL prepended to relative URLs in curl_execute           |
+| `defaultHeaders` | `Record<string, string>`  | Default headers added to all curl_execute requests            |
+| `defaultTimeout` | `number`                  | Default timeout in seconds (1-300) for curl_execute           |
+| `outputDir`      | `string`                  | Default output directory for saved responses                  |
+| `maxResultSize`  | `number`                  | Default max result size in bytes before auto-saving to file   |
+| `allowLocalhost` | `boolean`                 | Allow localhost requests (overrides MCP_CURL_ALLOW_LOCALHOST) |
+| `port`           | `number`                  | HTTP transport port (default: 3000)                           |
+| `authToken`      | `string`                  | HTTP auth token (overrides MCP_AUTH_TOKEN env)                |
+
+### Hooks
+
+Hooks allow you to intercept and modify tool calls. All hooks run sequentially in registration order.
+
+#### beforeRequest
+
+Called before tool execution. Can modify parameters or short-circuit to return early.
+
+```typescript
+import { McpCurlServer, type HookContext, type CurlExecuteInput } from "mcp-curl";
+
+const server = new McpCurlServer()
+  .beforeRequest((ctx: HookContext<CurlExecuteInput>) => {
+    // Log all requests
+    console.log(`${ctx.tool}: ${ctx.params.url}`);
+
+    // Add authorization header to all requests
+    return {
+      params: {
+        headers: {
+          ...ctx.params.headers,
+          Authorization: `Bearer ${process.env.API_TOKEN}`,
+        },
+      },
+    };
+  })
+  .start("stdio");
+```
+
+**Return values:**
+- `void` or `undefined`: Continue with current params
+- `{ params: {...} }`: Merge these params into current params
+- `{ shortCircuit: true, response: "..." }`: Skip execution, return response immediately
+
+#### afterResponse
+
+Called after successful tool execution. Useful for logging, metrics, or caching.
+
+```typescript
+server.afterResponse((ctx) => {
+  console.log(`Response from ${ctx.params.url}: ${ctx.response.length} bytes`);
+
+  // Track metrics
+  metrics.recordLatency(ctx.tool, Date.now() - startTime);
+});
+```
+
+#### onError
+
+Called when tool execution throws an error. Useful for error logging and alerting.
+
+```typescript
+server.onError((ctx) => {
+  console.error(`Error in ${ctx.tool}:`, ctx.error.message);
+
+  // Send to error tracking
+  errorTracker.capture(ctx.error, { tool: ctx.tool, params: ctx.params });
+});
+```
+
+#### Hook Error Handling
+
+Hooks use fail-fast semantics. If a hook throws an error:
+- For `afterResponse`: Subsequent hooks won't run, error propagates to caller
+- For `onError`: Subsequent hooks won't run, hook's error replaces original error
+
+For logging/metrics use cases, wrap your hook logic in try-catch internally.
+
+### Disabling Tools
+
+You can disable individual tools if your use case doesn't need them:
+
+```typescript
+const server = new McpCurlServer()
+  .disableCurlExecute()  // Disable HTTP requests
+  .disableJqQuery()      // Disable JSON file querying
+  .start("stdio");
+```
+
+### Instance Utilities
+
+The `utilities()` method provides config-aware helper methods for direct tool execution
+(bypasses hooks - use MCP tool invocation if hooks are needed):
+
+```typescript
+const server = new McpCurlServer()
+  .configure({ baseUrl: "https://api.example.com" });
+
+const utils = server.utilities();
+
+// Execute request with config defaults applied
+const result = await utils.executeRequest({
+  path: "/users/123",  // Combined with baseUrl
+  headers: { Accept: "application/json" },
+});
+
+// Query a saved JSON file
+const data = await utils.queryFile("/path/to/response.json", ".users[0:5]");
+```
+
+### Transport Modes
+
+```typescript
+// stdio transport (default) - for CLI tools like Claude Desktop/Code
+await server.start("stdio");
+
+// HTTP transport - for web clients
+await server.start("http");
+```
+
+### Lifecycle Management
+
+```typescript
+const server = new McpCurlServer()
+  .configure({ port: 3001 });
+
+// Start the server
+await server.start("http");
+
+// Check if started
+console.log(server.isStarted()); // true
+
+// Get underlying MCP server (for advanced use)
+const mcpServer = server.getMcpServer();
+
+// Graceful shutdown
+await server.shutdown();
+```
+
+### Complete Example
+
+```typescript
+import { McpCurlServer, type HookContext, type CurlExecuteInput } from "mcp-curl";
+
+// Create metrics tracking
+const requestCount = new Map<string, number>();
+
+const server = new McpCurlServer()
+  // Configure defaults
+  .configure({
+    baseUrl: "https://api.myservice.com",
+    defaultHeaders: {
+      "X-Client-ID": "my-mcp-client",
+    },
+    defaultTimeout: 30,
+  })
+
+  // Add authentication to all requests
+  .beforeRequest((ctx: HookContext<CurlExecuteInput>) => {
+    if (ctx.tool === "curl_execute") {
+      return {
+        params: {
+          bearer_token: process.env.API_TOKEN,
+        },
+      };
+    }
+  })
+
+  // Track request metrics
+  .afterResponse((ctx) => {
+    const count = requestCount.get(ctx.tool) ?? 0;
+    requestCount.set(ctx.tool, count + 1);
+  })
+
+  // Log errors
+  .onError((ctx) => {
+    console.error(`[${ctx.tool}] Error:`, ctx.error.message);
+  });
+
+// Start with HTTP transport
+await server.start("http");
+
+// Handle shutdown
+process.on("SIGINT", async () => {
+  console.log("Shutting down...");
+  await server.shutdown();
+  process.exit(0);
+});
+```
+
+### TypeScript Support
+
+All public types are exported for full TypeScript support:
+
+```typescript
+import {
+  McpCurlServer,
+  type McpCurlConfig,
+  type TransportMode,
+  type HookContext,
+  type BeforeRequestHook,
+  type AfterResponseHook,
+  type OnErrorHook,
+  type BeforeRequestResult,
+  type CurlExecuteInput,
+  type JqQueryInput,
+  type InstanceUtilities,
+  type ExecuteRequestParams,
+} from "mcp-curl";
+```
+
 ## Tools
 
 ### `curl_execute`
