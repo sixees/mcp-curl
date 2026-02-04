@@ -1,12 +1,13 @@
 // src/lib/extensible/mcp-curl-server.ts
 // Extensible MCP server class with fluent builder API
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Server } from "http";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { Request, Response, NextFunction } from "express";
 import { randomUUID } from "crypto";
+import type { z } from "zod";
 
 import type {
     McpCurlConfig,
@@ -29,6 +30,34 @@ import { startRateLimitCleanup, stopRateLimitCleanup, isValidSessionId } from ".
 import { SessionManager } from "../session/index.js";
 import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
 import type { Session } from "../types/session.js";
+
+/**
+ * Metadata for a custom tool registration.
+ */
+export interface CustomToolMeta {
+    /** Human-readable title */
+    title: string;
+    /** Description for LLM context */
+    description: string;
+    /** Zod schema for input validation */
+    inputSchema: z.ZodObject<z.ZodRawShape>;
+    /** Optional MCP tool annotations */
+    annotations?: {
+        readOnlyHint?: boolean;
+        destructiveHint?: boolean;
+        idempotentHint?: boolean;
+        openWorldHint?: boolean;
+    };
+}
+
+/**
+ * Stored custom tool definition.
+ */
+interface CustomToolDef {
+    name: string;
+    meta: CustomToolMeta;
+    handler: ToolCallback<z.ZodObject<z.ZodRawShape>>;
+}
 
 /**
  * Extensible MCP cURL server with fluent builder API.
@@ -58,6 +87,7 @@ export class McpCurlServer {
         curl_execute: true,
         jq_query: true,
     };
+    private _customTools: CustomToolDef[] = [];
     private _started = false;
     private _server: McpServer | null = null;
     private _httpServer: Server | null = null;
@@ -146,6 +176,58 @@ export class McpCurlServer {
     onError(hook: OnErrorHook): this {
         this.ensureNotStarted("onError()");
         this._hooks.onError.push(hook);
+        return this;
+    }
+
+    /**
+     * Register a custom tool.
+     * Custom tools are registered on the MCP server during start().
+     * Use this to add API-specific tools generated from schema definitions.
+     *
+     * @param name - Tool name (lowercase with underscores)
+     * @param meta - Tool metadata (title, description, inputSchema)
+     * @param handler - Tool handler function
+     * @returns this for chaining
+     * @throws Error if called after start()
+     * @throws Error if tool name conflicts with built-in tools
+     *
+     * @example
+     * ```typescript
+     * server.registerCustomTool(
+     *   "get_user",
+     *   {
+     *     title: "Get User",
+     *     description: "Fetch user by ID",
+     *     inputSchema: z.object({ id: z.string() }),
+     *   },
+     *   async (params) => {
+     *     // Handle request
+     *     return { content: [{ type: "text", text: "..." }] };
+     *   }
+     * );
+     * ```
+     */
+    registerCustomTool(
+        name: string,
+        meta: CustomToolMeta,
+        handler: ToolCallback<z.ZodObject<z.ZodRawShape>>
+    ): this {
+        this.ensureNotStarted("registerCustomTool()");
+
+        // Check for conflicts with built-in tools
+        if (name === "curl_execute" || name === "jq_query") {
+            throw new Error(
+                `Cannot register custom tool "${name}": conflicts with built-in tool. ` +
+                `Use disable${name === "curl_execute" ? "CurlExecute" : "JqQuery"}() first.`
+            );
+        }
+
+        // Check for duplicate custom tools
+        if (this._customTools.some((t) => t.name === name)) {
+            throw new Error(`Custom tool "${name}" is already registered`);
+        }
+
+        this._customTools.push({ name, meta, handler });
         return this;
     }
 
@@ -334,6 +416,11 @@ export class McpCurlServer {
             config,
             hooks: this._hooks,
         });
+
+        // Register custom tools
+        for (const { name, meta, handler } of this._customTools) {
+            server.registerTool(name, meta, handler);
+        }
     }
 
     /**

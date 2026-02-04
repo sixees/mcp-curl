@@ -43,6 +43,7 @@ export class McpCurlServer {
         curl_execute: true,
         jq_query: true,
     };
+    _customTools = [];
     _started = false;
     _server = null;
     _httpServer = null;
@@ -125,6 +126,48 @@ export class McpCurlServer {
     onError(hook) {
         this.ensureNotStarted("onError()");
         this._hooks.onError.push(hook);
+        return this;
+    }
+    /**
+     * Register a custom tool.
+     * Custom tools are registered on the MCP server during start().
+     * Use this to add API-specific tools generated from schema definitions.
+     *
+     * @param name - Tool name (lowercase with underscores)
+     * @param meta - Tool metadata (title, description, inputSchema)
+     * @param handler - Tool handler function
+     * @returns this for chaining
+     * @throws Error if called after start()
+     * @throws Error if tool name conflicts with built-in tools
+     *
+     * @example
+     * ```typescript
+     * server.registerCustomTool(
+     *   "get_user",
+     *   {
+     *     title: "Get User",
+     *     description: "Fetch user by ID",
+     *     inputSchema: z.object({ id: z.string() }),
+     *   },
+     *   async (params) => {
+     *     // Handle request
+     *     return { content: [{ type: "text", text: "..." }] };
+     *   }
+     * );
+     * ```
+     */
+    registerCustomTool(name, meta, handler) {
+        this.ensureNotStarted("registerCustomTool()");
+        // Check for conflicts with built-in tools
+        if (name === "curl_execute" || name === "jq_query") {
+            throw new Error(`Cannot register custom tool "${name}": conflicts with built-in tool. ` +
+                `Use disable${name === "curl_execute" ? "CurlExecute" : "JqQuery"}() first.`);
+        }
+        // Check for duplicate custom tools
+        if (this._customTools.some((t) => t.name === name)) {
+            throw new Error(`Custom tool "${name}" is already registered`);
+        }
+        this._customTools.push({ name, meta, handler });
         return this;
     }
     /**
@@ -302,6 +345,10 @@ export class McpCurlServer {
             config,
             hooks: this._hooks,
         });
+        // Register custom tools
+        for (const { name, meta, handler } of this._customTools) {
+            server.registerTool(name, meta, handler);
+        }
     }
     /**
      * Start stdio transport.

@@ -1,0 +1,435 @@
+// src/lib/schema/generator.ts
+// Generates MCP tools from API schema endpoint definitions
+
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type {
+    ApiSchema,
+    EndpointDefinition,
+    EndpointParameter,
+    AuthConfig,
+    HttpMethod,
+} from "./types.js";
+import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
+
+/**
+ * Error thrown when authentication is required but not available.
+ */
+export class AuthenticationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "AuthenticationError";
+    }
+}
+
+/**
+ * Configuration for generating endpoint tools.
+ */
+export interface GeneratorConfig {
+    /** Override auth config (for testing) */
+    authOverride?: Record<string, string>;
+    /** Custom timeout to apply */
+    timeout?: number;
+    /** Default headers to merge */
+    defaultHeaders?: Record<string, string>;
+}
+
+/**
+ * Generate a Zod input schema from endpoint parameter definitions.
+ *
+ * @param endpoint - Endpoint definition with parameters
+ * @returns Zod object schema for the endpoint
+ */
+export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z.ZodRawShape> {
+    const shape: z.ZodRawShape = {};
+
+    for (const param of endpoint.parameters ?? []) {
+        let schema: z.ZodTypeAny = createParamSchema(param);
+
+        if (param.description) {
+            schema = schema.describe(param.description);
+        }
+
+        if (!param.required) {
+            schema = schema.optional();
+        }
+
+        shape[param.name] = schema;
+    }
+
+    // Add optional filter_preset parameter if presets exist
+    if (endpoint.response?.filterPresets?.length) {
+        const presetNames = endpoint.response.filterPresets.map((p) => p.name) as [string, ...string[]];
+        shape.filter_preset = z
+            .enum(presetNames)
+            .optional()
+            .describe("Apply a predefined response filter");
+    }
+
+    return z.object(shape);
+}
+
+/**
+ * Create a Zod schema for a single parameter based on its type.
+ */
+function createParamSchema(param: EndpointParameter): z.ZodTypeAny {
+    // Handle enum first (applies to any base type)
+    if (param.enum && param.enum.length > 0) {
+        // Enum can be strings or numbers
+        const firstValue = param.enum[0];
+        if (typeof firstValue === "string") {
+            return z.enum(param.enum as [string, ...string[]]);
+        } else {
+            // For number enums, use union of literals
+            return z.union(
+                param.enum.map((v) => z.literal(v)) as [z.ZodLiteral<number>, z.ZodLiteral<number>, ...z.ZodLiteral<number>[]]
+            );
+        }
+    }
+
+    // Base type schemas
+    switch (param.type) {
+        case "number":
+            return z.number();
+        case "integer":
+            return z.number().int();
+        case "boolean":
+            return z.boolean();
+        case "string":
+        default:
+            return z.string();
+    }
+}
+
+/**
+ * Build the full URL with path parameter substitution and query params.
+ *
+ * @param baseUrl - API base URL
+ * @param path - Endpoint path with {param} placeholders
+ * @param pathParams - Values for path parameters
+ * @param queryParams - Query parameters to append
+ * @returns Fully constructed URL
+ */
+export function buildUrl(
+    baseUrl: string,
+    path: string,
+    pathParams: Record<string, unknown>,
+    queryParams: Record<string, string>
+): string {
+    // Substitute path parameters
+    let resolvedPath = path;
+    for (const [key, value] of Object.entries(pathParams)) {
+        resolvedPath = resolvedPath.replace(
+            `{${key}}`,
+            encodeURIComponent(String(value))
+        );
+    }
+
+    // Build base URL (remove trailing slash from base, path already has leading slash)
+    const base = baseUrl.replace(/\/$/, "");
+    const url = `${base}${resolvedPath}`;
+
+    // Append query parameters
+    const queryEntries = Object.entries(queryParams);
+    if (queryEntries.length === 0) {
+        return url;
+    }
+
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of queryEntries) {
+        searchParams.append(key, value);
+    }
+
+    return `${url}?${searchParams.toString()}`;
+}
+
+/**
+ * Extract authentication headers and query params from environment variables.
+ *
+ * @param auth - Auth configuration from schema
+ * @param override - Optional override values (for testing)
+ * @returns Headers and query params to add to requests
+ * @throws AuthenticationError if required auth is missing
+ */
+export function getAuthConfig(
+    auth: AuthConfig | undefined,
+    override?: Record<string, string>
+): { headers: Record<string, string>; queryParams: Record<string, string> } {
+    const headers: Record<string, string> = {};
+    const queryParams: Record<string, string> = {};
+
+    if (!auth) {
+        return { headers, queryParams };
+    }
+
+    // Handle API key auth
+    if (auth.apiKey) {
+        const value = override?.[auth.apiKey.envVar] ?? process.env[auth.apiKey.envVar];
+        const isRequired = auth.apiKey.required !== false;
+
+        if (!value && isRequired) {
+            throw new AuthenticationError(
+                `Missing required environment variable: ${auth.apiKey.envVar}`
+            );
+        }
+
+        if (value) {
+            if (auth.apiKey.type === "header") {
+                headers[auth.apiKey.name] = value;
+            } else {
+                queryParams[auth.apiKey.name] = value;
+            }
+        }
+    }
+
+    // Handle bearer token auth
+    if (auth.bearer) {
+        const value = override?.[auth.bearer.envVar] ?? process.env[auth.bearer.envVar];
+        const isRequired = auth.bearer.required !== false;
+
+        if (!value && isRequired) {
+            throw new AuthenticationError(
+                `Missing required environment variable: ${auth.bearer.envVar}`
+            );
+        }
+
+        if (value) {
+            headers["Authorization"] = `Bearer ${value}`;
+        }
+    }
+
+    return { headers, queryParams };
+}
+
+/**
+ * Separate endpoint parameters by their location.
+ *
+ * @param endpoint - Endpoint definition
+ * @param params - Parameter values from tool call
+ * @returns Parameters grouped by location
+ */
+function separateParams(
+    endpoint: EndpointDefinition,
+    params: Record<string, unknown>
+): {
+    pathParams: Record<string, unknown>;
+    queryParams: Record<string, string>;
+    headerParams: Record<string, string>;
+    bodyData: string | undefined;
+} {
+    const pathParams: Record<string, unknown> = {};
+    const queryParams: Record<string, string> = {};
+    const headerParams: Record<string, string> = {};
+    let bodyData: string | undefined;
+
+    for (const paramDef of endpoint.parameters ?? []) {
+        let value = params[paramDef.name];
+
+        // Apply default if value is undefined
+        if (value === undefined && paramDef.default !== undefined) {
+            value = paramDef.default;
+        }
+
+        // Skip if still undefined
+        if (value === undefined) {
+            continue;
+        }
+
+        switch (paramDef.in) {
+            case "path":
+                pathParams[paramDef.name] = value;
+                break;
+            case "query":
+                queryParams[paramDef.name] = String(value);
+                break;
+            case "header":
+                headerParams[paramDef.name] = String(value);
+                break;
+            case "body":
+                bodyData = typeof value === "string" ? value : JSON.stringify(value);
+                break;
+        }
+    }
+
+    return { pathParams, queryParams, headerParams, bodyData };
+}
+
+/**
+ * Determine the jq filter to apply based on params and endpoint config.
+ */
+function resolveJqFilter(
+    endpoint: EndpointDefinition,
+    params: Record<string, unknown>
+): string | undefined {
+    // Check for filter preset selection
+    const presetName = params.filter_preset as string | undefined;
+    if (presetName && endpoint.response?.filterPresets) {
+        const preset = endpoint.response.filterPresets.find((p) => p.name === presetName);
+        if (preset) {
+            return preset.jqFilter;
+        }
+    }
+
+    // Fall back to default filter
+    return endpoint.response?.jqFilter;
+}
+
+/**
+ * Create a tool handler for an endpoint.
+ *
+ * @param schema - Full API schema
+ * @param endpoint - Endpoint definition
+ * @param config - Generator configuration
+ * @returns Tool handler function
+ */
+function createToolHandler(
+    schema: ApiSchema,
+    endpoint: EndpointDefinition,
+    config?: GeneratorConfig
+): (params: Record<string, unknown>) => Promise<CurlExecuteResult> {
+    return async (params: Record<string, unknown>): Promise<CurlExecuteResult> => {
+        try {
+            // Separate parameters by location
+            const { pathParams, queryParams, headerParams, bodyData } = separateParams(
+                endpoint,
+                params
+            );
+
+            // Get auth configuration
+            const auth = getAuthConfig(schema.auth, config?.authOverride);
+
+            // Build URL with path params and query params (including auth query params)
+            const url = buildUrl(
+                schema.api.baseUrl,
+                endpoint.path,
+                pathParams,
+                { ...queryParams, ...auth.queryParams }
+            );
+
+            // Merge headers: defaults -> schema defaults -> auth -> endpoint params
+            const headers: Record<string, string> = {
+                ...config?.defaultHeaders,
+                ...schema.defaults?.headers,
+                ...auth.headers,
+                ...headerParams,
+            };
+
+            // Determine jq filter
+            const jqFilter = resolveJqFilter(endpoint, params);
+
+            // Determine timeout
+            const timeout = config?.timeout ?? schema.defaults?.timeout;
+
+            // Execute the request using the existing curl executor
+            return await executeCurlRequest({
+                url,
+                method: endpoint.method,
+                headers: Object.keys(headers).length > 0 ? headers : undefined,
+                data: bodyData,
+                timeout,
+                jq_filter: jqFilter,
+                // Required fields with standard defaults
+                follow_redirects: true,
+                insecure: false,
+                verbose: false,
+                include_headers: false,
+                compressed: true,
+                include_metadata: false,
+            });
+        } catch (error) {
+            // Handle authentication errors gracefully
+            if (error instanceof AuthenticationError) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Authentication error: ${error.message}`,
+                        },
+                    ],
+                    isError: true,
+                };
+            }
+
+            // Re-throw other errors
+            throw error;
+        }
+    };
+}
+
+/**
+ * Build tool description including parameter docs and filter presets.
+ */
+function buildToolDescription(endpoint: EndpointDefinition): string {
+    const parts: string[] = [endpoint.description];
+
+    // Document filter presets if available
+    if (endpoint.response?.filterPresets?.length) {
+        parts.push("");
+        parts.push("Available filter presets:");
+        for (const preset of endpoint.response.filterPresets) {
+            parts.push(`  - ${preset.name}: applies filter "${preset.jqFilter}"`);
+        }
+    }
+
+    return parts.join("\n");
+}
+
+/**
+ * Register all endpoints from an API schema as MCP tools.
+ *
+ * @param server - MCP server instance
+ * @param schema - Validated API schema
+ * @param config - Optional generator configuration
+ */
+export function registerEndpointTools(
+    server: McpServer,
+    schema: ApiSchema,
+    config?: GeneratorConfig
+): void {
+    for (const endpoint of schema.endpoints) {
+        const inputSchema = generateInputSchema(endpoint);
+        const handler = createToolHandler(schema, endpoint, config);
+
+        server.registerTool(
+            endpoint.id,
+            {
+                title: endpoint.title,
+                description: buildToolDescription(endpoint),
+                inputSchema,
+                annotations: {
+                    readOnlyHint: endpoint.method === "GET",
+                    destructiveHint: endpoint.method === "DELETE",
+                    idempotentHint: endpoint.method === "GET" || endpoint.method === "PUT",
+                    openWorldHint: true,
+                },
+            },
+            handler
+        );
+    }
+}
+
+/**
+ * Generate tool definitions without registering them.
+ * Useful for inspection or custom registration.
+ *
+ * @param schema - Validated API schema
+ * @returns Array of tool definitions with handlers
+ */
+export function generateToolDefinitions(
+    schema: ApiSchema,
+    config?: GeneratorConfig
+): Array<{
+    id: string;
+    title: string;
+    description: string;
+    inputSchema: z.ZodObject<z.ZodRawShape>;
+    handler: (params: Record<string, unknown>) => Promise<CurlExecuteResult>;
+}> {
+    return schema.endpoints.map((endpoint) => ({
+        id: endpoint.id,
+        title: endpoint.title,
+        description: buildToolDescription(endpoint),
+        inputSchema: generateInputSchema(endpoint),
+        handler: createToolHandler(schema, endpoint, config),
+    }));
+}
