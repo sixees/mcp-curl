@@ -81,6 +81,10 @@ function createParamSchema(param: EndpointParameter): z.ZodTypeAny {
             return z.enum(param.enum as [string, ...string[]]);
         } else {
             // For number enums, use union of literals
+            // z.union() requires at least 2 elements, so handle single-element case
+            if (param.enum.length === 1) {
+                return z.literal(firstValue as number);
+            }
             return z.union(
                 param.enum.map((v) => z.literal(v)) as [z.ZodLiteral<number>, z.ZodLiteral<number>, ...z.ZodLiteral<number>[]]
             );
@@ -397,9 +401,9 @@ export function registerEndpointTools(
                 description: buildToolDescription(endpoint),
                 inputSchema,
                 annotations: {
-                    readOnlyHint: endpoint.method === "GET",
+                    readOnlyHint: endpoint.method === "GET" || endpoint.method === "HEAD" || endpoint.method === "OPTIONS",
                     destructiveHint: endpoint.method === "DELETE",
-                    idempotentHint: endpoint.method === "GET" || endpoint.method === "PUT",
+                    idempotentHint: endpoint.method === "GET" || endpoint.method === "PUT" || endpoint.method === "HEAD" || endpoint.method === "OPTIONS",
                     openWorldHint: true,
                 },
             },

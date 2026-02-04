@@ -267,6 +267,49 @@ describe("generateInputSchema", () => {
         expect(schema.safeParse({ filter_preset: "summary" }).success).toBe(true);
         expect(schema.safeParse({ filter_preset: "invalid" }).success).toBe(false);
     });
+    it("generates schema for single-element number enum", () => {
+        const endpoint = {
+            id: "test",
+            path: "/test",
+            method: "GET",
+            title: "Test",
+            description: "Test endpoint",
+            parameters: [
+                {
+                    name: "version",
+                    in: "query",
+                    type: "integer",
+                    required: true,
+                    enum: [1], // Single-element number enum
+                },
+            ],
+        };
+        const schema = generateInputSchema(endpoint);
+        expect(schema.safeParse({ version: 1 }).success).toBe(true);
+        expect(schema.safeParse({ version: 2 }).success).toBe(false);
+    });
+    it("generates schema for multi-element number enum", () => {
+        const endpoint = {
+            id: "test",
+            path: "/test",
+            method: "GET",
+            title: "Test",
+            description: "Test endpoint",
+            parameters: [
+                {
+                    name: "version",
+                    in: "query",
+                    type: "integer",
+                    required: true,
+                    enum: [1, 2, 3],
+                },
+            ],
+        };
+        const schema = generateInputSchema(endpoint);
+        expect(schema.safeParse({ version: 1 }).success).toBe(true);
+        expect(schema.safeParse({ version: 2 }).success).toBe(true);
+        expect(schema.safeParse({ version: 4 }).success).toBe(false);
+    });
 });
 // --- URL Building Tests ---
 describe("buildUrl", () => {

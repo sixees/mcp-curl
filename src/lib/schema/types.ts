@@ -81,7 +81,7 @@ export interface ResponseConfig {
 /**
  * HTTP methods supported by endpoints.
  */
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 
 /**
  * Single endpoint definition that generates an MCP tool.

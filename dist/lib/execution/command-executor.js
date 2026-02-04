@@ -65,11 +65,21 @@ export async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIM
             }
         });
         childProcess.stderr?.on("data", (data) => {
+            const dataSize = data.length;
+            // Track stderr in global memory pool to prevent OOM
+            if (!allocateMemory(dataSize) && !killed) {
+                killed = true;
+                clearTimeout(timeoutId);
+                releaseRequestMemory();
+                childProcess.kill();
+                reject(new Error("Server memory limit reached due to concurrent requests. Please try again later."));
+                return;
+            }
+            requestMemoryUsage += dataSize;
             if (stderrMemoryUsage < LIMITS.MAX_RESPONSE_SIZE) {
                 const dataStr = data.toString();
                 stderr += dataStr;
-                // data is already a Buffer, so .length gives byte count directly
-                stderrMemoryUsage += data.length;
+                stderrMemoryUsage += dataSize;
                 if (stderrMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
                     // Truncate efficiently using Buffer slice
                     const truncateMsg = "\n[stderr truncated]";

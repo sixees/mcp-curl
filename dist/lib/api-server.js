@@ -143,6 +143,12 @@ export function createApiServerSync(schema, options = {}) {
             title: toolDef.title,
             description: toolDef.description,
             inputSchema: toolDef.inputSchema,
+            annotations: {
+                readOnlyHint: false,
+                destructiveHint: false,
+                idempotentHint: false,
+                openWorldHint: true,
+            },
         }, toolDef.handler);
     }
     return server;

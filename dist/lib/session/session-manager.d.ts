@@ -4,8 +4,14 @@ import type { Session } from "../types/index.js";
  * Encapsulates the sessions Map and provides controlled access.
  */
 export declare class SessionManager {
+    private readonly maxSessions;
     private sessions;
     private cleanupInterval;
+    /**
+     * Create a new session manager with optional custom max sessions.
+     * @param maxSessions - Maximum number of concurrent sessions (default: SESSION.MAX_SESSIONS)
+     */
+    constructor(maxSessions?: number);
     /**
      * Check if a session exists.
      */
@@ -16,6 +22,7 @@ export declare class SessionManager {
     get(id: string): Session | undefined;
     /**
      * Store a session.
+     * @throws Error if session limit is reached
      */
     set(id: string, session: Session): void;
     /**

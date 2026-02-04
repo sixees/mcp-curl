@@ -19,6 +19,8 @@ export const LIMITS = {
     FILENAME_MAX_LENGTH: 50,
     /** Default HTTP transport port */
     DEFAULT_HTTP_PORT: 3000,
+    /** Default maximum number of redirects to follow */
+    MAX_REDIRECTS: 10,
 };
 /**
  * Parse and validate a port number from string input.

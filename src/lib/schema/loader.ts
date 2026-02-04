@@ -44,13 +44,18 @@ export async function loadApiSchema(definitionPath: string): Promise<ApiSchema> 
     try {
         parsed = yaml.load(content);
     } catch (error) {
-        const yamlError = error as yaml.YAMLException;
-        const lineInfo = yamlError.mark
-            ? ` at line ${yamlError.mark.line + 1}, column ${yamlError.mark.column + 1}`
-            : "";
+        if (error instanceof yaml.YAMLException) {
+            const lineInfo = error.mark
+                ? ` at line ${error.mark.line + 1}, column ${error.mark.column + 1}`
+                : "";
+            throw new ApiSchemaLoadError(
+                `Failed to parse YAML${lineInfo}: ${error.message}`,
+                error
+            );
+        }
         throw new ApiSchemaLoadError(
-            `Failed to parse YAML${lineInfo}: ${yamlError.message}`,
-            yamlError
+            `Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`,
+            error instanceof Error ? error : undefined
         );
     }
 
@@ -78,10 +83,18 @@ export function loadApiSchemaFromString(yamlContent: string): ApiSchema {
     try {
         parsed = yaml.load(yamlContent);
     } catch (error) {
-        const yamlError = error as yaml.YAMLException;
+        if (error instanceof yaml.YAMLException) {
+            const lineInfo = error.mark
+                ? ` at line ${error.mark.line + 1}, column ${error.mark.column + 1}`
+                : "";
+            throw new ApiSchemaLoadError(
+                `Failed to parse YAML${lineInfo}: ${error.message}`,
+                error
+            );
+        }
         throw new ApiSchemaLoadError(
-            `Failed to parse YAML: ${yamlError.message}`,
-            yamlError
+            `Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`,
+            error instanceof Error ? error : undefined
         );
     }
 

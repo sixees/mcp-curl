@@ -10,8 +10,8 @@ export function registerApiTestPrompt(server) {
         title: "API Testing",
         description: "Test an API endpoint and analyze the response",
         argsSchema: {
-            url: z.string().describe("The API endpoint URL to test"),
-            method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().describe("HTTP method (default: GET)"),
+            url: z.string().url().describe("The API endpoint URL to test"),
+            method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (default: GET)"),
             description: z.string().optional().describe("What this API endpoint does"),
         },
     }, ({ url, method = "GET", description }) => ({

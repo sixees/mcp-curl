@@ -13,6 +13,12 @@ export class SessionManager {
     private cleanupInterval: NodeJS.Timeout | null = null;
 
     /**
+     * Create a new session manager with optional custom max sessions.
+     * @param maxSessions - Maximum number of concurrent sessions (default: SESSION.MAX_SESSIONS)
+     */
+    constructor(private readonly maxSessions: number = SESSION.MAX_SESSIONS) {}
+
+    /**
      * Check if a session exists.
      */
     has(id: string): boolean {
@@ -28,8 +34,13 @@ export class SessionManager {
 
     /**
      * Store a session.
+     * @throws Error if session limit is reached
      */
     set(id: string, session: Session): void {
+        // Enforce session limit when adding new sessions
+        if (!this.sessions.has(id) && this.sessions.size >= this.maxSessions) {
+            throw new Error(`Session limit reached (max: ${this.maxSessions})`);
+        }
         this.sessions.set(id, session);
     }
 

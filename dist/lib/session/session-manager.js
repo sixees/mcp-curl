@@ -6,8 +6,16 @@ import { SESSION } from "../config/index.js";
  * Encapsulates the sessions Map and provides controlled access.
  */
 export class SessionManager {
+    maxSessions;
     sessions = new Map();
     cleanupInterval = null;
+    /**
+     * Create a new session manager with optional custom max sessions.
+     * @param maxSessions - Maximum number of concurrent sessions (default: SESSION.MAX_SESSIONS)
+     */
+    constructor(maxSessions = SESSION.MAX_SESSIONS) {
+        this.maxSessions = maxSessions;
+    }
     /**
      * Check if a session exists.
      */
@@ -22,8 +30,13 @@ export class SessionManager {
     }
     /**
      * Store a session.
+     * @throws Error if session limit is reached
      */
     set(id, session) {
+        // Enforce session limit when adding new sessions
+        if (!this.sessions.has(id) && this.sessions.size >= this.maxSessions) {
+            throw new Error(`Session limit reached (max: ${this.maxSessions})`);
+        }
         this.sessions.set(id, session);
     }
     /**

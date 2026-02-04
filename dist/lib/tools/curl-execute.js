@@ -112,6 +112,10 @@ export async function executeCurlRequest(params, extra = {}) {
                 "HTTP headers in the response make it non-JSON. " +
                 "Remove include_headers to use jq_filter, or remove jq_filter to see headers.");
         }
+        // Validate basic_auth format if provided
+        if (params.basic_auth && !params.basic_auth.includes(":")) {
+            throw new Error("basic_auth must be in 'username:password' format");
+        }
         // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
         // This returns the resolved IP which we pin with --resolve
         const dnsResult = await validateUrlAndResolveDns(params.url);

@@ -87,7 +87,7 @@ export declare const ApiSchemaValidator: z.ZodObject<{
     endpoints: z.ZodArray<z.ZodObject<{
         id: z.ZodString;
         path: z.ZodString;
-        method: z.ZodEnum<["GET", "POST", "PUT", "PATCH", "DELETE"]>;
+        method: z.ZodEnum<["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]>;
         title: z.ZodString;
         description: z.ZodString;
         parameters: z.ZodOptional<z.ZodArray<z.ZodObject<{
@@ -142,7 +142,7 @@ export declare const ApiSchemaValidator: z.ZodObject<{
         }>>;
     }, "strip", z.ZodTypeAny, {
         path: string;
-        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
         id: string;
         description: string;
         title: string;
@@ -164,7 +164,7 @@ export declare const ApiSchemaValidator: z.ZodObject<{
         }[] | undefined;
     }, {
         path: string;
-        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
         id: string;
         description: string;
         title: string;
@@ -196,7 +196,7 @@ export declare const ApiSchemaValidator: z.ZodObject<{
     };
     endpoints: {
         path: string;
-        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
         id: string;
         description: string;
         title: string;
@@ -244,7 +244,7 @@ export declare const ApiSchemaValidator: z.ZodObject<{
     };
     endpoints: {
         path: string;
-        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
         id: string;
         description: string;
         title: string;

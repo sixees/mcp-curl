@@ -70,7 +70,7 @@ const EndpointSchema = z.object({
     path: z.string().startsWith("/", {
         message: "Endpoint path must start with /",
     }),
-    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]),
     title: z.string().min(1),
     description: z.string().min(1),
     parameters: z.array(ParameterSchema).optional(),

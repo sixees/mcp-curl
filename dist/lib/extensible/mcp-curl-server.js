@@ -12,7 +12,7 @@ import { registerAllPrompts } from "../prompts/index.js";
 import { executeCurlRequest } from "../tools/curl-execute.js";
 import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
-import { startRateLimitCleanup, stopRateLimitCleanup, isValidSessionId } from "../security/index.js";
+import { startRateLimitCleanup, stopRateLimitCleanup, isValidSessionId, safeStringCompare } from "../security/index.js";
 import { SessionManager } from "../session/index.js";
 import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
 /**
@@ -270,17 +270,23 @@ export class McpCurlServer {
             return; // Nothing to shut down
         }
         console.error("Shutting down McpCurlServer...");
-        // Close HTTP server if running
+        // Close HTTP server if running with timeout
         if (this._httpServer) {
-            await new Promise((resolve, reject) => {
-                this._httpServer.close((err) => {
-                    if (err)
-                        reject(err);
-                    else
-                        resolve();
-                });
-            }).catch((error) => {
+            const SHUTDOWN_TIMEOUT = 5000;
+            await Promise.race([
+                new Promise((resolve, reject) => {
+                    this._httpServer.close((err) => {
+                        if (err)
+                            reject(err);
+                        else
+                            resolve();
+                    });
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("HTTP server shutdown timeout")), SHUTDOWN_TIMEOUT)),
+            ]).catch((error) => {
                 console.error("Warning: Error closing HTTP server:", error);
+            }).finally(() => {
+                this._httpServer = null;
             });
         }
         // Close all active sessions (with error handling)
@@ -518,7 +524,8 @@ export class McpCurlServer {
                 return;
             }
             const authHeader = req.headers.authorization;
-            if (!authHeader || authHeader !== `Bearer ${authToken}`) {
+            const expectedHeader = `Bearer ${authToken}`;
+            if (!authHeader || !safeStringCompare(authHeader, expectedHeader)) {
                 res.status(401).json({
                     jsonrpc: "2.0",
                     error: {
