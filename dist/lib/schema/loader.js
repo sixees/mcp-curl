@@ -41,7 +41,7 @@ export async function loadApiSchema(definitionPath) {
                 : "";
             throw new ApiSchemaLoadError(`Failed to parse YAML${lineInfo}: ${error.message}`, error);
         }
-        throw new ApiSchemaLoadError(`Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error : undefined);
+        throw new ApiSchemaLoadError(`Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error : new Error(String(error)));
     }
     if (parsed === null || parsed === undefined) {
         throw new ApiSchemaLoadError(`API schema file is empty: ${definitionPath}`);
@@ -69,7 +69,7 @@ export function loadApiSchemaFromString(yamlContent) {
                 : "";
             throw new ApiSchemaLoadError(`Failed to parse YAML${lineInfo}: ${error.message}`, error);
         }
-        throw new ApiSchemaLoadError(`Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error : undefined);
+        throw new ApiSchemaLoadError(`Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error : new Error(String(error)));
     }
     if (parsed === null || parsed === undefined) {
         throw new ApiSchemaLoadError("API schema content is empty");

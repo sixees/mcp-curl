@@ -2,6 +2,8 @@
  * Compare two strings in constant time to prevent timing attacks.
  * Used for authentication token comparison.
  *
+ * Uses buffer padding to ensure comparison time doesn't leak length information.
+ *
  * @param a - First string to compare
  * @param b - Second string to compare
  * @returns true if strings are equal

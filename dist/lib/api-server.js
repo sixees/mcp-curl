@@ -4,6 +4,18 @@ import { McpCurlServer } from "./extensible/mcp-curl-server.js";
 import { loadApiSchema, loadApiSchemaFromString } from "./schema/loader.js";
 import { generateToolDefinitions } from "./schema/generator.js";
 /**
+ * Get MCP tool annotations based on HTTP method.
+ * Matches the logic in generator.ts registerEndpointTools.
+ */
+function getMethodAnnotations(method) {
+    return {
+        readOnlyHint: method === "GET" || method === "HEAD" || method === "OPTIONS",
+        destructiveHint: method === "DELETE",
+        idempotentHint: method === "GET" || method === "PUT" || method === "HEAD" || method === "OPTIONS",
+        openWorldHint: true,
+    };
+}
+/**
  * Create an MCP server from an API schema definition.
  *
  * This factory function:
@@ -91,12 +103,7 @@ export async function createApiServer(options) {
             title: toolDef.title,
             description: toolDef.description,
             inputSchema: toolDef.inputSchema,
-            annotations: {
-                readOnlyHint: false,
-                destructiveHint: false,
-                idempotentHint: false,
-                openWorldHint: true,
-            },
+            annotations: getMethodAnnotations(toolDef.method),
         }, toolDef.handler);
     }
     return server;
@@ -143,12 +150,7 @@ export function createApiServerSync(schema, options = {}) {
             title: toolDef.title,
             description: toolDef.description,
             inputSchema: toolDef.inputSchema,
-            annotations: {
-                readOnlyHint: false,
-                destructiveHint: false,
-                idempotentHint: false,
-                openWorldHint: true,
-            },
+            annotations: getMethodAnnotations(toolDef.method),
         }, toolDef.handler);
     }
     return server;

@@ -1,8 +1,7 @@
 // src/lib/schema/schema.test.ts
 // Tests for the API schema system
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { z } from "zod";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
     validateApiSchema,
     ApiSchemaValidationError,
@@ -332,6 +331,29 @@ describe("generateInputSchema", () => {
         const schema = generateInputSchema(endpoint);
         expect(schema.safeParse({ filter_preset: "summary" }).success).toBe(true);
         expect(schema.safeParse({ filter_preset: "invalid" }).success).toBe(false);
+    });
+
+    it("generates schema for single-element string enum", () => {
+        const endpoint: EndpointDefinition = {
+            id: "test",
+            path: "/test",
+            method: "GET",
+            title: "Test",
+            description: "Test endpoint",
+            parameters: [
+                {
+                    name: "format",
+                    in: "query",
+                    type: "string",
+                    required: true,
+                    enum: ["json"], // Single-element string enum
+                },
+            ],
+        };
+
+        const schema = generateInputSchema(endpoint);
+        expect(schema.safeParse({ format: "json" }).success).toBe(true);
+        expect(schema.safeParse({ format: "xml" }).success).toBe(false);
     });
 
     it("generates schema for single-element number enum", () => {

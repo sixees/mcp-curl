@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ApiSchema, EndpointDefinition, AuthConfig } from "./types.js";
+import type { ApiSchema, EndpointDefinition, AuthConfig, HttpMethod } from "./types.js";
 import { type CurlExecuteResult } from "../tools/curl-execute.js";
 /**
  * Error thrown when authentication is required but not available.
@@ -67,6 +67,7 @@ export declare function generateToolDefinitions(schema: ApiSchema, config?: Gene
     id: string;
     title: string;
     description: string;
+    method: HttpMethod;
     inputSchema: z.ZodObject<z.ZodRawShape>;
     handler: (params: Record<string, unknown>) => Promise<CurlExecuteResult>;
 }>;

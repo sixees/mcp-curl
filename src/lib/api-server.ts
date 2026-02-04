@@ -6,7 +6,20 @@ import { loadApiSchema, loadApiSchemaFromString } from "./schema/loader.js";
 import { generateToolDefinitions } from "./schema/generator.js";
 import type { GeneratorConfig } from "./schema/generator.js";
 import type { McpCurlConfig } from "./types/public.js";
-import type { ApiSchema } from "./schema/types.js";
+import type { ApiSchema, HttpMethod } from "./schema/types.js";
+
+/**
+ * Get MCP tool annotations based on HTTP method.
+ * Matches the logic in generator.ts registerEndpointTools.
+ */
+function getMethodAnnotations(method: HttpMethod) {
+    return {
+        readOnlyHint: method === "GET" || method === "HEAD" || method === "OPTIONS",
+        destructiveHint: method === "DELETE",
+        idempotentHint: method === "GET" || method === "PUT" || method === "HEAD" || method === "OPTIONS",
+        openWorldHint: true,
+    };
+}
 
 /**
  * Options for creating an API server from a schema definition.
@@ -130,12 +143,7 @@ export async function createApiServer(
                 title: toolDef.title,
                 description: toolDef.description,
                 inputSchema: toolDef.inputSchema,
-                annotations: {
-                    readOnlyHint: false,
-                    destructiveHint: false,
-                    idempotentHint: false,
-                    openWorldHint: true,
-                },
+                annotations: getMethodAnnotations(toolDef.method),
             },
             toolDef.handler
         );
@@ -200,12 +208,7 @@ export function createApiServerSync(
                 title: toolDef.title,
                 description: toolDef.description,
                 inputSchema: toolDef.inputSchema,
-                annotations: {
-                    readOnlyHint: false,
-                    destructiveHint: false,
-                    idempotentHint: false,
-                    openWorldHint: true,
-                },
+                annotations: getMethodAnnotations(toolDef.method),
             },
             toolDef.handler
         );

@@ -48,6 +48,10 @@ function createParamSchema(param) {
         // Enum can be strings or numbers
         const firstValue = param.enum[0];
         if (typeof firstValue === "string") {
+            // z.enum() requires at least 2 elements, so handle single-element case
+            if (param.enum.length === 1) {
+                return z.literal(firstValue);
+            }
             return z.enum(param.enum);
         }
         else {
@@ -312,6 +316,7 @@ export function generateToolDefinitions(schema, config) {
         id: endpoint.id,
         title: endpoint.title,
         description: buildToolDescription(endpoint),
+        method: endpoint.method,
         inputSchema: generateInputSchema(endpoint),
         handler: createToolHandler(schema, endpoint, config),
     }));

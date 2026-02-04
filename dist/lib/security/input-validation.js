@@ -6,6 +6,8 @@ import { UUID_REGEX } from "../config/security/validation.js";
  * Compare two strings in constant time to prevent timing attacks.
  * Used for authentication token comparison.
  *
+ * Uses buffer padding to ensure comparison time doesn't leak length information.
+ *
  * @param a - First string to compare
  * @param b - Second string to compare
  * @returns true if strings are equal
@@ -13,13 +15,16 @@ import { UUID_REGEX } from "../config/security/validation.js";
 export function safeStringCompare(a, b) {
     const bufA = Buffer.from(a, "utf8");
     const bufB = Buffer.from(b, "utf8");
-    if (bufA.length !== bufB.length) {
-        // Constant-time comparison even for different lengths
-        // Compare bufA against itself to maintain consistent timing
-        timingSafeEqual(bufA, bufA);
-        return false;
-    }
-    return timingSafeEqual(bufA, bufB);
+    // Pad both buffers to the same length to prevent timing leaks
+    const maxLen = Math.max(bufA.length, bufB.length);
+    const paddedA = Buffer.alloc(maxLen);
+    const paddedB = Buffer.alloc(maxLen);
+    bufA.copy(paddedA);
+    bufB.copy(paddedB);
+    // timingSafeEqual compares padded buffers in constant time
+    // XOR length match into result to ensure different lengths always fail
+    const lengthMatch = bufA.length === bufB.length ? 1 : 0;
+    return timingSafeEqual(paddedA, paddedB) && lengthMatch === 1;
 }
 /**
  * Validate session ID format (UUID v4) to prevent malformed session IDs as Map keys.

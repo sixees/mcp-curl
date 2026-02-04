@@ -273,21 +273,31 @@ export class McpCurlServer {
         // Close HTTP server if running with timeout
         if (this._httpServer) {
             const SHUTDOWN_TIMEOUT = 5000;
-            await Promise.race([
-                new Promise((resolve, reject) => {
-                    this._httpServer.close((err) => {
-                        if (err)
-                            reject(err);
-                        else
-                            resolve();
-                    });
-                }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("HTTP server shutdown timeout")), SHUTDOWN_TIMEOUT)),
-            ]).catch((error) => {
+            let timeoutId;
+            try {
+                await Promise.race([
+                    new Promise((resolve, reject) => {
+                        this._httpServer.close((err) => {
+                            if (err)
+                                reject(err);
+                            else
+                                resolve();
+                        });
+                    }),
+                    new Promise((_, reject) => {
+                        timeoutId = setTimeout(() => reject(new Error("HTTP server shutdown timeout")), SHUTDOWN_TIMEOUT);
+                    }),
+                ]);
+            }
+            catch (error) {
                 console.error("Warning: Error closing HTTP server:", error);
-            }).finally(() => {
+            }
+            finally {
+                if (timeoutId !== undefined) {
+                    clearTimeout(timeoutId);
+                }
                 this._httpServer = null;
-            });
+            }
         }
         // Close all active sessions (with error handling)
         if (this._sessionManager) {

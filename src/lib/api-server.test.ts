@@ -1,7 +1,7 @@
 // src/lib/api-server.test.ts
 // Integration tests for createApiServer
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { createApiServer, createApiServerSync } from "./api-server.js";
 import { loadApiSchemaFromString } from "./schema/index.js";
 

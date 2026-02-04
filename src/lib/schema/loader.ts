@@ -3,7 +3,7 @@
 
 import { readFile } from "fs/promises";
 import yaml from "js-yaml";
-import { validateApiSchema, ApiSchemaValidationError } from "./validator.js";
+import { validateApiSchema } from "./validator.js";
 import type { ApiSchema } from "./types.js";
 
 /**
@@ -55,7 +55,7 @@ export async function loadApiSchema(definitionPath: string): Promise<ApiSchema> 
         }
         throw new ApiSchemaLoadError(
             `Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`,
-            error instanceof Error ? error : undefined
+            error instanceof Error ? error : new Error(String(error))
         );
     }
 
@@ -94,7 +94,7 @@ export function loadApiSchemaFromString(yamlContent: string): ApiSchema {
         }
         throw new ApiSchemaLoadError(
             `Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`,
-            error instanceof Error ? error : undefined
+            error instanceof Error ? error : new Error(String(error))
         );
     }
 
