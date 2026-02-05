@@ -18,6 +18,7 @@ export {
 export {
     isValidSessionId,
     validateNoCRLF,
+    safeStringCompare,
 } from "./input-validation.js";
 
 export {

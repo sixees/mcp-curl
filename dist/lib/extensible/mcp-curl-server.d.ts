@@ -1,6 +1,25 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { z } from "zod";
 import type { McpCurlConfig, TransportMode, BeforeRequestHook, AfterResponseHook, OnErrorHook } from "../types/public.js";
 import { type InstanceUtilities } from "./instance-utilities.js";
+/**
+ * Metadata for a custom tool registration.
+ */
+export interface CustomToolMeta {
+    /** Human-readable title */
+    title: string;
+    /** Description for LLM context */
+    description: string;
+    /** Zod schema for input validation */
+    inputSchema: z.ZodObject<z.ZodRawShape>;
+    /** Optional MCP tool annotations */
+    annotations?: {
+        readOnlyHint?: boolean;
+        destructiveHint?: boolean;
+        idempotentHint?: boolean;
+        openWorldHint?: boolean;
+    };
+}
 /**
  * Extensible MCP cURL server with fluent builder API.
  *
@@ -22,6 +41,7 @@ export declare class McpCurlServer {
     private _frozenConfig;
     private _hooks;
     private _tools;
+    private _customTools;
     private _started;
     private _server;
     private _httpServer;
@@ -82,6 +102,35 @@ export declare class McpCurlServer {
      * @throws Error if called after start()
      */
     onError(hook: OnErrorHook): this;
+    /**
+     * Register a custom tool.
+     * Custom tools are registered on the MCP server during start().
+     * Use this to add API-specific tools generated from schema definitions.
+     *
+     * @param name - Tool name (lowercase with underscores)
+     * @param meta - Tool metadata (title, description, inputSchema)
+     * @param handler - Tool handler function
+     * @returns this for chaining
+     * @throws Error if called after start()
+     * @throws Error if tool name conflicts with built-in tools
+     *
+     * @example
+     * ```typescript
+     * server.registerCustomTool(
+     *   "get_user",
+     *   {
+     *     title: "Get User",
+     *     description: "Fetch user by ID",
+     *     inputSchema: z.object({ id: z.string() }),
+     *   },
+     *   async (params) => {
+     *     // Handle request
+     *     return { content: [{ type: "text", text: "..." }] };
+     *   }
+     * );
+     * ```
+     */
+    registerCustomTool(name: string, meta: CustomToolMeta, handler: ToolCallback<z.ZodObject<z.ZodRawShape>>): this;
     /**
      * Get the current (frozen after start) configuration.
      * Returns a deep-frozen snapshot to prevent mutation of nested objects.

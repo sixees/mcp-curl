@@ -5,7 +5,7 @@ import express, { Request, Response, NextFunction } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { randomUUID } from "crypto";
 import { cleanupOrphanedTempDirs } from "../files/index.js";
-import { startRateLimitCleanup, isValidSessionId } from "../security/index.js";
+import { startRateLimitCleanup, isValidSessionId, safeStringCompare } from "../security/index.js";
 import { SessionManager } from "../session/index.js";
 import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
 import {
@@ -35,7 +35,8 @@ export function createAuthMiddleware(): (req: Request, res: Response, next: Next
         }
 
         const authHeader = req.headers.authorization;
-        if (!authHeader || authHeader !== `Bearer ${authToken}`) {
+        const expectedHeader = `Bearer ${authToken}`;
+        if (!authHeader || !safeStringCompare(authHeader, expectedHeader)) {
             res.status(401).json({
                 jsonrpc: "2.0",
                 error: {

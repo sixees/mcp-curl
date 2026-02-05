@@ -1,6 +1,7 @@
 // src/lib/execution/curl-args-builder.ts
 // Build cURL CLI arguments from structured parameters
 import { validateNoCRLF } from "../security/index.js";
+import { LIMITS } from "../config/index.js";
 /**
  * Build cURL CLI arguments from structured parameters.
  *
@@ -41,12 +42,10 @@ export function buildCurlArgs(params) {
             args.push("--form-string", `${key}=${value}`);
         }
     }
-    // Follow redirects
+    // Follow redirects with default max redirects
     if (params.follow_redirects !== false) {
         args.push("-L");
-        if (params.max_redirects !== undefined) {
-            args.push("--max-redirs", params.max_redirects.toString());
-        }
+        args.push("--max-redirs", String(params.max_redirects ?? LIMITS.MAX_REDIRECTS));
     }
     // Insecure (skip SSL verification)
     if (params.insecure) {

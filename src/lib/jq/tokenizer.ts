@@ -114,6 +114,9 @@ function parseSlice(numStr: string, filter: string, newIndex: number): BracketPa
         if (!Number.isSafeInteger(parsedStart)) {
             throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": exceeds safe integer range`);
         }
+        if (parsedStart < 0) {
+            throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": negative indices are not supported`);
+        }
         // Check for leading zeros (e.g., "007" should be rejected, but "0" is ok)
         if (parts[0] !== String(parsedStart)) {
             throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": leading zeros are not allowed`);
@@ -129,6 +132,9 @@ function parseSlice(numStr: string, filter: string, newIndex: number): BracketPa
         }
         if (!Number.isSafeInteger(parsedEnd)) {
             throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": exceeds safe integer range`);
+        }
+        if (parsedEnd < 0) {
+            throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": negative indices are not supported`);
         }
         // Check for leading zeros
         if (parts[1] !== String(parsedEnd)) {

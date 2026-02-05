@@ -62,6 +62,21 @@ describe('parseJqFilter', () => {
         const result = parseJqFilter('.');
         expect(result).toEqual([]);
     });
+
+    it('rejects negative array indices', () => {
+        expect(() => parseJqFilter('.items[-1]'))
+            .toThrow('negative indices');
+    });
+
+    it('rejects negative slice start', () => {
+        expect(() => parseJqFilter('.items[-1:5]'))
+            .toThrow('negative indices');
+    });
+
+    it('rejects negative slice end', () => {
+        expect(() => parseJqFilter('.items[0:-1]'))
+            .toThrow('negative indices');
+    });
 });
 
 describe('splitJqFilters', () => {

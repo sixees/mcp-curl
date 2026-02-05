@@ -2,6 +2,7 @@
 // Unit tests for McpCurlServer
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { z } from "zod";
 import { McpCurlServer } from "./mcp-curl-server.js";
 
 describe("McpCurlServer", () => {
@@ -166,5 +167,126 @@ describe("McpCurlServer utilities", () => {
             // and accepts the parameters
             expect(typeof utils.executeRequest).toBe("function");
         });
+    });
+});
+
+describe("McpCurlServer.registerCustomTool()", () => {
+    let server: McpCurlServer;
+
+    beforeEach(() => {
+        server = new McpCurlServer();
+    });
+
+    it("should return this for chaining", () => {
+        const handler = vi.fn().mockResolvedValue({ content: [] });
+        const result = server.registerCustomTool(
+            "my_tool",
+            {
+                title: "My Tool",
+                description: "A custom tool",
+                inputSchema: z.object({ query: z.string() }),
+            },
+            handler
+        );
+        expect(result).toBe(server);
+    });
+
+    it("should support chaining with other methods", () => {
+        const handler = vi.fn().mockResolvedValue({ content: [] });
+        const result = server
+            .configure({ baseUrl: "https://api.example.com" })
+            .registerCustomTool(
+                "my_tool",
+                {
+                    title: "My Tool",
+                    description: "A custom tool",
+                    inputSchema: z.object({ query: z.string() }),
+                },
+                handler
+            )
+            .disableJqQuery();
+
+        expect(result).toBe(server);
+    });
+
+    it("should reject tool name curl_execute", () => {
+        const handler = vi.fn().mockResolvedValue({ content: [] });
+        expect(() =>
+            server.registerCustomTool(
+                "curl_execute",
+                {
+                    title: "Override Curl",
+                    description: "Try to override",
+                    inputSchema: z.object({}),
+                },
+                handler
+            )
+        ).toThrow("conflicts with built-in tool");
+    });
+
+    it("should reject tool name jq_query", () => {
+        const handler = vi.fn().mockResolvedValue({ content: [] });
+        expect(() =>
+            server.registerCustomTool(
+                "jq_query",
+                {
+                    title: "Override JQ",
+                    description: "Try to override",
+                    inputSchema: z.object({}),
+                },
+                handler
+            )
+        ).toThrow("conflicts with built-in tool");
+    });
+
+    it("should reject duplicate custom tool names", () => {
+        const handler = vi.fn().mockResolvedValue({ content: [] });
+        server.registerCustomTool(
+            "my_tool",
+            {
+                title: "My Tool",
+                description: "First registration",
+                inputSchema: z.object({}),
+            },
+            handler
+        );
+
+        expect(() =>
+            server.registerCustomTool(
+                "my_tool",
+                {
+                    title: "My Tool Again",
+                    description: "Duplicate",
+                    inputSchema: z.object({}),
+                },
+                handler
+            )
+        ).toThrow('Custom tool "my_tool" is already registered');
+    });
+
+    it("should allow multiple different custom tools", () => {
+        const handler = vi.fn().mockResolvedValue({ content: [] });
+
+        expect(() => {
+            server
+                .registerCustomTool(
+                    "tool_one",
+                    {
+                        title: "Tool One",
+                        description: "First tool",
+                        inputSchema: z.object({}),
+                    },
+                    handler
+                )
+                .registerCustomTool(
+                    "tool_two",
+                    {
+                        title: "Tool Two",
+                        description: "Second tool",
+                        inputSchema: z.object({}),
+                    },
+                    handler
+                );
+        }).not.toThrow();
     });
 });

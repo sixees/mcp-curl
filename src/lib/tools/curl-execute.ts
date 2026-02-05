@@ -139,6 +139,11 @@ export async function executeCurlRequest(
             );
         }
 
+        // Validate basic_auth format if provided
+        if (params.basic_auth && !params.basic_auth.includes(":")) {
+            throw new Error("basic_auth must be in 'username:password' format");
+        }
+
         // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
         // This returns the resolved IP which we pin with --resolve
         const dnsResult = await validateUrlAndResolveDns(params.url);
