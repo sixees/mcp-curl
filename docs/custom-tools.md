@@ -270,9 +270,9 @@ Weather for ${data.location.name}, ${data.location.country}:
       return {
         content: [{ type: "text", text: weather }],
       };
-    } catch {
+    } catch (error) {
       return {
-        content: [{ type: "text", text: "Failed to parse weather response" }],
+        content: [{ type: "text", text: `Failed to parse weather response: ${error instanceof Error ? error.message : String(error)}` }],
         isError: true,
       };
     }

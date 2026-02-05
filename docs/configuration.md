@@ -113,11 +113,10 @@ Can also be set via `PORT` environment variable.
 Require bearer token authentication for HTTP transport:
 
 ```typescript
-.
-configure({authToken: "secret-token-here"})
+.configure({authToken: process.env.MCP_AUTH_TOKEN})
 ```
 
-Clients must include `Authorization: Bearer secret-token-here` header.
+Clients must include the configured token in the `Authorization: Bearer <token>` header.
 
 Can also be set via `MCP_AUTH_TOKEN` environment variable.
 

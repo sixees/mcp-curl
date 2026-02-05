@@ -153,18 +153,33 @@ const server = await createApiServer({
 // Use the config option or create a custom server instead
 ```
 
-For hooks, use `McpCurlServer` directly with `loadApiSchema`:
+For hooks, use `McpCurlServer` directly with `loadApiSchema` and `generateToolDefinitions`:
 
 ```typescript
-import { McpCurlServer, loadApiSchema, registerEndpointTools } from "mcp-curl";
+import { McpCurlServer } from "mcp-curl";
+import { loadApiSchema, generateToolDefinitions, getMethodAnnotations } from "mcp-curl/schema";
 
 const schema = await loadApiSchema("./api-definition.yaml");
 const server = new McpCurlServer()
   .configure({ baseUrl: schema.api.baseUrl })
   .beforeRequest((ctx) => {
-    // Add hooks here
+    console.log(`Hook triggered for tool: ${ctx.tool}`);
   });
 
-// Register generated tools
-// ... custom tool registration logic
+// Generate tool definitions from the schema and register each one
+const toolDefs = generateToolDefinitions(schema);
+for (const toolDef of toolDefs) {
+  server.registerCustomTool(
+    toolDef.id,
+    {
+      title: toolDef.title,
+      description: toolDef.description,
+      inputSchema: toolDef.inputSchema,
+      annotations: getMethodAnnotations(toolDef.method),
+    },
+    toolDef.handler
+  );
+}
+
+await server.start("stdio");
 ```
