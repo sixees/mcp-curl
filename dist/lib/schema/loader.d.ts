@@ -9,6 +9,10 @@ export declare class ApiSchemaLoadError extends Error {
 /**
  * Load and validate an API schema from a YAML file.
  *
+ * SECURITY: This function reads from the filesystem. Ensure definitionPath
+ * comes from a trusted source (not user input) to prevent path traversal attacks.
+ * Path validation should be performed at the application boundary (CLI, HTTP handler).
+ *
  * @param definitionPath - Path to the YAML definition file
  * @returns Validated ApiSchema
  * @throws ApiSchemaLoadError if file cannot be read or parsed

@@ -12,9 +12,13 @@ export class SessionManager {
     /**
      * Create a new session manager with optional custom max sessions.
      * @param maxSessions - Maximum number of concurrent sessions (default: SESSION.MAX_SESSIONS)
+     * @throws Error if maxSessions is not a positive integer
      */
     constructor(maxSessions = SESSION.MAX_SESSIONS) {
         this.maxSessions = maxSessions;
+        if (!Number.isInteger(maxSessions) || maxSessions < 1) {
+            throw new Error(`maxSessions must be a positive integer, got: ${maxSessions}`);
+        }
     }
     /**
      * Check if a session exists.

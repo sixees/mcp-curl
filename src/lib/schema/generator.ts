@@ -59,11 +59,19 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
 
     // Add optional filter_preset parameter if presets exist
     if (endpoint.response?.filterPresets?.length) {
-        const presetNames = endpoint.response.filterPresets.map((p) => p.name) as [string, ...string[]];
-        shape.filter_preset = z
-            .enum(presetNames)
-            .optional()
-            .describe("Apply a predefined response filter");
+        const presetNames = endpoint.response.filterPresets.map((p) => p.name);
+        // z.enum() requires at least 2 elements, so handle single-element case with z.literal()
+        if (presetNames.length === 1) {
+            shape.filter_preset = z
+                .literal(presetNames[0])
+                .optional()
+                .describe("Apply a predefined response filter");
+        } else {
+            shape.filter_preset = z
+                .enum(presetNames as [string, ...string[]])
+                .optional()
+                .describe("Apply a predefined response filter");
+        }
     }
 
     return z.object(shape);

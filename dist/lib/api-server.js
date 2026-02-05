@@ -16,6 +16,49 @@ function getMethodAnnotations(method) {
     };
 }
 /**
+ * Configure server with schema defaults and register tools.
+ * Shared logic between sync and async factory functions.
+ */
+function configureServerFromSchema(server, schema, options) {
+    // Apply schema-derived configuration
+    const schemaConfig = {
+        baseUrl: schema.api.baseUrl,
+    };
+    if (schema.defaults?.headers) {
+        schemaConfig.defaultHeaders = schema.defaults.headers;
+    }
+    if (schema.defaults?.timeout) {
+        schemaConfig.defaultTimeout = schema.defaults.timeout;
+    }
+    // Merge with user-provided config (user config takes precedence)
+    server.configure({
+        ...schemaConfig,
+        ...options.config,
+    });
+    // Disable default tools if requested
+    if (options.disableCurlExecute) {
+        server.disableCurlExecute();
+    }
+    if (options.disableJqQuery) {
+        server.disableJqQuery();
+    }
+    // Generate and register custom tools from endpoints
+    const generatorConfig = {
+        defaultHeaders: schema.defaults?.headers,
+        timeout: schema.defaults?.timeout,
+        ...options.generatorConfig,
+    };
+    const toolDefs = generateToolDefinitions(schema, generatorConfig);
+    for (const toolDef of toolDefs) {
+        server.registerCustomTool(toolDef.id, {
+            title: toolDef.title,
+            description: toolDef.description,
+            inputSchema: toolDef.inputSchema,
+            annotations: getMethodAnnotations(toolDef.method),
+        }, toolDef.handler);
+    }
+}
+/**
  * Create an MCP server from an API schema definition.
  *
  * This factory function:
@@ -67,45 +110,9 @@ export async function createApiServer(options) {
     else {
         throw new Error("Must provide one of: definitionPath, definitionContent, or schema");
     }
-    // Create server instance
+    // Create server instance and configure from schema
     const server = new McpCurlServer();
-    // Apply schema-derived configuration
-    const schemaConfig = {
-        baseUrl: schema.api.baseUrl,
-    };
-    if (schema.defaults?.headers) {
-        schemaConfig.defaultHeaders = schema.defaults.headers;
-    }
-    if (schema.defaults?.timeout) {
-        schemaConfig.defaultTimeout = schema.defaults.timeout;
-    }
-    // Merge with user-provided config (user config takes precedence)
-    server.configure({
-        ...schemaConfig,
-        ...options.config,
-    });
-    // Disable default tools if requested
-    if (options.disableCurlExecute) {
-        server.disableCurlExecute();
-    }
-    if (options.disableJqQuery) {
-        server.disableJqQuery();
-    }
-    // Generate and register custom tools from endpoints
-    const generatorConfig = {
-        defaultHeaders: schema.defaults?.headers,
-        timeout: schema.defaults?.timeout,
-        ...options.generatorConfig,
-    };
-    const toolDefs = generateToolDefinitions(schema, generatorConfig);
-    for (const toolDef of toolDefs) {
-        server.registerCustomTool(toolDef.id, {
-            title: toolDef.title,
-            description: toolDef.description,
-            inputSchema: toolDef.inputSchema,
-            annotations: getMethodAnnotations(toolDef.method),
-        }, toolDef.handler);
-    }
+    configureServerFromSchema(server, schema, options);
     return server;
 }
 /**
@@ -118,40 +125,6 @@ export async function createApiServer(options) {
  */
 export function createApiServerSync(schema, options = {}) {
     const server = new McpCurlServer();
-    // Apply schema-derived configuration
-    const schemaConfig = {
-        baseUrl: schema.api.baseUrl,
-    };
-    if (schema.defaults?.headers) {
-        schemaConfig.defaultHeaders = schema.defaults.headers;
-    }
-    if (schema.defaults?.timeout) {
-        schemaConfig.defaultTimeout = schema.defaults.timeout;
-    }
-    server.configure({
-        ...schemaConfig,
-        ...options.config,
-    });
-    if (options.disableCurlExecute) {
-        server.disableCurlExecute();
-    }
-    if (options.disableJqQuery) {
-        server.disableJqQuery();
-    }
-    // Generate and register custom tools
-    const generatorConfig = {
-        defaultHeaders: schema.defaults?.headers,
-        timeout: schema.defaults?.timeout,
-        ...options.generatorConfig,
-    };
-    const toolDefs = generateToolDefinitions(schema, generatorConfig);
-    for (const toolDef of toolDefs) {
-        server.registerCustomTool(toolDef.id, {
-            title: toolDef.title,
-            description: toolDef.description,
-            inputSchema: toolDef.inputSchema,
-            annotations: getMethodAnnotations(toolDef.method),
-        }, toolDef.handler);
-    }
+    configureServerFromSchema(server, schema, options);
     return server;
 }

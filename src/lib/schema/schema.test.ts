@@ -200,6 +200,27 @@ endpoints:
             ApiSchemaValidationError
         );
     });
+
+    it("rejects dangerous YAML tags like !!js/function for security", () => {
+        // This YAML attempts to use a JavaScript function tag which could execute arbitrary code
+        const maliciousYaml = `
+apiVersion: "1.0"
+api:
+  name: !!js/function 'function() { return "malicious"; }'
+  title: Test
+  description: Test
+  version: "1.0"
+  baseUrl: https://api.example.com
+endpoints:
+  - id: test
+    path: /test
+    method: GET
+    title: Test
+    description: Test
+`;
+        // Using JSON_SCHEMA should reject these tags with a parse error
+        expect(() => loadApiSchemaFromString(maliciousYaml)).toThrow(ApiSchemaLoadError);
+    });
 });
 
 // --- Input Schema Generation Tests ---
@@ -331,6 +352,29 @@ describe("generateInputSchema", () => {
         const schema = generateInputSchema(endpoint);
         expect(schema.safeParse({ filter_preset: "summary" }).success).toBe(true);
         expect(schema.safeParse({ filter_preset: "invalid" }).success).toBe(false);
+    });
+
+    it("handles single-element filter preset with z.literal()", () => {
+        const endpoint: EndpointDefinition = {
+            id: "test",
+            path: "/test",
+            method: "GET",
+            title: "Test",
+            description: "Test endpoint",
+            response: {
+                filterPresets: [
+                    { name: "minimal", jqFilter: ".id" },
+                ],
+            },
+        };
+
+        const schema = generateInputSchema(endpoint);
+        // Single-element enum uses z.literal() - should accept the single value
+        expect(schema.safeParse({ filter_preset: "minimal" }).success).toBe(true);
+        // Should reject other values
+        expect(schema.safeParse({ filter_preset: "other" }).success).toBe(false);
+        // Should allow omitting the optional preset
+        expect(schema.safeParse({}).success).toBe(true);
     });
 
     it("generates schema for single-element string enum", () => {

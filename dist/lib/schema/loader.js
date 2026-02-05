@@ -15,7 +15,34 @@ export class ApiSchemaLoadError extends Error {
     }
 }
 /**
+ * Parse YAML content safely using JSON_SCHEMA to prevent code execution.
+ *
+ * @param content - YAML string content to parse
+ * @returns Parsed YAML as unknown type
+ * @throws ApiSchemaLoadError if parsing fails
+ */
+function parseYaml(content) {
+    try {
+        // Use JSON_SCHEMA to prevent arbitrary code execution via YAML tags
+        // like !!js/function. JSON_SCHEMA only allows basic JSON types.
+        return yaml.load(content, { schema: yaml.JSON_SCHEMA });
+    }
+    catch (error) {
+        if (error instanceof yaml.YAMLException) {
+            const lineInfo = error.mark
+                ? ` at line ${error.mark.line + 1}, column ${error.mark.column + 1}`
+                : "";
+            throw new ApiSchemaLoadError(`Failed to parse YAML${lineInfo}: ${error.message}`, error);
+        }
+        throw new ApiSchemaLoadError(`Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error : new Error(String(error)));
+    }
+}
+/**
  * Load and validate an API schema from a YAML file.
+ *
+ * SECURITY: This function reads from the filesystem. Ensure definitionPath
+ * comes from a trusted source (not user input) to prevent path traversal attacks.
+ * Path validation should be performed at the application boundary (CLI, HTTP handler).
  *
  * @param definitionPath - Path to the YAML definition file
  * @returns Validated ApiSchema
@@ -30,19 +57,7 @@ export async function loadApiSchema(definitionPath) {
     catch (error) {
         throw new ApiSchemaLoadError(`Failed to read API schema file: ${definitionPath}`, error instanceof Error ? error : undefined);
     }
-    let parsed;
-    try {
-        parsed = yaml.load(content);
-    }
-    catch (error) {
-        if (error instanceof yaml.YAMLException) {
-            const lineInfo = error.mark
-                ? ` at line ${error.mark.line + 1}, column ${error.mark.column + 1}`
-                : "";
-            throw new ApiSchemaLoadError(`Failed to parse YAML${lineInfo}: ${error.message}`, error);
-        }
-        throw new ApiSchemaLoadError(`Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error : new Error(String(error)));
-    }
+    const parsed = parseYaml(content);
     if (parsed === null || parsed === undefined) {
         throw new ApiSchemaLoadError(`API schema file is empty: ${definitionPath}`);
     }
@@ -58,19 +73,7 @@ export async function loadApiSchema(definitionPath) {
  * @throws ApiSchemaValidationError if schema validation fails
  */
 export function loadApiSchemaFromString(yamlContent) {
-    let parsed;
-    try {
-        parsed = yaml.load(yamlContent);
-    }
-    catch (error) {
-        if (error instanceof yaml.YAMLException) {
-            const lineInfo = error.mark
-                ? ` at line ${error.mark.line + 1}, column ${error.mark.column + 1}`
-                : "";
-            throw new ApiSchemaLoadError(`Failed to parse YAML${lineInfo}: ${error.message}`, error);
-        }
-        throw new ApiSchemaLoadError(`Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error : new Error(String(error)));
-    }
+    const parsed = parseYaml(yamlContent);
     if (parsed === null || parsed === undefined) {
         throw new ApiSchemaLoadError("API schema content is empty");
     }

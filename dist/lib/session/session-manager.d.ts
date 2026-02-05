@@ -10,6 +10,7 @@ export declare class SessionManager {
     /**
      * Create a new session manager with optional custom max sessions.
      * @param maxSessions - Maximum number of concurrent sessions (default: SESSION.MAX_SESSIONS)
+     * @throws Error if maxSessions is not a positive integer
      */
     constructor(maxSessions?: number);
     /**
