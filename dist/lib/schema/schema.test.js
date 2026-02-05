@@ -1,7 +1,10 @@
 // src/lib/schema/schema.test.ts
 // Tests for the API schema system
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { validateApiSchema, ApiSchemaValidationError, loadApiSchemaFromString, ApiSchemaLoadError, generateInputSchema, buildUrl, getAuthConfig, AuthenticationError, } from "./index.js";
+import { writeFile, unlink, mkdir, rmdir } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
+import { validateApiSchema, ApiSchemaValidationError, loadApiSchema, loadApiSchemaFromString, ApiSchemaLoadError, generateInputSchema, buildUrl, getAuthConfig, AuthenticationError, } from "./index.js";
 // --- Validation Tests ---
 describe("validateApiSchema", () => {
     const validSchema = {
@@ -150,6 +153,104 @@ endpoints:
         const invalidYaml = validYaml.replace('apiVersion: "1.0"', 'apiVersion: "2.0"');
         expect(() => loadApiSchemaFromString(invalidYaml)).toThrow(ApiSchemaValidationError);
     });
+    it("rejects dangerous YAML tags like !!js/function for security", () => {
+        // This YAML attempts to use a JavaScript function tag which could execute arbitrary code
+        const maliciousYaml = `
+apiVersion: "1.0"
+api:
+  name: !!js/function 'function() { return "malicious"; }'
+  title: Test
+  description: Test
+  version: "1.0"
+  baseUrl: https://api.example.com
+endpoints:
+  - id: test
+    path: /test
+    method: GET
+    title: Test
+    description: Test
+`;
+        // Using JSON_SCHEMA should reject these tags with a parse error
+        expect(() => loadApiSchemaFromString(maliciousYaml)).toThrow(ApiSchemaLoadError);
+    });
+});
+// --- File-based Loader Tests ---
+describe("loadApiSchema (file-based)", () => {
+    const testDir = join(tmpdir(), `mcp-curl-schema-test-${Date.now()}`);
+    const validYaml = `
+apiVersion: "1.0"
+api:
+  name: test-api
+  title: Test API
+  description: A test API
+  version: "1.0"
+  baseUrl: https://api.example.com
+endpoints:
+  - id: get_item
+    path: /items/{id}
+    method: GET
+    title: Get Item
+    description: Fetch an item by ID
+    parameters:
+      - name: id
+        in: path
+        type: string
+        required: true
+`;
+    beforeEach(async () => {
+        await mkdir(testDir, { recursive: true });
+    });
+    afterEach(async () => {
+        // Clean up all test files
+        try {
+            const { readdir } = await import("fs/promises");
+            const files = await readdir(testDir);
+            for (const file of files) {
+                await unlink(join(testDir, file)).catch(() => { });
+            }
+            await rmdir(testDir).catch(() => { });
+        }
+        catch {
+            // Ignore cleanup errors
+        }
+    });
+    it("loads schema from valid YAML file", async () => {
+        const filePath = join(testDir, "valid-schema.yaml");
+        await writeFile(filePath, validYaml, "utf-8");
+        const result = await loadApiSchema(filePath);
+        expect(result.api.name).toBe("test-api");
+        expect(result.endpoints).toHaveLength(1);
+        expect(result.endpoints[0].id).toBe("get_item");
+    });
+    it("throws ApiSchemaLoadError for non-existent file", async () => {
+        const filePath = join(testDir, "non-existent.yaml");
+        await expect(loadApiSchema(filePath)).rejects.toThrow(ApiSchemaLoadError);
+        await expect(loadApiSchema(filePath)).rejects.toThrow(/Failed to read API schema file/);
+    });
+    it("throws ApiSchemaLoadError for empty file", async () => {
+        const filePath = join(testDir, "empty-schema.yaml");
+        await writeFile(filePath, "", "utf-8");
+        await expect(loadApiSchema(filePath)).rejects.toThrow(ApiSchemaLoadError);
+        await expect(loadApiSchema(filePath)).rejects.toThrow(/empty/);
+    });
+    it("throws ApiSchemaLoadError for file with only whitespace/comments", async () => {
+        const filePath = join(testDir, "whitespace-schema.yaml");
+        await writeFile(filePath, "# Just a comment\n\n", "utf-8");
+        await expect(loadApiSchema(filePath)).rejects.toThrow(ApiSchemaLoadError);
+        await expect(loadApiSchema(filePath)).rejects.toThrow(/empty/);
+    });
+    it("throws ApiSchemaValidationError for invalid schema in file", async () => {
+        const filePath = join(testDir, "invalid-schema.yaml");
+        const invalidYaml = validYaml.replace('apiVersion: "1.0"', 'apiVersion: "2.0"');
+        await writeFile(filePath, invalidYaml, "utf-8");
+        await expect(loadApiSchema(filePath)).rejects.toThrow(ApiSchemaValidationError);
+    });
+    it("throws ApiSchemaLoadError for invalid YAML syntax in file", async () => {
+        const filePath = join(testDir, "invalid-yaml.yaml");
+        await writeFile(filePath, "invalid: yaml: content:", "utf-8");
+        await expect(loadApiSchema(filePath)).rejects.toThrow(ApiSchemaLoadError);
+        await expect(loadApiSchema(filePath)).rejects.toThrow(/Failed to parse YAML/);
+    });
 });
 // --- Input Schema Generation Tests ---
 describe("generateInputSchema", () => {
@@ -266,6 +367,27 @@ describe("generateInputSchema", () => {
         const schema = generateInputSchema(endpoint);
         expect(schema.safeParse({ filter_preset: "summary" }).success).toBe(true);
         expect(schema.safeParse({ filter_preset: "invalid" }).success).toBe(false);
+    });
+    it("handles single-element filter preset with z.literal()", () => {
+        const endpoint = {
+            id: "test",
+            path: "/test",
+            method: "GET",
+            title: "Test",
+            description: "Test endpoint",
+            response: {
+                filterPresets: [
+                    { name: "minimal", jqFilter: ".id" },
+                ],
+            },
+        };
+        const schema = generateInputSchema(endpoint);
+        // Single-element enum uses z.literal() - should accept the single value
+        expect(schema.safeParse({ filter_preset: "minimal" }).success).toBe(true);
+        // Should reject other values
+        expect(schema.safeParse({ filter_preset: "other" }).success).toBe(false);
+        // Should allow omitting the optional preset
+        expect(schema.safeParse({}).success).toBe(true);
     });
     it("generates schema for single-element string enum", () => {
         const endpoint = {
@@ -452,5 +574,315 @@ describe("getAuthConfig", () => {
         });
         expect(result.headers["X-API-Key"]).toBe("key123");
         expect(result.headers.Authorization).toBe("Bearer token123");
+    });
+    it("throws on missing required bearer token", () => {
+        expect(() => getAuthConfig({
+            bearer: {
+                envVar: "MISSING_BEARER_TOKEN",
+                required: true,
+            },
+        })).toThrow(AuthenticationError);
+    });
+    it("does not throw on missing optional bearer token", () => {
+        const result = getAuthConfig({
+            bearer: {
+                envVar: "MISSING_BEARER_TOKEN",
+                required: false,
+            },
+        });
+        expect(result.headers).toEqual({});
+    });
+});
+// --- Handler Execution Tests ---
+import { vi } from "vitest";
+import { generateToolDefinitions } from "./generator.js";
+import * as curlExecuteModule from "../tools/curl-execute.js";
+// Mock executeCurlRequest
+vi.mock("../tools/curl-execute.js", () => ({
+    executeCurlRequest: vi.fn(),
+}));
+describe("generateToolDefinitions", () => {
+    const mockedExecuteCurlRequest = curlExecuteModule.executeCurlRequest;
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockedExecuteCurlRequest.mockResolvedValue({
+            content: [{ type: "text", text: '{"result": "ok"}' }],
+            isError: false,
+        });
+    });
+    const baseSchema = {
+        apiVersion: "1.0",
+        api: {
+            name: "test-api",
+            title: "Test API",
+            description: "A test API",
+            version: "1.0.0",
+            baseUrl: "https://api.example.com",
+        },
+        endpoints: [],
+    };
+    it("generates handlers that call executeCurlRequest with correct URL", async () => {
+        const schema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "get_user",
+                    path: "/users/{id}",
+                    method: "GET",
+                    title: "Get User",
+                    description: "Fetch a user by ID",
+                    parameters: [
+                        { name: "id", in: "path", type: "string", required: true },
+                    ],
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema);
+        expect(tools).toHaveLength(1);
+        await tools[0].handler({ id: "123" });
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledOnce();
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(expect.objectContaining({
+            url: "https://api.example.com/users/123",
+            method: "GET",
+        }));
+    });
+    it("separates parameters by location (path, query, header)", async () => {
+        const schema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "search",
+                    path: "/search/{category}",
+                    method: "GET",
+                    title: "Search",
+                    description: "Search items",
+                    parameters: [
+                        { name: "category", in: "path", type: "string", required: true },
+                        { name: "q", in: "query", type: "string", required: true },
+                        { name: "limit", in: "query", type: "integer", required: false },
+                        { name: "X-Request-ID", in: "header", type: "string", required: false },
+                    ],
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema);
+        await tools[0].handler({
+            category: "books",
+            q: "typescript",
+            limit: 10,
+            "X-Request-ID": "req-123",
+        });
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(expect.objectContaining({
+            url: "https://api.example.com/search/books?q=typescript&limit=10",
+            headers: expect.objectContaining({
+                "X-Request-ID": "req-123",
+            }),
+        }));
+    });
+    it("applies default parameter values", async () => {
+        const schema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "list_items",
+                    path: "/items",
+                    method: "GET",
+                    title: "List Items",
+                    description: "List all items",
+                    parameters: [
+                        { name: "page", in: "query", type: "integer", required: false, default: 1 },
+                        { name: "limit", in: "query", type: "integer", required: false, default: 20 },
+                    ],
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema);
+        await tools[0].handler({}); // No params provided, should use defaults
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(expect.objectContaining({
+            url: "https://api.example.com/items?page=1&limit=20",
+        }));
+    });
+    it("merges headers in correct precedence order", async () => {
+        const schema = {
+            ...baseSchema,
+            defaults: {
+                headers: {
+                    "Accept": "application/json",
+                    "X-Default-Header": "default-value",
+                },
+            },
+            endpoints: [
+                {
+                    id: "get_data",
+                    path: "/data",
+                    method: "GET",
+                    title: "Get Data",
+                    description: "Get data",
+                    parameters: [
+                        { name: "X-Custom", in: "header", type: "string", required: false },
+                    ],
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema, {
+            defaultHeaders: { "X-Config-Header": "config-value" },
+        });
+        await tools[0].handler({ "X-Custom": "custom-value" });
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(expect.objectContaining({
+            headers: expect.objectContaining({
+                "Accept": "application/json",
+                "X-Default-Header": "default-value",
+                "X-Config-Header": "config-value",
+                "X-Custom": "custom-value",
+            }),
+        }));
+    });
+    it("passes jq_filter from preset selection", async () => {
+        const schema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "get_user",
+                    path: "/users/{id}",
+                    method: "GET",
+                    title: "Get User",
+                    description: "Fetch a user",
+                    parameters: [
+                        { name: "id", in: "path", type: "string", required: true },
+                    ],
+                    response: {
+                        jqFilter: ".data",
+                        filterPresets: [
+                            { name: "summary", jqFilter: "{name: .data.name, email: .data.email}" },
+                            { name: "full", jqFilter: "." },
+                        ],
+                    },
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema);
+        // Test with preset selection
+        await tools[0].handler({ id: "123", filter_preset: "summary" });
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(expect.objectContaining({
+            jq_filter: "{name: .data.name, email: .data.email}",
+        }));
+        // Test without preset (uses default filter)
+        vi.clearAllMocks();
+        await tools[0].handler({ id: "123" });
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(expect.objectContaining({
+            jq_filter: ".data",
+        }));
+    });
+    it("returns error result for AuthenticationError", async () => {
+        const schema = {
+            ...baseSchema,
+            auth: {
+                apiKey: {
+                    type: "header",
+                    name: "X-API-Key",
+                    envVar: "TEST_API_KEY_NOT_SET",
+                    required: true,
+                },
+            },
+            endpoints: [
+                {
+                    id: "get_data",
+                    path: "/data",
+                    method: "GET",
+                    title: "Get Data",
+                    description: "Get data",
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema);
+        const result = await tools[0].handler({});
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("Authentication error");
+        expect(result.content[0].text).toContain("TEST_API_KEY_NOT_SET");
+        expect(mockedExecuteCurlRequest).not.toHaveBeenCalled();
+    });
+    it("returns error result for invalid filter preset", async () => {
+        const schema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "get_user",
+                    path: "/users/{id}",
+                    method: "GET",
+                    title: "Get User",
+                    description: "Fetch a user",
+                    parameters: [
+                        { name: "id", in: "path", type: "string", required: true },
+                    ],
+                    response: {
+                        filterPresets: [
+                            { name: "summary", jqFilter: ".summary" },
+                            { name: "full", jqFilter: "." },
+                        ],
+                    },
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema);
+        // Note: The input schema validation would normally prevent invalid preset names,
+        // but we're testing the runtime error handling for the handler
+        const result = await tools[0].handler({ id: "123", filter_preset: "nonexistent" });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain('Unknown filter preset "nonexistent"');
+        expect(result.content[0].text).toContain("summary, full");
+        expect(mockedExecuteCurlRequest).not.toHaveBeenCalled();
+    });
+    it("handles body parameters for POST requests", async () => {
+        const schema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "create_user",
+                    path: "/users",
+                    method: "POST",
+                    title: "Create User",
+                    description: "Create a new user",
+                    parameters: [
+                        { name: "body", in: "body", type: "string", required: true },
+                    ],
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema);
+        await tools[0].handler({ body: '{"name": "John", "email": "john@example.com"}' });
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(expect.objectContaining({
+            url: "https://api.example.com/users",
+            method: "POST",
+            data: '{"name": "John", "email": "john@example.com"}',
+        }));
+    });
+    it("uses auth override from generator config", async () => {
+        const schema = {
+            ...baseSchema,
+            auth: {
+                bearer: {
+                    envVar: "TEST_TOKEN",
+                    required: true,
+                },
+            },
+            endpoints: [
+                {
+                    id: "get_data",
+                    path: "/data",
+                    method: "GET",
+                    title: "Get Data",
+                    description: "Get data",
+                },
+            ],
+        };
+        const tools = generateToolDefinitions(schema, {
+            authOverride: { TEST_TOKEN: "mock-token-123" },
+        });
+        await tools[0].handler({});
+        expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(expect.objectContaining({
+            headers: expect.objectContaining({
+                Authorization: "Bearer mock-token-123",
+            }),
+        }));
     });
 });

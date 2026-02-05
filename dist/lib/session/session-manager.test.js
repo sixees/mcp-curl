@@ -18,6 +18,24 @@ describe("SessionManager", () => {
     afterEach(() => {
         sessionManager.stopCleanup();
     });
+    describe("constructor validation", () => {
+        it("rejects zero maxSessions", () => {
+            expect(() => new SessionManager(0)).toThrow("maxSessions must be a positive integer, got: 0");
+        });
+        it("rejects negative maxSessions", () => {
+            expect(() => new SessionManager(-1)).toThrow("maxSessions must be a positive integer, got: -1");
+        });
+        it("rejects non-integer maxSessions", () => {
+            expect(() => new SessionManager(1.5)).toThrow("maxSessions must be a positive integer, got: 1.5");
+        });
+        it("rejects NaN maxSessions", () => {
+            expect(() => new SessionManager(NaN)).toThrow("maxSessions must be a positive integer, got: NaN");
+        });
+        it("accepts positive integer maxSessions", () => {
+            expect(() => new SessionManager(1)).not.toThrow();
+            expect(() => new SessionManager(100)).not.toThrow();
+        });
+    });
     describe("session limit enforcement", () => {
         it("allows sessions up to the limit", () => {
             for (let i = 0; i < 5; i++) {

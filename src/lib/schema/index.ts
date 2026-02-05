@@ -36,6 +36,7 @@ export {
     generateInputSchema,
     buildUrl,
     getAuthConfig,
+    getMethodAnnotations,
     registerEndpointTools,
     generateToolDefinitions,
 } from "./generator.js";

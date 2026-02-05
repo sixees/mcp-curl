@@ -107,6 +107,8 @@ describe("createApiServer", () => {
         expect(server.isStarted()).toBe(false);
     });
     it("throws when no schema source provided", async () => {
+        // Use type assertion to test runtime error handling for JavaScript users
+        // TypeScript's discriminated union now catches this at compile time
         await expect(createApiServer({})).rejects.toThrow("Must provide one of: definitionPath, definitionContent, or schema");
     });
 });

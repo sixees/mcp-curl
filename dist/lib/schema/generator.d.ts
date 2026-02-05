@@ -49,6 +49,19 @@ export declare function getAuthConfig(auth: AuthConfig | undefined, override?: R
     queryParams: Record<string, string>;
 };
 /**
+ * Get MCP tool annotations based on HTTP method.
+ * Indicates to clients the nature of the tool operation.
+ *
+ * @param method - HTTP method of the endpoint
+ * @returns MCP tool annotations object
+ */
+export declare function getMethodAnnotations(method: HttpMethod): {
+    readOnlyHint: boolean;
+    destructiveHint: boolean;
+    idempotentHint: boolean;
+    openWorldHint: boolean;
+};
+/**
  * Register all endpoints from an API schema as MCP tools.
  *
  * @param server - MCP server instance

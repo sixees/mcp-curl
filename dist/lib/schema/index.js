@@ -5,4 +5,4 @@ export { ApiSchemaValidator, ApiSchemaValidationError, validateApiSchema, } from
 // Loading
 export { ApiSchemaLoadError, loadApiSchema, loadApiSchemaFromString, } from "./loader.js";
 // Generation
-export { AuthenticationError, generateInputSchema, buildUrl, getAuthConfig, registerEndpointTools, generateToolDefinitions, } from "./generator.js";
+export { AuthenticationError, generateInputSchema, buildUrl, getAuthConfig, getMethodAnnotations, registerEndpointTools, generateToolDefinitions, } from "./generator.js";

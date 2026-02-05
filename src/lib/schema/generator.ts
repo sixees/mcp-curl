@@ -272,6 +272,7 @@ function separateParams(
 
 /**
  * Determine the jq filter to apply based on params and endpoint config.
+ * @throws Error if an explicit preset name is provided but not found
  */
 function resolveJqFilter(
     endpoint: EndpointDefinition,
@@ -284,6 +285,11 @@ function resolveJqFilter(
         if (preset) {
             return preset.jqFilter;
         }
+        // Preset explicitly requested but not found - throw error
+        const available = endpoint.response.filterPresets.map((p) => p.name).join(", ");
+        throw new Error(
+            `Unknown filter preset "${presetName}". Available presets: ${available}`
+        );
     }
 
     // Fall back to default filter
@@ -366,9 +372,38 @@ function createToolHandler(
                 };
             }
 
+            // Handle filter preset errors gracefully
+            if (error instanceof Error && error.message.startsWith("Unknown filter preset")) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: error.message,
+                        },
+                    ],
+                    isError: true,
+                };
+            }
+
             // Re-throw other errors
             throw error;
         }
+    };
+}
+
+/**
+ * Get MCP tool annotations based on HTTP method.
+ * Indicates to clients the nature of the tool operation.
+ *
+ * @param method - HTTP method of the endpoint
+ * @returns MCP tool annotations object
+ */
+export function getMethodAnnotations(method: HttpMethod) {
+    return {
+        readOnlyHint: method === "GET" || method === "HEAD" || method === "OPTIONS",
+        destructiveHint: method === "DELETE",
+        idempotentHint: method === "GET" || method === "PUT" || method === "HEAD" || method === "OPTIONS",
+        openWorldHint: true,
     };
 }
 
@@ -412,12 +447,7 @@ export function registerEndpointTools(
                 title: endpoint.title,
                 description: buildToolDescription(endpoint),
                 inputSchema,
-                annotations: {
-                    readOnlyHint: endpoint.method === "GET" || endpoint.method === "HEAD" || endpoint.method === "OPTIONS",
-                    destructiveHint: endpoint.method === "DELETE",
-                    idempotentHint: endpoint.method === "GET" || endpoint.method === "PUT" || endpoint.method === "HEAD" || endpoint.method === "OPTIONS",
-                    openWorldHint: true,
-                },
+                annotations: getMethodAnnotations(endpoint.method),
             },
             handler
         );

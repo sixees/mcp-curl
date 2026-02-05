@@ -3,23 +3,10 @@
 
 import { McpCurlServer } from "./extensible/mcp-curl-server.js";
 import { loadApiSchema, loadApiSchemaFromString } from "./schema/loader.js";
-import { generateToolDefinitions } from "./schema/generator.js";
+import { generateToolDefinitions, getMethodAnnotations } from "./schema/generator.js";
 import type { GeneratorConfig } from "./schema/generator.js";
 import type { McpCurlConfig } from "./types/public.js";
-import type { ApiSchema, HttpMethod } from "./schema/types.js";
-
-/**
- * Get MCP tool annotations based on HTTP method.
- * Matches the logic in generator.ts registerEndpointTools.
- */
-function getMethodAnnotations(method: HttpMethod) {
-    return {
-        readOnlyHint: method === "GET" || method === "HEAD" || method === "OPTIONS",
-        destructiveHint: method === "DELETE",
-        idempotentHint: method === "GET" || method === "PUT" || method === "HEAD" || method === "OPTIONS",
-        openWorldHint: true,
-    };
-}
+import type { ApiSchema } from "./schema/types.js";
 
 /**
  * Configure server with schema defaults and register tools.
@@ -28,7 +15,7 @@ function getMethodAnnotations(method: HttpMethod) {
 function configureServerFromSchema(
     server: McpCurlServer,
     schema: ApiSchema,
-    options: Omit<CreateApiServerOptions, "definitionPath" | "definitionContent" | "schema">
+    options: ApiServerOptionsBase
 ): void {
     // Apply schema-derived configuration
     const schemaConfig: Partial<McpCurlConfig> = {
@@ -82,15 +69,9 @@ function configureServerFromSchema(
 }
 
 /**
- * Options for creating an API server from a schema definition.
+ * Base options shared by all schema source variants.
  */
-export interface CreateApiServerOptions {
-    /** Path to YAML definition file */
-    definitionPath?: string;
-    /** YAML content as string (alternative to definitionPath) */
-    definitionContent?: string;
-    /** Pre-loaded schema (alternative to definitionPath/definitionContent) */
-    schema?: ApiSchema;
+interface ApiServerOptionsBase {
     /** Additional configuration to merge */
     config?: Partial<McpCurlConfig>;
     /** Disable the default curl_execute tool */
@@ -100,6 +81,51 @@ export interface CreateApiServerOptions {
     /** Generator configuration for tool creation */
     generatorConfig?: GeneratorConfig;
 }
+
+/**
+ * Load schema from a YAML file path.
+ */
+interface ApiServerFromPath extends ApiServerOptionsBase {
+    /** Path to YAML definition file */
+    definitionPath: string;
+    /** YAML content - mutually exclusive with definitionPath */
+    definitionContent?: never;
+    /** Pre-loaded schema - mutually exclusive with definitionPath */
+    schema?: never;
+}
+
+/**
+ * Load schema from a YAML string.
+ */
+interface ApiServerFromContent extends ApiServerOptionsBase {
+    /** Path - mutually exclusive with definitionContent */
+    definitionPath?: never;
+    /** YAML content as string */
+    definitionContent: string;
+    /** Pre-loaded schema - mutually exclusive with definitionContent */
+    schema?: never;
+}
+
+/**
+ * Use a pre-loaded and validated schema.
+ */
+interface ApiServerFromSchema extends ApiServerOptionsBase {
+    /** Path - mutually exclusive with schema */
+    definitionPath?: never;
+    /** YAML content - mutually exclusive with schema */
+    definitionContent?: never;
+    /** Pre-loaded and validated API schema */
+    schema: ApiSchema;
+}
+
+/**
+ * Options for creating an API server from a schema definition.
+ * Exactly one of definitionPath, definitionContent, or schema must be provided.
+ */
+export type CreateApiServerOptions =
+    | ApiServerFromPath
+    | ApiServerFromContent
+    | ApiServerFromSchema;
 
 /**
  * Create an MCP server from an API schema definition.
@@ -173,7 +199,7 @@ export async function createApiServer(
  */
 export function createApiServerSync(
     schema: ApiSchema,
-    options: Omit<CreateApiServerOptions, "definitionPath" | "definitionContent" | "schema"> = {}
+    options: ApiServerOptionsBase = {}
 ): McpCurlServer {
     const server = new McpCurlServer();
     configureServerFromSchema(server, schema, options);

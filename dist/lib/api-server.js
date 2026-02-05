@@ -2,19 +2,7 @@
 // Factory function for creating API servers from YAML definitions
 import { McpCurlServer } from "./extensible/mcp-curl-server.js";
 import { loadApiSchema, loadApiSchemaFromString } from "./schema/loader.js";
-import { generateToolDefinitions } from "./schema/generator.js";
-/**
- * Get MCP tool annotations based on HTTP method.
- * Matches the logic in generator.ts registerEndpointTools.
- */
-function getMethodAnnotations(method) {
-    return {
-        readOnlyHint: method === "GET" || method === "HEAD" || method === "OPTIONS",
-        destructiveHint: method === "DELETE",
-        idempotentHint: method === "GET" || method === "PUT" || method === "HEAD" || method === "OPTIONS",
-        openWorldHint: true,
-    };
-}
+import { generateToolDefinitions, getMethodAnnotations } from "./schema/generator.js";
 /**
  * Configure server with schema defaults and register tools.
  * Shared logic between sync and async factory functions.
