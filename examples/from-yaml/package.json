@@ -1,0 +1,19 @@
+{
+  "name": "mcp-curl-yaml-example",
+  "version": "1.0.0",
+  "description": "mcp-curl server from YAML API definition",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "dependencies": {
+    "mcp-curl": "file:../.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

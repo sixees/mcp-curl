@@ -31,8 +31,8 @@ specialized API MCP servers for any API (PageSpeed, Stripe, GitHub, etc.).
 | 3     | ✅ Complete    | Execution Layer - cURL, Response Processing      |
 | 4     | ✅ Complete    | Server Components - Tools, Resources, Transports |
 | 5     | ✅ Complete    | Extension System - McpCurlServer Class, Hooks    |
-| 6     | ⬜ Not Started | API Schema System - YAML Loader, Tool Generator  |
-| 7     | ⬜ Not Started | Documentation & Examples                         |
+| 6     | ✅ Complete    | API Schema System - YAML Loader, Tool Generator  |
+| 7     | ✅ Complete    | Documentation & Examples                         |
 
 ---
 

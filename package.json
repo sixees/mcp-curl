@@ -13,13 +13,22 @@
     "./cli": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./lib": {
+      "types": "./dist/lib/index.d.ts",
+      "import": "./dist/lib/index.js"
+    },
+    "./schema": {
+      "types": "./dist/lib/schema/index.d.ts",
+      "import": "./dist/lib/schema/index.js"
     }
   },
   "bin": {
     "curl-mcp": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
   "repository": {
     "type": "git",
