@@ -136,12 +136,18 @@ const server = new McpCurlServer()
 
     // Add auth to all requests
     .beforeRequest((ctx) => {
-        if (ctx.tool === "curl_execute" && "headers" in ctx.params) {
-            ctx.params.headers = {
-                ...ctx.params.headers,
-                "Authorization": `Bearer ${process.env.API_TOKEN}`,
-            };
+        if (ctx.tool !== "curl_execute" || !("headers" in ctx.params)) {
+            return;
         }
+
+        return {
+            params: {
+                headers: {
+                    ...ctx.params.headers,
+                    "Authorization": `Bearer ${process.env.API_TOKEN}`,
+                },
+            },
+        };
     })
 
     // Log all responses

@@ -17,10 +17,15 @@ const server = new McpCurlServer()
         defaultHeaders: {"Accept": "application/json"},
     })
     .beforeRequest((ctx) => {
-        // Add auth header from environment
-        ctx.params.headers = {
-            ...ctx.params.headers,
-            "Authorization": `Bearer ${process.env.API_TOKEN}`,
+        if (ctx.tool !== "curl_execute") return;
+
+        return {
+            params: {
+                headers: {
+                    ...ctx.params.headers,
+                    "Authorization": `Bearer ${process.env.API_TOKEN}`,
+                },
+            },
         };
     })
     .start("stdio");
