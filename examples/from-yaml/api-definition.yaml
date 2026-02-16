@@ -1,0 +1,168 @@
+# JSONPlaceholder API Definition
+# Generates MCP tools for the JSONPlaceholder fake REST API
+
+apiVersion: "1.0"
+
+api:
+  name: jsonplaceholder
+  title: JSONPlaceholder API
+  description: >
+    Free fake API for testing and prototyping.
+    Provides typical REST endpoints for posts, comments, users, and more.
+  version: "1.0.0"
+  baseUrl: https://jsonplaceholder.typicode.com
+
+defaults:
+  timeout: 30
+  headers:
+    Accept: application/json
+    Content-Type: application/json
+
+endpoints:
+  # Posts endpoints
+  - id: list_posts
+    path: /posts
+    method: GET
+    title: List Posts
+    description: Get all posts. Can filter by userId.
+    parameters:
+      - name: userId
+        in: query
+        type: integer
+        required: false
+        description: Filter posts by user ID
+
+  - id: get_post
+    path: /posts/{id}
+    method: GET
+    title: Get Post
+    description: Get a specific post by its ID
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+        description: Post ID
+
+  - id: create_post
+    path: /posts
+    method: POST
+    title: Create Post
+    description: Create a new post. Note - JSONPlaceholder simulates creation but doesn't persist.
+    parameters:
+      - name: title
+        in: body
+        type: string
+        required: true
+        description: Post title
+      - name: body
+        in: body
+        type: string
+        required: true
+        description: Post content
+      - name: userId
+        in: body
+        type: integer
+        required: true
+        description: Author's user ID
+
+  - id: update_post
+    path: /posts/{id}
+    method: PUT
+    title: Update Post
+    description: Update an existing post
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+        description: Post ID to update
+      - name: title
+        in: body
+        type: string
+        required: false
+        description: New title
+      - name: body
+        in: body
+        type: string
+        required: false
+        description: New content
+      - name: userId
+        in: body
+        type: integer
+        required: false
+        description: New author user ID
+
+  - id: delete_post
+    path: /posts/{id}
+    method: DELETE
+    title: Delete Post
+    description: Delete a post by ID
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+        description: Post ID to delete
+
+  # Users endpoints
+  - id: list_users
+    path: /users
+    method: GET
+    title: List Users
+    description: Get all users
+
+  - id: get_user
+    path: /users/{id}
+    method: GET
+    title: Get User
+    description: Get a specific user by ID
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+        description: User ID
+
+  # Comments endpoints
+  - id: list_comments
+    path: /comments
+    method: GET
+    title: List Comments
+    description: Get all comments. Can filter by postId.
+    parameters:
+      - name: postId
+        in: query
+        type: integer
+        required: false
+        description: Filter comments by post ID
+
+  - id: get_post_comments
+    path: /posts/{postId}/comments
+    method: GET
+    title: Get Post Comments
+    description: Get all comments for a specific post
+    parameters:
+      - name: postId
+        in: path
+        type: integer
+        required: true
+        description: Post ID to get comments for
+
+  # Todos endpoints
+  - id: list_todos
+    path: /todos
+    method: GET
+    title: List Todos
+    description: Get all todos. Can filter by userId or completed status.
+    parameters:
+      - name: userId
+        in: query
+        type: integer
+        required: false
+        description: Filter todos by user ID
+      - name: completed
+        in: query
+        type: boolean
+        required: false
+        description: Filter by completion status

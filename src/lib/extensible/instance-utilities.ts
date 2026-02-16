@@ -5,6 +5,7 @@ import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/pub
 import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
 import { executeJqQuery, type JqQueryResult } from "../tools/jq-query.js";
 import { LIMITS } from "../config/index.js";
+import { resolveBaseUrl } from "../utils/index.js";
 
 /**
  * Partial curl_execute input with optional path for baseUrl resolution.
@@ -49,9 +50,7 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
             // Build URL from baseUrl + path if url not provided
             let url = params.url;
             if (!url && params.path && config.baseUrl) {
-                const base = config.baseUrl.replace(/\/$/, "");
-                const path = params.path.startsWith("/") ? params.path : `/${params.path}`;
-                url = `${base}${path}`;
+                url = resolveBaseUrl(config.baseUrl, params.path);
             }
             if (!url) {
                 return {
@@ -89,7 +88,7 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 output_dir: params.output_dir ?? config.outputDir,
             };
 
-            return executeCurlRequest(fullParams, {});
+            return executeCurlRequest(fullParams, { allowLocalhost: config.allowLocalhost });
         },
 
         async queryFile(filepath: string, jqFilter: string): Promise<JqQueryResult> {

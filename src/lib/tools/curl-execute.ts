@@ -26,6 +26,8 @@ export interface CurlExecuteResult {
 /** Extra context passed to tool handler */
 export interface CurlExecuteExtra {
     sessionId?: string;
+    /** Override env var for allowing localhost requests (from McpCurlConfig) */
+    allowLocalhost?: boolean;
 }
 
 /**
@@ -146,7 +148,9 @@ export async function executeCurlRequest(
 
         // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
         // This returns the resolved IP which we pin with --resolve
-        const dnsResult = await validateUrlAndResolveDns(params.url);
+        const dnsResult = await validateUrlAndResolveDns(params.url, {
+            allowLocalhost: extra.allowLocalhost,
+        });
 
         // Rate limit by both target host and client to prevent abuse
         // Per-host: protects individual targets from being hammered
@@ -210,6 +214,14 @@ export async function executeCurlRequest(
     } catch (error) {
         const rawMessage = getErrorMessage(error);
         const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
+        let hostname = "unknown";
+        try {
+            hostname = new URL(params.url).hostname;
+        } catch {
+            // URL parsing failed — keep "unknown"
+        }
+        const errorClass = error instanceof Error ? error.constructor.name : "Error";
+        console.error(`curl_execute error: [${hostname}] ${errorClass}`);
         return {
             content: [
                 {

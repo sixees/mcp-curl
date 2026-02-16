@@ -21,15 +21,12 @@ import type { Hooks, ToolResult, ToolName } from "./types.js";
  * 3. Run afterResponse hooks sequentially
  * 4. On error, run onError hooks instead of afterResponse
  *
- * Error Handling (fail-fast behavior):
- * Hooks use fail-fast semantics. If a hook throws an error:
- * - For afterResponse: subsequent afterResponse hooks won't run, and the error
- *   propagates to the caller (onError hooks are NOT called for hook errors)
- * - For onError: subsequent onError hooks won't run, and the hook's error
- *   replaces the original tool error
- *
- * This is intentional - hooks should not throw. For logging/metrics use cases,
- * wrap your hook logic in try-catch internally to ensure it doesn't throw.
+ * Error Handling:
+ * - For afterResponse: if a hook throws, subsequent hooks won't run, and the
+ *   error propagates to the caller (onError hooks are NOT called for hook errors).
+ *   Wrap hook logic in try-catch internally to prevent failures from aborting the chain.
+ * - For onError: hook errors are caught and suppressed (logged as warnings).
+ *   Subsequent onError hooks continue to run, and the original tool error is re-thrown.
  *
  * @param tool - Name of the tool being executed
  * @param params - Tool parameters (will be modified by hooks)
@@ -45,7 +42,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
     config: Readonly<McpCurlConfig>,
     hooks: Hooks,
     sessionId: string | undefined,
-    executor: (p: T, extra: { sessionId?: string }) => Promise<ToolResult>
+    executor: (p: T, extra: { sessionId?: string; allowLocalhost?: boolean }) => Promise<ToolResult>
 ): Promise<ToolResult> {
     // Create mutable context for hooks
     const ctx: HookContext<T> = {
@@ -77,7 +74,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
 
     try {
         // Execute the tool with potentially modified params
-        const response = await executor(ctx.params, { sessionId });
+        const response = await executor(ctx.params, { sessionId, allowLocalhost: config.allowLocalhost });
 
         // Run afterResponse hooks sequentially
         // content[0] is guaranteed by ToolResult tuple type
@@ -96,10 +93,14 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         // Preserve non-Error thrown values by wrapping them
         const normalizedError = error instanceof Error ? error : new Error(String(error));
         for (const hook of hooks.onError) {
-            await hook({
-                ...ctx,
-                error: normalizedError,
-            });
+            try {
+                await hook({
+                    ...ctx,
+                    error: normalizedError,
+                });
+            } catch (hookError) {
+                console.error("Warning: onError hook threw (suppressed to preserve original error):", hookError);
+            }
         }
 
         // Re-throw the original error to preserve stack trace

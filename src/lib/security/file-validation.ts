@@ -28,6 +28,27 @@ interface AllowedDirsCache {
 let allowedDirsCache: AllowedDirsCache | null = null;
 
 /**
+ * Resolve the shared temp directory via realpath(), returning null if unavailable.
+ * Handles ENOENT silently (temp dir may not exist yet), logs other errors as warnings.
+ */
+async function resolveSharedTempDirSafely(): Promise<string | null> {
+    const tempDir = getSharedTempDir();
+    if (!tempDir) return null;
+    try {
+        return await realpath(tempDir);
+    } catch (error) {
+        const errno = (error as NodeJS.ErrnoException).code;
+        if (errno !== "ENOENT") {
+            console.error(
+                `Warning: Failed to resolve temp directory "${tempDir}" (${errno}):`,
+                error
+            );
+        }
+        return null;
+    }
+}
+
+/**
  * Get the list of allowed directories for file validation.
  * Uses caching with TTL to avoid repeated I/O operations.
  *
@@ -41,15 +62,9 @@ async function getAllowedDirectories(): Promise<string[]> {
         const dirs: string[] = [];
 
         // Temp directory (check fresh each time as it may be created after cache)
-        // Resolve via realpath() for consistent symlink handling
-        const tempDir = getSharedTempDir();
-        if (tempDir) {
-            try {
-                const tempDirResolved = await realpath(tempDir);
-                dirs.push(tempDirResolved);
-            } catch {
-                // Temp dir may not exist yet, ignore
-            }
+        const resolvedTempDir = await resolveSharedTempDirSafely();
+        if (resolvedTempDir) {
+            dirs.push(resolvedTempDir);
         }
 
         // Cached directories
@@ -104,14 +119,9 @@ async function getAllowedDirectories(): Promise<string[]> {
     const dirs: string[] = [];
 
     // Resolve temp directory via realpath() for consistent symlink handling
-    const tempDir = getSharedTempDir();
-    if (tempDir) {
-        try {
-            const tempDirResolved = await realpath(tempDir);
-            dirs.push(tempDirResolved);
-        } catch {
-            // Temp dir may not exist yet, ignore
-        }
+    const resolvedTempDir = await resolveSharedTempDirSafely();
+    if (resolvedTempDir) {
+        dirs.push(resolvedTempDir);
     }
 
     if (envOutputDirResolved) {

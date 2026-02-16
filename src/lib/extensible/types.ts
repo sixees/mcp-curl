@@ -37,6 +37,7 @@ export interface Hooks {
  */
 export interface ToolExtra {
     sessionId?: string;
+    allowLocalhost?: boolean;
 }
 
 /**

@@ -11,6 +11,7 @@ import type {
     HttpMethod,
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
+import { resolveBaseUrl } from "../utils/index.js";
 
 /**
  * Error thrown when authentication is required but not available.
@@ -141,9 +142,7 @@ export function buildUrl(
         );
     }
 
-    // Build base URL (remove trailing slash from base, path already has leading slash)
-    const base = baseUrl.replace(/\/$/, "");
-    const url = `${base}${resolvedPath}`;
+    const url = resolveBaseUrl(baseUrl, resolvedPath);
 
     // Append query parameters
     const queryEntries = Object.entries(queryParams);

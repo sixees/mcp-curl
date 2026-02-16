@@ -1,22 +1,46 @@
 #!/usr/bin/env node
-// src/index.ts
-// Main entry point - thin wrapper that delegates to modular components
-import { registerShutdownHandlers } from "./lib/server/lifecycle.js";
-import { runStdio } from "./lib/transports/stdio.js";
-import { runHTTP } from "./lib/transports/http.js";
-// Register shutdown handlers for graceful cleanup
-registerShutdownHandlers();
-// Select transport based on environment (case-insensitive)
-const transport = (process.env.TRANSPORT || "stdio").toLowerCase();
-if (transport === "http") {
-    runHTTP().catch((error) => {
-        console.error("Server error:", error);
-        process.exit(1);
-    });
+import {
+  createServer,
+  initializeLifecycle,
+  registerAllCapabilities,
+  registerShutdownHandlers,
+  runHTTP
+} from "./chunk-35NLDOHU.js";
+import {
+  cleanupOrphanedTempDirs,
+  startRateLimitCleanup,
+  stopRateLimitCleanup
+} from "./chunk-G5JEJVFP.js";
+
+// src/lib/transports/stdio.ts
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+async function runStdio() {
+  await cleanupOrphanedTempDirs();
+  const rateLimitInterval = startRateLimitCleanup();
+  initializeLifecycle(null, rateLimitInterval);
+  try {
+    const server = createServer();
+    registerAllCapabilities(server);
+    const transport2 = new StdioServerTransport();
+    await server.connect(transport2);
+    console.error("cURL MCP server running on stdio");
+  } catch (error) {
+    stopRateLimitCleanup(rateLimitInterval);
+    throw error;
+  }
 }
-else {
-    runStdio().catch((error) => {
-        console.error("Server error:", error);
-        process.exit(1);
-    });
+
+// src/index.ts
+registerShutdownHandlers();
+var transport = (process.env.TRANSPORT || "stdio").toLowerCase();
+if (transport === "http") {
+  runHTTP().catch((error) => {
+    console.error("Server error:", error);
+    process.exit(1);
+  });
+} else {
+  runStdio().catch((error) => {
+    console.error("Server error:", error);
+    process.exit(1);
+  });
 }

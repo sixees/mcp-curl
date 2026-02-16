@@ -24,15 +24,15 @@ specialized API MCP servers for any API (PageSpeed, Stripe, GitHub, etc.).
 
 ## Progress Tracking
 
-| Phase | Status        | Description                                      |
-|-------|---------------|--------------------------------------------------|
-| 1     | ✅ Complete    | Foundation - Types, Constants, Configuration     |
-| 2     | ✅ Complete    | Core Utilities - Security, JQ, Files             |
-| 3     | ✅ Complete    | Execution Layer - cURL, Response Processing      |
-| 4     | ✅ Complete    | Server Components - Tools, Resources, Transports |
-| 5     | ✅ Complete    | Extension System - McpCurlServer Class, Hooks    |
-| 6     | ⬜ Not Started | API Schema System - YAML Loader, Tool Generator  |
-| 7     | ⬜ Not Started | Documentation & Examples                         |
+| Phase | Status     | Description                                      |
+|-------|------------|--------------------------------------------------|
+| 1     | ✅ Complete | Foundation - Types, Constants, Configuration     |
+| 2     | ✅ Complete | Core Utilities - Security, JQ, Files             |
+| 3     | ✅ Complete | Execution Layer - cURL, Response Processing      |
+| 4     | ✅ Complete | Server Components - Tools, Resources, Transports |
+| 5     | ✅ Complete | Extension System - McpCurlServer Class, Hooks    |
+| 6     | ✅ Complete | API Schema System - YAML Loader, Tool Generator  |
+| 7     | ✅ Complete | Documentation & Examples                         |
 
 ---
 
@@ -97,15 +97,15 @@ src/
 
 ### Module Responsibilities
 
-| Module                          | Contents                                                                  |
-|---------------------------------|---------------------------------------------------------------------------|
-| `config/limits.ts`              | MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, FILENAME_MAX_LENGTH, etc.             |
-| `config/server.ts`              | SERVER_NAME, SERVER_VERSION                                               |
-| `config/session.ts`             | MAX_SESSIONS, SESSION_IDLE_TIMEOUT_MS, RATE_LIMIT_*, TEMP_DIR_PREFIX      |
-| `config/jq.ts`                  | MAX_JQ_FILTER_LENGTH, MAX_JQ_TOKENS, MAX_JQ_FILTERS, MAX_JQ_PARSE_TIME_MS |
-| `config/environment.ts`         | OUTPUT_DIR_ENV_VAR, ALLOW_LOCALHOST_ENV_VAR, HTTP_AUTH_TOKEN_ENV_VAR      |
-| `config/security/ssrf.ts`       | SSRF patterns (private) + isBlockedHostname(), isLocalhostIp(), etc.      |
-| `config/security/validation.ts` | UUID_REGEX, isWindowsReservedBasename()                                   |
+| Module                          | Contents                                                                                                                   |
+|---------------------------------|----------------------------------------------------------------------------------------------------------------------------|
+| `config/limits.ts`              | MAX_RESPONSE_SIZE, DEFAULT_TIMEOUT, FILENAME_MAX_LENGTH, etc.                                                              |
+| `config/server.ts`              | SERVER_NAME, SERVER_VERSION                                                                                                |
+| `config/session.ts`             | MAX_SESSIONS, SESSION_IDLE_TIMEOUT_MS, RATE_LIMIT_*, TEMP_DIR_PREFIX                                                       |
+| `config/jq.ts`                  | MAX_JQ_FILTER_LENGTH, MAX_JQ_TOKENS, MAX_JQ_FILTERS, MAX_JQ_PARSE_TIME_MS                                                  |
+| `config/environment.ts`         | OUTPUT_DIR_ENV_VAR, ALLOW_LOCALHOST_ENV_VAR, HTTP_AUTH_TOKEN_ENV_VAR                                                       |
+| `config/security/ssrf.ts`       | SSRF patterns (private IPs, cloud metadata hostnames, DNS rebinding services) + isBlockedHostname(), isLocalhostIp(), etc. |
+| `config/security/validation.ts` | UUID_REGEX, isWindowsReservedBasename()                                                                                    |
 
 ### Verification
 
@@ -197,7 +197,7 @@ src/
 ├── lib/
 │   ├── execution/
 │   │   ├── index.ts              # Barrel export
-│   │   ├── command-executor.ts   # executeCommand with memory tracking
+│   │   ├── command-executor.ts   # executeCommand with command allowlist and memory tracking
 │   │   └── curl-args-builder.ts  # buildCurlArgs
 │   └── response/
 │       ├── index.ts              # Barrel export
@@ -209,15 +209,15 @@ src/
 
 ### Extract from index.ts
 
-| Source Lines | Target File                      | Content                                      |
-|--------------|----------------------------------|----------------------------------------------|
-| 475-576      | `execution/command-executor.ts`  | executeCommand, memory tracking              |
-| 822-950      | `execution/curl-args-builder.ts` | buildCurlArgs                                |
-| 411-438      | `response/parser.ts`             | isJsonContentType, parseResponseWithMetadata |
-| 441-454      | `response/parser.ts`             | sanitizeErrorMessage                         |
-| 953-989      | `response/formatter.ts`          | formatResponse                               |
-| 1396-1447    | `response/file-saver.ts`         | createSafeFilenameBase, saveResponseToFile   |
-| 1466-1525    | `response/processor.ts`          | processResponse                              |
+| Source Lines | Target File                      | Content                                                |
+|--------------|----------------------------------|--------------------------------------------------------|
+| 475-576      | `execution/command-executor.ts`  | executeCommand (allowlist: curl only), memory tracking |
+| 822-950      | `execution/curl-args-builder.ts` | buildCurlArgs                                          |
+| 411-438      | `response/parser.ts`             | isJsonContentType, parseResponseWithMetadata           |
+| 441-454      | `response/parser.ts`             | sanitizeErrorMessage                                   |
+| 953-989      | `response/formatter.ts`          | formatResponse                                         |
+| 1396-1447    | `response/file-saver.ts`         | createSafeFilenameBase, saveResponseToFile             |
+| 1466-1525    | `response/processor.ts`          | processResponse                                        |
 
 ### Verification
 

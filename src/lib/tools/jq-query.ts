@@ -136,6 +136,8 @@ export async function executeJqQuery(
         };
     } catch (error) {
         const errorMessage = getErrorMessage(error);
+        const errorClass = error instanceof Error ? error.constructor.name : "Error";
+        console.error(`jq_query error: [${basename(params.filepath)}] ${errorClass}`);
         return {
             content: [
                 {

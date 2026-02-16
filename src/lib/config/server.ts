@@ -1,25 +1,13 @@
 // src/lib/config/server.ts
 // Server identity constants
 
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const packageJsonPath = join(__dirname, "../../..", "package.json");
-
-let version = "0.0.0";
-try {
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version?: string };
-    version = packageJson.version ?? "0.0.0";
-} catch {
-    console.warn(`Warning: Could not read package.json from ${packageJsonPath}`);
-}
+// __PACKAGE_VERSION__ is injected at build time by tsup's `define` option.
+// Falls back to "0.0.0" when running unbundled (e.g., tests via vitest).
+declare const __PACKAGE_VERSION__: string | undefined;
 
 export const SERVER = {
     /** MCP server name for protocol identification */
     NAME: "curl-mcp-server",
     /** Server version from package.json */
-    VERSION: version,
+    VERSION: typeof __PACKAGE_VERSION__ !== "undefined" ? __PACKAGE_VERSION__ : "0.0.0",
 } as const;

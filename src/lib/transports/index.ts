@@ -2,4 +2,12 @@
 // Transports barrel export
 
 export { runStdio } from "./stdio.js";
-export { runHTTP, createAuthMiddleware } from "./http.js";
+export {
+    runHTTP,
+    createHttpApp,
+    createAuthMiddleware,
+    createOriginMiddleware,
+    resolveHost,
+    formatHostForUrl,
+} from "./http.js";
+export type { HttpAppOptions } from "./http.js";
