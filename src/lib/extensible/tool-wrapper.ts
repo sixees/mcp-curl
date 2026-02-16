@@ -3,7 +3,7 @@
 
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
-import type { CurlRegisterToolOptions, JqRegisterToolOptions, ToolName } from "./types.js";
+import type { CurlRegisterToolOptions, JqRegisterToolOptions } from "./types.js";
 import { executeWithHooks } from "./hook-executor.js";
 import { CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
 import {
@@ -13,6 +13,24 @@ import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
 import { LIMITS } from "../config/index.js";
+import { resolveBaseUrl } from "../utils/index.js";
+
+interface ConfigDefaultableParams {
+    output_dir?: string;
+    max_result_size?: number;
+}
+
+function applySharedConfigDefaults<T extends ConfigDefaultableParams>(
+    params: T,
+    config: Readonly<McpCurlConfig>
+): void {
+    if (config.outputDir && !params.output_dir) {
+        params.output_dir = config.outputDir;
+    }
+    if (config.maxResultSize && !params.max_result_size) {
+        params.max_result_size = config.maxResultSize;
+    }
+}
 
 /**
  * Apply configuration transforms to curl_execute parameters.
@@ -30,9 +48,7 @@ function applyConfigTransformsCurl(
 
     // Prepend baseUrl to relative URLs (URLs not starting with http:// or https://)
     if (config.baseUrl && !params.url.match(/^https?:\/\//i)) {
-        const base = config.baseUrl.replace(/\/$/, "");
-        const path = params.url.startsWith("/") ? params.url : `/${params.url}`;
-        transformed.url = `${base}${path}`;
+        transformed.url = resolveBaseUrl(config.baseUrl, params.url);
     }
 
     // Merge defaultHeaders (request headers take precedence)
@@ -47,15 +63,7 @@ function applyConfigTransformsCurl(
         transformed.timeout = config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000;
     }
 
-    // Apply outputDir if not specified
-    if (config.outputDir && !params.output_dir) {
-        transformed.output_dir = config.outputDir;
-    }
-
-    // Apply maxResultSize if not specified
-    if (config.maxResultSize && !params.max_result_size) {
-        transformed.max_result_size = config.maxResultSize;
-    }
+    applySharedConfigDefaults(transformed, config);
 
     return transformed;
 }
@@ -71,15 +79,7 @@ function applyConfigTransformsJq(
 ): JqQueryInput {
     const transformed = { ...params };
 
-    // Apply outputDir if not specified
-    if (config.outputDir && !params.output_dir) {
-        transformed.output_dir = config.outputDir;
-    }
-
-    // Apply maxResultSize if not specified
-    if (config.maxResultSize && !params.max_result_size) {
-        transformed.max_result_size = config.maxResultSize;
-    }
+    applySharedConfigDefaults(transformed, config);
 
     return transformed;
 }
@@ -176,29 +176,3 @@ export function registerJqToolWithHooks(
     );
 }
 
-/**
- * Register a tool on the MCP server with hook support and config transforms.
- *
- * @param server - MCP server instance
- * @param toolName - Name of the tool to register
- * @param options - Tool registration options
- */
-export function registerToolWithHooks(
-    server: McpServer,
-    toolName: ToolName,
-    options: CurlRegisterToolOptions | JqRegisterToolOptions
-): void {
-    switch (toolName) {
-        case "curl_execute":
-            registerCurlToolWithHooks(server, options as CurlRegisterToolOptions);
-            break;
-        case "jq_query":
-            registerJqToolWithHooks(server, options as JqRegisterToolOptions);
-            break;
-        default: {
-            // Exhaustive check - TypeScript will error if a ToolName case is missed
-            const _exhaustive: never = toolName;
-            throw new Error(`Unknown tool: ${_exhaustive}`);
-        }
-    }
-}

@@ -236,14 +236,7 @@ export class McpCurlServer {
      */
     getConfig(): Readonly<McpCurlConfig> {
         if (this._frozenConfig) return this._frozenConfig;
-        // Deep freeze to prevent mutation of nested objects like defaultHeaders
-        const snapshot: McpCurlConfig = {
-            ...this._config,
-            defaultHeaders: this._config.defaultHeaders
-                ? Object.freeze({ ...this._config.defaultHeaders })
-                : undefined,
-        };
-        return Object.freeze(snapshot);
+        return this.freezeConfig();
     }
 
     /**
@@ -287,13 +280,7 @@ export class McpCurlServer {
             throw new Error("Server is already running. Call shutdown() before starting again.");
         }
         this._started = true;
-        // Deep freeze to prevent mutation of nested objects like defaultHeaders
-        this._frozenConfig = Object.freeze({
-            ...this._config,
-            defaultHeaders: this._config.defaultHeaders
-                ? Object.freeze({ ...this._config.defaultHeaders })
-                : undefined,
-        });
+        this._frozenConfig = this.freezeConfig();
 
         try {
             // Clean up orphaned temp directories from previous runs
@@ -486,6 +473,18 @@ export class McpCurlServer {
                     reject(err);
                 }
             });
+        });
+    }
+
+    /**
+     * Deep-freeze the current config to prevent mutation of nested objects.
+     */
+    private freezeConfig(): Readonly<McpCurlConfig> {
+        return Object.freeze({
+            ...this._config,
+            defaultHeaders: this._config.defaultHeaders
+                ? Object.freeze({ ...this._config.defaultHeaders })
+                : undefined,
         });
     }
 

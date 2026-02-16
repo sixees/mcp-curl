@@ -8,3 +8,5 @@ export {
     createFileError,
     createConfigError,
 } from "./error.js";
+
+export { resolveBaseUrl } from "./url.js";
