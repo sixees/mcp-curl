@@ -1,6 +1,7 @@
 # mcp-curl Library Documentation
 
-mcp-curl is an MCP (Model Context Protocol) server that enables LLMs to make HTTP requests via cURL. It provides a secure, configurable way to expose HTTP capabilities to AI assistants like Claude.
+mcp-curl is an MCP (Model Context Protocol) server that enables LLMs to make HTTP requests via cURL. It provides a
+secure, configurable way to expose HTTP capabilities to AI assistants like Claude.
 
 ## Two Usage Patterns
 
@@ -40,10 +41,10 @@ await server.start("stdio");
 Use `createApiServer()` to generate tools from a YAML API definition:
 
 ```typescript
-import { createApiServer } from "mcp-curl";
+import {createApiServer} from "mcp-curl";
 
 const server = await createApiServer({
-  definitionPath: "./my-api.yaml",
+    definitionPath: "./my-api.yaml",
 });
 await server.start("stdio");
 ```
@@ -59,10 +60,10 @@ npm install mcp-curl
 Minimal server (5 lines):
 
 ```typescript
-import { McpCurlServer } from "mcp-curl";
+import {McpCurlServer} from "mcp-curl";
 
 const server = new McpCurlServer()
-  .configure({ baseUrl: "https://api.example.com" });
+    .configure({baseUrl: "https://api.example.com"});
 
 await server.start("stdio");
 ```
@@ -89,29 +90,29 @@ All public types are exported from the main package:
 
 ```typescript
 import type {
-  // Configuration
-  McpCurlConfig,
-  TransportMode,
+    // Configuration
+    McpCurlConfig,
+    TransportMode,
 
-  // Hooks
-  HookContext,
-  BeforeRequestResult,
-  BeforeRequestHook,
-  AfterResponseHook,
-  OnErrorHook,
+    // Hooks
+    HookContext,
+    BeforeRequestResult,
+    BeforeRequestHook,
+    AfterResponseHook,
+    OnErrorHook,
 
-  // Tool inputs
-  CurlExecuteInput,
-  JqQueryInput,
+    // Tool inputs
+    CurlExecuteInput,
+    JqQueryInput,
 
-  // Schema types
-  ApiSchema,
-  EndpointDefinition,
-  AuthConfig,
+    // Schema types
+    ApiSchema,
+    EndpointDefinition,
+    AuthConfig,
 
-  // API server
-  CreateApiServerOptions,
-  CustomToolMeta,
+    // API server
+    CreateApiServerOptions,
+    CustomToolMeta,
 } from "mcp-curl";
 ```
 
@@ -121,10 +122,10 @@ For advanced use cases, additional exports are available:
 
 ```typescript
 // Lower-level utilities
-import { createServer, CurlExecuteSchema } from "mcp-curl/lib";
+import {createServer, CurlExecuteSchema} from "mcp-curl/lib";
 
 // Schema loading and generation
-import { loadApiSchema, generateToolDefinitions } from "mcp-curl/schema";
+import {loadApiSchema, generateToolDefinitions} from "mcp-curl/schema";
 ```
 
 ## Links

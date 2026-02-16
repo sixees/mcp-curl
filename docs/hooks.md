@@ -111,7 +111,7 @@ server
         // Pass the request ID in a header (type-safe alternative to `as any`)
         return {
             params: {
-                headers: { ...(ctx.params.headers ?? {}), "X-Request-ID": requestId },
+                headers: {...(ctx.params.headers ?? {}), "X-Request-ID": requestId},
             },
         };
     })
@@ -263,7 +263,9 @@ If a beforeRequest hook returns `{ shortCircuit: true }`, subsequent hooks are s
 
 ## Error Handling in Hooks
 
-**Important:** Errors thrown in hooks propagate and abort the tool call (fail-fast). They are NOT caught and ignored. The `onError` hook only runs for errors during tool execution, not for errors in `beforeRequest` or `afterResponse` hooks.
+**Important:** Errors thrown in hooks propagate and abort the tool call (fail-fast). They are NOT caught and ignored.
+The `onError` hook only runs for errors during tool execution, not for errors in `beforeRequest` or `afterResponse`
+hooks.
 
 To prevent hook failures from breaking requests, wrap hook bodies in try/catch:
 

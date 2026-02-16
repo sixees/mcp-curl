@@ -24,15 +24,15 @@ specialized API MCP servers for any API (PageSpeed, Stripe, GitHub, etc.).
 
 ## Progress Tracking
 
-| Phase | Status        | Description                                      |
-|-------|---------------|--------------------------------------------------|
-| 1     | ✅ Complete    | Foundation - Types, Constants, Configuration     |
-| 2     | ✅ Complete    | Core Utilities - Security, JQ, Files             |
-| 3     | ✅ Complete    | Execution Layer - cURL, Response Processing      |
-| 4     | ✅ Complete    | Server Components - Tools, Resources, Transports |
-| 5     | ✅ Complete    | Extension System - McpCurlServer Class, Hooks    |
-| 6     | ✅ Complete    | API Schema System - YAML Loader, Tool Generator  |
-| 7     | ✅ Complete    | Documentation & Examples                         |
+| Phase | Status     | Description                                      |
+|-------|------------|--------------------------------------------------|
+| 1     | ✅ Complete | Foundation - Types, Constants, Configuration     |
+| 2     | ✅ Complete | Core Utilities - Security, JQ, Files             |
+| 3     | ✅ Complete | Execution Layer - cURL, Response Processing      |
+| 4     | ✅ Complete | Server Components - Tools, Resources, Transports |
+| 5     | ✅ Complete | Extension System - McpCurlServer Class, Hooks    |
+| 6     | ✅ Complete | API Schema System - YAML Loader, Tool Generator  |
+| 7     | ✅ Complete | Documentation & Examples                         |
 
 ---
 

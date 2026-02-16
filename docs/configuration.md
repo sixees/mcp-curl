@@ -41,7 +41,8 @@ interface McpCurlConfig {
 Prepended to relative URLs. Useful for API-specific servers:
 
 ```typescript
-.configure({baseUrl: "https://api.example.com/v1"})
+.
+configure({baseUrl: "https://api.example.com/v1"})
 ```
 
 Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/users`.
@@ -51,7 +52,8 @@ Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/use
 Added to all requests. Merged with request-specific headers (request headers take precedence):
 
 ```typescript
-.configure({
+.
+configure({
     defaultHeaders: {
         "Accept": "application/json",
         "X-Client-Version": "1.0.0",
@@ -64,7 +66,8 @@ Added to all requests. Merged with request-specific headers (request headers tak
 Default request timeout in seconds. Can be overridden per-request:
 
 ```typescript
-.configure({defaultTimeout: 60})
+.
+configure({defaultTimeout: 60})
 ```
 
 ### outputDir
@@ -72,7 +75,8 @@ Default request timeout in seconds. Can be overridden per-request:
 Directory where large responses are saved. Falls back to system temp directory:
 
 ```typescript
-.configure({outputDir: "/var/data/mcp-responses"})
+.
+configure({outputDir: "/var/data/mcp-responses"})
 ```
 
 Can also be set via `MCP_CURL_OUTPUT_DIR` environment variable.
@@ -82,7 +86,8 @@ Can also be set via `MCP_CURL_OUTPUT_DIR` environment variable.
 Maximum bytes to return inline. Larger responses auto-save to file:
 
 ```typescript
-.configure({maxResultSize: 1_000_000}) // 1MB
+.
+configure({maxResultSize: 1_000_000}) // 1MB
 ```
 
 ### allowLocalhost
@@ -90,7 +95,8 @@ Maximum bytes to return inline. Larger responses auto-save to file:
 By default, localhost requests are blocked for security. Enable for local development:
 
 ```typescript
-.configure({allowLocalhost: true})
+.
+configure({allowLocalhost: true})
 ```
 
 Can also be set via `MCP_CURL_ALLOW_LOCALHOST=true` environment variable.
@@ -100,7 +106,8 @@ Can also be set via `MCP_CURL_ALLOW_LOCALHOST=true` environment variable.
 HTTP transport listening port:
 
 ```typescript
-.configure({port: 8080})
+.
+configure({port: 8080})
 ```
 
 Can also be set via `PORT` environment variable.
@@ -110,7 +117,8 @@ Can also be set via `PORT` environment variable.
 HTTP transport bind address:
 
 ```typescript
-.configure({host: "0.0.0.0"}) // Listen on all interfaces
+.
+configure({host: "0.0.0.0"}) // Listen on all interfaces
 ```
 
 Default: `"127.0.0.1"` (localhost only). Can also be set via `MCP_CURL_HOST` environment variable.
@@ -120,7 +128,8 @@ Default: `"127.0.0.1"` (localhost only). Can also be set via `MCP_CURL_HOST` env
 Require bearer token authentication for HTTP transport:
 
 ```typescript
-.configure({authToken: process.env.MCP_AUTH_TOKEN})
+.
+configure({authToken: process.env.MCP_AUTH_TOKEN})
 ```
 
 Clients must include the configured token in the `Authorization: Bearer <token>` header.
@@ -132,10 +141,12 @@ Can also be set via `MCP_AUTH_TOKEN` environment variable.
 Override the default Origin header validation for HTTP transport:
 
 ```typescript
-.configure({allowedOrigins: ["https://myapp.example.com", "https://admin.example.com"]})
+.
+configure({allowedOrigins: ["https://myapp.example.com", "https://admin.example.com"]})
 ```
 
-By default, only localhost origins are allowed. Setting this replaces the defaults entirely. Can also be set via `MCP_CURL_ALLOWED_ORIGINS` (comma-separated).
+By default, only localhost origins are allowed. Setting this replaces the defaults entirely. Can also be set via
+`MCP_CURL_ALLOWED_ORIGINS` (comma-separated).
 
 ## Environment Variables
 
