@@ -1,34 +1,25 @@
 # cURL MCP Server
 
-An MCP (Model Context Protocol) server that enables LLMs to execute cURL commands for making HTTP requests.
+A security-hardened MCP server that gives LLMs the ability to make HTTP requests via cURL. Use it as a standalone
+server,
+extend it programmatically, or define APIs declaratively with YAML.
 
-## Features
+**Key features:**
 
-- **Structured HTTP Requests**: Use `curl_execute` with typed parameters for safe, validated HTTP calls
-- **Multiple Auth Methods**: Basic auth, Bearer tokens, and custom headers
-- **Response Control**: Follow redirects, include headers, compressed responses
-- **Large Response Handling**: Auto-saves responses exceeding size limits to configurable output directory
-- **JSON Filtering**: Extract specific data with jq-like path expressions (`jq_filter`)
-    - Dot notation for arrays: `.results.0.name` or `.results[0].name`
-    - Multiple paths: `.name,.email,.id` returns array of values
-- **JSON File Querying**: Use `jq_query` to re-query saved files without new HTTP requests
-- **Security**: SSRF protection, rate limiting, CRLF injection prevention, file access restrictions
-- **Error Handling**: Clear error messages with exit codes and metadata
-- **Built-in Documentation**: MCP resources and prompts for discoverability
-- **Dual Transport**: Supports both stdio (for Claude Desktop/Code) and HTTP transports
+- **Security-first** — SSRF protection, DNS rebinding prevention, rate limiting, input validation
+- **Extensible** — `McpCurlServer` class with hooks, custom tools, and configuration
+- **YAML-driven** — Define API endpoints declaratively and generate MCP tools automatically
+- **Two tools** — `curl_execute` for HTTP requests, `jq_query` for querying saved JSON files
 
-## Installation
+## Quick Start: MCP Server
+
+### Claude Code
 
 ```bash
-npm install
-npm run build
+claude mcp add curl -- npx -y github:sixees/mcp-curl
 ```
 
-## Usage
-
-### With Claude Code
-
-The easiest way is to install directly from GitHub using npx:
+Or add to `.mcp.json`:
 
 ```json
 {
@@ -44,27 +35,12 @@ The easiest way is to install directly from GitHub using npx:
 }
 ```
 
-Or with a local clone:
+### Claude Desktop
 
-```json
-{
-  "mcpServers": {
-    "curl": {
-      "command": "node",
-      "args": [
-        "/path/to/mcp-curl/dist/index.js"
-      ]
-    }
-  }
-}
-```
+Add to your config file:
 
-### With Claude Desktop
-
-Add to your Claude Desktop configuration file:
-
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -80,433 +56,48 @@ Add to your Claude Desktop configuration file:
 }
 ```
 
-### Standalone Usage
-
-**Stdio Transport (Default):**
+## Quick Start: Standalone
 
 ```bash
+# Stdio transport (default)
+npx -y github:sixees/mcp-curl
+
+# HTTP transport
+TRANSPORT=http PORT=3000 npx -y github:sixees/mcp-curl
+
+# HTTP with authentication
+TRANSPORT=http PORT=3000 MCP_AUTH_TOKEN=your-secret npx -y github:sixees/mcp-curl
+```
+
+Or clone and build locally:
+
+```bash
+git clone https://github.com/sixees/mcp-curl.git
+cd mcp-curl && npm install && npm run build
 npm start
-# or
-node dist/index.js
-```
-
-**HTTP Transport:**
-
-```bash
-TRANSPORT=http PORT=3000 npm start
-```
-
-**HTTP Transport with Authentication:**
-
-When running in HTTP mode, you can require bearer token authentication to prevent unauthorized access:
-
-```bash
-TRANSPORT=http PORT=3000 MCP_AUTH_TOKEN=your-secret-token npm start
-```
-
-Clients must include the token in the Authorization header:
-
-```
-Authorization: Bearer your-secret-token
-```
-
-## Programmatic API
-
-The `McpCurlServer` class provides a fluent builder API for creating custom MCP servers with cURL capabilities.
-This is useful for embedding mcp-curl in your own applications or extending it with custom behavior.
-
-### Installation
-
-```bash
-npm install mcp-curl
-```
-
-### Basic Usage
-
-```typescript
-import {McpCurlServer} from "mcp-curl";
-
-const server = new McpCurlServer()
-    .configure({
-        baseUrl: "https://api.example.com",
-        defaultTimeout: 60,
-    })
-    .start("stdio");
-```
-
-### Configuration Options
-
-The `configure()` method accepts a `McpCurlConfig` object:
-
-| Option           | Type                     | Description                                                   |
-|------------------|--------------------------|---------------------------------------------------------------|
-| `baseUrl`        | `string`                 | Base URL prepended to relative URLs in curl_execute           |
-| `defaultHeaders` | `Record<string, string>` | Default headers added to all curl_execute requests            |
-| `defaultTimeout` | `number`                 | Default timeout in seconds (1-300) for curl_execute           |
-| `outputDir`      | `string`                 | Default output directory for saved responses                  |
-| `maxResultSize`  | `number`                 | Default max result size in bytes before auto-saving to file   |
-| `allowLocalhost` | `boolean`                | Allow localhost requests (overrides MCP_CURL_ALLOW_LOCALHOST) |
-| `port`           | `number`                 | HTTP transport port (default: 3000)                           |
-| `authToken`      | `string`                 | HTTP auth token (overrides MCP_AUTH_TOKEN env)                |
-
-### Hooks
-
-Hooks allow you to intercept and modify tool calls. All hooks run sequentially in registration order.
-
-#### beforeRequest
-
-Called before tool execution. Can modify parameters or short-circuit to return early.
-
-```typescript
-import {McpCurlServer, type HookContext, type CurlExecuteInput} from "mcp-curl";
-
-const server = new McpCurlServer()
-    .beforeRequest((ctx: HookContext<CurlExecuteInput>) => {
-        // Log all requests
-        console.log(`${ctx.tool}: ${ctx.params.url}`);
-
-        // Add authorization header to all requests
-        return {
-            params: {
-                headers: {
-                    ...ctx.params.headers,
-                    Authorization: `Bearer ${process.env.API_TOKEN}`,
-                },
-            },
-        };
-    })
-    .start("stdio");
-```
-
-**Return values:**
-
-- `void` or `undefined`: Continue with current params
-- `{ params: {...} }`: Merge these params into current params
-- `{ shortCircuit: true, response: "..." }`: Skip execution, return response immediately
-
-#### afterResponse
-
-Called after successful tool execution. Useful for logging, metrics, or caching.
-
-```typescript
-server.afterResponse((ctx) => {
-    console.log(`Response from ${ctx.params.url}: ${ctx.response.length} bytes`);
-
-    // Track metrics
-    metrics.recordLatency(ctx.tool, Date.now() - startTime);
-});
-```
-
-#### onError
-
-Called when tool execution throws an error. Useful for error logging and alerting.
-
-```typescript
-server.onError((ctx) => {
-    console.error(`Error in ${ctx.tool}:`, ctx.error.message);
-
-    // Send to error tracking
-    errorTracker.capture(ctx.error, {tool: ctx.tool, params: ctx.params});
-});
-```
-
-#### Hook Error Handling
-
-Hooks use fail-fast semantics. If a hook throws an error:
-
-- For `afterResponse`: Subsequent hooks won't run, error propagates to caller
-- For `onError`: Subsequent hooks won't run, hook's error replaces original error
-
-For logging/metrics use cases, wrap your hook logic in try-catch internally.
-
-### Disabling Tools
-
-You can disable individual tools if your use case doesn't need them:
-
-```typescript
-const server = new McpCurlServer()
-    .disableCurlExecute()  // Disable HTTP requests
-    .disableJqQuery()      // Disable JSON file querying
-    .start("stdio");
-```
-
-### Instance Utilities
-
-The `utilities()` method provides config-aware helper methods for direct tool execution
-(bypasses hooks - use MCP tool invocation if hooks are needed):
-
-```typescript
-const server = new McpCurlServer()
-    .configure({baseUrl: "https://api.example.com"});
-
-const utils = server.utilities();
-
-// Execute request with config defaults applied
-const result = await utils.executeRequest({
-    path: "/users/123",  // Combined with baseUrl
-    headers: {Accept: "application/json"},
-});
-
-// Query a saved JSON file
-const data = await utils.queryFile("/path/to/response.json", ".users[0:5]");
-```
-
-### Transport Modes
-
-```typescript
-// stdio transport (default) - for CLI tools like Claude Desktop/Code
-await server.start("stdio");
-
-// HTTP transport - for web clients
-await server.start("http");
-```
-
-### Lifecycle Management
-
-```typescript
-const server = new McpCurlServer()
-    .configure({port: 3001});
-
-// Start the server
-await server.start("http");
-
-// Check if started
-console.log(server.isStarted()); // true
-
-// Get underlying MCP server (for advanced use)
-const mcpServer = server.getMcpServer();
-
-// Graceful shutdown
-await server.shutdown();
-```
-
-### Complete Example
-
-```typescript
-import {McpCurlServer, type HookContext, type CurlExecuteInput} from "mcp-curl";
-
-// Create metrics tracking
-const requestCount = new Map<string, number>();
-
-const server = new McpCurlServer()
-    // Configure defaults
-    .configure({
-        baseUrl: "https://api.myservice.com",
-        defaultHeaders: {
-            "X-Client-ID": "my-mcp-client",
-        },
-        defaultTimeout: 30,
-    })
-
-    // Add authentication to all requests
-    .beforeRequest((ctx: HookContext<CurlExecuteInput>) => {
-        if (ctx.tool === "curl_execute") {
-            return {
-                params: {
-                    bearer_token: process.env.API_TOKEN,
-                },
-            };
-        }
-    })
-
-    // Track request metrics
-    .afterResponse((ctx) => {
-        const count = requestCount.get(ctx.tool) ?? 0;
-        requestCount.set(ctx.tool, count + 1);
-    })
-
-    // Log errors
-    .onError((ctx) => {
-        console.error(`[${ctx.tool}] Error:`, ctx.error.message);
-    });
-
-// Start with HTTP transport
-await server.start("http");
-
-// Handle shutdown
-process.on("SIGINT", async () => {
-    console.log("Shutting down...");
-    await server.shutdown();
-    process.exit(0);
-});
-```
-
-### TypeScript Support
-
-All public types are exported for full TypeScript support:
-
-```typescript
-import {
-    McpCurlServer,
-    type McpCurlConfig,
-    type TransportMode,
-    type HookContext,
-    type BeforeRequestHook,
-    type AfterResponseHook,
-    type OnErrorHook,
-    type BeforeRequestResult,
-    type CurlExecuteInput,
-    type JqQueryInput,
-    type InstanceUtilities,
-    type ExecuteRequestParams,
-} from "mcp-curl";
 ```
 
 ## Tools
 
 ### `curl_execute`
 
-Execute HTTP requests with structured parameters. Provides a safe, validated interface for HTTP requests.
-
-**Parameters:**
-
-| Parameter          | Type    | Required | Default | Description                                                |
-|--------------------|---------|----------|---------|------------------------------------------------------------|
-| `url`              | string  | Yes      | -       | The URL to request                                         |
-| `method`           | string  | No       | GET     | HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) |
-| `headers`          | object  | No       | -       | HTTP headers as key-value pairs                            |
-| `data`             | string  | No       | -       | Request body data                                          |
-| `form`             | object  | No       | -       | Form data as key-value pairs                               |
-| `follow_redirects` | boolean | No       | true    | Follow HTTP redirects                                      |
-| `max_redirects`    | number  | No       | -       | Maximum redirects to follow (0-50)                         |
-| `insecure`         | boolean | No       | false   | Skip SSL certificate verification                          |
-| `timeout`          | number  | No       | 30      | Request timeout in seconds (1-300)                         |
-| `user_agent`       | string  | No       | -       | Custom User-Agent header                                   |
-| `basic_auth`       | string  | No       | -       | Basic auth as "username:password"                          |
-| `bearer_token`     | string  | No       | -       | Bearer token for Authorization                             |
-| `verbose`          | boolean | No       | false   | Include verbose output                                     |
-| `include_headers`  | boolean | No       | false   | Include response headers                                   |
-| `compressed`       | boolean | No       | true    | Request compressed response                                |
-| `include_metadata` | boolean | No       | false   | Wrap response in JSON metadata                             |
-| `jq_filter`        | string  | No       | -       | JSON path filter (e.g., `.data[0]`, `.name,.email`)        |
-| `max_result_size`  | number  | No       | 500KB   | Max bytes inline before auto-save (1KB-1MB)                |
-| `save_to_file`     | boolean | No       | false   | Force save response to file                                |
-| `output_dir`       | string  | No       | -       | Custom directory for saved files (overrides env var)       |
-
-**Examples:**
+Execute HTTP requests with structured parameters. Supports all common HTTP methods, authentication (basic, bearer),
+headers, form data, redirects, and timeouts.
 
 ```json
-// Simple GET request
-{
-  "url": "https://api.github.com/users/octocat"
-}
-
-// POST with JSON body
-{
-  "url": "https://api.example.com/users",
-  "method": "POST",
-  "headers": {
-    "Content-Type": "application/json"
-  },
-  "data": "{\"name\": \"John Doe\", \"email\": \"john@example.com\"}"
-}
-
-// With Bearer token authentication
-{
-  "url": "https://api.example.com/protected",
-  "bearer_token": "your-access-token"
-}
-
-// Form submission
-{
-  "url": "https://example.com/upload",
-  "method": "POST",
-  "form": {
-    "field1": "value1",
-    "field2": "value2"
-  }
-}
-
-// Extract specific field with jq_filter
-{
-  "url": "https://api.github.com/repos/octocat/hello-world",
-  "jq_filter": ".name"
-}
-
-// Extract multiple fields (returns array)
 {
   "url": "https://api.github.com/users/octocat",
+  "bearer_token": "ghp_xxx",
   "jq_filter": ".name,.email,.location"
-}
-
-// Dot notation for array access
-{
-  "url": "https://api.example.com/items",
-  "jq_filter": ".results.0.name"
-}
-
-// Get first 10 items from array
-{
-  "url": "https://api.example.com/items",
-  "jq_filter": ".results[0:10]"
-}
-
-// Save to custom directory (accessible by AI clients)
-{
-  "url": "https://api.example.com/large-dataset",
-  "save_to_file": true,
-  "output_dir": "/path/to/accessible/directory"
 }
 ```
 
-### Large Response Handling
+Responses exceeding `max_result_size` (default 500KB) are automatically saved to file. Use `jq_filter` to extract
+specific data before the size limit is checked.
 
-Responses exceeding `max_result_size` (default: 500KB, max: 1MB) are automatically saved to a file.
+### `jq_query`
 
-**Output Directory Priority:**
-
-1. `output_dir` parameter (if provided)
-2. `MCP_CURL_OUTPUT_DIR` environment variable (if set)
-3. System temp directory (cleaned up on shutdown)
-
-**File Properties:**
-
-- Saved with secure permissions (owner-only: 0o600)
-- Response includes `filepath` pointing to saved file
-- Files in custom `output_dir` are NOT auto-cleaned (user-managed)
-
-Use `jq_filter` to reduce response size before the limit is checked:
-
-| Syntax         | Description                     | Example            |
-|----------------|---------------------------------|--------------------|
-| `.key`         | Object property                 | `.data`            |
-| `.[n]` or `.n` | Array index (non-negative only) | `.[0]`, `.0`       |
-| `.[n:m]`       | Array slice                     | `.[0:10]`          |
-| `.["key"]`     | Bracket notation                | `.["special-key"]` |
-| `.a,.b,.c`     | Multiple paths (returns array)  | `.name,.email`     |
-
-**Filter Validation:**
-
-- Maximum 20 comma-separated paths
-- Unclosed quotes and unmatched brackets throw clear errors
-- Leading zeros in indices are rejected (use `.0` not `.00`)
-- Negative indices are not supported (unlike real `jq`, `[-1]` will error)
-- Indices must be within JavaScript safe integer range
-
-### jq_query Tool
-
-Query existing JSON files without making new HTTP requests. Useful for extracting different fields from saved responses.
-
-**Parameters:**
-
-| Parameter         | Type    | Required | Description                                      |
-|-------------------|---------|----------|--------------------------------------------------|
-| `filepath`        | string  | Yes      | Path to JSON file (must be in allowed directory) |
-| `jq_filter`       | string  | Yes      | JSON path filter expression                      |
-| `max_result_size` | number  | No       | Max bytes inline (default: 500KB)                |
-| `save_to_file`    | boolean | No       | Force save result to file                        |
-| `output_dir`      | string  | No       | Directory for saved result files                 |
-
-**Security:** Only files in these directories can be read:
-
-- Temp directory (files saved by curl_execute)
-- `MCP_CURL_OUTPUT_DIR` path
-- Current working directory and all subdirectories
-
-> **Warning**: The cwd permission is broad. Ensure the server's working directory doesn't contain sensitive files you
-> don't want accessible via `jq_query`.
-
-**Example:**
+Query saved JSON files without making new HTTP requests:
 
 ```json
 {
@@ -515,95 +106,127 @@ Query existing JSON files without making new HTTP requests. Useful for extractin
 }
 ```
 
-## MCP Resources
+Files must be in the temp directory, `MCP_CURL_OUTPUT_DIR`, or current working directory.
 
-The server exposes documentation as an MCP resource:
+### jq_filter syntax
 
-- `curl://docs/api` - API documentation with parameter reference and examples
+| Syntax         | Example            | Description                     |
+|----------------|--------------------|---------------------------------|
+| `.key`         | `.data`            | Object property                 |
+| `.[n]` or `.n` | `.[0]`, `.0`       | Array index (non-negative only) |
+| `.[n:m]`       | `.[0:10]`          | Array slice                     |
+| `.["key"]`     | `.["special-key"]` | Bracket notation                |
+| `.a,.b,.c`     | `.name,.email`     | Multiple paths (returns array)  |
 
-## MCP Prompts
+## Programmatic API
 
-Two prompts are available for common use cases:
+Install as a library and build custom MCP servers:
 
-- **api-test** - Test an API endpoint and analyze the response
-- **api-discovery** - Explore a REST API to discover available endpoints
+```bash
+npm install mcp-curl
+```
 
-## Security Considerations
+```typescript
+import {McpCurlServer} from "mcp-curl";
 
-### Network Security
+const server = new McpCurlServer()
+    .configure({
+        baseUrl: "https://api.example.com",
+        defaultHeaders: {"Authorization": `Bearer ${process.env.API_TOKEN}`},
+        defaultTimeout: 60,
+    })
+    .beforeRequest((ctx) => {
+        console.log(`${ctx.tool}: ${ctx.params.url}`);
+    })
+    .afterResponse((ctx) => {
+        console.log(`Response: ${ctx.response.length} bytes`);
+    });
 
-- **SSRF Protection**: Blocks requests to private networks and internal hosts:
-    - **Protocol whitelist**: Only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
-    - **Windows UNC paths**: `\\server\share` patterns blocked to prevent internal network share access
-    - **DNS Rebinding Prevention**: DNS is resolved before validation, and cURL is pinned to the validated
-      IP using `--resolve`. This prevents attacks where DNS returns a public IP during validation but a
-      private IP when cURL connects.
-    - Private IPs: 10.x, 172.16-31.x, 192.168.x, 169.254.x (link-local)
-    - IPv4-mapped IPv6: `::ffff:` prefixed versions of all blocked IPv4 ranges
-    - IPv6 private: loopback (::1), link-local (fe80::), unique local (fc00::, fd00::)
-    - Internal TLDs (case-insensitive): .local, .internal, .corp, .lan, .localhost
-    - **Cloud metadata hostnames**: `metadata.google.internal`, `instance-data.ec2.internal`,
-      `metadata.azure.com`, and bare `metadata` blocked to prevent cloud instance metadata access
-    - **DNS rebinding services**: `*.nip.io`, `*.sslip.io`, `*.xip.io` blocked to prevent mapping
-      arbitrary hostnames to internal IPs (e.g., `169.254.169.254.nip.io`)
-    - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
-      development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
-      service ports like 22, 25, 3306 remain blocked)
-    - **cURL-level protocol restriction**: `--proto =http,https` enforced on all requests as
-      defense-in-depth alongside Node URL validation
-    - **cURL-level size abort**: `--max-filesize` set to 10MB; cURL aborts early (exit code 63) when
-      `Content-Length` exceeds the limit, before data streams into Node
+await server.start("stdio");
+```
 
-### Rate Limiting
+See the [library documentation](./docs/README.md) for the full API reference, including hooks, custom tools,
+instance utilities, and lifecycle management.
 
-- **Dual limits** prevent abuse:
-    - Per-hostname: 60 requests/minute to any single host (protects target servers)
-    - Per-client: 300 requests/minute total (prevents bypassing host limits via many hostnames)
+## YAML Schema
 
-### Input Validation
+Define API endpoints declaratively and generate MCP tools:
 
-- Only structured `curl_execute` and `jq_query` tools available (no arbitrary command execution)
-- **Command allowlist**: `executeCommand()` only accepts `"curl"` — enforced at both compile-time
-  (TypeScript literal type) and runtime (allowlist guard), preventing arbitrary command execution
-  even from programmatic API consumers
-- All parameters are validated using Zod schemas
-- Commands are executed without shell interpretation to prevent injection
-- **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters
-- **File Exfiltration Prevention**: Uses `--data-raw` and `--form-string` to prevent `@` file reading
-- **Response Injection Prevention**: Uses unique per-request separators for metadata to prevent crafted responses from
-  injecting fake metadata
+```typescript
+import {createApiServer} from "mcp-curl";
 
-### File Access Security
+const server = await createApiServer({
+    definitionPath: "./my-api.yaml",
+});
+await server.start("stdio");
+```
 
-- **File Access Restrictions**: `jq_query` can only read from temp directory, `MCP_CURL_OUTPUT_DIR`, or cwd (including
-  all subdirectories - ensure cwd doesn't contain sensitive files)
-- **Symlink Escape Prevention**: All file paths and output directories are resolved via `realpath()` before
-  validation. This prevents attacks where a symlink in an allowed directory points outside it:
-  ```
-  # Example attack that is blocked:
-  # Attacker creates: /allowed/dir/data.json -> /etc/passwd
-  # Without realpath: "/allowed/dir/data.json" passes check, reads /etc/passwd
-  # With realpath: Resolves to "/etc/passwd", blocked as outside allowed dirs
-  ```
-- **Path Traversal Prevention**: `output_dir` and `filepath` reject paths containing `..`
+```yaml
+apiVersion: "1.0"
+api:
+  name: my-api
+  baseUrl: https://api.example.com
+endpoints:
+  - id: list_items
+    path: /items
+    method: GET
+    title: List Items
+    description: Get all items
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        required: false
+```
 
-### Resource Limits
+See [YAML Schema Reference](./docs/api-schema.md) for the full specification including authentication, defaults,
+response filtering, and parameter types.
 
-- Maximum response/file size for processing: 10MB
-- Maximum result size for inline return: 1MB (default 500KB)
-- **Global memory limit**: 100MB across all concurrent requests (prevents memory exhaustion)
-- Maximum jq_filter paths: 20 comma-separated expressions
-- **JQ parsing timeout**: 100ms (prevents ReDoS attacks via crafted filters)
-- Default request timeout: 30 seconds
-- SSL verification is enabled by default (use `insecure: true` only when necessary)
-- **Minimal error logging**: Server-side stderr logs only `[hostname]` or `[filename]` with error class name — no
-  message content, URLs, headers, or file paths are logged
+## Security Highlights
 
-### HTTP Transport Security
+- **SSRF protection** — blocks private IPs, cloud metadata endpoints, DNS rebinding services, internal TLDs
+- **DNS rebinding prevention** — DNS resolved before validation, cURL pinned to validated IP via `--resolve`
+- **Protocol whitelist** — only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
+- **Rate limiting** — 60 req/min per host, 300 req/min per client
+- **Input validation** — Zod schemas, CRLF injection prevention, `--data-raw`/`--form-string` to block `@` file reads
+- **No shell execution** — commands spawned via `spawn()` without shell; allowlist permits only `curl`
+- **File access control** — `jq_query` restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd; symlinks resolved
+- **Resource limits** — 10MB response cap, 100MB global memory, 100ms jq parse timeout, 30s default request timeout
+- **Secure file permissions** — temp dirs 0o700, files 0o600 (owner-only)
 
-- **Authentication**: Set `MCP_AUTH_TOKEN` environment variable to require bearer token authentication
-- **Session Management**: Maximum 100 concurrent sessions
-- **Session Timeout**: Idle sessions are cleaned up after 1 hour (cleanup runs every 5 minutes)
+## Environment Variables
+
+| Variable                   | Description                                 |
+|----------------------------|---------------------------------------------|
+| `TRANSPORT`                | Transport mode: `stdio` (default) or `http` |
+| `PORT`                     | HTTP transport port (default: 3000)         |
+| `MCP_AUTH_TOKEN`           | Bearer token for HTTP transport auth        |
+| `MCP_CURL_OUTPUT_DIR`      | Default directory for saved responses       |
+| `MCP_CURL_ALLOW_LOCALHOST` | Set `true` to allow localhost requests      |
+
+## Documentation
+
+| Guide                                         | Description                                   |
+|-----------------------------------------------|-----------------------------------------------|
+| [Library Overview](./docs/README.md)          | `McpCurlServer` class and YAML usage patterns |
+| [Getting Started](./docs/getting-started.md)  | Step-by-step setup guide                      |
+| [Configuration](./docs/configuration.md)      | All configuration options                     |
+| [Hooks](./docs/hooks.md)                      | Request/response interception                 |
+| [Custom Tools](./docs/custom-tools.md)        | Creating custom MCP tools                     |
+| [YAML Schema Reference](./docs/api-schema.md) | API definition format                         |
+
+## Examples
+
+Working example projects in [`examples/`](./examples/):
+
+- [`basic/`](./examples/basic/) — Minimal custom server
+- [`with-hooks/`](./examples/with-hooks/) — Authentication and logging hooks
+- [`from-yaml/`](./examples/from-yaml/) — Server from YAML API definition
+
+## MCP Resources & Prompts
+
+- **Resource**: `curl://docs/api` — Built-in API documentation
+- **Prompts**: `api-test` (test an endpoint), `api-discovery` (explore a REST API)
 
 ## License
 

@@ -146,19 +146,9 @@ const server = await createApiServer({
 
 ### Add Hooks
 
-The server is a standard `McpCurlServer`, so you can add hooks:
-
-```typescript
-const server = await createApiServer({
-    definitionPath: "./api-definition.yaml",
-});
-
-// Note: createApiServer() returns a fully configured McpCurlServer.
-// Hooks cannot be added after creation via chaining methods.
-// For hooks support, use McpCurlServer directly as shown below.
-```
-
-For hooks, use `McpCurlServer` directly with `loadApiSchema` and `generateToolDefinitions`:
+`createApiServer()` returns a fully configured server — hooks cannot be added after creation.
+To use hooks with YAML schemas, build the server manually with `McpCurlServer`, `loadApiSchema`, and
+`generateToolDefinitions`:
 
 ```typescript
 import {McpCurlServer} from "mcp-curl";

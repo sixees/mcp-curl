@@ -9,129 +9,79 @@ npm install          # Install dependencies
 npm run build        # Compile TypeScript to dist/
 npm run dev          # Watch mode compilation
 npm start            # Run the server (stdio transport)
+npm test             # Run vitest tests
 TRANSPORT=http PORT=3000 npm start  # Run with HTTP transport
 ```
 
 ## Architecture
 
-This is an MCP (Model Context Protocol) server that enables LLMs to execute cURL commands. Single-file TypeScript
-implementation in `src/index.ts`.
+MCP server enabling LLMs to execute cURL commands. Modular TypeScript library with three entry points:
 
-### Key Components
+- `src/index.ts` — CLI entry point (thin wrapper selecting stdio/HTTP transport)
+- `src/lib.ts` — Library entry point (main package export: `McpCurlServer`, types, schema utilities)
+- `src/lib/api-server.ts` — `createApiServer()` factory for YAML-driven servers
 
-- **McpServer**: Core server from `@modelcontextprotocol/sdk` handling MCP protocol
-- **Tools**: `curl_execute` (HTTP requests), `jq_query` (query saved JSON files)
-- **Resources**: `curl://docs/api` - Built-in API documentation
-- **Prompts**: `api-test`, `api-discovery` - Reusable prompt templates
-- **Transports**: Stdio (default) or HTTP via Express with session management
+### Module Map
 
-### Code Organization
+```
+src/lib/
+├── config/            # Constants: limits, env vars, server identity, session config
+│   └── security/      # SSRF patterns, blocked IPs/hostnames, validation patterns (pure predicates)
+├── types/             # TypeScript types: response, session, rate-limit, jq tokens, public API types
+├── security/          # Stateful security: DNS resolution, SSRF validation, rate limiter, file validation
+├── jq/                # JQ filter engine: tokenizer, parser, filter application
+├── files/             # File system: temp directory manager, output directory validation
+├── execution/         # cURL execution: command executor (allowlist), args builder, memory tracker
+├── response/          # Response processing: parser, formatter, file saver, processor (orchestration)
+├── server/            # MCP server: factory, Zod schemas, registration, lifecycle/shutdown
+├── session/           # HTTP session manager
+├── tools/             # Tool handlers: curl_execute, jq_query
+├── resources/         # MCP resources: API documentation
+├── prompts/           # MCP prompts: api-test, api-discovery
+├── transports/        # Transport implementations: stdio, HTTP (Express + SSE)
+├── schema/            # YAML schema system: types, validator, loader, tool generator
+├── extensible/        # McpCurlServer class, hooks executor, tool wrapper, instance utilities
+└── utils/             # Shared utilities: error handling, URL helpers
+```
 
-- `createServer()` - Factory function for MCP server instances
-- `registerAllCapabilities(server)` - Registers tools, resources, and prompts
-- `executeCommand()` - Spawns allowed commands (allowlist: `curl` only) with size limits and timeout handling
-- `buildCurlArgs()` - Converts structured params to cURL CLI arguments
-- `processResponse()` - Handles jq filtering, size limits, and file saving
-- `applyJqFilter()` / `applySingleJqFilter()` / `parseJqFilter()` - JSON path extraction (jq-like syntax)
-- `splitJqFilters()` - Splits comma-separated jq filters respecting brackets/quotes with validation
-- `resolveOutputDir()` / `validateOutputDir()` - Output directory resolution and validation
-- `validateFilePath()` - Security validation for jq_query file access
-- `runStdio()` / `runHTTP()` - Transport-specific startup
+### Extension System
 
-### HTTP Transport Sessions
+- **`McpCurlServer`** (`src/lib/extensible/mcp-curl-server.ts`) — fluent builder: `.configure()`, `.beforeRequest()`, `.afterResponse()`, `.onError()`, `.registerCustomTool()`, `.disableCurlExecute()`, `.disableJqQuery()`, `.start()`, `.shutdown()`
+- **Hooks** — `beforeRequest` (modify params or short-circuit), `afterResponse` (logging/metrics), `onError` (error tracking). Fail-fast semantics.
+- **Custom tools** — Register additional MCP tools via `.registerCustomTool(id, meta, handler)`
+- **YAML schema** — `loadApiSchema()` + `generateToolDefinitions()` for declarative API endpoint → tool mapping
+- **Instance utilities** — `.utilities()` for direct config-aware `executeRequest()` / `queryFile()` (bypasses hooks)
 
-The HTTP transport uses proper session management:
+### Key Design Decisions
 
-- `sessions` Map tracks active sessions by ID (max 100 concurrent)
-- Each session has its own McpServer instance
-- POST creates/reuses sessions, GET handles SSE, DELETE terminates
-- Session idle timeout: 1 hour (cleanup runs every 5 minutes)
-- Graceful shutdown closes all sessions on SIGINT/SIGTERM
-- Optional authentication: `MCP_AUTH_TOKEN` env var enables bearer token requirement
+- Composition with builder pattern (not inheritance)
+- Immutable security data: frozen arrays/sets with pure predicate functions
+- Layered architecture: pure config predicates → stateful security functions → tool handlers
+- `spawn()` without shell for command execution; compile-time + runtime allowlist
+- DNS resolved before SSRF validation; cURL pinned to validated IP via `--resolve`
 
-### Large Response Handling
+## Tools
 
-Responses are processed in stages:
+- **`curl_execute`** — HTTP requests with structured params, auth, jq filtering, auto-save for large responses
+- **`jq_query`** — Query saved JSON files without new HTTP requests
 
-1. cURL fetches response (max 10MB processing limit)
-2. `jq_filter` extracts specific data if provided:
-    - Dot notation for arrays: `.results.0` same as `.results[0]`
-    - Multiple paths: `.name,.email` returns array (max 20 paths)
-    - Validation: unclosed quotes/brackets, leading zeros, safe integer bounds
-    - Note: negative indices not supported (e.g., `[-1]` for last element)
-3. If result exceeds `max_result_size` (default 500KB), auto-saves to file
-4. Output directory priority: `output_dir` param > `MCP_CURL_OUTPUT_DIR` env > system temp
-5. Temp directories use 0o700, files use 0o600 (owner-only); cleaned on shutdown
+## Security
 
-### jq_query Tool
+**Network:** SSRF protection (private IPs, cloud metadata, DNS rebinding services, internal TLDs), DNS rebinding prevention, protocol whitelist (`http`/`https` only), `--proto =http,https` defense-in-depth, `--max-filesize` 10MB early abort, Windows UNC path blocking, localhost blocked by default (`MCP_CURL_ALLOW_LOCALHOST=true` to enable with port restrictions)
 
-Query saved JSON files without new HTTP requests:
+**Rate limiting:** 60 req/min per host, 300 req/min per client
 
-- Only allows files in: temp directory, `MCP_CURL_OUTPUT_DIR`, or current working directory
-- **Note**: cwd access includes ALL subdirectories - be aware of what files exist in the server's working directory
-- 10MB file size limit (same as curl response limit)
-- Supports same jq_filter syntax as curl_execute
+**Input validation:** Zod schemas, command allowlist (`curl` only), `spawn()` without shell, CRLF injection prevention, `--data-raw`/`--form-string` against `@` file exfil, per-request unique metadata separators
 
-### Security Constraints
+**File access:** `jq_query` restricted to temp dir / `MCP_CURL_OUTPUT_DIR` / cwd (including subdirs), symlinks resolved via `realpath()`, path traversal (`..`) rejected
 
-**Network Security:**
+**Resource limits:** 10MB response/file processing, 1MB max inline return (default 500KB), 100MB global memory, 20 max jq filter paths, 100ms jq parse timeout, 30s default request timeout
 
-- SSRF protection: blocks private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.x), IPv4-mapped IPv6, internal TLDs
-- Cloud metadata hostname blocking: `metadata.google.internal`, `instance-data.ec2.internal`, `metadata.azure.com`, bare
-  `metadata`
-- DNS rebinding service blocking: `*.nip.io`, `*.sslip.io`, `*.xip.io` (prevents mapping hostnames to metadata IPs)
-- DNS rebinding prevention: DNS resolved before validation, cURL pinned to validated IP via `--resolve`
-- Protocol whitelist: only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
-- cURL-level protocol restriction: `--proto =http,https` on all requests (defense-in-depth alongside URL validation)
-- cURL-level size abort: `--max-filesize` set to 10MB; aborts early when `Content-Length` exceeds limit (exit code 63)
-- Windows UNC paths blocked (`\\server\share`)
-- Localhost: blocked by default; `MCP_CURL_ALLOW_LOCALHOST=true` enables with port restrictions (80, 443, >1024)
+**HTTP transport:** Optional bearer token auth (`MCP_AUTH_TOKEN`), 100 max sessions, 1h idle timeout
 
-**Rate Limiting:**
+**Error logging:** Minimal — `tool_name error: [hostname/filename] ErrorClassName` (no message content)
 
-- Per-hostname: 60 requests/minute to any single host
-- Per-client: 300 requests/minute total (prevents bypassing host limits via many hostnames)
-
-**Input Validation:**
-
-- Only structured `curl_execute` and `jq_query` tools (no arbitrary command execution)
-- Command allowlist: `executeCommand()` only accepts `"curl"` (compile-time type + runtime guard)
-- Commands executed via `spawn()` without shell (prevents injection)
-- CRLF injection protection: validates headers, user-agent, auth values, and form fields for newlines
-- Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix
-- Per-request unique metadata separator prevents response injection attacks
-
-**File Access:**
-
-- `jq_query` restricted to: temp dir, `MCP_CURL_OUTPUT_DIR`, cwd (including subdirectories)
-- **Symlink handling**: All paths resolved via `realpath()` before validation
-- `output_dir` validation: must exist, be writable, no path traversal (`..`)
-
-**Resource Limits:**
-
-- Max response/file size for processing: 10MB
-- Max result size for inline return: 1MB (default 500KB)
-- Global memory limit: 100MB across all concurrent requests
-- Max jq_filter paths: 20 comma-separated expressions
-- JQ parsing timeout: 100ms (prevents ReDoS)
-- Default request timeout: 30 seconds
-- SSL verification enabled by default
-- Server-side error logs are minimal: `tool_name error: [hostname/filename] ErrorClassName` (no message content)
-
-**Timeout Handling:**
-
-The `timeout` parameter is optional in the schema. When not provided, defaults are applied in order:
-
-1. `McpCurlConfig.defaultTimeout` (if configured via extensible API)
-2. System default: 30 seconds (`LIMITS.DEFAULT_TIMEOUT_MS / 1000`)
-
-This design allows distinguishing between "user explicitly passed 30" vs "user didn't provide a value".
-
-**HTTP Transport:**
-
-- Optional bearer token authentication via `MCP_AUTH_TOKEN` env var
-- Session idle timeout: 1 hour (cleanup every 5 minutes)
-- Max 100 concurrent sessions
+**Timeout defaults:** `McpCurlConfig.defaultTimeout` → system default 30s (`LIMITS.DEFAULT_TIMEOUT_MS / 1000`)
 
 ## Code Style
 
@@ -140,3 +90,10 @@ This design allows distinguishing between "user explicitly passed 30" vs "user d
 - Zod for runtime schema validation
 - Prefer async/await, pure functions, early returns
 - Cross-platform: uses `path.isAbsolute()`, `path.basename()`, `path.resolve()` for Windows/Unix compatibility
+
+## Testing
+
+- `npm test` runs vitest (`vitest run`)
+- `npm run test:watch` for watch mode
+- Test files are co-located: `*.test.ts` next to their source files
+- Key test files: `mcp-curl-server.test.ts`, `ssrf.test.ts`, `parser.test.ts`, `filter.test.ts`, `schema.test.ts`, `session-manager.test.ts`, `http.test.ts`
