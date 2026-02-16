@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 10MB file size limit
     - Same jq_filter syntax as curl_execute
 
-- **Large response handling** - Automatic handling of responses up to 10MB
+- **Large response handling** – Automatic handling of responses up to 10MB
     - `jq_filter` parameter for extracting specific JSON data
     - Dot notation for arrays (`.results.0` same as `.results[0]`)
     - Multiple paths support (`.name,.email` returns array, max 20 paths)
@@ -25,23 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **SSRF protection** - Blocks requests to private networks and internal hosts
+- **SSRF protection** – Blocks requests to private networks and internal hosts
     - Private IP ranges: 10.x, 172.16-31.x, 192.168.x, 169.254.x
     - IPv4-mapped IPv6 addresses
     - IPv6 private ranges (loopback, link-local, unique local)
     - Internal TLDs: .local, .internal, .corp, .lan, .localhost (case-insensitive)
 
-- **DNS rebinding prevention** - DNS resolved before validation, cURL pinned to validated IP via `--resolve`
+- **DNS rebinding prevention** – DNS resolved before validation, cURL pinned to validated IP via `--resolve`
 
 - **Protocol whitelist** - Only `http://` and `https://` allowed; `file://`, `ftp://`, UNC paths blocked
 
-- **Symlink security** - All paths resolved via `realpath()` before validation to prevent symlink escape attacks
+- **Symlink security** – All paths resolved via `realpath()` before validation to prevent symlink escape attacks
 
 - **Path traversal protection** - Explicit `..` blocking in both `output_dir` and `filepath` parameters
 
-- **Authentication** - Optional bearer token via `MCP_AUTH_TOKEN` env var for HTTP transport
+- **Authentication** – Optional bearer token via `MCP_AUTH_TOKEN` env var for HTTP transport
 
-- **Rate limiting** - Dual limits prevent abuse
+- **Rate limiting** – Dual limits prevent abuse
     - Per-hostname: 60 requests/minute
     - Per-client: 300 requests/minute total
 
@@ -55,18 +55,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Per-request unique metadata separator prevents response injection
     - Strict jq_filter validation (unclosed quotes/brackets, leading zeros, safe integer bounds)
 
-- **Localhost access** - Blocked by default; `MCP_CURL_ALLOW_LOCALHOST=true` enables with port restrictions
+- **Localhost access** – Blocked by default; `MCP_CURL_ALLOW_LOCALHOST=true` enables with port restrictions
 
 ### Changed
 
 - Maximum response size increased to 10MB for processing (inline result limit remains configurable)
-- Negative indices no longer supported in jq_filter for simplicity and security
+- Negative indices are no longer supported in jq_filter for simplicity and security
 
 ## [1.0.2] - 2026-01-23
 
 ### Changed
 
-- Increased maximum response size from 1MB to 4MB to support larger API responses
+- Increased the maximum response size from 1MB to 4MB to support larger API responses
 
 ## [1.0.0] - 2025-12-12
 

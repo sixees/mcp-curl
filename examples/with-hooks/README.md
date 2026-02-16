@@ -9,7 +9,8 @@ npm install
 npm run build
 ```
 
-> **Note:** When copying this example to your own project, change the dependency in `package.json` from `"file:../.."` to `"mcp-curl": "^1.1.5"` (or latest version).
+> **Note:** When copying this example to your own project, change the dependency in `package.json` from `"file:../.."`
+> to `"mcp-curl": "^1.1.5"` (or latest version).
 
 ## Running
 
@@ -71,29 +72,30 @@ When you stop the server (Ctrl+C), it prints final metrics:
 
 ```typescript
 // beforeRequest: Add auth and tracking
-.beforeRequest((ctx) => {
-  const token = process.env.API_TOKEN;
-  return {
-    params: {
-      headers: {
-        ...(ctx.params.headers ?? {}),
-        ...(token && { "Authorization": `Bearer ${token}` }),
-        "X-Request-ID": generateRequestId(),
-      },
-    },
-  };
+.
+beforeRequest((ctx) => {
+    const token = process.env.API_TOKEN;
+    return {
+        params: {
+            headers: {
+                ...(ctx.params.headers ?? {}),
+                ...(token && {"Authorization": `Bearer ${token}`}),
+                "X-Request-ID": generateRequestId(),
+            },
+        },
+    };
 })
 
-// afterResponse: Log and collect metrics
-.afterResponse((ctx) => {
-  const latency = Date.now() - startTime;
-  console.error(`[${requestId}] ${ctx.isError ? 'Failed' : 'Success'} (${latency}ms)`);
-})
+    // afterResponse: Log and collect metrics
+    .afterResponse((ctx) => {
+        const latency = Date.now() - startTime;
+        console.error(`[${requestId}] ${ctx.isError ? 'Failed' : 'Success'} (${latency}ms)`);
+    })
 
-// onError: Track and report errors
-.onError((ctx) => {
-  console.error(`Error in ${ctx.tool}: ${ctx.error.message}`);
-});
+    // onError: Track and report errors
+    .onError((ctx) => {
+        console.error(`Error in ${ctx.tool}: ${ctx.error.message}`);
+    });
 ```
 
 ## Extending This Example

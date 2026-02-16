@@ -9,7 +9,8 @@ npm install
 npm run build
 ```
 
-> **Note:** When copying this example to your own project, change the dependency in `package.json` from `"file:../.."` to `"mcp-curl": "^1.1.5"` (or latest version).
+> **Note:** When copying this example to your own project, change the dependency in `package.json` from `"file:../.."`to
+`"mcp-curl": "^1.1.5"` (or latest version).
 
 ## Running
 
@@ -20,6 +21,7 @@ npm start
 ```
 
 The server exposes two tools to the connected LLM:
+
 - `curl_execute` - Make HTTP requests
 - `jq_query` - Query saved JSON files
 
@@ -38,13 +40,16 @@ With Claude Desktop, add to your config:
   "mcpServers": {
     "basic-example": {
       "command": "node",
-      "args": ["/path/to/examples/basic/dist/index.js"]
+      "args": [
+        "/path/to/examples/basic/dist/index.js"
+      ]
     }
   }
 }
 ```
 
 Then ask Claude to make requests to the JSONPlaceholder API:
+
 - "Get the list of users"
 - "Fetch post #1"
 - "Create a new post with title 'Test'"
@@ -52,14 +57,14 @@ Then ask Claude to make requests to the JSONPlaceholder API:
 ## Code
 
 ```typescript
-import { McpCurlServer } from "mcp-curl";
+import {McpCurlServer} from "mcp-curl";
 
 const server = new McpCurlServer()
-  .configure({
-    baseUrl: "https://jsonplaceholder.typicode.com",
-    defaultHeaders: { "Accept": "application/json" },
-    defaultTimeout: 30,
-  });
+    .configure({
+        baseUrl: "https://jsonplaceholder.typicode.com",
+        defaultHeaders: {"Accept": "application/json"},
+        defaultTimeout: 30,
+    });
 
 await server.start("stdio");
 ```
