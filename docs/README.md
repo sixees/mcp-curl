@@ -19,16 +19,20 @@ const server = new McpCurlServer()
     .beforeRequest((ctx) => {
         if (ctx.tool !== "curl_execute") return;
 
+        const token = process.env.API_TOKEN;
+        if (!token) return;
+
         return {
             params: {
                 headers: {
-                    ...ctx.params.headers,
-                    "Authorization": `Bearer ${process.env.API_TOKEN}`,
+                    ...(ctx.params.headers ?? {}),
+                    "Authorization": `Bearer ${token}`,
                 },
             },
         };
-    })
-    .start("stdio");
+    });
+
+await server.start("stdio");
 ```
 
 ### 2. YAML Schema Definitions
@@ -57,9 +61,10 @@ Minimal server (5 lines):
 ```typescript
 import { McpCurlServer } from "mcp-curl";
 
-new McpCurlServer()
-  .configure({ baseUrl: "https://api.example.com" })
-  .start("stdio");
+const server = new McpCurlServer()
+  .configure({ baseUrl: "https://api.example.com" });
+
+await server.start("stdio");
 ```
 
 ## Guides

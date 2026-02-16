@@ -23,4 +23,9 @@ const server = new McpCurlServer()
 
 // Start the server on stdio transport
 // The LLM can now use curl_execute and jq_query tools
-await server.start("stdio");
+try {
+  await server.start("stdio");
+} catch (error) {
+  console.error("Failed to start server:", error);
+  process.exit(1);
+}

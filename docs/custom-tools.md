@@ -104,7 +104,7 @@ server.registerCustomTool(
 
     // Make request using instance utilities (applies config)
     const result = await utils.executeRequest({
-      url: `/users/${userId}`,  // baseUrl is prepended
+      url: `/users/${encodeURIComponent(userId)}`,  // Encode to prevent path traversal
       headers: { "Accept": "application/json" },
     });
 
@@ -293,7 +293,7 @@ async (params) => {
     return { content: [{ type: "text", text: result }] };
   } catch (error) {
     return {
-      content: [{ type: "text", text: `Error: ${error.message}` }],
+      content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
       isError: true,
     };
   }

@@ -52,7 +52,7 @@ const server = new McpCurlServer()
 
     // Build new headers with request ID and optional auth
     const newHeaders: Record<string, string> = {
-      ...params.headers,
+      ...(params.headers ?? {}),
       "X-Request-ID": requestId,
     };
 
@@ -106,9 +106,13 @@ const server = new McpCurlServer()
     if (ctx.tool === "curl_execute") {
       const params = ctx.params as { headers?: Record<string, string> };
       requestId = params.headers?.["X-Request-ID"] ?? "unknown";
+      // Clean up the start time entry to prevent memory leak
+      requestStartTimes.delete(requestId);
     }
 
-    metrics.failedRequests++;
+    // Note: Don't increment metrics.failedRequests here - it's already counted
+    // in afterResponse when ctx.isError is true. This hook handles errors
+    // that occur during hook execution or tool processing.
     console.error(`[${requestId}] Error in ${ctx.tool}: ${ctx.error.message}`);
 
     // In a real application, you might send this to an error tracking service

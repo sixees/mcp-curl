@@ -49,7 +49,7 @@ interface HookContext<T = CurlExecuteInput | JqQueryInput> {
 
 ## Hook Execution Flow
 
-```
+```text
 Request arrives
      │
      ▼
@@ -102,16 +102,28 @@ const requestTimes = new Map<string, number>();
 
 server
     .beforeRequest((ctx) => {
-        const id = `${ctx.tool}-${Date.now()}`;
-        requestTimes.set(id, Date.now());
-        console.log(`[${id}] Starting ${ctx.tool}`);
-        ctx.params = {...ctx.params, _requestId: id} as any;
+        if (ctx.tool !== "curl_execute") return;
+
+        const requestId = `req-${Date.now()}`;
+        requestTimes.set(requestId, Date.now());
+        console.error(`[${requestId}] Starting ${ctx.tool}`);
+
+        // Pass the request ID in a header (type-safe alternative to `as any`)
+        return {
+            params: {
+                headers: { ...(ctx.params.headers ?? {}), "X-Request-ID": requestId },
+            },
+        };
     })
     .afterResponse((ctx) => {
-        const id = (ctx.params as any)._requestId;
-        const duration = Date.now() - (requestTimes.get(id) ?? Date.now());
-        requestTimes.delete(id);
-        console.log(`[${id}] Completed in ${duration}ms`);
+        if (ctx.tool !== "curl_execute") return;
+
+        const requestId = ctx.params.headers?.["X-Request-ID"];
+        if (!requestId) return;
+
+        const duration = Date.now() - (requestTimes.get(requestId) ?? Date.now());
+        requestTimes.delete(requestId);
+        console.error(`[${requestId}] Completed in ${duration}ms`);
     });
 ```
 
@@ -157,10 +169,18 @@ server.onError(async (ctx) => {
     console.error(`Error in ${ctx.tool}:`, ctx.error.message);
 
     // Report to error tracking service
+    // IMPORTANT: Sanitize params before sending to external services
+    // to avoid leaking credentials (Authorization headers, tokens in URLs, etc.)
+    const sanitizedParams = {
+        url: ctx.params.url,
+        method: ctx.params.method,
+        // Omit headers, body, and other potentially sensitive fields
+    };
+
     await reportError({
         tool: ctx.tool,
         error: ctx.error.message,
-        params: ctx.params,
+        params: sanitizedParams,
         sessionId: ctx.sessionId,
     });
 });
@@ -234,24 +254,31 @@ Hooks run in the order they're registered:
 
 ```typescript
 server
-    .beforeRequest((ctx) => console.log("Hook 1"))  // Runs first
-    .beforeRequest((ctx) => console.log("Hook 2"))  // Runs second
-    .beforeRequest((ctx) => console.log("Hook 3")); // Runs third
+    .beforeRequest((ctx) => console.error("Hook 1"))  // Runs first
+    .beforeRequest((ctx) => console.error("Hook 2"))  // Runs second
+    .beforeRequest((ctx) => console.error("Hook 3")); // Runs third
 ```
 
 If a beforeRequest hook returns `{ shortCircuit: true }`, subsequent hooks are skipped.
 
 ## Error Handling in Hooks
 
-Errors in hooks are caught and logged but don't prevent tool execution:
+**Important:** Errors thrown in hooks propagate and abort the tool call (fail-fast). They are NOT caught and ignored. The `onError` hook only runs for errors during tool execution, not for errors in `beforeRequest` or `afterResponse` hooks.
+
+To prevent hook failures from breaking requests, wrap hook bodies in try/catch:
 
 ```typescript
 server.beforeRequest((ctx) => {
-    throw new Error("Hook error");  // Logged, but execution continues
+    try {
+        // Hook logic that might throw
+    } catch (error) {
+        console.error("Hook error (non-fatal):", error);
+        // Return undefined to continue without modifications
+    }
 });
 ```
 
-To fail the request, use short-circuit:
+To intentionally fail the request, use short-circuit:
 
 ```typescript
 server.beforeRequest((ctx) => {

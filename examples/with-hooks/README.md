@@ -76,8 +76,8 @@ When you stop the server (Ctrl+C), it prints final metrics:
   return {
     params: {
       headers: {
-        ...ctx.params.headers,
-        "Authorization": token ? `Bearer ${token}` : undefined,
+        ...(ctx.params.headers ?? {}),
+        ...(token && { "Authorization": `Bearer ${token}` }),
         "X-Request-ID": generateRequestId(),
       },
     },

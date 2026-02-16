@@ -140,19 +140,25 @@ const server = new McpCurlServer()
             return;
         }
 
+        const token = process.env.API_TOKEN;
+        if (!token) {
+            console.warn("API_TOKEN is not set; skipping Authorization header.");
+            return;
+        }
+
         return {
             params: {
                 headers: {
-                    ...ctx.params.headers,
-                    "Authorization": `Bearer ${process.env.API_TOKEN}`,
+                    ...(ctx.params.headers ?? {}),
+                    "Authorization": `Bearer ${token}`,
                 },
             },
         };
     })
 
-    // Log all responses
+    // Log all responses (use console.error for stdio transport)
     .afterResponse((ctx) => {
-        console.log(`${ctx.tool}: ${ctx.response.slice(0, 100)}...`);
+        console.error(`${ctx.tool}: ${ctx.response.slice(0, 100)}...`);
     })
 
     // Track errors
@@ -208,7 +214,7 @@ Add to your project's `.mcp.json`:
 
 ## Example Project Structure
 
-```
+```text
 my-mcp-server/
 ├── package.json
 ├── tsconfig.json

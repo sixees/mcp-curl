@@ -37,8 +37,7 @@ interface McpCurlConfig {
 Prepended to relative URLs. Useful for API-specific servers:
 
 ```typescript
-.
-configure({baseUrl: "https://api.example.com/v1"})
+.configure({baseUrl: "https://api.example.com/v1"})
 ```
 
 Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/users`.
@@ -48,8 +47,7 @@ Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/use
 Added to all requests. Merged with request-specific headers (request headers take precedence):
 
 ```typescript
-.
-configure({
+.configure({
     defaultHeaders: {
         "Accept": "application/json",
         "X-Client-Version": "1.0.0",
@@ -62,8 +60,7 @@ configure({
 Default request timeout in seconds. Can be overridden per-request:
 
 ```typescript
-.
-configure({defaultTimeout: 60})
+.configure({defaultTimeout: 60})
 ```
 
 ### outputDir
@@ -71,8 +68,7 @@ configure({defaultTimeout: 60})
 Directory where large responses are saved. Falls back to system temp directory:
 
 ```typescript
-.
-configure({outputDir: "/var/data/mcp-responses"})
+.configure({outputDir: "/var/data/mcp-responses"})
 ```
 
 Can also be set via `MCP_CURL_OUTPUT_DIR` environment variable.
@@ -82,8 +78,7 @@ Can also be set via `MCP_CURL_OUTPUT_DIR` environment variable.
 Maximum bytes to return inline. Larger responses auto-save to file:
 
 ```typescript
-.
-configure({maxResultSize: 1_000_000}) // 1MB
+.configure({maxResultSize: 1_000_000}) // 1MB
 ```
 
 ### allowLocalhost
@@ -91,8 +86,7 @@ configure({maxResultSize: 1_000_000}) // 1MB
 By default, localhost requests are blocked for security. Enable for local development:
 
 ```typescript
-.
-configure({allowLocalhost: true})
+.configure({allowLocalhost: true})
 ```
 
 Can also be set via `MCP_CURL_ALLOW_LOCALHOST=true` environment variable.
@@ -102,8 +96,7 @@ Can also be set via `MCP_CURL_ALLOW_LOCALHOST=true` environment variable.
 HTTP transport listening port:
 
 ```typescript
-.
-configure({port: 8080})
+.configure({port: 8080})
 ```
 
 Can also be set via `PORT` environment variable.
@@ -143,8 +136,9 @@ Configuration can be set via environment variables (config takes precedence):
 
 ```typescript
 const server = new McpCurlServer()
-    .configure({baseUrl: "https://api.example.com"})
-    .start("stdio");
+    .configure({baseUrl: "https://api.example.com"});
+
+await server.start("stdio");
 ```
 
 ### Full Configuration
@@ -163,8 +157,9 @@ const server = new McpCurlServer()
         allowLocalhost: false,
         port: 3000,
         authToken: process.env.MCP_AUTH_TOKEN,
-    })
-    .start("http");
+    });
+
+await server.start("http");
 ```
 
 ### Configuration from Environment
@@ -176,6 +171,7 @@ const server = new McpCurlServer()
         baseUrl: process.env.API_BASE_URL,
         authToken: process.env.MCP_AUTH_TOKEN,
         allowLocalhost: process.env.NODE_ENV === "development",
-    })
-    .start(process.env.TRANSPORT === "http" ? "http" : "stdio");
+    });
+
+await server.start(process.env.TRANSPORT === "http" ? "http" : "stdio");
 ```

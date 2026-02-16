@@ -149,8 +149,9 @@ const server = await createApiServer({
   definitionPath: "./api-definition.yaml",
 });
 
-// This won't work - server is already created
-// Use the config option or create a custom server instead
+// Note: createApiServer() returns a fully configured McpCurlServer.
+// Hooks cannot be added after creation via chaining methods.
+// For hooks support, use McpCurlServer directly as shown below.
 ```
 
 For hooks, use `McpCurlServer` directly with `loadApiSchema` and `generateToolDefinitions`:
@@ -166,8 +167,11 @@ const server = new McpCurlServer()
     console.log(`Hook triggered for tool: ${ctx.tool}`);
   });
 
-// Generate tool definitions from the schema and register each one
-const toolDefs = generateToolDefinitions(schema);
+// Generate tool definitions from the schema (with defaults from YAML)
+const toolDefs = generateToolDefinitions(schema, {
+  defaultHeaders: schema.defaults?.headers,
+  timeout: schema.defaults?.timeout,
+});
 for (const toolDef of toolDefs) {
   server.registerCustomTool(
     toolDef.id,
