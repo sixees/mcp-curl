@@ -51,6 +51,10 @@ export declare function createAuthMiddleware(authToken?: string): (req: Request,
  */
 export declare function createHttpApp(options: HttpAppOptions): Express;
 /**
+ * Format a host for use in a URL. Wraps IPv6 addresses in brackets per RFC 3986.
+ */
+export declare function formatHostForUrl(host: string): string;
+/**
  * Resolve the HTTP bind host from environment or default.
  */
 export declare function resolveHost(configHost?: string): string;

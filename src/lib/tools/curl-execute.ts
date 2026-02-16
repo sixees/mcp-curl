@@ -212,9 +212,9 @@ export async function executeCurlRequest(
             ],
         };
     } catch (error) {
-        console.error("curl_execute error:", error);
         const rawMessage = getErrorMessage(error);
         const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
+        console.error("curl_execute error:", sanitizeErrorMessage(rawMessage, false));
         return {
             content: [
                 {

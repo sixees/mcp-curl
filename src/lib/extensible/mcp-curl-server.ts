@@ -24,7 +24,7 @@ import { executeCurlRequest } from "../tools/curl-execute.js";
 import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import { startRateLimitCleanup, stopRateLimitCleanup } from "../security/index.js";
-import { createHttpApp, resolveHost } from "../transports/http.js";
+import { createHttpApp, resolveHost, formatHostForUrl } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
 import { ENV, LIMITS, parsePort } from "../config/index.js";
 
@@ -284,7 +284,7 @@ export class McpCurlServer {
      */
     async start(transport: TransportMode = "stdio"): Promise<void> {
         if (this._started) {
-            throw new Error("Server already started. Create a new McpCurlServer instance for a new server.");
+            throw new Error("Server is already running. Call shutdown() before starting again.");
         }
         this._started = true;
         // Deep freeze to prevent mutation of nested objects like defaultHeaders
@@ -475,7 +475,7 @@ export class McpCurlServer {
             this._httpServer = app.listen(port, host);
 
             this._httpServer.on("listening", () => {
-                console.error(`cURL MCP server running on http://${host}:${port}/mcp`);
+                console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
                 resolve();
             });
 

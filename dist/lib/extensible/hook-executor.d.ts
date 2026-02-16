@@ -11,15 +11,12 @@ import type { Hooks, ToolResult, ToolName } from "./types.js";
  * 3. Run afterResponse hooks sequentially
  * 4. On error, run onError hooks instead of afterResponse
  *
- * Error Handling (fail-fast behavior):
- * Hooks use fail-fast semantics. If a hook throws an error:
- * - For afterResponse: subsequent afterResponse hooks won't run, and the error
- *   propagates to the caller (onError hooks are NOT called for hook errors)
- * - For onError: subsequent onError hooks won't run, and the hook's error
- *   replaces the original tool error
- *
- * This is intentional - hooks should not throw. For logging/metrics use cases,
- * wrap your hook logic in try-catch internally to ensure it doesn't throw.
+ * Error Handling:
+ * - For afterResponse: if a hook throws, subsequent hooks won't run, and the
+ *   error propagates to the caller (onError hooks are NOT called for hook errors).
+ *   Wrap hook logic in try-catch internally to prevent failures from aborting the chain.
+ * - For onError: hook errors are caught and suppressed (logged as warnings).
+ *   Subsequent onError hooks continue to run, and the original tool error is re-thrown.
  *
  * @param tool - Name of the tool being executed
  * @param params - Tool parameters (will be modified by hooks)

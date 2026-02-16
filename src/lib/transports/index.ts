@@ -8,5 +8,6 @@ export {
     createAuthMiddleware,
     createOriginMiddleware,
     resolveHost,
+    formatHostForUrl,
 } from "./http.js";
 export type { HttpAppOptions } from "./http.js";

@@ -109,8 +109,8 @@ export async function executeJqQuery(params, _extra) {
         };
     }
     catch (error) {
-        console.error("jq_query error:", error);
         const errorMessage = getErrorMessage(error);
+        console.error("jq_query error:", errorMessage);
         return {
             content: [
                 {

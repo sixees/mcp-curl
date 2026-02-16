@@ -158,7 +158,7 @@ const server = new McpCurlServer()
 
     // Log all responses (use console.error for stdio transport)
     .afterResponse((ctx) => {
-        console.error(`${ctx.tool}: ${ctx.response.slice(0, 100)}...`);
+        console.error(`${ctx.tool}: ${ctx.response.length} bytes`);
     })
 
     // Track errors

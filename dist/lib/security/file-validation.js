@@ -7,6 +7,25 @@ import { getSharedTempDir } from "../files/temp-manager.js";
 import { getErrorMessage, createValidationError, createConfigError, createFileError, } from "../utils/index.js";
 let allowedDirsCache = null;
 /**
+ * Resolve the shared temp directory via realpath(), returning null if unavailable.
+ * Handles ENOENT silently (temp dir may not exist yet), logs other errors as warnings.
+ */
+async function resolveSharedTempDirSafely() {
+    const tempDir = getSharedTempDir();
+    if (!tempDir)
+        return null;
+    try {
+        return await realpath(tempDir);
+    }
+    catch (error) {
+        const errno = error.code;
+        if (errno !== "ENOENT") {
+            console.error(`Warning: Failed to resolve temp directory "${tempDir}" (${errno}):`, error);
+        }
+        return null;
+    }
+}
+/**
  * Get the list of allowed directories for file validation.
  * Uses caching with TTL to avoid repeated I/O operations.
  *
@@ -18,19 +37,9 @@ async function getAllowedDirectories() {
     if (allowedDirsCache && (now - allowedDirsCache.timestamp) < JQ.ALLOWED_DIRS_CACHE_TTL_MS) {
         const dirs = [];
         // Temp directory (check fresh each time as it may be created after cache)
-        // Resolve via realpath() for consistent symlink handling
-        const tempDir = getSharedTempDir();
-        if (tempDir) {
-            try {
-                const tempDirResolved = await realpath(tempDir);
-                dirs.push(tempDirResolved);
-            }
-            catch (error) {
-                const errno = error.code;
-                if (errno !== "ENOENT") {
-                    console.error(`Warning: Failed to resolve temp directory "${tempDir}" (${errno}):`, error);
-                }
-            }
+        const resolvedTempDir = await resolveSharedTempDirSafely();
+        if (resolvedTempDir) {
+            dirs.push(resolvedTempDir);
         }
         // Cached directories
         if (allowedDirsCache.envOutputDir) {
@@ -77,18 +86,9 @@ async function getAllowedDirectories() {
     // Build result array
     const dirs = [];
     // Resolve temp directory via realpath() for consistent symlink handling
-    const tempDir = getSharedTempDir();
-    if (tempDir) {
-        try {
-            const tempDirResolved = await realpath(tempDir);
-            dirs.push(tempDirResolved);
-        }
-        catch (error) {
-            const errno = error.code;
-            if (errno !== "ENOENT") {
-                console.error(`Warning: Failed to resolve temp directory "${tempDir}" (${errno}):`, error);
-            }
-        }
+    const resolvedTempDir = await resolveSharedTempDirSafely();
+    if (resolvedTempDir) {
+        dirs.push(resolvedTempDir);
     }
     if (envOutputDirResolved) {
         dirs.push(envOutputDirResolved);

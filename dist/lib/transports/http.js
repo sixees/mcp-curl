@@ -29,20 +29,29 @@ const DEFAULT_HOST = "127.0.0.1";
  * - Override via MCP_CURL_ALLOWED_ORIGINS env var or config.allowedOrigins
  */
 export function createOriginMiddleware(allowedOrigins) {
-    // Build matchers: explicit list or default localhost patterns
-    const explicitOrigins = allowedOrigins ?? parseAllowedOriginsEnv();
+    // Clone + precompute: explicit list or default localhost patterns
+    const explicitOrigins = allowedOrigins ? [...allowedOrigins] : parseAllowedOriginsEnv();
     const useExplicitList = explicitOrigins !== null;
+    // Precompute lowercased Set for O(1) lookups
+    const allowedOriginSet = useExplicitList
+        ? new Set(explicitOrigins.map((o) => o.toLowerCase()))
+        : null;
     return (req, res, next) => {
-        const origin = req.headers.origin;
+        const rawOrigin = req.headers.origin;
         // No Origin header = non-browser client (curl, SDK, etc.) — allow
+        if (!rawOrigin) {
+            next();
+            return;
+        }
+        // Normalize: if duplicate Origin headers arrive as array, use first value
+        const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
         if (!origin) {
             next();
             return;
         }
         if (useExplicitList) {
-            // Check against explicit allowlist (case-insensitive)
-            const normalizedOrigin = origin.toLowerCase();
-            if (explicitOrigins.some((allowed) => normalizedOrigin === allowed.toLowerCase())) {
+            // Check against explicit allowlist (case-insensitive, O(1) Set lookup)
+            if (allowedOriginSet.has(origin.toLowerCase())) {
                 next();
                 return;
             }
@@ -255,6 +264,15 @@ export function createHttpApp(options) {
     return app;
 }
 /**
+ * Format a host for use in a URL. Wraps IPv6 addresses in brackets per RFC 3986.
+ */
+export function formatHostForUrl(host) {
+    if (host.includes(":") && !host.startsWith("[")) {
+        return `[${host}]`;
+    }
+    return host;
+}
+/**
  * Resolve the HTTP bind host from environment or default.
  */
 export function resolveHost(configHost) {
@@ -286,7 +304,7 @@ export async function runHTTP() {
     const host = resolveHost();
     const httpServer = app.listen(port, host);
     httpServer.on("listening", () => {
-        console.error(`cURL MCP server running on http://${host}:${port}/mcp`);
+        console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
     });
     httpServer.on("error", (err) => {
         if (err.code === "EADDRINUSE") {

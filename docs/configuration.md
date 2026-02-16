@@ -13,7 +13,9 @@ interface McpCurlConfig {
     maxResultSize?: number;
     allowLocalhost?: boolean;
     port?: number;
+    host?: string;
     authToken?: string;
+    allowedOrigins?: string[];
 }
 ```
 
@@ -28,7 +30,9 @@ interface McpCurlConfig {
 | `maxResultSize`  | `number`                 | 500000      | Max bytes before auto-saving to file (max 1MB)        |
 | `allowLocalhost` | `boolean`                | false       | Allow localhost requests (blocked by default)         |
 | `port`           | `number`                 | 3000        | HTTP transport port                                   |
+| `host`           | `string`                 | "127.0.0.1" | HTTP transport bind address                           |
 | `authToken`      | `string`                 | none        | Bearer token for HTTP transport authentication        |
+| `allowedOrigins` | `string[]`               | localhost   | Allowed origins for HTTP Origin header validation     |
 
 ## Detailed Options
 
@@ -101,6 +105,16 @@ HTTP transport listening port:
 
 Can also be set via `PORT` environment variable.
 
+### host
+
+HTTP transport bind address:
+
+```typescript
+.configure({host: "0.0.0.0"}) // Listen on all interfaces
+```
+
+Default: `"127.0.0.1"` (localhost only). Can also be set via `MCP_CURL_HOST` environment variable.
+
 ### authToken
 
 Require bearer token authentication for HTTP transport:
@@ -113,6 +127,16 @@ Clients must include the configured token in the `Authorization: Bearer <token>`
 
 Can also be set via `MCP_AUTH_TOKEN` environment variable.
 
+### allowedOrigins
+
+Override the default Origin header validation for HTTP transport:
+
+```typescript
+.configure({allowedOrigins: ["https://myapp.example.com", "https://admin.example.com"]})
+```
+
+By default, only localhost origins are allowed. Setting this replaces the defaults entirely. Can also be set via `MCP_CURL_ALLOWED_ORIGINS` (comma-separated).
+
 ## Environment Variables
 
 Configuration can be set via environment variables (config takes precedence):
@@ -123,6 +147,8 @@ Configuration can be set via environment variables (config takes precedence):
 | `MCP_CURL_ALLOW_LOCALHOST` | `allowLocalhost`  |
 | `PORT`                     | `port`            |
 | `MCP_AUTH_TOKEN`           | `authToken`       |
+| `MCP_CURL_HOST`            | `host`            |
+| `MCP_CURL_ALLOWED_ORIGINS` | `allowedOrigins`  |
 
 ## Configuration Precedence
 
@@ -156,6 +182,8 @@ const server = new McpCurlServer()
         maxResultSize: 1_000_000,
         allowLocalhost: false,
         port: 3000,
+        host: "127.0.0.1",
+        allowedOrigins: ["https://myapp.example.com"],
         authToken: process.env.MCP_AUTH_TOKEN,
     });
 
