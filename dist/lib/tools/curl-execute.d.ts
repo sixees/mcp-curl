@@ -12,6 +12,8 @@ export interface CurlExecuteResult {
 /** Extra context passed to tool handler */
 export interface CurlExecuteExtra {
     sessionId?: string;
+    /** Override env var for allowing localhost requests (from McpCurlConfig) */
+    allowLocalhost?: boolean;
 }
 /**
  * Tool metadata for curl_execute.

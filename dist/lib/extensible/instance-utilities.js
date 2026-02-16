@@ -53,7 +53,7 @@ export function createInstanceUtilities(config) {
                 save_to_file: params.save_to_file,
                 output_dir: params.output_dir ?? config.outputDir,
             };
-            return executeCurlRequest(fullParams, {});
+            return executeCurlRequest(fullParams, { allowLocalhost: config.allowLocalhost });
         },
         async queryFile(filepath, jqFilter) {
             const params = {

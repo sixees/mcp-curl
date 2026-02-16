@@ -1,8 +1,11 @@
 import type { UrlValidationResult } from "../types/index.js";
 /**
- * Check if localhost requests are allowed via environment variable.
+ * Check if localhost requests are allowed.
+ * Config override takes precedence over environment variable.
+ *
+ * @param configOverride - If provided, overrides the environment variable check
  */
-export declare function isLocalhostAllowed(): boolean;
+export declare function isLocalhostAllowed(configOverride?: boolean): boolean;
 /**
  * Resolve DNS for a hostname and return the IP address.
  * This is used to pin DNS resolution and prevent DNS rebinding attacks.
@@ -23,6 +26,10 @@ export declare function resolveDns(hostname: string): Promise<string>;
  *
  * By resolving once and pinning with --resolve, cURL uses our validated IP.
  *
+ * @param options - Optional overrides for validation behavior
+ * @param options.allowLocalhost - Override env var for localhost permission
  * @throws Error if URL uses blocked protocol, targets internal network, or localhost without permission
  */
-export declare function validateUrlAndResolveDns(url: string): Promise<UrlValidationResult>;
+export declare function validateUrlAndResolveDns(url: string, options?: {
+    allowLocalhost?: boolean;
+}): Promise<UrlValidationResult>;

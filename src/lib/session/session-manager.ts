@@ -118,9 +118,13 @@ export class SessionManager {
         for (const [sessionId, session] of this.sessions) {
             try {
                 session.transport.close();
+            } catch (error) {
+                console.error(`Warning: Error closing session ${sessionId} transport:`, error);
+            }
+            try {
                 await session.server.close();
             } catch (error) {
-                console.error(`Warning: Error closing session ${sessionId} during shutdown:`, error);
+                console.error(`Warning: Error closing session ${sessionId} server:`, error);
             }
             this.sessions.delete(sessionId);
         }

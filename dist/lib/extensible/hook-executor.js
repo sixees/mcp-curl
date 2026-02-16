@@ -56,7 +56,7 @@ export async function executeWithHooks(tool, params, config, hooks, sessionId, e
     }
     try {
         // Execute the tool with potentially modified params
-        const response = await executor(ctx.params, { sessionId });
+        const response = await executor(ctx.params, { sessionId, allowLocalhost: config.allowLocalhost });
         // Run afterResponse hooks sequentially
         // content[0] is guaranteed by ToolResult tuple type
         const responseText = response.content[0].text;
@@ -74,10 +74,15 @@ export async function executeWithHooks(tool, params, config, hooks, sessionId, e
         // Preserve non-Error thrown values by wrapping them
         const normalizedError = error instanceof Error ? error : new Error(String(error));
         for (const hook of hooks.onError) {
-            await hook({
-                ...ctx,
-                error: normalizedError,
-            });
+            try {
+                await hook({
+                    ...ctx,
+                    error: normalizedError,
+                });
+            }
+            catch (hookError) {
+                console.error("Warning: onError hook threw (suppressed to preserve original error):", hookError);
+            }
         }
         // Re-throw the original error to preserve stack trace
         throw error;

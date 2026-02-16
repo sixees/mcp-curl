@@ -14,9 +14,15 @@ import type { UrlValidationResult } from "../types/index.js";
 import { getErrorMessage } from "../utils/index.js";
 
 /**
- * Check if localhost requests are allowed via environment variable.
+ * Check if localhost requests are allowed.
+ * Config override takes precedence over environment variable.
+ *
+ * @param configOverride - If provided, overrides the environment variable check
  */
-export function isLocalhostAllowed(): boolean {
+export function isLocalhostAllowed(configOverride?: boolean): boolean {
+    if (configOverride !== undefined) {
+        return configOverride;
+    }
     const value = process.env[ENV.ALLOW_LOCALHOST]?.toLowerCase();
     return value === "true" || value === "1" || value === "yes";
 }
@@ -49,9 +55,14 @@ export async function resolveDns(hostname: string): Promise<string> {
  *
  * By resolving once and pinning with --resolve, cURL uses our validated IP.
  *
+ * @param options - Optional overrides for validation behavior
+ * @param options.allowLocalhost - Override env var for localhost permission
  * @throws Error if URL uses blocked protocol, targets internal network, or localhost without permission
  */
-export async function validateUrlAndResolveDns(url: string): Promise<UrlValidationResult> {
+export async function validateUrlAndResolveDns(
+    url: string,
+    options?: { allowLocalhost?: boolean }
+): Promise<UrlValidationResult> {
     // Block file:// protocol which could read local files
     if (url.toLowerCase().startsWith("file://")) {
         throw new Error("file:// URLs are not allowed - they could be used to read local files");
@@ -94,7 +105,7 @@ export async function validateUrlAndResolveDns(url: string): Promise<UrlValidati
     const ipIsLocalhost = isLocalhostIp(resolvedIp);
 
     if (hostnameIsLocalhost || ipIsLocalhost) {
-        if (!isLocalhostAllowed()) {
+        if (!isLocalhostAllowed(options?.allowLocalhost)) {
             throw new Error(
                 `Requests to localhost are blocked by default. ` +
                 `Set ${ENV.ALLOW_LOCALHOST}=true to enable local development/testing.` +

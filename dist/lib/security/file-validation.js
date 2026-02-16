@@ -25,8 +25,11 @@ async function getAllowedDirectories() {
                 const tempDirResolved = await realpath(tempDir);
                 dirs.push(tempDirResolved);
             }
-            catch {
-                // Temp dir may not exist yet, ignore
+            catch (error) {
+                const errno = error.code;
+                if (errno !== "ENOENT") {
+                    console.error(`Warning: Failed to resolve temp directory "${tempDir}" (${errno}):`, error);
+                }
             }
         }
         // Cached directories
@@ -80,8 +83,11 @@ async function getAllowedDirectories() {
             const tempDirResolved = await realpath(tempDir);
             dirs.push(tempDirResolved);
         }
-        catch {
-            // Temp dir may not exist yet, ignore
+        catch (error) {
+            const errno = error.code;
+            if (errno !== "ENOENT") {
+                console.error(`Warning: Failed to resolve temp directory "${tempDir}" (${errno}):`, error);
+            }
         }
     }
     if (envOutputDirResolved) {

@@ -103,6 +103,8 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
     if (params.follow_redirects !== false) {
         args.push("-L");
         args.push("--max-redirs", String(params.max_redirects ?? LIMITS.MAX_REDIRECTS));
+        // Restrict redirect protocols to http/https only (prevents file://, ftp://, etc. via redirects)
+        args.push("--proto-redir", "=http,https");
     }
 
     // Insecure (skip SSL verification)

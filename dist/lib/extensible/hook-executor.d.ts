@@ -31,4 +31,5 @@ import type { Hooks, ToolResult, ToolName } from "./types.js";
  */
 export declare function executeWithHooks<T extends CurlExecuteInput | JqQueryInput>(tool: ToolName, params: T, config: Readonly<McpCurlConfig>, hooks: Hooks, sessionId: string | undefined, executor: (p: T, extra: {
     sessionId?: string;
+    allowLocalhost?: boolean;
 }) => Promise<ToolResult>): Promise<ToolResult>;

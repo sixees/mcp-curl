@@ -45,7 +45,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
     config: Readonly<McpCurlConfig>,
     hooks: Hooks,
     sessionId: string | undefined,
-    executor: (p: T, extra: { sessionId?: string }) => Promise<ToolResult>
+    executor: (p: T, extra: { sessionId?: string; allowLocalhost?: boolean }) => Promise<ToolResult>
 ): Promise<ToolResult> {
     // Create mutable context for hooks
     const ctx: HookContext<T> = {
@@ -77,7 +77,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
 
     try {
         // Execute the tool with potentially modified params
-        const response = await executor(ctx.params, { sessionId });
+        const response = await executor(ctx.params, { sessionId, allowLocalhost: config.allowLocalhost });
 
         // Run afterResponse hooks sequentially
         // content[0] is guaranteed by ToolResult tuple type
@@ -96,10 +96,14 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         // Preserve non-Error thrown values by wrapping them
         const normalizedError = error instanceof Error ? error : new Error(String(error));
         for (const hook of hooks.onError) {
-            await hook({
-                ...ctx,
-                error: normalizedError,
-            });
+            try {
+                await hook({
+                    ...ctx,
+                    error: normalizedError,
+                });
+            } catch (hookError) {
+                console.error("Warning: onError hook threw (suppressed to preserve original error):", hookError);
+            }
         }
 
         // Re-throw the original error to preserve stack trace

@@ -47,8 +47,14 @@ async function getAllowedDirectories(): Promise<string[]> {
             try {
                 const tempDirResolved = await realpath(tempDir);
                 dirs.push(tempDirResolved);
-            } catch {
-                // Temp dir may not exist yet, ignore
+            } catch (error) {
+                const errno = (error as NodeJS.ErrnoException).code;
+                if (errno !== "ENOENT") {
+                    console.error(
+                        `Warning: Failed to resolve temp directory "${tempDir}" (${errno}):`,
+                        error
+                    );
+                }
             }
         }
 
@@ -109,8 +115,14 @@ async function getAllowedDirectories(): Promise<string[]> {
         try {
             const tempDirResolved = await realpath(tempDir);
             dirs.push(tempDirResolved);
-        } catch {
-            // Temp dir may not exist yet, ignore
+        } catch (error) {
+            const errno = (error as NodeJS.ErrnoException).code;
+            if (errno !== "ENOENT") {
+                console.error(
+                    `Warning: Failed to resolve temp directory "${tempDir}" (${errno}):`,
+                    error
+                );
+            }
         }
     }
 

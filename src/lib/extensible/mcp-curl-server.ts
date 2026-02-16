@@ -4,9 +4,6 @@
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Server } from "http";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express, { Request, Response, NextFunction } from "express";
-import { randomUUID } from "crypto";
 import type { z } from "zod";
 
 import type {
@@ -26,10 +23,10 @@ import { registerAllPrompts } from "../prompts/index.js";
 import { executeCurlRequest } from "../tools/curl-execute.js";
 import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
-import { startRateLimitCleanup, stopRateLimitCleanup, isValidSessionId, safeStringCompare } from "../security/index.js";
+import { startRateLimitCleanup, stopRateLimitCleanup } from "../security/index.js";
+import { createHttpApp, resolveHost } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
-import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
-import type { Session } from "../types/session.js";
+import { ENV, LIMITS, parsePort } from "../config/index.js";
 
 /**
  * Metadata for a custom tool registration.
@@ -396,6 +393,12 @@ export class McpCurlServer {
 
         // Clean up temp directory
         await cleanupTempDir();
+
+        // Reset state to allow potential reuse
+        this._started = false;
+        this._frozenConfig = null;
+        this._rateLimitInterval = null;
+        this._sessionManager = null;
     }
 
     /**
@@ -452,157 +455,27 @@ export class McpCurlServer {
 
     /**
      * Start HTTP transport with session management.
+     * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
      */
     private async startHttp(): Promise<void> {
         this._sessionManager = new SessionManager();
         this._sessionManager.startCleanup();
 
-        const app = express();
-        app.use(express.json({ limit: "1mb" }));
-
-        // Apply authentication middleware
-        const authMiddleware = this.createAuthMiddleware();
-        app.use("/mcp", authMiddleware);
-
-        // POST /mcp - Handle MCP requests
-        app.post("/mcp", async (req: Request, res: Response) => {
-            try {
-                const rawSessionId = req.headers["mcp-session-id"];
-                const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
-
-                if (sessionId && !isValidSessionId(sessionId)) {
-                    res.status(400).json({
-                        jsonrpc: "2.0",
-                        error: { code: -32600, message: "Invalid session ID format" },
-                    });
-                    return;
-                }
-
-                if (sessionId && this._sessionManager!.has(sessionId)) {
-                    const session = this._sessionManager!.get(sessionId)!;
-                    session.lastActivity = Date.now();
-                    await session.transport.handleRequest(req, res, req.body);
-                    return;
-                }
-
-                if (this._sessionManager!.size >= SESSION.MAX_SESSIONS) {
-                    res.status(503).json({
-                        jsonrpc: "2.0",
-                        error: { code: -32603, message: "Server at capacity. Try again later." },
-                    });
-                    return;
-                }
-
-                // Create new session with a configured server instance
-                const sessionServer = this.createConfiguredServer();
-
-                const sessionTransport = new StreamableHTTPServerTransport({
-                    sessionIdGenerator: () => randomUUID(),
-                    enableJsonResponse: true,
-                });
-
-                sessionTransport.onclose = () => {
-                    const sid = sessionTransport.sessionId;
-                    if (sid && this._sessionManager!.has(sid)) {
-                        this._sessionManager!.delete(sid);
-                    }
-                };
-
-                await sessionServer.connect(sessionTransport);
-
-                if (sessionTransport.sessionId) {
-                    this._sessionManager!.set(sessionTransport.sessionId, {
-                        server: sessionServer,
-                        transport: sessionTransport,
-                        lastActivity: Date.now(),
-                    });
-                }
-
-                await sessionTransport.handleRequest(req, res, req.body);
-            } catch (error) {
-                console.error("MCP request error:", error);
-                if (!res.headersSent) {
-                    res.status(500).json({
-                        jsonrpc: "2.0",
-                        error: { code: -32603, message: "Internal server error" },
-                    });
-                }
-            }
-        });
-
-        // GET /mcp - Handle SSE streams
-        app.get("/mcp", async (req: Request, res: Response, next: NextFunction) => {
-            try {
-                const rawSessionId = req.headers["mcp-session-id"];
-                const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
-                if (!isValidSessionId(sessionId)) {
-                    res.status(400).json({
-                        jsonrpc: "2.0",
-                        error: { code: -32600, message: "Invalid or missing session ID" },
-                    });
-                    return;
-                }
-                if (!this._sessionManager!.has(sessionId)) {
-                    res.status(400).json({
-                        jsonrpc: "2.0",
-                        error: { code: -32600, message: "Session not found" },
-                    });
-                    return;
-                }
-                const session = this._sessionManager!.get(sessionId)!;
-                session.lastActivity = Date.now();
-                await session.transport.handleRequest(req, res);
-            } catch (error) {
-                next(error);
-            }
-        });
-
-        // DELETE /mcp - Terminate session
-        app.delete("/mcp", async (req: Request, res: Response, next: NextFunction) => {
-            const rawSessionId = req.headers["mcp-session-id"];
-            const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
-
-            if (sessionId && !isValidSessionId(sessionId)) {
-                res.status(400).json({
-                    jsonrpc: "2.0",
-                    error: { code: -32600, message: "Invalid session ID format" },
-                });
-                return;
-            }
-
-            if (sessionId && this._sessionManager!.has(sessionId)) {
-                const session = this._sessionManager!.get(sessionId)!;
-                try {
-                    session.transport.close();
-                    await session.server.close();
-                } catch (error) {
-                    next(error);
-                    return;
-                } finally {
-                    this._sessionManager!.delete(sessionId);
-                }
-            }
-            res.status(200).end();
-        });
-
-        // Global error handler
-        app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-            console.error("Unhandled error:", err);
-            if (!res.headersSent) {
-                res.status(500).json({
-                    jsonrpc: "2.0",
-                    error: { code: -32603, message: "Internal server error" },
-                });
-            }
+        const app = createHttpApp({
+            createMcpServer: () => this.createConfiguredServer(),
+            sessionManager: this._sessionManager,
+            authToken: this._frozenConfig!.authToken ?? process.env[ENV.AUTH_TOKEN],
+            allowedOrigins: this._frozenConfig!.allowedOrigins,
         });
 
         const port = this._frozenConfig!.port ?? parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);
+        const host = resolveHost(this._frozenConfig!.host);
 
         return new Promise((resolve, reject) => {
-            this._httpServer = app.listen(port);
+            this._httpServer = app.listen(port, host);
 
             this._httpServer.on("listening", () => {
-                console.error(`cURL MCP server running on http://localhost:${port}/mcp`);
+                console.error(`cURL MCP server running on http://${host}:${port}/mcp`);
                 resolve();
             });
 
@@ -614,35 +487,6 @@ export class McpCurlServer {
                 }
             });
         });
-    }
-
-    /**
-     * Create authentication middleware for HTTP transport.
-     */
-    private createAuthMiddleware(): (req: Request, res: Response, next: NextFunction) => void {
-        const authToken = this._frozenConfig!.authToken ?? process.env[ENV.AUTH_TOKEN];
-
-        return (req: Request, res: Response, next: NextFunction): void => {
-            if (!authToken) {
-                next();
-                return;
-            }
-
-            const authHeader = req.headers.authorization;
-            const expectedHeader = `Bearer ${authToken}`;
-            if (!authHeader || !safeStringCompare(authHeader, expectedHeader)) {
-                res.status(401).json({
-                    jsonrpc: "2.0",
-                    error: {
-                        code: -32600,
-                        message: "Unauthorized: Invalid or missing authentication token",
-                    },
-                });
-                return;
-            }
-
-            next();
-        };
     }
 
     /**

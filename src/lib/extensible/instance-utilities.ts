@@ -89,7 +89,7 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 output_dir: params.output_dir ?? config.outputDir,
             };
 
-            return executeCurlRequest(fullParams, {});
+            return executeCurlRequest(fullParams, { allowLocalhost: config.allowLocalhost });
         },
 
         async queryFile(filepath: string, jqFilter: string): Promise<JqQueryResult> {

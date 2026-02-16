@@ -192,12 +192,9 @@ export declare class McpCurlServer {
     private startStdio;
     /**
      * Start HTTP transport with session management.
+     * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
      */
     private startHttp;
-    /**
-     * Create authentication middleware for HTTP transport.
-     */
-    private createAuthMiddleware;
     /**
      * Ensure server has not been started.
      * @throws Error if started

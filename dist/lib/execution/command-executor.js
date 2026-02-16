@@ -41,10 +41,12 @@ export async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIM
             requestMemoryUsage = 0;
         };
         childProcess.stdout?.on("data", (data) => {
+            if (killed)
+                return; // Don't accumulate data after kill
             // data is already a Buffer, so .length gives byte count directly
             const dataSize = data.length;
             // Check global memory limit
-            if (!allocateMemory(dataSize) && !killed) {
+            if (!allocateMemory(dataSize)) {
                 killed = true;
                 clearTimeout(timeoutId);
                 releaseRequestMemory();
@@ -55,7 +57,7 @@ export async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIM
             stdout += data.toString();
             requestMemoryUsage += dataSize;
             // Check per-request limit
-            if (requestMemoryUsage > LIMITS.MAX_RESPONSE_SIZE && !killed) {
+            if (requestMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
                 killed = true;
                 clearTimeout(timeoutId);
                 releaseRequestMemory();
@@ -65,9 +67,11 @@ export async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIM
             }
         });
         childProcess.stderr?.on("data", (data) => {
+            if (killed)
+                return; // Don't accumulate data after kill
             const dataSize = data.length;
             // Track stderr in global memory pool to prevent OOM
-            if (!allocateMemory(dataSize) && !killed) {
+            if (!allocateMemory(dataSize)) {
                 killed = true;
                 clearTimeout(timeoutId);
                 releaseRequestMemory();

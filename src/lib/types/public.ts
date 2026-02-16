@@ -22,8 +22,12 @@ export interface McpCurlConfig {
     allowLocalhost?: boolean;
     /** HTTP transport port (default: 3000) */
     port?: number;
+    /** HTTP transport bind address (default: "127.0.0.1") */
+    host?: string;
     /** HTTP auth token (overrides MCP_AUTH_TOKEN env) */
     authToken?: string;
+    /** Allowed origins for HTTP transport Origin header validation (default: localhost) */
+    allowedOrigins?: string[];
 }
 
 /**

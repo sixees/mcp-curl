@@ -27,6 +27,7 @@ export interface Hooks {
  */
 export interface ToolExtra {
     sessionId?: string;
+    allowLocalhost?: boolean;
 }
 /**
  * Tool executor function signature for curl_execute.

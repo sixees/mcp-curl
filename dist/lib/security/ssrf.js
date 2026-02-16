@@ -5,9 +5,15 @@ import { ENV } from "../config/environment.js";
 import { isBlockedHostname, isLocalhostHostname, isBlockedIp, isLocalhostIp, isAllowedLocalhostPort, } from "../config/security/ssrf.js";
 import { getErrorMessage } from "../utils/index.js";
 /**
- * Check if localhost requests are allowed via environment variable.
+ * Check if localhost requests are allowed.
+ * Config override takes precedence over environment variable.
+ *
+ * @param configOverride - If provided, overrides the environment variable check
  */
-export function isLocalhostAllowed() {
+export function isLocalhostAllowed(configOverride) {
+    if (configOverride !== undefined) {
+        return configOverride;
+    }
     const value = process.env[ENV.ALLOW_LOCALHOST]?.toLowerCase();
     return value === "true" || value === "1" || value === "yes";
 }
@@ -39,9 +45,11 @@ export async function resolveDns(hostname) {
  *
  * By resolving once and pinning with --resolve, cURL uses our validated IP.
  *
+ * @param options - Optional overrides for validation behavior
+ * @param options.allowLocalhost - Override env var for localhost permission
  * @throws Error if URL uses blocked protocol, targets internal network, or localhost without permission
  */
-export async function validateUrlAndResolveDns(url) {
+export async function validateUrlAndResolveDns(url, options) {
     // Block file:// protocol which could read local files
     if (url.toLowerCase().startsWith("file://")) {
         throw new Error("file:// URLs are not allowed - they could be used to read local files");
@@ -75,7 +83,7 @@ export async function validateUrlAndResolveDns(url) {
     // Check if resolved IP is localhost
     const ipIsLocalhost = isLocalhostIp(resolvedIp);
     if (hostnameIsLocalhost || ipIsLocalhost) {
-        if (!isLocalhostAllowed()) {
+        if (!isLocalhostAllowed(options?.allowLocalhost)) {
             throw new Error(`Requests to localhost are blocked by default. ` +
                 `Set ${ENV.ALLOW_LOCALHOST}=true to enable local development/testing.` +
                 (ipIsLocalhost && !hostnameIsLocalhost

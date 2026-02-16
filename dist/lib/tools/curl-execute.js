@@ -118,7 +118,9 @@ export async function executeCurlRequest(params, extra = {}) {
         }
         // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
         // This returns the resolved IP which we pin with --resolve
-        const dnsResult = await validateUrlAndResolveDns(params.url);
+        const dnsResult = await validateUrlAndResolveDns(params.url, {
+            allowLocalhost: extra.allowLocalhost,
+        });
         // Rate limit by both target host and client to prevent abuse
         // Per-host: protects individual targets from being hammered
         // Per-client: prevents spreading requests across many hosts to bypass limits
@@ -166,6 +168,7 @@ export async function executeCurlRequest(params, extra = {}) {
         };
     }
     catch (error) {
+        console.error("curl_execute error:", error);
         const rawMessage = getErrorMessage(error);
         const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
         return {
