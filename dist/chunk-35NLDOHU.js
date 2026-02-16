@@ -22,7 +22,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-EEVW5ALN.js";
+} from "./chunk-G5JEJVFP.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -174,7 +174,8 @@ async function executeJqQuery(params, _extra) {
     };
   } catch (error) {
     const errorMessage = getErrorMessage(error);
-    console.error("jq_query error:", errorMessage);
+    const errorClass = error instanceof Error ? error.constructor.name : "Error";
+    console.error(`jq_query error: [${basename(params.filepath)}] ${errorClass}`);
     return {
       content: [
         {

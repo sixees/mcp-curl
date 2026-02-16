@@ -549,6 +549,10 @@ Two prompts are available for common use cases:
     - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
       development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
       service ports like 22, 25, 3306 remain blocked)
+    - **cURL-level protocol restriction**: `--proto =http,https` enforced on all requests as
+      defense-in-depth alongside Node URL validation
+    - **cURL-level size abort**: `--max-filesize` set to 10MB; cURL aborts early (exit code 63) when
+      `Content-Length` exceeds the limit, before data streams into Node
 
 ### Rate Limiting
 
@@ -592,6 +596,8 @@ Two prompts are available for common use cases:
 - **JQ parsing timeout**: 100ms (prevents ReDoS attacks via crafted filters)
 - Default request timeout: 30 seconds
 - SSL verification is enabled by default (use `insecure: true` only when necessary)
+- **Minimal error logging**: Server-side stderr logs only `[hostname]` or `[filename]` with error class name — no
+  message content, URLs, headers, or file paths are logged
 
 ### HTTP Transport Security
 

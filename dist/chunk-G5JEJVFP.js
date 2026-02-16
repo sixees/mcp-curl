@@ -949,6 +949,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
 // src/lib/execution/curl-args-builder.ts
 function buildCurlArgs(params) {
   const args = [];
+  args.push("--proto", "=http,https");
   if (params.method) {
     args.push("-X", params.method.toUpperCase());
   }
@@ -1014,6 +1015,7 @@ function buildCurlArgs(params) {
     const { hostname, port, resolvedIp } = params.dnsResolve;
     args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
   }
+  args.push("--max-filesize", String(LIMITS.MAX_RESPONSE_SIZE));
   args.push(params.url);
   return args;
 }
@@ -1657,7 +1659,13 @@ async function executeCurlRequest(params, extra = {}) {
   } catch (error) {
     const rawMessage = getErrorMessage(error);
     const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
-    console.error("curl_execute error:", sanitizeErrorMessage(rawMessage, false));
+    let hostname = "unknown";
+    try {
+      hostname = new URL(params.url).hostname;
+    } catch {
+    }
+    const errorClass = error instanceof Error ? error.constructor.name : "Error";
+    console.error(`curl_execute error: [${hostname}] ${errorClass}`);
     return {
       content: [
         {

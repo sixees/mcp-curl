@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.6] - 2026-02-16
+
+### Security
+
+- **cURL protocol restriction** – Added `--proto =http,https` to all requests as defense-in-depth alongside URL
+  validation, preventing protocol confusion between Node's URL parser and cURL's parser
+
+- **cURL size abort** – Added `--max-filesize` (10MB) to abort early when `Content-Length` exceeds the limit (cURL exit
+  code 63), before data streams into Node. Chunked/streaming responses without Content-Length still rely on the
+  Node-level backstop in `command-executor.ts`
+
+- **Minimal error logging** – Server-side `console.error` now logs only `[hostname]` or `[filename]` with error class
+  name. Previously could leak auth headers from `-v` mode, URLs with tokens, cURL stderr fragments, file content
+  snippets, or system paths. User-facing error messages are unchanged
+
 ## [1.1.5] - 2026-01-27
 
 ### Added

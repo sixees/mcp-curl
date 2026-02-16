@@ -82,6 +82,8 @@ Query saved JSON files without new HTTP requests:
 - DNS rebinding service blocking: `*.nip.io`, `*.sslip.io`, `*.xip.io` (prevents mapping hostnames to metadata IPs)
 - DNS rebinding prevention: DNS resolved before validation, cURL pinned to validated IP via `--resolve`
 - Protocol whitelist: only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
+- cURL-level protocol restriction: `--proto =http,https` on all requests (defense-in-depth alongside URL validation)
+- cURL-level size abort: `--max-filesize` set to 10MB; aborts early when `Content-Length` exceeds limit (exit code 63)
 - Windows UNC paths blocked (`\\server\share`)
 - Localhost: blocked by default; `MCP_CURL_ALLOW_LOCALHOST=true` enables with port restrictions (80, 443, >1024)
 
@@ -114,6 +116,7 @@ Query saved JSON files without new HTTP requests:
 - JQ parsing timeout: 100ms (prevents ReDoS)
 - Default request timeout: 30 seconds
 - SSL verification enabled by default
+- Server-side error logs are minimal: `tool_name error: [hostname/filename] ErrorClassName` (no message content)
 
 **Timeout Handling:**
 

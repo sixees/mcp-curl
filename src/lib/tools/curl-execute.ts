@@ -214,7 +214,14 @@ export async function executeCurlRequest(
     } catch (error) {
         const rawMessage = getErrorMessage(error);
         const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
-        console.error("curl_execute error:", sanitizeErrorMessage(rawMessage, false));
+        let hostname = "unknown";
+        try {
+            hostname = new URL(params.url).hostname;
+        } catch {
+            // URL parsing failed — keep "unknown"
+        }
+        const errorClass = error instanceof Error ? error.constructor.name : "Error";
+        console.error(`curl_execute error: [${hostname}] ${errorClass}`);
         return {
             content: [
                 {
