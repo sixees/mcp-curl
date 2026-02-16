@@ -1,9 +1,15 @@
 // src/lib/execution/command-executor.ts
-// Execute shell commands with memory tracking, timeout, and size limits
+// Execute allowed commands with memory tracking, timeout, and size limits
 
 import { spawn, ChildProcess } from "child_process";
 import { LIMITS, BYTES_PER_MB } from "../config/limits.js";
 import { allocateMemory, releaseMemory } from "./memory-tracker.js";
+
+/** Allowlist of commands that can be executed */
+const ALLOWED_COMMANDS = ["curl"] as const;
+
+/** Union type of allowed command names */
+export type AllowedCommand = typeof ALLOWED_COMMANDS[number];
 
 /**
  * Result of executing a command.
@@ -18,26 +24,32 @@ export interface CommandResult {
 }
 
 /**
- * Execute a command with memory tracking, timeout, and size limits.
+ * Execute an allowed command with memory tracking, timeout, and size limits.
  *
  * Security features:
+ * - Command allowlist: only "curl" can be executed (compile-time + runtime)
  * - Uses spawn() without shell to prevent command injection
  * - Per-request memory tracking with global limit enforcement
  * - Per-request size limit (kills process if exceeded)
  * - AbortController for process-level timeout
  * - Stderr truncation at MAX_RESPONSE_SIZE
  *
- * @param command - The command to execute
+ * @param command - The command to execute (must be in ALLOWED_COMMANDS)
  * @param args - Arguments for the command
  * @param timeout - Timeout in milliseconds (defaults to LIMITS.DEFAULT_TIMEOUT_MS)
  * @returns CommandResult with stdout, stderr, and exitCode
- * @throws Error if timeout, memory limit, or size limit exceeded
+ * @throws Error if command not allowed, timeout, memory limit, or size limit exceeded
  */
 export async function executeCommand(
-    command: string,
+    command: AllowedCommand,
     args: string[],
     timeout: number = LIMITS.DEFAULT_TIMEOUT_MS
 ): Promise<CommandResult> {
+    // Runtime guard: reject commands not in the allowlist (defense-in-depth for JS callers)
+    if (!(ALLOWED_COMMANDS as readonly string[]).includes(command)) {
+        throw new Error(`Command not allowed: ${command}. Only ${ALLOWED_COMMANDS.join(", ")} can be executed.`);
+    }
+
     // Track this request's memory usage for cleanup
     let requestMemoryUsage = 0;
 

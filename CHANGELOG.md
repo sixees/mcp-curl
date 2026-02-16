@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - IPv4-mapped IPv6 addresses
     - IPv6 private ranges (loopback, link-local, unique local)
     - Internal TLDs: .local, .internal, .corp, .lan, .localhost (case-insensitive)
+    - Cloud metadata hostnames: `metadata.google.internal`, `instance-data.ec2.internal`, `metadata.azure.com`
+    - DNS rebinding services: `*.nip.io`, `*.sslip.io`, `*.xip.io`
 
 - **DNS rebinding prevention** – DNS resolved before validation, cURL pinned to validated IP via `--resolve`
 
@@ -49,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - jq filter parsing timeout: 100ms (prevents ReDoS)
     - Global memory limit: 100MB across concurrent requests
     - Session idle timeout: 1 hour with automatic cleanup
+
+- **Command allowlist** – `executeCommand()` restricted to `"curl"` only via TypeScript literal type and runtime guard
 
 - **Input validation**
     - CRLF injection protection for headers, user-agent, auth values

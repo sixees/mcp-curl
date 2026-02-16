@@ -39,14 +39,19 @@
  *    two patterns: /^fc00:/i for the fc00:: prefix and /^fd[0-9a-f]{2}:/i for
  *    the fd00::/8 range (which is the commonly used subset for local networks).
  *
+ * 7. Cloud Metadata Service Hostnames
+ *    Cloud providers expose instance metadata via well-known hostnames
+ *    (metadata.google.internal, instance-data.ec2.internal, etc.).
+ *    While their IPs (169.254.169.254, fd00:ec2::254) are already blocked
+ *    via link-local and unique local patterns, we also block the hostnames
+ *    as defense-in-depth. This catches requests before DNS resolution and
+ *    also covers DNS rebinding services (e.g., nip.io, sslip.io) that
+ *    could map metadata hostnames to metadata IPs.
+ *
  * DEFENSE IN DEPTH:
  * We check BOTH hostnames AND resolved IPs because:
  * - Hostname check catches obvious internal addresses before DNS lookup
  * - IP check catches DNS rebinding and hostnames that resolve to internal IPs
- *
- * TODO: Consider adding cloud metadata HOSTNAME blocking (metadata.google.internal,
- * instance-data.ec2.internal, etc.). Cloud metadata IPs like 169.254.169.254 and
- * fd00:ec2::254 are already blocked via link-local and unique local patterns.
  */
 
 // ============================================================================
@@ -86,6 +91,20 @@ const BLOCKED_HOSTNAME_PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([
     /\.corp$/i,
     /\.lan$/i,
     /\.localhost$/i,
+    // Cloud metadata service hostnames (defense-in-depth; IPs already blocked via link-local)
+    // AWS EC2 metadata
+    /^instance-data\.ec2\.internal$/i,
+    // GCP metadata
+    /^metadata\.google\.internal$/i,
+    // Azure metadata (uses 169.254.169.254 with special header, but block hostname too)
+    /^metadata\.azure\.com$/i,
+    // Generic metadata hostname pattern (catches metadata.* on internal TLDs already blocked above,
+    // but this also catches bare "metadata" hostname without TLD)
+    /^metadata$/i,
+    // DNS rebinding services that can map any hostname to any IP (e.g., 169.254.169.254)
+    /\.nip\.io$/i,
+    /\.sslip\.io$/i,
+    /\.xip\.io$/i,
     // Windows UNC paths
     /^\\\\[^\\]+/,
 ]);

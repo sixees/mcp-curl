@@ -29,7 +29,7 @@ implementation in `src/index.ts`.
 
 - `createServer()` - Factory function for MCP server instances
 - `registerAllCapabilities(server)` - Registers tools, resources, and prompts
-- `executeCommand()` - Spawns cURL process with size limits and timeout handling
+- `executeCommand()` - Spawns allowed commands (allowlist: `curl` only) with size limits and timeout handling
 - `buildCurlArgs()` - Converts structured params to cURL CLI arguments
 - `processResponse()` - Handles jq filtering, size limits, and file saving
 - `applyJqFilter()` / `applySingleJqFilter()` / `parseJqFilter()` - JSON path extraction (jq-like syntax)
@@ -77,6 +77,9 @@ Query saved JSON files without new HTTP requests:
 **Network Security:**
 
 - SSRF protection: blocks private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.x), IPv4-mapped IPv6, internal TLDs
+- Cloud metadata hostname blocking: `metadata.google.internal`, `instance-data.ec2.internal`, `metadata.azure.com`, bare
+  `metadata`
+- DNS rebinding service blocking: `*.nip.io`, `*.sslip.io`, `*.xip.io` (prevents mapping hostnames to metadata IPs)
 - DNS rebinding prevention: DNS resolved before validation, cURL pinned to validated IP via `--resolve`
 - Protocol whitelist: only `http://` and `https://` allowed; `file://`, `ftp://`, etc. blocked
 - Windows UNC paths blocked (`\\server\share`)
@@ -90,6 +93,7 @@ Query saved JSON files without new HTTP requests:
 **Input Validation:**
 
 - Only structured `curl_execute` and `jq_query` tools (no arbitrary command execution)
+- Command allowlist: `executeCommand()` only accepts `"curl"` (compile-time type + runtime guard)
 - Commands executed via `spawn()` without shell (prevents injection)
 - CRLF injection protection: validates headers, user-agent, auth values, and form fields for newlines
 - Uses `--data-raw` and `--form-string` to prevent file exfiltration via `@` prefix

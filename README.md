@@ -542,6 +542,10 @@ Two prompts are available for common use cases:
     - IPv4-mapped IPv6: `::ffff:` prefixed versions of all blocked IPv4 ranges
     - IPv6 private: loopback (::1), link-local (fe80::), unique local (fc00::, fd00::)
     - Internal TLDs (case-insensitive): .local, .internal, .corp, .lan, .localhost
+    - **Cloud metadata hostnames**: `metadata.google.internal`, `instance-data.ec2.internal`,
+      `metadata.azure.com`, and bare `metadata` blocked to prevent cloud instance metadata access
+    - **DNS rebinding services**: `*.nip.io`, `*.sslip.io`, `*.xip.io` blocked to prevent mapping
+      arbitrary hostnames to internal IPs (e.g., `169.254.169.254.nip.io`)
     - **Localhost**: Blocked by default. Set `MCP_CURL_ALLOW_LOCALHOST=true` to enable for local
       development/testing. When enabled, only ports 80, 443, and >1024 are allowed (privileged
       service ports like 22, 25, 3306 remain blocked)
@@ -555,6 +559,9 @@ Two prompts are available for common use cases:
 ### Input Validation
 
 - Only structured `curl_execute` and `jq_query` tools available (no arbitrary command execution)
+- **Command allowlist**: `executeCommand()` only accepts `"curl"` — enforced at both compile-time
+  (TypeScript literal type) and runtime (allowlist guard), preventing arbitrary command execution
+  even from programmatic API consumers
 - All parameters are validated using Zod schemas
 - Commands are executed without shell interpretation to prevent injection
 - **CRLF Injection Prevention**: Validates headers, user-agent, and auth values for newline characters

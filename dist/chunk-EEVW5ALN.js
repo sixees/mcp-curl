@@ -178,6 +178,20 @@ var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
   /\.corp$/i,
   /\.lan$/i,
   /\.localhost$/i,
+  // Cloud metadata service hostnames (defense-in-depth; IPs already blocked via link-local)
+  // AWS EC2 metadata
+  /^instance-data\.ec2\.internal$/i,
+  // GCP metadata
+  /^metadata\.google\.internal$/i,
+  // Azure metadata (uses 169.254.169.254 with special header, but block hostname too)
+  /^metadata\.azure\.com$/i,
+  // Generic metadata hostname pattern (catches metadata.* on internal TLDs already blocked above,
+  // but this also catches bare "metadata" hostname without TLD)
+  /^metadata$/i,
+  // DNS rebinding services that can map any hostname to any IP (e.g., 169.254.169.254)
+  /\.nip\.io$/i,
+  /\.sslip\.io$/i,
+  /\.xip\.io$/i,
   // Windows UNC paths
   /^\\\\[^\\]+/
 ]);
@@ -833,7 +847,11 @@ function releaseMemory(bytes) {
 }
 
 // src/lib/execution/command-executor.ts
+var ALLOWED_COMMANDS = ["curl"];
 async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS) {
+  if (!ALLOWED_COMMANDS.includes(command)) {
+    throw new Error(`Command not allowed: ${command}. Only ${ALLOWED_COMMANDS.join(", ")} can be executed.`);
+  }
   let requestMemoryUsage = 0;
   return new Promise((resolve3, reject) => {
     const abortController = new AbortController();
