@@ -34,7 +34,12 @@ export const LIMITS = {
  * @throws Error if port is not a valid integer in range 1-65535
  */
 export function parsePort(value: string | undefined, defaultPort: number): number {
-    const port = parseInt(value || String(defaultPort), 10);
+    const raw = value || String(defaultPort);
+    // Reject trailing garbage (e.g., "3000abc") that parseInt would silently accept
+    if (!/^\d+$/.test(raw)) {
+        throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
+    }
+    const port = parseInt(raw, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
     }

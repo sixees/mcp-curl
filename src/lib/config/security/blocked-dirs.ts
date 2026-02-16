@@ -81,7 +81,9 @@ function startsWithBlockedPrefix(path: string, blockedDirs: readonly string[]): 
  * Subdirectories are allowed for these paths.
  */
 function isExactRootOnlyMatch(path: string, rootOnlyDirs: readonly string[]): boolean {
-    return rootOnlyDirs.includes(path);
+    // Strip trailing slashes so "/Volumes/" matches "/Volumes"
+    const normalized = path.replace(/\/+$/, "");
+    return rootOnlyDirs.includes(normalized);
 }
 
 /**

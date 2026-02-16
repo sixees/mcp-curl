@@ -22,7 +22,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-G5JEJVFP.js";
+} from "./chunk-MUUYSCTU.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -332,7 +332,7 @@ Files can only be read from:
 
 ### Rate Limits
 - Per-hostname: 60 requests/minute
-- Per-client: 300 requests/minute total
+- Per-client: 300 requests/minute total (HTTP: per session; stdio: shared single bucket)
 
 ### Resource Limits
 - Max response for processing: 10MB
@@ -895,7 +895,7 @@ var McpCurlServer = class {
     this.ensureNotStarted("registerCustomTool()");
     if (name === "curl_execute" || name === "jq_query") {
       throw new Error(
-        `Cannot register custom tool "${name}": conflicts with built-in tool. Use disable${name === "curl_execute" ? "CurlExecute" : "JqQuery"}() first.`
+        `Cannot register custom tool "${name}": built-in tool names are reserved and cannot be overridden, even if disabled.`
       );
     }
     if (this._customTools.some((t) => t.name === name)) {
@@ -963,6 +963,14 @@ var McpCurlServer = class {
         await this.startStdio();
       }
     } catch (error) {
+      if (this._httpServer) {
+        this._httpServer.close();
+        this._httpServer = null;
+      }
+      if (this._sessionManager) {
+        this._sessionManager.stopCleanup();
+        this._sessionManager = null;
+      }
       if (this._rateLimitInterval) {
         stopRateLimitCleanup(this._rateLimitInterval);
         this._rateLimitInterval = null;
@@ -1030,11 +1038,16 @@ var McpCurlServer = class {
     if (this._rateLimitInterval) {
       stopRateLimitCleanup(this._rateLimitInterval);
     }
-    await cleanupTempDir();
-    this._started = false;
-    this._frozenConfig = null;
-    this._rateLimitInterval = null;
-    this._sessionManager = null;
+    try {
+      await cleanupTempDir();
+    } catch (error) {
+      console.error("Warning: Error cleaning up temp directory:", error);
+    } finally {
+      this._started = false;
+      this._frozenConfig = null;
+      this._rateLimitInterval = null;
+      this._sessionManager = null;
+    }
   }
   /**
    * Create a fully configured MCP server instance.
@@ -1094,7 +1107,7 @@ var McpCurlServer = class {
       authToken: this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN],
       allowedOrigins: this._frozenConfig.allowedOrigins
     });
-    const port = this._frozenConfig.port ?? parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);
+    const port = this._frozenConfig.port ?? parsePort(process.env[ENV.PORT], LIMITS.DEFAULT_HTTP_PORT);
     const host = resolveHost(this._frozenConfig.host);
     return new Promise((resolve, reject) => {
       this._httpServer = app.listen(port, host);
@@ -1117,7 +1130,8 @@ var McpCurlServer = class {
   freezeConfig() {
     return Object.freeze({
       ...this._config,
-      defaultHeaders: this._config.defaultHeaders ? Object.freeze({ ...this._config.defaultHeaders }) : void 0
+      defaultHeaders: this._config.defaultHeaders ? Object.freeze({ ...this._config.defaultHeaders }) : void 0,
+      allowedOrigins: this._config.allowedOrigins ? Object.freeze([...this._config.allowedOrigins]) : void 0
     });
   }
   /**

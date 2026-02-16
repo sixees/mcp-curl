@@ -116,25 +116,35 @@ server.registerCustomTool(
             headers: {"Accept": "application/json"},
         });
 
-        if (!result.success) {
+        if (result.isError) {
             return {
-                content: [{type: "text", text: result.error ?? "Request failed"}],
+                content: [{type: "text", text: result.content[0]?.text ?? "Request failed"}],
                 isError: true,
             };
         }
 
         // Format the response
-        const user = JSON.parse(result.response);
-        const formatted = `
+        try {
+            const user = JSON.parse(result.content[0].text);
+            const formatted = `
 User Profile:
   Name: ${user.name}
   Email: ${user.email}
   Role: ${user.role}
 `.trim();
 
-        return {
-            content: [{type: "text", text: formatted}],
-        };
+            return {
+                content: [{type: "text", text: formatted}],
+            };
+        } catch (error) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `Failed to parse response: ${error instanceof Error ? error.message : String(error)}`
+                }],
+                isError: true,
+            };
+        }
     }
 );
 ```
@@ -195,16 +205,16 @@ Annotations help clients understand tool behavior:
 
 ```typescript
 annotations: {
-    readOnlyHint: true,      // Only reads, doesn't modify
+    readOnlyHint: true,       // Only reads, doesn't modify
         destructiveHint
 :
-    false,  // Doesn't delete data
+    false,   // Doesn't delete data
         idempotentHint
 :
-    true,    // Safe to call multiple times
+    true,     // Safe to call multiple times
         openWorldHint
 :
-    true,     // Makes external requests
+    true,      // Makes external requests
 }
 ```
 
@@ -260,15 +270,15 @@ server.registerCustomTool(
             url: `/current.json?key=${apiKey}&q=${encodeURIComponent(location)}`,
         });
 
-        if (!result.success) {
+        if (result.isError) {
             return {
-                content: [{type: "text", text: `Weather API error: ${result.error}`}],
+                content: [{type: "text", text: `Weather API error: ${result.content[0]?.text ?? "Unknown"}`}],
                 isError: true,
             };
         }
 
         try {
-            const data = JSON.parse(result.response);
+            const data = JSON.parse(result.content[0].text);
             const temp = units === "imperial"
                 ? `${data.current.temp_f}°F`
                 : `${data.current.temp_c}°C`;

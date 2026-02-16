@@ -5,6 +5,7 @@
 // Falls back to "0.0.0" when running unbundled (e.g., tests via vitest).
 declare const __PACKAGE_VERSION__: string | undefined;
 
+/** MCP server identity constants used for protocol identification and version reporting. */
 export const SERVER = {
     /** MCP server name for protocol identification */
     NAME: "curl-mcp-server",

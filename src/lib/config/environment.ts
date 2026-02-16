@@ -12,4 +12,6 @@ export const ENV = {
     ALLOWED_ORIGINS: "MCP_CURL_ALLOWED_ORIGINS",
     /** HTTP transport bind address (default: 127.0.0.1) */
     HOST: "MCP_CURL_HOST",
+    /** HTTP transport port (default: 3000) */
+    PORT: "PORT",
 } as const;

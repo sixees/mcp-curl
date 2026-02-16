@@ -143,7 +143,7 @@ Files can only be read from:
 
 ### Rate Limits
 - Per-hostname: 60 requests/minute
-- Per-client: 300 requests/minute total
+- Per-client: 300 requests/minute total (HTTP: per session; stdio: shared single bucket)
 
 ### Resource Limits
 - Max response for processing: 10MB

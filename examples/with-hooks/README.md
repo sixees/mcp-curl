@@ -50,7 +50,7 @@ npm start
 
 The server logs to stderr (so it doesn't interfere with MCP communication):
 
-```
+```text
 [req-1234-abc123] curl_execute: /users
 [req-1234-abc123] Success (145ms) - 2847 bytes
 [Metrics] Requests: 10, Success: 9, Failed: 1, Avg Latency: 132ms
@@ -60,7 +60,7 @@ The server logs to stderr (so it doesn't interfere with MCP communication):
 
 When you stop the server (Ctrl+C), it prints final metrics:
 
-```
+```text
 [Shutdown] Final metrics:
   Total requests: 25
   Successful: 23

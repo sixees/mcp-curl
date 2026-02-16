@@ -127,6 +127,19 @@ export async function executeCommand(
             }
             requestMemoryUsage += dataSize;
 
+            // Enforce per-request size limit across both stdout and stderr
+            if (requestMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
+                killed = true;
+                clearTimeout(timeoutId);
+                releaseRequestMemory();
+                childProcess.kill();
+                reject(new Error(
+                    `Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. ` +
+                    `Consider using a more specific API endpoint or adding query parameters to reduce response size.`
+                ));
+                return;
+            }
+
             if (stderrMemoryUsage < LIMITS.MAX_RESPONSE_SIZE) {
                 const dataStr = data.toString();
                 stderr += dataStr;
@@ -143,14 +156,15 @@ export async function executeCommand(
             }
         });
 
-        childProcess.on("close", (code: number | null) => {
+        childProcess.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
             clearTimeout(timeoutId);
             releaseRequestMemory(); // Release memory tracking on completion
             if (!killed) {
                 resolve({
                     stdout,
                     stderr,
-                    exitCode: code ?? 0,
+                    // null code means process was killed by signal — report as failure (not 0)
+                    exitCode: code ?? (signal ? 1 : 0),
                 });
             }
         });

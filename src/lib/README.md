@@ -4,7 +4,7 @@ Extracted utility modules organized by domain.
 
 ## Dependency Graph
 
-```
+```text
 Foundational (no lib deps):
   config/     - Constants and configuration
   types/      - TypeScript type definitions

@@ -51,8 +51,10 @@ export function resolveOutputDir(paramDir?: string): string | null {
  * @throws Error if directory doesn't exist, isn't a directory, or isn't writable
  */
 export async function validateOutputDir(dir: string): Promise<string> {
-    // Block path traversal in input string
-    if (dir.includes("..")) {
+    // Block path traversal: check for ".." as a path segment (not substring)
+    // This allows valid names like "/tmp/foo..bar" while blocking "/tmp/../etc"
+    const segments = dir.split(/[/\\]/);
+    if (segments.includes("..")) {
         throw new Error(
             `Invalid output_dir: path traversal detected. ` +
             `Please provide a direct path without ".." components.`

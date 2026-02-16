@@ -124,6 +124,12 @@ server
         const duration = Date.now() - (requestTimes.get(requestId) ?? Date.now());
         requestTimes.delete(requestId);
         console.error(`[${requestId}] Completed in ${duration}ms`);
+    })
+    .onError((ctx) => {
+        // Clean up requestTimes on error (afterResponse won't run)
+        if (ctx.tool !== "curl_execute") return;
+        const requestId = ctx.params.headers?.["X-Request-ID"];
+        if (requestId) requestTimes.delete(requestId);
     });
 ```
 

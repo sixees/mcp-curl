@@ -24,8 +24,8 @@ The following versions of this project are currently receiving security updates:
 Instead, please report them via one of the following methods:
 
 - **GitHub Security Advisories (Preferred):**
-  Use [GitHub's private vulnerability reporting feature](../../security/advisories/new) to submit a report directly
-  through this repository.
+    - Use [GitHub's private vulnerability reporting feature](../../security/advisories/new) to submit a report directly
+      through this repository.
 
 ### What to Include
 

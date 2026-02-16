@@ -214,8 +214,7 @@ export class McpCurlServer {
         // Check for conflicts with built-in tools
         if (name === "curl_execute" || name === "jq_query") {
             throw new Error(
-                `Cannot register custom tool "${name}": conflicts with built-in tool. ` +
-                `Use disable${name === "curl_execute" ? "CurlExecute" : "JqQuery"}() first.`
+                `Cannot register custom tool "${name}": built-in tool names are reserved and cannot be overridden, even if disabled.`
             );
         }
 
@@ -300,6 +299,14 @@ export class McpCurlServer {
             }
         } catch (error) {
             // Rollback state on failure to allow retry with new instance
+            if (this._httpServer) {
+                this._httpServer.close();
+                this._httpServer = null;
+            }
+            if (this._sessionManager) {
+                this._sessionManager.stopCleanup();
+                this._sessionManager = null;
+            }
             if (this._rateLimitInterval) {
                 stopRateLimitCleanup(this._rateLimitInterval);
                 this._rateLimitInterval = null;
@@ -378,14 +385,18 @@ export class McpCurlServer {
             stopRateLimitCleanup(this._rateLimitInterval);
         }
 
-        // Clean up temp directory
-        await cleanupTempDir();
-
-        // Reset state to allow potential reuse
-        this._started = false;
-        this._frozenConfig = null;
-        this._rateLimitInterval = null;
-        this._sessionManager = null;
+        // Clean up temp directory (wrapped in try/finally to always reset state)
+        try {
+            await cleanupTempDir();
+        } catch (error) {
+            console.error("Warning: Error cleaning up temp directory:", error);
+        } finally {
+            // Reset state to allow potential reuse
+            this._started = false;
+            this._frozenConfig = null;
+            this._rateLimitInterval = null;
+            this._sessionManager = null;
+        }
     }
 
     /**
@@ -455,7 +466,7 @@ export class McpCurlServer {
             allowedOrigins: this._frozenConfig!.allowedOrigins,
         });
 
-        const port = this._frozenConfig!.port ?? parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);
+        const port = this._frozenConfig!.port ?? parsePort(process.env[ENV.PORT], LIMITS.DEFAULT_HTTP_PORT);
         const host = resolveHost(this._frozenConfig!.host);
 
         return new Promise((resolve, reject) => {
@@ -484,6 +495,9 @@ export class McpCurlServer {
             ...this._config,
             defaultHeaders: this._config.defaultHeaders
                 ? Object.freeze({ ...this._config.defaultHeaders })
+                : undefined,
+            allowedOrigins: this._config.allowedOrigins
+                ? Object.freeze([...this._config.allowedOrigins]) as string[]
                 : undefined,
         });
     }

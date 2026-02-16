@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **cURL protocol restriction** – Added `--proto =http,https` to all requests as defense-in-depth alongside URL
+- **cURL protocol restriction** – Added `--proto=http,https` to all requests as defense-in-depth alongside URL
   validation, preventing protocol confusion between Node's URL parser and cURL's parser
 
 - **cURL size abort** – Added `--max-filesize` (10MB) to abort early when `Content-Length` exceeds the limit (cURL exit

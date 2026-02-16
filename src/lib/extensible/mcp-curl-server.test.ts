@@ -221,7 +221,7 @@ describe("McpCurlServer.registerCustomTool()", () => {
                 },
                 handler
             )
-        ).toThrow("conflicts with built-in tool");
+        ).toThrow("built-in tool names are reserved");
     });
 
     it("should reject tool name jq_query", () => {
@@ -236,7 +236,7 @@ describe("McpCurlServer.registerCustomTool()", () => {
                 },
                 handler
             )
-        ).toThrow("conflicts with built-in tool");
+        ).toThrow("built-in tool names are reserved");
     });
 
     it("should reject duplicate custom tool names", () => {

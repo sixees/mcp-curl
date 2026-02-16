@@ -68,7 +68,11 @@ var LIMITS = {
   MAX_REDIRECTS: 10
 };
 function parsePort(value, defaultPort) {
-  const port = parseInt(value || String(defaultPort), 10);
+  const raw = value || String(defaultPort);
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
+  }
+  const port = parseInt(raw, 10);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
   }
@@ -140,7 +144,9 @@ var ENV = {
   /** Comma-separated allowed origins for HTTP transport (default: localhost) */
   ALLOWED_ORIGINS: "MCP_CURL_ALLOWED_ORIGINS",
   /** HTTP transport bind address (default: 127.0.0.1) */
-  HOST: "MCP_CURL_HOST"
+  HOST: "MCP_CURL_HOST",
+  /** HTTP transport port (default: 3000) */
+  PORT: "PORT"
 };
 
 // src/lib/config/security/ssrf.ts
@@ -326,7 +332,8 @@ function startsWithBlockedPrefix(path, blockedDirs) {
   return false;
 }
 function isExactRootOnlyMatch(path, rootOnlyDirs) {
-  return rootOnlyDirs.includes(path);
+  const normalized = path.replace(/\/+$/, "");
+  return rootOnlyDirs.includes(normalized);
 }
 function isBlockedSystemDirectory(resolvedPath) {
   const platform = process.platform;
@@ -518,7 +525,8 @@ function resolveOutputDir(paramDir) {
   return null;
 }
 async function validateOutputDir(dir) {
-  if (dir.includes("..")) {
+  const segments = dir.split(/[/\\]/);
+  if (segments.includes("..")) {
     throw new Error(
       `Invalid output_dir: path traversal detected. Please provide a direct path without ".." components.`
     );
@@ -908,6 +916,16 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
         return;
       }
       requestMemoryUsage += dataSize;
+      if (requestMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
+        killed = true;
+        clearTimeout(timeoutId);
+        releaseRequestMemory();
+        childProcess.kill();
+        reject(new Error(
+          `Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. Consider using a more specific API endpoint or adding query parameters to reduce response size.`
+        ));
+        return;
+      }
       if (stderrMemoryUsage < LIMITS.MAX_RESPONSE_SIZE) {
         const dataStr = data.toString();
         stderr += dataStr;
@@ -921,14 +939,15 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
         }
       }
     });
-    childProcess.on("close", (code) => {
+    childProcess.on("close", (code, signal) => {
       clearTimeout(timeoutId);
       releaseRequestMemory();
       if (!killed) {
         resolve3({
           stdout,
           stderr,
-          exitCode: code ?? 0
+          // null code means process was killed by signal — report as failure (not 0)
+          exitCode: code ?? (signal ? 1 : 0)
         });
       }
     });
@@ -1083,11 +1102,11 @@ import { join as join2 } from "path";
 import { writeFile } from "fs/promises";
 function createSafeFilenameBase(input, fallback = "response") {
   let base = input.replace(/[^a-zA-Z0-9]/g, "_");
+  base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
   base = base.replace(/^_+|_+$/g, "");
   if (!base) {
     base = fallback;
   }
-  base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
   if (isWindowsReservedBasename(base) || base === "." || base === "..") {
     const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
     base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH) : prefixed;

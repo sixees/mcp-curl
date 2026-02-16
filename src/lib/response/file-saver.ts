@@ -23,14 +23,15 @@ import { getOrCreateTempDir } from "../files/index.js";
 export function createSafeFilenameBase(input: string, fallback = "response"): string {
     // Replace non-alphanumeric characters with underscores
     let base = input.replace(/[^a-zA-Z0-9]/g, "_");
+    // Enforce maximum length before trimming underscores to prevent ReDoS
+    // on strings with many consecutive underscores (e.g., "____...____")
+    base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
     // Trim leading and trailing underscores to avoid names like "___"
     base = base.replace(/^_+|_+$/g, "");
     // Ensure we have a non-empty base
     if (!base) {
         base = fallback;
     }
-    // Enforce maximum length
-    base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
     // Avoid reserved or problematic base names across platforms
     // (isWindowsReservedBasename handles case-insensitivity internally)
     if (isWindowsReservedBasename(base) || base === "." || base === "..") {
