@@ -1,8 +1,32 @@
-// src/lib/schema/index.ts
-// Barrel export for the schema module
-// Validation
-export { ApiSchemaValidator, ApiSchemaValidationError, validateApiSchema, } from "./validator.js";
-// Loading
-export { ApiSchemaLoadError, loadApiSchema, loadApiSchemaFromString, } from "./loader.js";
-// Generation
-export { AuthenticationError, generateInputSchema, buildUrl, getAuthConfig, getMethodAnnotations, registerEndpointTools, generateToolDefinitions, } from "./generator.js";
+import "../../chunk-75AHYVPG.js";
+import {
+  ApiSchemaLoadError,
+  ApiSchemaValidationError,
+  ApiSchemaValidator,
+  AuthenticationError,
+  buildUrl,
+  generateInputSchema,
+  generateToolDefinitions,
+  getAuthConfig,
+  getMethodAnnotations,
+  loadApiSchema,
+  loadApiSchemaFromString,
+  registerEndpointTools,
+  validateApiSchema
+} from "../../chunk-U3LWBWHM.js";
+import "../../chunk-RNW7WIXZ.js";
+export {
+  ApiSchemaLoadError,
+  ApiSchemaValidationError,
+  ApiSchemaValidator,
+  AuthenticationError,
+  buildUrl,
+  generateInputSchema,
+  generateToolDefinitions,
+  getAuthConfig,
+  getMethodAnnotations,
+  loadApiSchema,
+  loadApiSchemaFromString,
+  registerEndpointTools,
+  validateApiSchema
+};

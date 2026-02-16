@@ -1,18 +1,42 @@
-// src/lib.ts
-// Library entry point for programmatic usage of mcp-curl
-//
-// This module exports the extensible McpCurlServer class and all public types
-// for building custom MCP servers with cURL capabilities.
-// Main server class
-export { McpCurlServer } from "./lib/extensible/index.js";
-// Instance utilities for direct tool execution
-export { createInstanceUtilities } from "./lib/extensible/index.js";
-// API server factory (creates servers from YAML schema definitions)
-export { createApiServer, createApiServerSync } from "./lib/api-server.js";
-export { 
-// Validation
-ApiSchemaValidator, ApiSchemaValidationError, validateApiSchema, 
-// Loading
-ApiSchemaLoadError, loadApiSchema, loadApiSchemaFromString, 
-// Generation
-AuthenticationError, generateInputSchema, buildUrl, getAuthConfig, registerEndpointTools, generateToolDefinitions, } from "./lib/schema/index.js";
+import {
+  createApiServer,
+  createApiServerSync
+} from "./chunk-LYPU6TLH.js";
+import {
+  McpCurlServer,
+  createInstanceUtilities
+} from "./chunk-YJO3HCMU.js";
+import "./chunk-75AHYVPG.js";
+import {
+  ApiSchemaLoadError,
+  ApiSchemaValidationError,
+  ApiSchemaValidator,
+  AuthenticationError,
+  buildUrl,
+  generateInputSchema,
+  generateToolDefinitions,
+  getAuthConfig,
+  loadApiSchema,
+  loadApiSchemaFromString,
+  registerEndpointTools,
+  validateApiSchema
+} from "./chunk-U3LWBWHM.js";
+import "./chunk-RNW7WIXZ.js";
+export {
+  ApiSchemaLoadError,
+  ApiSchemaValidationError,
+  ApiSchemaValidator,
+  AuthenticationError,
+  McpCurlServer,
+  buildUrl,
+  createApiServer,
+  createApiServerSync,
+  createInstanceUtilities,
+  generateInputSchema,
+  generateToolDefinitions,
+  getAuthConfig,
+  loadApiSchema,
+  loadApiSchemaFromString,
+  registerEndpointTools,
+  validateApiSchema
+};
