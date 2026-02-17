@@ -100,7 +100,7 @@ export function registerCurlToolWithHooks(
     server.registerTool(
         "curl_execute",
         CURL_EXECUTE_TOOL_META,
-        ((params: CurlExecuteInput, extra: { sessionId?: string }) => {
+        ((params: CurlExecuteInput, extra?: { sessionId?: string }) => {
             // Check if tool is enabled
             if (!enabled) {
                 return Promise.resolve({
@@ -123,7 +123,7 @@ export function registerCurlToolWithHooks(
                 transformedParams,
                 config,
                 hooks,
-                extra.sessionId,
+                extra?.sessionId,
                 executor
             );
         }) as ToolCallback<typeof CurlExecuteSchema>
@@ -146,7 +146,7 @@ export function registerJqToolWithHooks(
     server.registerTool(
         "jq_query",
         JQ_QUERY_TOOL_META,
-        ((params: JqQueryInput, extra: { sessionId?: string }) => {
+        ((params: JqQueryInput, extra?: { sessionId?: string }) => {
             // Check if tool is enabled
             if (!enabled) {
                 return Promise.resolve({
@@ -169,7 +169,7 @@ export function registerJqToolWithHooks(
                 transformedParams,
                 config,
                 hooks,
-                extra.sessionId,
+                extra?.sessionId,
                 executor
             );
         }) as ToolCallback<typeof JqQuerySchema>

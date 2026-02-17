@@ -22,9 +22,9 @@ import type { Hooks, ToolResult, ToolName } from "./types.js";
  * 4. On error, run onError hooks instead of afterResponse
  *
  * Error Handling:
- * - For afterResponse: if a hook throws, subsequent hooks won't run, and the
- *   error propagates to the caller (onError hooks are NOT called for hook errors).
- *   Wrap hook logic in try-catch internally to prevent failures from aborting the chain.
+ * - For afterResponse: if a hook throws, the error is caught and passed to
+ *   onError hooks (same as tool execution errors). This means afterResponse
+ *   hook errors are observable via onError hooks for logging/reporting.
  * - For onError: hook errors are caught and suppressed (logged as warnings).
  *   Subsequent onError hooks continue to run, and the original tool error is re-thrown.
  *

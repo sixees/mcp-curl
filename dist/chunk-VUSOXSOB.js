@@ -22,7 +22,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-MUUYSCTU.js";
+} from "./chunk-KNPMSJ7T.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -729,7 +729,7 @@ function registerCurlToolWithHooks(server, options) {
         transformedParams,
         config,
         hooks,
-        extra.sessionId,
+        extra?.sessionId,
         executor
       );
     })
@@ -758,7 +758,7 @@ function registerJqToolWithHooks(server, options) {
         transformedParams,
         config,
         hooks,
-        extra.sessionId,
+        extra?.sessionId,
         executor
       );
     })
@@ -868,12 +868,17 @@ var McpCurlServer = class {
    * Custom tools are registered on the MCP server during start().
    * Use this to add API-specific tools generated from schema definitions.
    *
-   * @param name - Tool name (lowercase with underscores)
+   * Note: Custom tools are NOT wrapped with beforeRequest/afterResponse/onError hooks.
+   * They are registered directly on the MCP server. If you need hook-like behavior,
+   * implement it within the handler function itself.
+   *
+   * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
    * @param meta - Tool metadata (title, description, inputSchema)
    * @param handler - Tool handler function
    * @returns this for chaining
    * @throws Error if called after start()
    * @throws Error if tool name conflicts with built-in tools
+   * @throws Error if tool name format is invalid
    *
    * @example
    * ```typescript
@@ -893,6 +898,11 @@ var McpCurlServer = class {
    */
   registerCustomTool(name, meta, handler) {
     this.ensureNotStarted("registerCustomTool()");
+    if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+      throw new Error(
+        `Invalid tool name "${name}": must start with a lowercase letter and contain only lowercase letters, digits, and underscores.`
+      );
+    }
     if (name === "curl_execute" || name === "jq_query") {
       throw new Error(
         `Cannot register custom tool "${name}": built-in tool names are reserved and cannot be overridden, even if disabled.`
@@ -964,7 +974,17 @@ var McpCurlServer = class {
       }
     } catch (error) {
       if (this._httpServer) {
-        this._httpServer.close();
+        try {
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => resolve(), 5e3);
+            this._httpServer.close((err) => {
+              clearTimeout(timeout);
+              if (err) reject(err);
+              else resolve();
+            });
+          });
+        } catch {
+        }
         this._httpServer = null;
       }
       if (this._sessionManager) {

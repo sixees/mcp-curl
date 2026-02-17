@@ -72,8 +72,7 @@ When you stop the server (Ctrl+C), it prints final metrics:
 
 ```typescript
 // beforeRequest: Add auth and tracking
-.
-beforeRequest((ctx) => {
+.beforeRequest((ctx) => {
     const token = process.env.API_TOKEN;
     return {
         params: {
@@ -86,16 +85,16 @@ beforeRequest((ctx) => {
     };
 })
 
-    // afterResponse: Log and collect metrics
-    .afterResponse((ctx) => {
-        const latency = Date.now() - startTime;
-        console.error(`[${requestId}] ${ctx.isError ? 'Failed' : 'Success'} (${latency}ms)`);
-    })
+// afterResponse: Log and collect metrics
+.afterResponse((ctx) => {
+    const latency = Date.now() - startTime;
+    console.error(`[${requestId}] ${ctx.isError ? 'Failed' : 'Success'} (${latency}ms)`);
+})
 
-    // onError: Track and report errors
-    .onError((ctx) => {
-        console.error(`Error in ${ctx.tool}: ${ctx.error.message}`);
-    });
+// onError: Track and report errors
+.onError((ctx) => {
+    console.error(`Error in ${ctx.tool}: ${ctx.error.message}`);
+});
 ```
 
 ## Extending This Example

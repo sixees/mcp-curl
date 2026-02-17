@@ -181,12 +181,17 @@ export class McpCurlServer {
      * Custom tools are registered on the MCP server during start().
      * Use this to add API-specific tools generated from schema definitions.
      *
-     * @param name - Tool name (lowercase with underscores)
+     * Note: Custom tools are NOT wrapped with beforeRequest/afterResponse/onError hooks.
+     * They are registered directly on the MCP server. If you need hook-like behavior,
+     * implement it within the handler function itself.
+     *
+     * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
      * @param meta - Tool metadata (title, description, inputSchema)
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()
      * @throws Error if tool name conflicts with built-in tools
+     * @throws Error if tool name format is invalid
      *
      * @example
      * ```typescript
@@ -210,6 +215,13 @@ export class McpCurlServer {
         handler: ToolCallback<z.ZodObject<z.ZodRawShape>>
     ): this {
         this.ensureNotStarted("registerCustomTool()");
+
+        // Validate tool name format
+        if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+            throw new Error(
+                `Invalid tool name "${name}": must start with a lowercase letter and contain only lowercase letters, digits, and underscores.`
+            );
+        }
 
         // Check for conflicts with built-in tools
         if (name === "curl_execute" || name === "jq_query") {
@@ -300,7 +312,18 @@ export class McpCurlServer {
         } catch (error) {
             // Rollback state on failure to allow retry with new instance
             if (this._httpServer) {
-                this._httpServer.close();
+                try {
+                    await new Promise<void>((resolve, reject) => {
+                        const timeout = setTimeout(() => resolve(), 5000);
+                        this._httpServer!.close((err) => {
+                            clearTimeout(timeout);
+                            if (err) reject(err);
+                            else resolve();
+                        });
+                    });
+                } catch {
+                    // Best-effort close during rollback
+                }
                 this._httpServer = null;
             }
             if (this._sessionManager) {
@@ -497,7 +520,7 @@ export class McpCurlServer {
                 ? Object.freeze({ ...this._config.defaultHeaders })
                 : undefined,
             allowedOrigins: this._config.allowedOrigins
-                ? Object.freeze([...this._config.allowedOrigins]) as string[]
+                ? Object.freeze([...this._config.allowedOrigins]) as readonly string[]
                 : undefined,
         });
     }

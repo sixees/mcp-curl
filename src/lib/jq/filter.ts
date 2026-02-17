@@ -18,7 +18,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * @param data - The parsed JSON data
  * @param filter - A single filter expression (e.g., ".data.items[0]")
- * @returns The extracted value, or null if path doesn't exist
+ * @returns The extracted value, undefined for missing keys, or null for type mismatches
  * @throws Error for empty/invalid filters
  */
 export function applySingleJqFilter(data: unknown, filter: string): unknown {

@@ -1,7 +1,7 @@
 import {
   executeCurlRequest,
   resolveBaseUrl
-} from "./chunk-MUUYSCTU.js";
+} from "./chunk-KNPMSJ7T.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -290,7 +290,7 @@ function separateParams(endpoint, params) {
   const pathParams = {};
   const queryParams = {};
   const headerParams = {};
-  let bodyData;
+  const bodyParams = {};
   for (const paramDef of endpoint.parameters ?? []) {
     let value = params[paramDef.name];
     if (value === void 0 && paramDef.default !== void 0) {
@@ -310,9 +310,17 @@ function separateParams(endpoint, params) {
         headerParams[paramDef.name] = String(value);
         break;
       case "body":
-        bodyData = typeof value === "string" ? value : JSON.stringify(value);
+        bodyParams[paramDef.name] = value;
         break;
     }
+  }
+  let bodyData;
+  const bodyKeys = Object.keys(bodyParams);
+  if (bodyKeys.length === 1) {
+    const value = bodyParams[bodyKeys[0]];
+    bodyData = typeof value === "string" ? value : JSON.stringify(value);
+  } else if (bodyKeys.length > 1) {
+    bodyData = JSON.stringify(bodyParams);
   }
   return { pathParams, queryParams, headerParams, bodyData };
 }
@@ -331,7 +339,7 @@ function resolveJqFilter(endpoint, params) {
   return endpoint.response?.jqFilter;
 }
 function createToolHandler(schema, endpoint, config) {
-  return async (params) => {
+  return async (params, extra) => {
     try {
       const { pathParams, queryParams, headerParams, bodyData } = separateParams(
         endpoint,
@@ -352,21 +360,24 @@ function createToolHandler(schema, endpoint, config) {
       };
       const jqFilter = resolveJqFilter(endpoint, params);
       const timeout = config?.timeout ?? schema.defaults?.timeout;
-      return await executeCurlRequest({
-        url,
-        method: endpoint.method,
-        headers: Object.keys(headers).length > 0 ? headers : void 0,
-        data: bodyData,
-        timeout,
-        jq_filter: jqFilter,
-        // Required fields with standard defaults
-        follow_redirects: true,
-        insecure: false,
-        verbose: false,
-        include_headers: false,
-        compressed: true,
-        include_metadata: false
-      });
+      return await executeCurlRequest(
+        {
+          url,
+          method: endpoint.method,
+          headers: Object.keys(headers).length > 0 ? headers : void 0,
+          data: bodyData,
+          timeout,
+          jq_filter: jqFilter,
+          // Required fields with standard defaults
+          follow_redirects: true,
+          insecure: false,
+          verbose: false,
+          include_headers: false,
+          compressed: true,
+          include_metadata: false
+        },
+        extra
+      );
     } catch (error) {
       if (error instanceof AuthenticationError) {
         return {

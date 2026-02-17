@@ -345,7 +345,7 @@ declare function generateToolDefinitions(schema: ApiSchema, config?: GeneratorCo
     description: string;
     method: HttpMethod;
     inputSchema: z.ZodObject<z.ZodRawShape>;
-    handler: (params: Record<string, unknown>) => Promise<CurlExecuteResult>;
+    handler: (params: Record<string, unknown>, extra?: CurlExecuteExtra) => Promise<CurlExecuteResult>;
 }>;
 
 export { type ApiDefaults as A, type CurlExecuteInput as C, type EndpointDefinition as E, type GeneratorConfig as G, type HttpMethod as H, type JqQueryInput as J, type ParameterLocation as P, type ResponseConfig as R, type ApiInfo as a, type ApiSchema as b, type ApiSchemaVersion as c, type AuthConfig as d, AuthenticationError as e, type EndpointParameter as f, type ParameterType as g, buildUrl as h, generateInputSchema as i, generateToolDefinitions as j, getAuthConfig as k, CurlExecuteSchema as l, JqQuerySchema as m, executeCurlRequest as n, type CurlExecuteResult as o, getMethodAnnotations as p, registerEndpointTools as r };

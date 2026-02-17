@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, o as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-hpE_ZNiA.js';
+import { C as CurlExecuteInput, J as JqQueryInput, o as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-D_8nKMrh.js';
 
 /**
  * Configuration options for McpCurlServer.
@@ -26,7 +26,7 @@ interface McpCurlConfig {
     /** HTTP auth token (overrides MCP_AUTH_TOKEN env) */
     authToken?: string;
     /** Allowed origins for HTTP transport Origin header validation (default: localhost) */
-    allowedOrigins?: string[];
+    allowedOrigins?: readonly string[];
 }
 /**
  * Context provided to hooks during tool execution.
@@ -246,12 +246,17 @@ declare class McpCurlServer {
      * Custom tools are registered on the MCP server during start().
      * Use this to add API-specific tools generated from schema definitions.
      *
-     * @param name - Tool name (lowercase with underscores)
+     * Note: Custom tools are NOT wrapped with beforeRequest/afterResponse/onError hooks.
+     * They are registered directly on the MCP server. If you need hook-like behavior,
+     * implement it within the handler function itself.
+     *
+     * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
      * @param meta - Tool metadata (title, description, inputSchema)
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()
      * @throws Error if tool name conflicts with built-in tools
+     * @throws Error if tool name format is invalid
      *
      * @example
      * ```typescript

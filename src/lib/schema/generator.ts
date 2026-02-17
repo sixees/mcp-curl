@@ -10,7 +10,7 @@ import type {
     AuthConfig,
     HttpMethod,
 } from "./types.js";
-import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
+import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
 import { resolveBaseUrl } from "../utils/index.js";
 
 /**
@@ -235,7 +235,7 @@ function separateParams(
     const pathParams: Record<string, unknown> = {};
     const queryParams: Record<string, string> = {};
     const headerParams: Record<string, string> = {};
-    let bodyData: string | undefined;
+    const bodyParams: Record<string, unknown> = {};
 
     for (const paramDef of endpoint.parameters ?? []) {
         let value = params[paramDef.name];
@@ -261,9 +261,21 @@ function separateParams(
                 headerParams[paramDef.name] = String(value);
                 break;
             case "body":
-                bodyData = typeof value === "string" ? value : JSON.stringify(value);
+                bodyParams[paramDef.name] = value;
                 break;
         }
+    }
+
+    // Build body data from collected body parameters
+    let bodyData: string | undefined;
+    const bodyKeys = Object.keys(bodyParams);
+    if (bodyKeys.length === 1) {
+        // Single body param: use its value directly (backward compatible)
+        const value = bodyParams[bodyKeys[0]];
+        bodyData = typeof value === "string" ? value : JSON.stringify(value);
+    } else if (bodyKeys.length > 1) {
+        // Multiple body params: aggregate into a single JSON object
+        bodyData = JSON.stringify(bodyParams);
     }
 
     return { pathParams, queryParams, headerParams, bodyData };
@@ -307,8 +319,8 @@ function createToolHandler(
     schema: ApiSchema,
     endpoint: EndpointDefinition,
     config?: GeneratorConfig
-): (params: Record<string, unknown>) => Promise<CurlExecuteResult> {
-    return async (params: Record<string, unknown>): Promise<CurlExecuteResult> => {
+): (params: Record<string, unknown>, extra?: CurlExecuteExtra) => Promise<CurlExecuteResult> {
+    return async (params: Record<string, unknown>, extra?: CurlExecuteExtra): Promise<CurlExecuteResult> => {
         try {
             // Separate parameters by location
             const { pathParams, queryParams, headerParams, bodyData } = separateParams(
@@ -342,21 +354,24 @@ function createToolHandler(
             const timeout = config?.timeout ?? schema.defaults?.timeout;
 
             // Execute the request using the existing curl executor
-            return await executeCurlRequest({
-                url,
-                method: endpoint.method,
-                headers: Object.keys(headers).length > 0 ? headers : undefined,
-                data: bodyData,
-                timeout,
-                jq_filter: jqFilter,
-                // Required fields with standard defaults
-                follow_redirects: true,
-                insecure: false,
-                verbose: false,
-                include_headers: false,
-                compressed: true,
-                include_metadata: false,
-            });
+            return await executeCurlRequest(
+                {
+                    url,
+                    method: endpoint.method,
+                    headers: Object.keys(headers).length > 0 ? headers : undefined,
+                    data: bodyData,
+                    timeout,
+                    jq_filter: jqFilter,
+                    // Required fields with standard defaults
+                    follow_redirects: true,
+                    insecure: false,
+                    verbose: false,
+                    include_headers: false,
+                    compressed: true,
+                    include_metadata: false,
+                },
+                extra
+            );
         } catch (error) {
             // Handle authentication errors gracefully
             if (error instanceof AuthenticationError) {
@@ -469,7 +484,7 @@ export function generateToolDefinitions(
     description: string;
     method: HttpMethod;
     inputSchema: z.ZodObject<z.ZodRawShape>;
-    handler: (params: Record<string, unknown>) => Promise<CurlExecuteResult>;
+    handler: (params: Record<string, unknown>, extra?: CurlExecuteExtra) => Promise<CurlExecuteResult>;
 }> {
     return schema.endpoints.map((endpoint) => ({
         id: endpoint.id,

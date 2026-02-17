@@ -27,7 +27,7 @@ export interface McpCurlConfig {
     /** HTTP auth token (overrides MCP_AUTH_TOKEN env) */
     authToken?: string;
     /** Allowed origins for HTTP transport Origin header validation (default: localhost) */
-    allowedOrigins?: string[];
+    allowedOrigins?: readonly string[];
 }
 
 /**

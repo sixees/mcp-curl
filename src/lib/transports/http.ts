@@ -39,7 +39,7 @@ export interface HttpAppOptions {
     /** Bearer token for authentication (undefined = no auth required) */
     authToken?: string;
     /** Allowed origins for Origin header validation (undefined = localhost only) */
-    allowedOrigins?: string[];
+    allowedOrigins?: readonly string[];
 }
 
 /**
@@ -55,7 +55,7 @@ export interface HttpAppOptions {
  * - Override via MCP_CURL_ALLOWED_ORIGINS env var or config.allowedOrigins
  */
 export function createOriginMiddleware(
-    allowedOrigins?: string[]
+    allowedOrigins?: readonly string[]
 ): (req: Request, res: Response, next: NextFunction) => void {
     // Clone + precompute: explicit list or default localhost patterns
     const explicitOrigins = allowedOrigins ? [...allowedOrigins] : parseAllowedOriginsEnv();

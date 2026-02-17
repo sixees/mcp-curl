@@ -161,9 +161,9 @@ function parseIndex(numStr: string, filter: string, newIndex: number): BracketPa
     if (!Number.isSafeInteger(index)) {
         throw new Error(`Invalid array index "${numStr}" in filter "${filter}": exceeds safe integer range`);
     }
-    // Check for leading zeros (e.g., "007" should be rejected, but "0" is ok)
+    // Check for leading zeros or explicit + signs (e.g., "007" or "+1" should be rejected, but "0" is ok)
     if (numStr !== String(index)) {
-        throw new Error(`Invalid array index "${numStr}" in filter "${filter}": leading zeros are not allowed`);
+        throw new Error(`Invalid array index "${numStr}" in filter "${filter}": leading zeros and explicit '+' signs are not allowed`);
     }
 
     return { token: { type: "index", value: index }, newIndex };

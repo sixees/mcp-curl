@@ -17,6 +17,8 @@ const metrics = {
 };
 
 // Track request start times
+// Note: In production, add periodic cleanup (e.g., TTL-based eviction) to prevent
+// unbounded growth if requests fail before afterResponse/onError cleans up entries.
 const requestStartTimes = new Map<string, number>();
 
 // Generate a simple request ID

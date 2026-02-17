@@ -805,7 +805,8 @@ describe("generateToolDefinitions", () => {
             expect.objectContaining({
                 url: "https://api.example.com/users/123",
                 method: "GET",
-            })
+            }),
+            undefined
         );
     });
 
@@ -843,7 +844,8 @@ describe("generateToolDefinitions", () => {
                 headers: expect.objectContaining({
                     "X-Request-ID": "req-123",
                 }),
-            })
+            }),
+            undefined
         );
     });
 
@@ -871,7 +873,8 @@ describe("generateToolDefinitions", () => {
         expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(
             expect.objectContaining({
                 url: "https://api.example.com/items?page=1&limit=20",
-            })
+            }),
+            undefined
         );
     });
 
@@ -911,7 +914,8 @@ describe("generateToolDefinitions", () => {
                     "X-Config-Header": "config-value",
                     "X-Custom": "custom-value",
                 }),
-            })
+            }),
+            undefined
         );
     });
 
@@ -946,7 +950,8 @@ describe("generateToolDefinitions", () => {
         expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(
             expect.objectContaining({
                 jq_filter: "{name: .data.name, email: .data.email}",
-            })
+            }),
+            undefined
         );
 
         // Test without preset (uses default filter)
@@ -955,7 +960,8 @@ describe("generateToolDefinitions", () => {
         expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(
             expect.objectContaining({
                 jq_filter: ".data",
-            })
+            }),
+            undefined
         );
     });
 
@@ -1049,7 +1055,8 @@ describe("generateToolDefinitions", () => {
                 url: "https://api.example.com/users",
                 method: "POST",
                 data: '{"name": "John", "email": "john@example.com"}',
-            })
+            }),
+            undefined
         );
     });
 
@@ -1083,7 +1090,8 @@ describe("generateToolDefinitions", () => {
                 headers: expect.objectContaining({
                     Authorization: "Bearer mock-token-123",
                 }),
-            })
+            }),
+            undefined
         );
     });
 });

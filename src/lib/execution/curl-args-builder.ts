@@ -160,7 +160,7 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
 
     // Output format for response info (custom format + metadata separator for content-type)
     // The separator is unique per-request to prevent response injection attacks
-    const metadataSuffix = params.metadataSeparator.replace(/\n/g, "\\n") + "%{content_type}";
+    const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
     if (params.output_format) {
         args.push("-w", params.output_format + metadataSuffix);
     } else {

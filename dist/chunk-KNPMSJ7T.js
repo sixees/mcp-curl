@@ -174,10 +174,10 @@ var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
   // IPv6 link-local
   /^\[?fe80:/i,
   // IPv6 unique local (fc00::/7 covers fc00::/8 and fd00::/8)
-  /^\[?fc00:/i,
-  // fc00::/8 prefix (not yet assigned by IANA)
+  /^\[?fc[0-9a-f]{2}:/i,
+  // fc00::/8 prefix (fcxx::, not yet assigned by IANA)
   /^\[?fd[0-9a-f]{2}:/i,
-  // fd00::/8 prefix (locally assigned)
+  // fd00::/8 prefix (fdxx::, locally assigned)
   // Internal TLDs
   /\.local$/i,
   /\.internal$/i,
@@ -219,7 +219,7 @@ var BLOCKED_IP_PATTERNS_INTERNAL = Object.freeze([
   /^0\.0\.0\.0$/,
   /^::1$/,
   /^fe80:/i,
-  /^fc00:/i,
+  /^fc[0-9a-f]{2}:/i,
   /^fd[0-9a-f]{2}:/i,
   /^::ffff:127\./i,
   /^::ffff:10\./i,
@@ -861,7 +861,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
     throw new Error(`Command not allowed: ${command}. Only ${ALLOWED_COMMANDS.join(", ")} can be executed.`);
   }
   let requestMemoryUsage = 0;
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve4, reject) => {
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
       abortController.abort();
@@ -943,7 +943,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
       clearTimeout(timeoutId);
       releaseRequestMemory();
       if (!killed) {
-        resolve3({
+        resolve4({
           stdout,
           stderr,
           // null code means process was killed by signal — report as failure (not 0)
@@ -1024,7 +1024,7 @@ function buildCurlArgs(params) {
   if (params.silent !== false) {
     args.push("-s");
   }
-  const metadataSuffix = params.metadataSeparator.replace(/\n/g, "\\n") + "%{content_type}";
+  const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
   if (params.output_format) {
     args.push("-w", params.output_format + metadataSuffix);
   } else {
@@ -1043,7 +1043,8 @@ function buildCurlArgs(params) {
 function isJsonContentType(contentType) {
   if (!contentType) return false;
   const ct = contentType.toLowerCase();
-  return ct.includes("application/json") || ct.includes("+json");
+  const mimeType = ct.split(";")[0].trim();
+  return mimeType === "application/json" || mimeType.endsWith("+json");
 }
 function parseResponseWithMetadata(rawResponse, separator) {
   const searchStart = Math.max(0, rawResponse.length - LIMITS.MAX_METADATA_TAIL_LENGTH);
@@ -1062,7 +1063,7 @@ function sanitizeErrorMessage(message, includeDetails) {
     return message;
   }
   let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
-  sanitized = sanitized.replace(/(?:\/[^\s:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
+  sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
   if (sanitized !== message) {
     sanitized += " (use include_metadata: true for details)";
   }
@@ -1098,8 +1099,8 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo)
 }
 
 // src/lib/response/file-saver.ts
-import { join as join2 } from "path";
-import { writeFile } from "fs/promises";
+import { join as join2, resolve as resolve3 } from "path";
+import { writeFile, realpath as realpath3 } from "fs/promises";
 function createSafeFilenameBase(input, fallback = "response") {
   let base = input.replace(/[^a-zA-Z0-9]/g, "_");
   base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
@@ -1115,6 +1116,13 @@ function createSafeFilenameBase(input, fallback = "response") {
 }
 async function saveResponseToFile(content, url, outputDir) {
   const targetDir = outputDir ?? await getOrCreateTempDir();
+  if (outputDir) {
+    const realDir = await realpath3(resolve3(outputDir));
+    const normalizedTarget = await realpath3(resolve3(targetDir));
+    if (realDir !== normalizedTarget) {
+      throw new Error(`Output directory path mismatch after normalization`);
+    }
+  }
   let baseName;
   try {
     const urlObj = new URL(url);
@@ -1238,7 +1246,7 @@ function parseIndex(numStr, filter, newIndex) {
     throw new Error(`Invalid array index "${numStr}" in filter "${filter}": exceeds safe integer range`);
   }
   if (numStr !== String(index)) {
-    throw new Error(`Invalid array index "${numStr}" in filter "${filter}": leading zeros are not allowed`);
+    throw new Error(`Invalid array index "${numStr}" in filter "${filter}": leading zeros and explicit '+' signs are not allowed`);
   }
   return { token: { type: "index", value: index }, newIndex };
 }
@@ -1489,6 +1497,12 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 
 // src/lib/response/processor.ts
 async function processResponse(response, options) {
+  const rawBytes = Buffer.byteLength(response, "utf8");
+  if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
+    throw new Error(
+      `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
+    );
+  }
   let content = response;
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);
@@ -1498,8 +1512,7 @@ async function processResponse(response, options) {
       const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
       if (!looksLikeJson) {
         throw new Error(
-          `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"}).
-Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
+          `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
         );
       }
     }
@@ -1508,8 +1521,7 @@ Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMI
     } catch (error) {
       if (error instanceof SyntaxError) {
         throw new Error(
-          `Cannot apply jq_filter: Response does not appear to be valid JSON.
-Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
+          `Cannot apply jq_filter: Response does not appear to be valid JSON`
         );
       }
       throw error;

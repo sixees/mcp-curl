@@ -27,6 +27,14 @@ export async function processResponse(
     response: string,
     options: ProcessResponseOptions
 ): Promise<ProcessedResponse> {
+    // Early size guard: reject responses exceeding absolute limit before processing
+    const rawBytes = Buffer.byteLength(response, "utf8");
+    if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
+        throw new Error(
+            `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
+        );
+    }
+
     let content = response;
 
     // Step 1: Apply jq filter if provided AND response is JSON
@@ -41,8 +49,7 @@ export async function processResponse(
             const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
             if (!looksLikeJson) {
                 throw new Error(
-                    `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"}).\n` +
-                    `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
+                    `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
                 );
             }
         }
@@ -54,8 +61,7 @@ export async function processResponse(
             // SyntaxError indicates invalid JSON
             if (error instanceof SyntaxError) {
                 throw new Error(
-                    `Cannot apply jq_filter: Response does not appear to be valid JSON.\n` +
-                    `Preview: ${content.slice(0, LIMITS.ERROR_PREVIEW_LENGTH)}${content.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
+                    `Cannot apply jq_filter: Response does not appear to be valid JSON`
                 );
             }
             throw error; // Re-throw unexpected errors
@@ -75,7 +81,7 @@ export async function processResponse(
     if (shouldSave) {
         const filepath = await saveResponseToFile(content, options.url, options.outputDir);
         // Keep content as actual response data, capped to maxSize for preview
-        // Use byte-aware truncation to handle multi-byte UTF-8 characters correctly
+        // Use byte-aware truncation (best-effort: may produce replacement chars at boundary)
         let displayContent = content;
         if (contentBytes > maxSize) {
             displayContent = Buffer.from(content, "utf8").subarray(0, maxSize).toString("utf8");

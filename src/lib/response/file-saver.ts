@@ -1,8 +1,8 @@
 // src/lib/response/file-saver.ts
 // Safe file saving with filename sanitization
 
-import { join } from "path";
-import { writeFile } from "fs/promises";
+import { join, resolve } from "path";
+import { writeFile, realpath } from "fs/promises";
 import { LIMITS } from "../config/limits.js";
 import { isWindowsReservedBasename } from "../config/security/validation.js";
 import { getOrCreateTempDir } from "../files/index.js";
@@ -63,6 +63,15 @@ export async function saveResponseToFile(
 ): Promise<string> {
     // Use custom output dir if provided, otherwise use temp dir
     const targetDir = outputDir ?? await getOrCreateTempDir();
+
+    // Validate outputDir is a safe absolute path (defense-in-depth)
+    if (outputDir) {
+        const realDir = await realpath(resolve(outputDir));
+        const normalizedTarget = await realpath(resolve(targetDir));
+        if (realDir !== normalizedTarget) {
+            throw new Error(`Output directory path mismatch after normalization`);
+        }
+    }
 
     // Create a safe filename from URL (fall back to raw string if URL is invalid)
     let baseName: string;

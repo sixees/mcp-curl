@@ -36,8 +36,8 @@
  * 6. Unique Local Addresses (fc00::/7)
  *    IPv6 equivalent of private address ranges - used for internal networks.
  *    The fc00::/7 block covers both fc00::/8 and fd00::/8. We block these with
- *    two patterns: /^fc00:/i for the fc00:: prefix and /^fd[0-9a-f]{2}:/i for
- *    the fd00::/8 range (which is the commonly used subset for local networks).
+ *    two patterns: /^fc[0-9a-f]{2}:/i for the full fc00::/8 range (fc00::–fcff::)
+ *    and /^fd[0-9a-f]{2}:/i for the fd00::/8 range (fd00::–fdff::).
  *
  * 7. Cloud Metadata Service Hostnames
  *    Cloud providers expose instance metadata via well-known hostnames
@@ -83,8 +83,8 @@ const BLOCKED_HOSTNAME_PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([
     // IPv6 link-local
     /^\[?fe80:/i,
     // IPv6 unique local (fc00::/7 covers fc00::/8 and fd00::/8)
-    /^\[?fc00:/i,       // fc00::/8 prefix (not yet assigned by IANA)
-    /^\[?fd[0-9a-f]{2}:/i, // fd00::/8 prefix (locally assigned)
+    /^\[?fc[0-9a-f]{2}:/i, // fc00::/8 prefix (fcxx::, not yet assigned by IANA)
+    /^\[?fd[0-9a-f]{2}:/i, // fd00::/8 prefix (fdxx::, locally assigned)
     // Internal TLDs
     /\.local$/i,
     /\.internal$/i,
@@ -142,7 +142,7 @@ const BLOCKED_IP_PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([
     /^0\.0\.0\.0$/,
     /^::1$/,
     /^fe80:/i,
-    /^fc00:/i,
+    /^fc[0-9a-f]{2}:/i,
     /^fd[0-9a-f]{2}:/i,
     /^::ffff:127\./i,
     /^::ffff:10\./i,

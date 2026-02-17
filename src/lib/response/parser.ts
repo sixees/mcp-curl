@@ -26,7 +26,8 @@ export interface ParsedResponse {
 export function isJsonContentType(contentType: string | undefined): boolean {
     if (!contentType) return false;
     const ct = contentType.toLowerCase();
-    return ct.includes("application/json") || ct.includes("+json");
+    const mimeType = ct.split(";")[0].trim();
+    return mimeType === "application/json" || mimeType.endsWith("+json");
 }
 
 /**
@@ -79,8 +80,9 @@ export function sanitizeErrorMessage(message: string, includeDetails: boolean): 
     }
     // Remove response previews (could contain sensitive API data)
     let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
-    // Remove file paths - handles both Unix (/path/to/file) and Windows (C:\path\to\file)
-    sanitized = sanitized.replace(/(?:\/[^\s:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
+    // Remove filesystem paths - handles both Unix (/path/to/file) and Windows (C:\path\to\file)
+    // Requires at least two path segments to avoid matching URL paths like /v1/users
+    sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
     // Add hint about getting more details
     if (sanitized !== message) {
         sanitized += " (use include_metadata: true for details)";
