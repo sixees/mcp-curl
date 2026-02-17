@@ -29,11 +29,12 @@ export const LIMITS = {
  * Parse and validate a port number from string input.
  *
  * @param value - Port string to parse (e.g., from process.env.PORT)
- * @param defaultPort - Default port if value is undefined or empty
+ * @param defaultPort - Default port if value is undefined or empty string
  * @returns Validated port number
  * @throws Error if port is not a valid integer in range 1-65535
  */
 export function parsePort(value: string | undefined, defaultPort: number): number {
+    // Empty strings are treated as undefined (falsy), falling back to default
     const raw = value || String(defaultPort);
     // Reject trailing garbage (e.g., "3000abc") that parseInt would silently accept
     if (!/^\d+$/.test(raw)) {

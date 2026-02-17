@@ -292,26 +292,27 @@ endpoints:
 ## Using the Schema
 
 ```typescript
-import {createApiServer} from "mcp-curl";
+import { createApiServer } from "mcp-curl";
 
 // From file
-const server = await createApiServer({
+const serverFromFile = await createApiServer({
     definitionPath: "./api.yaml",
 });
+await serverFromFile.start("stdio");
 
 // From string
-const server = await createApiServer({
+const serverFromString = await createApiServer({
     definitionContent: yamlString,
 });
+await serverFromString.start("stdio");
 
 // Disable default tools (only expose generated ones)
-const server = await createApiServer({
+const serverCustomOnly = await createApiServer({
     definitionPath: "./api.yaml",
     disableCurlExecute: true,
     disableJqQuery: true,
 });
-
-await server.start("stdio");
+await serverCustomOnly.start("stdio");
 ```
 
 ## Validation Errors

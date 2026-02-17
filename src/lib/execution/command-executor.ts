@@ -50,6 +50,11 @@ export async function executeCommand(
         throw new Error(`Command not allowed: ${command}. Only ${ALLOWED_COMMANDS.join(", ")} can be executed.`);
     }
 
+    // Validate timeout: use default for invalid values
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+        timeout = LIMITS.DEFAULT_TIMEOUT_MS;
+    }
+
     // Track this request's memory usage for cleanup
     let requestMemoryUsage = 0;
 

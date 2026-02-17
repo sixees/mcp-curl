@@ -46,9 +46,13 @@ function configureServerFromSchema(
     }
 
     // Generate and register custom tools from endpoints
+    // Merge user config overrides (baseUrl, allowLocalhost) into generator config
+    const mergedConfig = { ...schemaConfig, ...options.config };
     const generatorConfig: GeneratorConfig = {
         defaultHeaders: schema.defaults?.headers,
         timeout: schema.defaults?.timeout,
+        baseUrl: mergedConfig.baseUrl,
+        allowLocalhost: mergedConfig.allowLocalhost,
         ...options.generatorConfig,
     };
 

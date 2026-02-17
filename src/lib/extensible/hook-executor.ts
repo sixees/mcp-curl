@@ -99,7 +99,9 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
                     error: normalizedError,
                 });
             } catch (hookError) {
-                console.error("Warning: onError hook threw (suppressed to preserve original error):", hookError);
+                // Log only error name to avoid exposing sensitive data from hook context
+                const hookErrorName = hookError instanceof Error ? hookError.name : "UnknownError";
+                console.error(`Warning: onError hook threw (${hookErrorName}) [suppressed to preserve original error]`);
             }
         }
 

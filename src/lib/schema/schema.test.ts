@@ -806,7 +806,7 @@ describe("generateToolDefinitions", () => {
                 url: "https://api.example.com/users/123",
                 method: "GET",
             }),
-            undefined
+            expect.objectContaining({ allowLocalhost: undefined })
         );
     });
 
@@ -845,7 +845,7 @@ describe("generateToolDefinitions", () => {
                     "X-Request-ID": "req-123",
                 }),
             }),
-            undefined
+            expect.objectContaining({ allowLocalhost: undefined })
         );
     });
 
@@ -874,7 +874,7 @@ describe("generateToolDefinitions", () => {
             expect.objectContaining({
                 url: "https://api.example.com/items?page=1&limit=20",
             }),
-            undefined
+            expect.objectContaining({ allowLocalhost: undefined })
         );
     });
 
@@ -915,7 +915,7 @@ describe("generateToolDefinitions", () => {
                     "X-Custom": "custom-value",
                 }),
             }),
-            undefined
+            expect.objectContaining({ allowLocalhost: undefined })
         );
     });
 
@@ -951,7 +951,7 @@ describe("generateToolDefinitions", () => {
             expect.objectContaining({
                 jq_filter: "{name: .data.name, email: .data.email}",
             }),
-            undefined
+            expect.objectContaining({ allowLocalhost: undefined })
         );
 
         // Test without preset (uses default filter)
@@ -961,7 +961,7 @@ describe("generateToolDefinitions", () => {
             expect.objectContaining({
                 jq_filter: ".data",
             }),
-            undefined
+            expect.objectContaining({ allowLocalhost: undefined })
         );
     });
 
@@ -1056,7 +1056,7 @@ describe("generateToolDefinitions", () => {
                 method: "POST",
                 data: '{"name": "John", "email": "john@example.com"}',
             }),
-            undefined
+            expect.objectContaining({ allowLocalhost: undefined })
         );
     });
 
@@ -1091,7 +1091,7 @@ describe("generateToolDefinitions", () => {
                     Authorization: "Bearer mock-token-123",
                 }),
             }),
-            undefined
+            expect.objectContaining({ allowLocalhost: undefined })
         );
     });
 });

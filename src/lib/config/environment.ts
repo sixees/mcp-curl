@@ -1,6 +1,10 @@
 // src/lib/config/environment.ts
 // Environment variable names
 
+/**
+ * Canonical environment variable names used by mcp-curl configuration.
+ * All values are string literals (use as `process.env[ENV.OUTPUT_DIR]`).
+ */
 export const ENV = {
     /** Directory for saving response files */
     OUTPUT_DIR: "MCP_CURL_OUTPUT_DIR",

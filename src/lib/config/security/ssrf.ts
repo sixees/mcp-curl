@@ -105,8 +105,8 @@ const BLOCKED_HOSTNAME_PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([
     /\.nip\.io$/i,
     /\.sslip\.io$/i,
     /\.xip\.io$/i,
-    // Windows UNC paths
-    /^\\\\[^\\]+/,
+    // Windows UNC paths (limit to reasonable hostname length to prevent scanning long strings)
+    /^\\\\[^\\]{1,255}/,
 ]);
 
 /** Check if a hostname matches any blocked pattern (internal networks, reserved TLDs, etc.) */

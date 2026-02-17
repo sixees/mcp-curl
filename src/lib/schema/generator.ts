@@ -33,6 +33,10 @@ export interface GeneratorConfig {
     timeout?: number;
     /** Default headers to merge */
     defaultHeaders?: Record<string, string>;
+    /** Override base URL (takes precedence over schema.api.baseUrl) */
+    baseUrl?: string;
+    /** Allow localhost requests (propagated to curl executor) */
+    allowLocalhost?: boolean;
 }
 
 /**
@@ -332,8 +336,9 @@ function createToolHandler(
             const auth = getAuthConfig(schema.auth, config?.authOverride);
 
             // Build URL with path params and query params (including auth query params)
+            // config.baseUrl takes precedence over schema.api.baseUrl to support staging/proxy redirects
             const url = buildUrl(
-                schema.api.baseUrl,
+                config?.baseUrl ?? schema.api.baseUrl,
                 endpoint.path,
                 pathParams,
                 { ...queryParams, ...auth.queryParams }
@@ -354,6 +359,11 @@ function createToolHandler(
             const timeout = config?.timeout ?? schema.defaults?.timeout;
 
             // Execute the request using the existing curl executor
+            // Merge allowLocalhost from config with extra context
+            const execExtra: CurlExecuteExtra = {
+                ...extra,
+                allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost,
+            };
             return await executeCurlRequest(
                 {
                     url,
@@ -370,7 +380,7 @@ function createToolHandler(
                     compressed: true,
                     include_metadata: false,
                 },
-                extra
+                execExtra
             );
         } catch (error) {
             // Handle authentication errors gracefully

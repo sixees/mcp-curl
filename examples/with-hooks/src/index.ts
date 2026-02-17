@@ -48,9 +48,10 @@ const server = new McpCurlServer()
     // Get token from environment (if available)
     const token = process.env.API_TOKEN;
 
-    // Log the request
+    // Log the request (redact query params to avoid exposing tokens)
     const params = ctx.params as { url: string; headers?: Record<string, string> };
-    console.error(`[${requestId}] ${ctx.tool}: ${params.url}`);
+    const safeUrl = params.url.split(/[?#]/)[0];
+    console.error(`[${requestId}] ${ctx.tool}: ${safeUrl}`);
 
     // Build new headers with request ID and optional auth
     const newHeaders: Record<string, string> = {
@@ -64,6 +65,7 @@ const server = new McpCurlServer()
 
     return {
       params: {
+        ...params,
         headers: newHeaders,
       },
     };
@@ -126,8 +128,8 @@ const server = new McpCurlServer()
     // });
   });
 
-// Handle graceful shutdown
-process.on("SIGINT", async () => {
+// Handle graceful shutdown (SIGINT and SIGTERM for container environments)
+const shutdownHandler = async () => {
   console.error("\n[Shutdown] Final metrics:");
   console.error(`  Total requests: ${metrics.totalRequests}`);
   console.error(`  Successful: ${metrics.successfulRequests}`);
@@ -137,7 +139,9 @@ process.on("SIGINT", async () => {
   }
   await server.shutdown();
   process.exit(0);
-});
+};
+process.on("SIGINT", shutdownHandler);
+process.on("SIGTERM", shutdownHandler);
 
 // Start the server
 await server.start("stdio");

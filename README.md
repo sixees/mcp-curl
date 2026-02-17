@@ -1,8 +1,6 @@
 # cURL MCP Server
 
-A security-hardened MCP server that gives LLMs the ability to make HTTP requests via cURL. Use it as a standalone
-server,
-extend it programmatically, or define APIs declaratively with YAML.
+A security-hardened MCP server that gives LLMs the ability to make HTTP requests via cURL. Use it as a standalone server, extend it programmatically, or define APIs declaratively with YAML.
 
 **Key features:**
 

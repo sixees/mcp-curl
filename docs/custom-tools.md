@@ -32,10 +32,9 @@ ToolCallback   // Handler function
 
 ```typescript
 interface CustomToolMeta {
-    title: string;                    // Human-readable title
-    description: string;              // Description for LLM context
-    inputSchema: z.ZodObject<
-    ...>;    // Zod schema for input validation
+    title: string;                              // Human-readable title
+    description: string;                        // Description for LLM context
+    inputSchema: z.ZodObject<z.ZodRawShape>;    // Zod schema for input validation
     annotations?: {
         readOnlyHint?: boolean;         // Tool only reads data
         destructiveHint?: boolean;      // Tool may delete/modify data

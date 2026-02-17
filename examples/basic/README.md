@@ -10,8 +10,7 @@ npm run build
 ```
 
 > **Note:** When copying this example to your own project, change the dependency in `package.json` from `"file:../.."`
-> to
-`"mcp-curl": "^1.1.5"` (or latest version).
+> to `"mcp-curl": "^1.1.5"` (or latest version).
 
 ## Running
 
