@@ -197,6 +197,9 @@ cp configs/example.yaml.template configs/my-api.yaml
 # See docs/api-schema.md for the full YAML specification
 
 # 4. Create your entry point (configs/*.ts is gitignored)
+
+# 5. Run your server (using tsx to run the TS file directly)
+npx tsx configs/my-api.ts
 ```
 
 Files in `configs/` matching `*.yaml`, `*.yml`, `*.ts`, `*.js` are **gitignored**, so pulling upstream changes

@@ -292,7 +292,7 @@ endpoints:
 ## Using the Schema
 
 ```typescript
-import {createApiServer} from "mcp-curl";
+import { createApiServer } from "mcp-curl";
 
 // From file
 const serverFromFile = await createApiServer({

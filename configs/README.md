@@ -15,7 +15,7 @@ This directory holds your application-specific API definitions.
 3. Create an entry point that loads your definition:
 
    ```typescript
-   import {createApiServer} from "mcp-curl";
+   import { createApiServer } from "mcp-curl";
 
    (async () => {
        const server = await createApiServer({
@@ -23,6 +23,12 @@ This directory holds your application-specific API definitions.
        });
        await server.start("stdio");
    })();
+   ```
+
+   Run your server:
+
+   ```bash
+   npx tsx configs/my-api.ts
    ```
 
 ## What's gitignored
