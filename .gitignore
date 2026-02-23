@@ -34,3 +34,13 @@ Thumbs.db
 # Package manager locks (use package-lock.json)
 yarn.lock
 pnpm-lock.yaml
+
+# App config (fork workflow — actual configs are local-only)
+# Template and README in configs/ are tracked; actual definitions are not
+configs/*.yaml
+configs/*.yml
+configs/*.ts
+configs/*.js
+
+# Runtime output
+/output

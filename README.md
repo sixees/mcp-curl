@@ -1,6 +1,7 @@
 # cURL MCP Server
 
-A security-hardened MCP server that gives LLMs the ability to make HTTP requests via cURL. Use it as a standalone server, extend it programmatically, or define APIs declaratively with YAML.
+A security-hardened MCP server that gives LLMs the ability to make HTTP requests via cURL. Use it as a standalone
+server, extend it programmatically, or define APIs declaratively with YAML.
 
 **Key features:**
 
@@ -179,6 +180,31 @@ endpoints:
 
 See [YAML Schema Reference](./docs/api-schema.md) for the full specification including authentication, defaults,
 response filtering, and parameter types.
+
+### Fork Workflow
+
+If you fork this repo to build an API-specific server, use the `configs/` directory for your definitions:
+
+```bash
+# 1. Fork and clone
+git clone https://github.com/your-org/mcp-curl.git
+cd mcp-curl && npm install && npm run build
+
+# 2. Copy the template
+cp configs/example.yaml.template configs/my-api.yaml
+
+# 3. Edit your API definition
+# See docs/api-schema.md for the full YAML specification
+
+# 4. Create your entry point (configs/*.ts is gitignored)
+# Or modify src/index.ts to load your definition
+```
+
+Files in `configs/` matching `*.yaml`, `*.yml`, `*.ts`, `*.js` are **gitignored**, so pulling upstream changes
+(`git pull upstream main`) won't conflict with your application-specific configuration.
+
+Alternatively, install `mcp-curl` as an npm dependency in a separate project — see
+[Getting Started](./docs/getting-started.md).
 
 ## Security Highlights
 

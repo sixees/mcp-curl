@@ -1,0 +1,161 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# API Definition Template
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file and rename it to create your API definition:
+#
+#   cp configs/example.yaml.template configs/my-api.yaml
+#
+# Then reference it in your entry point:
+#
+#   const server = await createApiServer({
+#       definitionPath: "./configs/my-api.yaml",
+#   });
+#
+# Your *.yaml files in configs/ are gitignored, so upstream pulls
+# won't conflict with your application-specific definitions.
+#
+# Full schema reference: docs/api-schema.md
+# Working example: examples/from-yaml/
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: "1.0"
+
+# API metadata — describes your API to the LLM
+api:
+  name: my-api                          # Machine-readable identifier
+  title: My API                         # Human-readable name
+  description: >
+    Describe what this API does.
+    This text is shown to the LLM to help it understand when to use the tools.
+  version: "1.0.0"
+  baseUrl: https://api.example.com      # Base URL for all endpoints
+
+# Authentication (optional) — credentials are loaded from environment variables
+# Uncomment ONE of the following auth methods:
+#
+# auth:
+#   # API key authentication (sent as query param or header)
+#   apiKey:
+#     type: query           # "query" or "header"
+#     name: api_key         # Parameter/header name
+#     envVar: MY_API_KEY    # Environment variable holding the key
+#     required: true
+#
+#   # Bearer token authentication
+#   bearer:
+#     envVar: MY_API_TOKEN  # Environment variable holding the token
+#     required: true
+
+# Default settings for all endpoints (optional)
+defaults:
+  timeout: 30                           # Request timeout in seconds (1-300)
+  headers:
+    Accept: application/json
+
+# Endpoint definitions — each generates one MCP tool
+endpoints:
+  # GET endpoint with query parameters
+  - id: list_items
+    path: /items
+    method: GET
+    title: List Items
+    description: Get all items with optional filtering
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        required: false
+        description: Page number for pagination
+      - name: limit
+        in: query
+        type: integer
+        required: false
+        description: Number of items per page
+        default: 20
+
+  # GET endpoint with path parameter
+  - id: get_item
+    path: /items/{id}
+    method: GET
+    title: Get Item
+    description: Get a specific item by ID
+    parameters:
+      - name: id
+        in: path
+        type: string
+        required: true
+        description: Item identifier
+
+  # POST endpoint with body parameters
+  - id: create_item
+    path: /items
+    method: POST
+    title: Create Item
+    description: Create a new item
+    parameters:
+      - name: name
+        in: body
+        type: string
+        required: true
+        description: Item name
+      - name: description
+        in: body
+        type: string
+        required: false
+        description: Item description
+
+  # PUT endpoint with path + body parameters
+  - id: update_item
+    path: /items/{id}
+    method: PUT
+    title: Update Item
+    description: Update an existing item
+    parameters:
+      - name: id
+        in: path
+        type: string
+        required: true
+        description: Item ID to update
+      - name: name
+        in: body
+        type: string
+        required: false
+        description: New name
+      - name: description
+        in: body
+        type: string
+        required: false
+        description: New description
+
+  # DELETE endpoint
+  - id: delete_item
+    path: /items/{id}
+    method: DELETE
+    title: Delete Item
+    description: Delete an item by ID
+    parameters:
+      - name: id
+        in: path
+        type: string
+        required: true
+        description: Item ID to delete
+
+  # Endpoint with response filtering and presets
+  # - id: search_items
+  #   path: /items/search
+  #   method: GET
+  #   title: Search Items
+  #   description: Search items with optional result filtering
+  #   parameters:
+  #     - name: q
+  #       in: query
+  #       type: string
+  #       required: true
+  #       description: Search query
+  #   response:
+  #     jqFilter: ".results"                    # Default filter applied to response
+  #     filterPresets:                           # Named presets LLM can choose from
+  #       - name: ids_only
+  #         jqFilter: ".results[].id"
+  #       - name: summary
+  #         jqFilter: ".results[] | {id, name}"

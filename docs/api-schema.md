@@ -292,7 +292,7 @@ endpoints:
 ## Using the Schema
 
 ```typescript
-import { createApiServer } from "mcp-curl";
+import {createApiServer} from "mcp-curl";
 
 // From file
 const serverFromFile = await createApiServer({
@@ -334,3 +334,42 @@ Common validation errors:
 3. **Mark required fields**: Be explicit about what's needed
 4. **Use filter presets**: Give LLMs easy options for common use cases
 5. **Group related endpoints**: Organize by resource (users, posts, etc.)
+
+## Config Directory Convention
+
+The repository includes a `configs/` directory for application-specific API definitions.
+
+### Directory Structure
+
+```
+configs/
+├── .gitkeep                    # Ensures directory exists in fresh clones
+├── README.md                   # Usage instructions (tracked)
+├── example.yaml.template       # Starting point for new definitions (tracked)
+├── my-api.yaml                 # Your API definition (gitignored)
+└── my-entry.ts                 # Your custom entry point (gitignored)
+```
+
+### Fork Workflow
+
+If you fork this repo to build an API-specific server:
+
+1. Copy the template: `cp configs/example.yaml.template configs/my-api.yaml`
+2. Edit the YAML to define your API endpoints
+3. Create an entry point that loads your definition
+4. Pull upstream changes freely — your configs won't conflict
+
+Files matching `*.yaml`, `*.yml`, `*.ts`, `*.js` in `configs/` are gitignored. The template, README, and
+`.gitkeep` are tracked so they appear in fresh clones.
+
+### npm Dependency Workflow
+
+If you prefer a separate project:
+
+```bash
+mkdir my-api-server && cd my-api-server
+npm init -y && npm install mcp-curl
+```
+
+Create your YAML definition and entry point in your own project. Upstream updates come via `npm update mcp-curl`.
+See [Getting Started](./getting-started.md) for a step-by-step guide.
