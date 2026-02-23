@@ -197,7 +197,6 @@ cp configs/example.yaml.template configs/my-api.yaml
 # See docs/api-schema.md for the full YAML specification
 
 # 4. Create your entry point (configs/*.ts is gitignored)
-# Or modify src/index.ts to load your definition
 ```
 
 Files in `configs/` matching `*.yaml`, `*.yml`, `*.ts`, `*.js` are **gitignored**, so pulling upstream changes

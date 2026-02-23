@@ -15,12 +15,14 @@ This directory holds your application-specific API definitions.
 3. Create an entry point that loads your definition:
 
    ```typescript
-   import { createApiServer } from "mcp-curl";
+   import {createApiServer} from "mcp-curl";
 
-   const server = await createApiServer({
-       definitionPath: "./configs/my-api.yaml",
-   });
-   await server.start("stdio");
+   (async () => {
+       const server = await createApiServer({
+           definitionPath: "./configs/my-api.yaml",
+       });
+       await server.start("stdio");
+   })();
    ```
 
 ## What's gitignored

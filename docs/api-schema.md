@@ -368,7 +368,8 @@ If you prefer a separate project:
 
 ```bash
 mkdir my-api-server && cd my-api-server
-npm init -y && npm install mcp-curl
+npm init -y
+npm install mcp-curl
 ```
 
 Create your YAML definition and entry point in your own project. Upstream updates come via `npm update mcp-curl`.

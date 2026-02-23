@@ -7,9 +7,12 @@
 #
 # Then reference it in your entry point:
 #
-#   const server = await createApiServer({
-#       definitionPath: "./configs/my-api.yaml",
-#   });
+#   (async () => {
+#       const server = await createApiServer({
+#           definitionPath: "./configs/my-api.yaml",
+#       });
+#       await server.start("stdio");
+#   })();
 #
 # Your *.yaml files in configs/ are gitignored, so upstream pulls
 # won't conflict with your application-specific definitions.
