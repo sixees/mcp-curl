@@ -341,7 +341,7 @@ The repository includes a `configs/` directory for application-specific API defi
 
 ### Directory Structure
 
-```
+```text
 configs/
 ├── .gitkeep                    # Ensures directory exists in fresh clones
 ├── README.md                   # Usage instructions (tracked)
