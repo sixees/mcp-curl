@@ -126,7 +126,7 @@ npm install mcp-curl
 ```
 
 ```typescript
-import {McpCurlServer} from "mcp-curl";
+import { McpCurlServer } from "mcp-curl";
 
 const server = new McpCurlServer()
     .configure({
@@ -152,7 +152,7 @@ instance utilities, and lifecycle management.
 Define API endpoints declaratively and generate MCP tools:
 
 ```typescript
-import {createApiServer} from "mcp-curl";
+import { createApiServer } from "mcp-curl";
 
 const server = await createApiServer({
     definitionPath: "./my-api.yaml",
@@ -197,6 +197,7 @@ cp configs/example.yaml.template configs/my-api.yaml
 # See docs/api-schema.md for the full YAML specification
 
 # 4. Create your entry point (configs/*.ts is gitignored)
+#    See configs/README.md for a full TypeScript template
 
 # 5. Run your server (using tsx to run the TS file directly)
 npx tsx configs/my-api.ts

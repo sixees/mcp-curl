@@ -161,6 +161,6 @@ endpoints:
   #     jqFilter: ".results"                    # Default filter applied to response
   #     filterPresets:                           # Named presets LLM can choose from
   #       - name: ids_only
-  #         jqFilter: ".results[].id"
-  #       - name: summary
-  #         jqFilter: ".results[] | {id, name}"
+  #         jqFilter: ".results"
+  #       - name: first_five
+  #         jqFilter: ".results[0:5]"
