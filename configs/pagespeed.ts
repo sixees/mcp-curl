@@ -110,7 +110,9 @@ try {
       const apiUrl = new URL(`${schema.api.baseUrl}${endpoint.path}`);
       apiUrl.searchParams.set("url", url);
       apiUrl.searchParams.set("strategy", strategy ?? "MOBILE");
-      CATEGORIES.forEach((cat) => apiUrl.searchParams.append("category", cat));
+      for (const cat of CATEGORIES) {
+        apiUrl.searchParams.append("category", cat);
+      }
 
       // Add API key if available
       const apiKey = process.env.PAGESPEED_API_KEY;
