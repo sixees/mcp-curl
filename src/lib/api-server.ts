@@ -53,6 +53,8 @@ function configureServerFromSchema(
         timeout: schema.defaults?.timeout,
         baseUrl: mergedConfig.baseUrl,
         allowLocalhost: mergedConfig.allowLocalhost,
+        defaultUserAgent: mergedConfig.defaultUserAgent,
+        defaultReferer: mergedConfig.defaultReferer,
         ...options.generatorConfig,
     };
 

@@ -146,8 +146,22 @@ var ENV = {
   /** HTTP transport bind address (default: 127.0.0.1) */
   HOST: "MCP_CURL_HOST",
   /** HTTP transport port (default: 3000) */
-  PORT: "PORT"
+  PORT: "PORT",
+  /** Override default User-Agent header (empty string disables) */
+  USER_AGENT: "MCP_CURL_USER_AGENT",
+  /** Override default Referer header (empty string disables) */
+  REFERER: "MCP_CURL_REFERER"
 };
+
+// src/lib/config/defaults.ts
+var DEFAULT_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 mcp-curl/${SERVER.VERSION}`;
+var DEFAULT_REFERER = "";
+function resolveDefault(configValue, envVar, builtInDefault) {
+  if (configValue !== void 0) return configValue || void 0;
+  const envValue = process.env[envVar];
+  if (envValue !== void 0) return envValue || void 0;
+  return builtInDefault || void 0;
+}
 
 // src/lib/config/security/ssrf.ts
 var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
@@ -1731,6 +1745,9 @@ export {
   LIMITS,
   parsePort,
   SERVER,
+  DEFAULT_USER_AGENT,
+  DEFAULT_REFERER,
+  resolveDefault,
   getOrCreateTempDir,
   cleanupOrphanedTempDirs,
   cleanupTempDir,

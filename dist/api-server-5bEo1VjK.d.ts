@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, o as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-ESbdGPUq.js';
+import { C as CurlExecuteInput, J as JqQueryInput, o as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-CPvY9sSW.js';
 
 /**
  * Configuration options for McpCurlServer.
@@ -27,6 +27,10 @@ interface McpCurlConfig {
     authToken?: string;
     /** Allowed origins for HTTP transport Origin header validation (default: localhost) */
     allowedOrigins?: readonly string[];
+    /** Default User-Agent for all requests. Empty string disables. */
+    defaultUserAgent?: string;
+    /** Default Referer for all requests. Empty string disables. */
+    defaultReferer?: string;
 }
 /**
  * Context provided to hooks during tool execution.

@@ -18,4 +18,8 @@ export const ENV = {
     HOST: "MCP_CURL_HOST",
     /** HTTP transport port (default: 3000) */
     PORT: "PORT",
+    /** Override default User-Agent header (empty string disables) */
+    USER_AGENT: "MCP_CURL_USER_AGENT",
+    /** Override default Referer header (empty string disables) */
+    REFERER: "MCP_CURL_REFERER",
 } as const;

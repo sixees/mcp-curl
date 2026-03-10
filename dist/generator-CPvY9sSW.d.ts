@@ -285,6 +285,10 @@ interface GeneratorConfig {
     baseUrl?: string;
     /** Allow localhost requests (propagated to curl executor) */
     allowLocalhost?: boolean;
+    /** Default User-Agent for all requests. Empty string disables. */
+    defaultUserAgent?: string;
+    /** Default Referer for all requests. Empty string disables. */
+    defaultReferer?: string;
 }
 /**
  * Generate a Zod input schema from endpoint parameter definitions.

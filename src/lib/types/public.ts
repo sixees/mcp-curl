@@ -28,6 +28,10 @@ export interface McpCurlConfig {
     authToken?: string;
     /** Allowed origins for HTTP transport Origin header validation (default: localhost) */
     allowedOrigins?: readonly string[];
+    /** Default User-Agent for all requests. Empty string disables. */
+    defaultUserAgent?: string;
+    /** Default Referer for all requests. Empty string disables. */
+    defaultReferer?: string;
 }
 
 /**

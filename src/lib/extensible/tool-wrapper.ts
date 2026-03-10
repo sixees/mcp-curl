@@ -12,7 +12,7 @@ import {
 import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
-import { LIMITS } from "../config/index.js";
+import { LIMITS, ENV, DEFAULT_USER_AGENT, DEFAULT_REFERER, resolveDefault } from "../config/index.js";
 import { resolveBaseUrl } from "../utils/index.js";
 
 interface ConfigDefaultableParams {
@@ -36,11 +36,12 @@ function applySharedConfigDefaults<T extends ConfigDefaultableParams>(
  * Apply configuration transforms to curl_execute parameters.
  * - Prepend baseUrl to relative URLs
  * - Merge defaultHeaders with request headers
+ * - Apply default User-Agent and Referer
  * - Apply defaultTimeout if using default
  * - Apply outputDir if not specified
  * - Apply maxResultSize if not specified
  */
-function applyConfigTransformsCurl(
+export function applyConfigTransformsCurl(
     params: CurlExecuteInput,
     config: Readonly<McpCurlConfig>
 ): CurlExecuteInput {
@@ -54,6 +55,18 @@ function applyConfigTransformsCurl(
     // Merge defaultHeaders (request headers take precedence)
     if (config.defaultHeaders) {
         transformed.headers = { ...config.defaultHeaders, ...params.headers };
+    }
+
+    // Apply default User-Agent (per-request user_agent, headers["User-Agent"], or defaultHeaders take precedence)
+    if (!transformed.user_agent && !params.headers?.["User-Agent"] && !config.defaultHeaders?.["User-Agent"]) {
+        const ua = resolveDefault(config.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
+        if (ua) transformed.user_agent = ua;
+    }
+
+    // Apply default Referer (per-request headers["Referer"] or defaultHeaders take precedence)
+    if (!params.headers?.["Referer"] && !config.defaultHeaders?.["Referer"]) {
+        const referer = resolveDefault(config.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
+        if (referer) transformed.headers = { ...transformed.headers, Referer: referer };
     }
 
     // Apply timeout defaults if the user didn't provide a timeout explicitly.

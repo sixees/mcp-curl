@@ -1,5 +1,7 @@
 import {
   CURL_EXECUTE_TOOL_META,
+  DEFAULT_REFERER,
+  DEFAULT_USER_AGENT,
   ENV,
   JqQuerySchema,
   LIMITS,
@@ -16,13 +18,14 @@ import {
   parsePort,
   registerCurlExecuteTool,
   resolveBaseUrl,
+  resolveDefault,
   resolveOutputDir,
   safeStringCompare,
   startRateLimitCleanup,
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-LNX6NIVQ.js";
+} from "./chunk-A6KED6WW.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -461,17 +464,26 @@ function createInstanceUtilities(config) {
           isError: true
         };
       }
+      let resolvedUserAgent = params.user_agent;
+      if (!resolvedUserAgent && !params.headers?.["User-Agent"] && !config.defaultHeaders?.["User-Agent"]) {
+        resolvedUserAgent = resolveDefault(config.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
+      }
+      const mergedHeaders = { ...config.defaultHeaders, ...params.headers };
+      if (!params.headers?.["Referer"] && !config.defaultHeaders?.["Referer"]) {
+        const referer = resolveDefault(config.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
+        if (referer) mergedHeaders["Referer"] = referer;
+      }
       const fullParams = {
         url,
         method: params.method,
-        headers: { ...config.defaultHeaders, ...params.headers },
+        headers: mergedHeaders,
         data: params.data,
         form: params.form,
         follow_redirects: params.follow_redirects ?? true,
         max_redirects: params.max_redirects,
         insecure: params.insecure ?? false,
         timeout: params.timeout ?? config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3,
-        user_agent: params.user_agent,
+        user_agent: resolvedUserAgent,
         basic_auth: params.basic_auth,
         bearer_token: params.bearer_token,
         verbose: params.verbose ?? false,
@@ -695,6 +707,14 @@ function applyConfigTransformsCurl(params, config) {
   }
   if (config.defaultHeaders) {
     transformed.headers = { ...config.defaultHeaders, ...params.headers };
+  }
+  if (!transformed.user_agent && !params.headers?.["User-Agent"] && !config.defaultHeaders?.["User-Agent"]) {
+    const ua = resolveDefault(config.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
+    if (ua) transformed.user_agent = ua;
+  }
+  if (!params.headers?.["Referer"] && !config.defaultHeaders?.["Referer"]) {
+    const referer = resolveDefault(config.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
+    if (referer) transformed.headers = { ...transformed.headers, Referer: referer };
   }
   if (params.timeout === void 0) {
     transformed.timeout = config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3;
