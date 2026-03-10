@@ -43,5 +43,9 @@ configs/*.ts
 configs/*.js
 configs/*.json
 
+# PageSpeed fork — tracked on pagespeed branch
+!configs/pagespeed.yaml
+!configs/pagespeed.ts
+
 # Runtime output
 /output

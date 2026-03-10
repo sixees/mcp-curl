@@ -1,0 +1,80 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PageSpeed Insights API Definition
+# ─────────────────────────────────────────────────────────────────────────────
+# Google PageSpeed Insights API v5 — category scores and Core Web Vitals.
+#
+# Usage:
+#   npx tsx configs/pagespeed.ts
+#
+# Environment:
+#   PAGESPEED_API_KEY — Optional Google API key (higher rate limits)
+#
+# Note: The entry point (pagespeed.ts) uses a custom handler instead of
+# the YAML-generated tool handler because:
+# 1. The API requires repeated &category=X params (YAML schema is single-value)
+# 2. The built-in jq engine can't do object construction or arithmetic
+# This YAML is still loaded at runtime for config values and input schema
+# generation via generateInputSchema().
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: "1.0"
+
+api:
+  name: pagespeed-insights
+  title: Google PageSpeed Insights
+  description: >
+    Analyze web page performance using Google PageSpeed Insights API v5.
+    Returns category scores (Performance, Accessibility, Best Practices, SEO)
+    and Core Web Vitals (LCP, FCP, CLS, TBT, TTI).
+    Analysis typically takes 15-45 seconds.
+  version: "5.0.0"
+  baseUrl: https://pagespeedonline.googleapis.com
+
+auth:
+  apiKey:
+    type: query
+    name: key
+    envVar: PAGESPEED_API_KEY
+    required: false
+
+defaults:
+  timeout: 60
+  headers:
+    Accept: application/json
+
+endpoints:
+  - id: analyze_pagespeed
+    path: /pagespeedonline/v5/runPagespeed
+    method: GET
+    title: Analyze PageSpeed
+    description: >
+      Run PageSpeed Insights analysis on a URL. Returns category scores
+      and Core Web Vitals. Analysis takes 15-45 seconds.
+      Without PAGESPEED_API_KEY, rate-limited to ~25 queries/100s.
+    parameters:
+      - name: url
+        in: query
+        type: string
+        required: true
+        description: The URL to analyze (must be publicly accessible)
+      - name: strategy
+        in: query
+        type: string
+        required: false
+        description: Analysis strategy
+        default: MOBILE
+        enum:
+          - MOBILE
+          - DESKTOP
+    response:
+      # jqFilter values below are NOT used at runtime (custom handler does
+      # TypeScript post-processing). They exist so generateInputSchema()
+      # produces a filter_preset enum parameter from the preset names.
+      jqFilter: ".lighthouseResult"
+      filterPresets:
+        - name: scores
+          jqFilter: ".lighthouseResult.categories"
+        - name: metrics
+          jqFilter: ".lighthouseResult.audits"
+        - name: summary
+          jqFilter: ".lighthouseResult"
