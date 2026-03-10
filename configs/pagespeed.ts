@@ -17,14 +17,52 @@ import {
   getAuthConfig,
   type ApiSchema,
 } from "mcp-curl";
+import type { CurlExecuteResult } from "mcp-curl";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const CATEGORIES = ["PERFORMANCE", "ACCESSIBILITY", "BEST_PRACTICES", "SEO"];
 
-// Preset extraction logic — TypeScript post-processing because the built-in
-// jq engine can't do object construction ({ key: .value }) or arithmetic (* 100)
+// ─── Pure helpers — each has a single responsibility ─────────────────────────
+
+/**
+ * Build the PageSpeed API URL with all required category params and auth.
+ * Isolated so URL construction can be reasoned about independently of I/O.
+ */
+function buildPageSpeedUrl(
+  baseUrl: string,
+  path: string,
+  targetUrl: string,
+  strategy: string,
+  authQueryParams: Record<string, string>,
+): string {
+  const apiUrl = new URL(`${baseUrl}${path}`);
+  apiUrl.searchParams.set("url", targetUrl);
+  apiUrl.searchParams.set("strategy", strategy);
+  for (const cat of CATEGORIES) {
+    apiUrl.searchParams.append("category", cat);
+  }
+  for (const [key, value] of Object.entries(authQueryParams)) {
+    apiUrl.searchParams.set(key, value);
+  }
+  return apiUrl.toString();
+}
+
+/**
+ * Extract the concatenated text body from an inline MCP result.
+ * Returns null when the result was auto-saved to a file (no inline text).
+ */
+function extractInlineText(result: CurlExecuteResult): string | null {
+  const parts = result.content
+    .filter((c): c is { type: "text"; text: string } => c.type === "text")
+    .map((c) => c.text);
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+// ─── Preset extraction — TypeScript post-processing ──────────────────────────
+// The built-in jq engine can't do object construction ({ key: .value })
+// or arithmetic (* 100), so scores/metrics are extracted here instead.
 
 function extractScores(lighthouse: Record<string, any>) {
   const cats = lighthouse.categories ?? {};
@@ -66,11 +104,17 @@ function buildOutput(
   };
 }
 
+// ─── Server setup ─────────────────────────────────────────────────────────────
+
 try {
   // Load YAML schema for config values and input schema generation
   const schemaPath = join(__dirname, "pagespeed.yaml");
   const schema: ApiSchema = await loadApiSchema(schemaPath);
   const endpoint = schema.endpoints[0];
+
+  // Read the strategy default from the YAML schema param definition
+  const strategyParam = endpoint.parameters?.find((p) => p.name === "strategy");
+  const defaultStrategy = String(strategyParam?.default ?? "MOBILE");
 
   // Generate Zod input schema from YAML endpoint definition
   // (includes url, strategy, and filter_preset enum from filterPresets)
@@ -116,25 +160,21 @@ try {
         filter_preset?: string;
       };
 
-      // Build API URL with all 4 categories (YAML schema can't repeat params)
-      const apiUrl = new URL(`${schema.api.baseUrl}${endpoint.path}`);
-      apiUrl.searchParams.set("url", url);
-      apiUrl.searchParams.set("strategy", strategy ?? "MOBILE");
-      for (const cat of CATEGORIES) {
-        apiUrl.searchParams.append("category", cat);
-      }
-
-      // Add auth from YAML schema definition (reads PAGESPEED_API_KEY env var)
-      const { queryParams } = getAuthConfig(schema.auth);
-      for (const [key, value] of Object.entries(queryParams)) {
-        apiUrl.searchParams.set(key, value);
-      }
+      // Resolve auth and construct the full API URL
+      const { queryParams: authQueryParams } = getAuthConfig(schema.auth);
+      const apiUrl = buildPageSpeedUrl(
+        schema.api.baseUrl,
+        endpoint.path,
+        url,
+        strategy ?? defaultStrategy,
+        authQueryParams,
+      );
 
       // Execute request via utilities (applies config defaults, SSRF checks)
       // maxResultSize=2MB configured on server; response returned inline for parsing
       const utils = server.utilities();
       const result = await utils.executeRequest({
-        url: apiUrl.toString(),
+        url: apiUrl,
         method: "GET",
         timeout: schema.defaults?.timeout ?? 60,
       });
@@ -144,17 +184,17 @@ try {
       }
 
       // Extract inline response text (maxResultSize=2MB keeps it inline)
-      const resultText = result.content
-        .filter((c): c is { type: "text"; text: string } => c.type === "text")
-        .map((c) => c.text)
-        .join("\n");
+      const resultText = extractInlineText(result);
+      if (resultText === null) {
+        return result; // auto-saved to file, return as-is
+      }
 
       // Parse JSON response
       let data: Record<string, any>;
       try {
         data = JSON.parse(resultText);
       } catch {
-        return result; // not JSON (or auto-saved to file), return as-is
+        return result; // not JSON, return as-is
       }
 
       const lighthouse = data.lighthouseResult;
@@ -163,7 +203,7 @@ try {
           content: [
             {
               type: "text" as const,
-              text: `Error: No lighthouseResult in response. API may have returned an error:\n${resultText.slice(0, 1000)}`,
+              text: "Error: No lighthouseResult in API response. The API may have returned an error.",
             },
           ],
           isError: true,
