@@ -49,4 +49,5 @@ configs/*.json
 
 # Runtime output
 /output
-/docs
+/docs/*
+!/docs/todos

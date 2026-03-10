@@ -28,11 +28,13 @@ const CATEGORIES = ["PERFORMANCE", "ACCESSIBILITY", "BEST_PRACTICES", "SEO"];
 
 function extractScores(lighthouse: Record<string, any>) {
   const cats = lighthouse.categories ?? {};
+  const toScore = (v: number | null | undefined) =>
+    Math.round((v ?? 0) * 100);
   return {
-    performance: Math.round((cats.performance?.score ?? 0) * 100),
-    accessibility: Math.round((cats.accessibility?.score ?? 0) * 100),
-    best_practices: Math.round((cats["best-practices"]?.score ?? 0) * 100),
-    seo: Math.round((cats.seo?.score ?? 0) * 100),
+    performance: toScore(cats.performance?.score),
+    accessibility: toScore(cats.accessibility?.score),
+    best_practices: toScore(cats["best-practices"]?.score),
+    seo: toScore(cats.seo?.score),
   };
 }
 
@@ -86,6 +88,8 @@ try {
     })
     .disableCurlExecute(); // replaced by custom tool; jq_query stays enabled
 
+  const utils = server.utilities();
+
   // Build description with filter_preset documentation (buildToolDescription
   // does this for YAML-generated tools, but we bypass that with a custom handler)
   const description = [
@@ -116,6 +120,29 @@ try {
         filter_preset?: string;
       };
 
+      // Validate URL locally before making a 15-45s API call
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "Error: Only http and https URLs are supported.",
+              },
+            ],
+            isError: true,
+          };
+        }
+      } catch {
+        return {
+          content: [
+            { type: "text" as const, text: "Error: Invalid URL provided." },
+          ],
+          isError: true,
+        };
+      }
+
       // Build API URL with all 4 categories (YAML schema can't repeat params)
       const apiUrl = new URL(`${schema.api.baseUrl}${endpoint.path}`);
       apiUrl.searchParams.set("url", url);
@@ -124,7 +151,8 @@ try {
         apiUrl.searchParams.append("category", cat);
       }
 
-      // Add auth from YAML schema definition (reads PAGESPEED_API_KEY env var)
+      // API key is sent as ?key=... per Google's documented method.
+      // The key will be visible in proxy/access logs — use a restricted key.
       const { queryParams } = getAuthConfig(schema.auth);
       for (const [key, value] of Object.entries(queryParams)) {
         apiUrl.searchParams.set(key, value);
@@ -132,7 +160,6 @@ try {
 
       // Execute request via utilities (applies config defaults, SSRF checks)
       // maxResultSize=2MB configured on server; response returned inline for parsing
-      const utils = server.utilities();
       const result = await utils.executeRequest({
         url: apiUrl.toString(),
         method: "GET",
@@ -159,11 +186,12 @@ try {
 
       const lighthouse = data.lighthouseResult;
       if (!lighthouse) {
+        console.error("pagespeed: no lighthouseResult in API response");
         return {
           content: [
             {
               type: "text" as const,
-              text: `Error: No lighthouseResult in response. API may have returned an error:\n${resultText.slice(0, 1000)}`,
+              text: "Error: PageSpeed API did not return lighthouse results. The URL may be unreachable or the API may be experiencing issues.",
             },
           ],
           isError: true,
