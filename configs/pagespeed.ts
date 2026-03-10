@@ -10,11 +10,11 @@
 
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { readFile } from "fs/promises";
 import {
   McpCurlServer,
   loadApiSchema,
   generateInputSchema,
+  getAuthConfig,
   type ApiSchema,
 } from "mcp-curl";
 
@@ -79,20 +79,30 @@ try {
   // Create and configure server from schema
   const server = new McpCurlServer()
     .configure({
-      serverName: schema.api.name,
-      serverVersion: schema.api.version,
       baseUrl: schema.api.baseUrl,
       defaultTimeout: schema.defaults?.timeout,
       defaultHeaders: schema.defaults?.headers,
+      maxResultSize: 2_000_000,
     })
     .disableCurlExecute(); // replaced by custom tool; jq_query stays enabled
+
+  // Build description with filter_preset documentation (buildToolDescription
+  // does this for YAML-generated tools, but we bypass that with a custom handler)
+  const description = [
+    endpoint.description,
+    "",
+    "Available filter_preset values:",
+    "  - scores: category scores as 0-100 integers (performance, accessibility, best_practices, seo)",
+    "  - metrics: Core Web Vitals as value/display pairs (lcp, fcp, cls, tbt, tti)",
+    "  - summary (default): both scores and metrics plus analyzed_url and strategy",
+  ].join("\n");
 
   // Register custom tool with YAML-derived metadata + custom handler
   server.registerCustomTool(
     endpoint.id,
     {
       title: endpoint.title,
-      description: endpoint.description,
+      description,
       inputSchema,
       annotations: {
         readOnlyHint: true,
@@ -114,45 +124,37 @@ try {
         apiUrl.searchParams.append("category", cat);
       }
 
-      // Add API key if available
-      const apiKey = process.env.PAGESPEED_API_KEY;
-      if (apiKey) {
-        apiUrl.searchParams.set("key", apiKey);
+      // Add auth from YAML schema definition (reads PAGESPEED_API_KEY env var)
+      const { queryParams } = getAuthConfig(schema.auth);
+      for (const [key, value] of Object.entries(queryParams)) {
+        apiUrl.searchParams.set(key, value);
       }
 
       // Execute request via utilities (applies config defaults, SSRF checks)
+      // maxResultSize=2MB configured on server; response returned inline for parsing
       const utils = server.utilities();
       const result = await utils.executeRequest({
         url: apiUrl.toString(),
         method: "GET",
         timeout: schema.defaults?.timeout ?? 60,
-        save_to_file: true,
       });
 
       if (result.isError) {
         return result;
       }
 
-      // Get raw JSON — either from saved file or inline
+      // Extract inline response text (maxResultSize=2MB keeps it inline)
       const resultText = result.content
         .filter((c): c is { type: "text"; text: string } => c.type === "text")
         .map((c) => c.text)
         .join("\n");
 
-      let raw: string;
-      const fileMatch = resultText.match(/saved to:\s*(.+)/i);
-      if (fileMatch?.[1]) {
-        raw = await readFile(fileMatch[1].trim(), "utf-8");
-      } else {
-        raw = resultText;
-      }
-
-      // Parse and extract
+      // Parse JSON response
       let data: Record<string, any>;
       try {
-        data = JSON.parse(raw);
+        data = JSON.parse(resultText);
       } catch {
-        return result; // not JSON, return as-is
+        return result; // not JSON (or auto-saved to file), return as-is
       }
 
       const lighthouse = data.lighthouseResult;
@@ -161,7 +163,7 @@ try {
           content: [
             {
               type: "text" as const,
-              text: `Error: No lighthouseResult in response. API may have returned an error:\n${raw.slice(0, 1000)}`,
+              text: `Error: No lighthouseResult in response. API may have returned an error:\n${resultText.slice(0, 1000)}`,
             },
           ],
           isError: true,
