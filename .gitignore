@@ -49,3 +49,4 @@ configs/*.json
 
 # Runtime output
 /output
+/docs
