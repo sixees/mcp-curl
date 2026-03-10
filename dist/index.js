@@ -5,12 +5,12 @@ import {
   registerAllCapabilities,
   registerShutdownHandlers,
   runHTTP
-} from "./chunk-JWZC5NFE.js";
+} from "./chunk-4MB3DQR2.js";
 import {
   cleanupOrphanedTempDirs,
   startRateLimitCleanup,
   stopRateLimitCleanup
-} from "./chunk-A6KED6WW.js";
+} from "./chunk-DMQP2EFP.js";
 
 // src/lib/transports/stdio.ts
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

@@ -162,6 +162,18 @@ function resolveDefault(configValue, envVar, builtInDefault) {
   if (envValue !== void 0) return envValue || void 0;
   return builtInDefault || void 0;
 }
+function applyDefaultHeaders(headers, userAgent, config) {
+  const result = { ...headers };
+  let resolvedUA = userAgent;
+  if (resolvedUA === void 0 && !("User-Agent" in result)) {
+    resolvedUA = resolveDefault(config?.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
+  }
+  if (!("Referer" in result)) {
+    const referer = resolveDefault(config?.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
+    if (referer) result["Referer"] = referer;
+  }
+  return { headers: result, userAgent: resolvedUA };
+}
 
 // src/lib/config/security/ssrf.ts
 var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
@@ -1745,9 +1757,7 @@ export {
   LIMITS,
   parsePort,
   SERVER,
-  DEFAULT_USER_AGENT,
-  DEFAULT_REFERER,
-  resolveDefault,
+  applyDefaultHeaders,
   getOrCreateTempDir,
   cleanupOrphanedTempDirs,
   cleanupTempDir,

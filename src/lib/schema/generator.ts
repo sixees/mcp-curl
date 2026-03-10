@@ -12,7 +12,7 @@ import type {
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
 import { resolveBaseUrl } from "../utils/index.js";
-import { ENV, DEFAULT_USER_AGENT, DEFAULT_REFERER, resolveDefault } from "../config/index.js";
+import { applyDefaultHeaders } from "../config/index.js";
 
 /**
  * Error thrown when authentication is required but not available.
@@ -350,24 +350,17 @@ function createToolHandler(
             );
 
             // Merge headers: defaults -> schema defaults -> auth -> endpoint params
-            const headers: Record<string, string> = {
+            const mergedHeaders: Record<string, string> = {
                 ...config?.defaultHeaders,
                 ...schema.defaults?.headers,
                 ...auth.headers,
                 ...headerParams,
             };
 
-            // Apply default User-Agent if not already set
-            if (!headers["User-Agent"]) {
-                const ua = resolveDefault(config?.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
-                if (ua) headers["User-Agent"] = ua;
-            }
-
-            // Apply default Referer if not already set
-            if (!headers["Referer"]) {
-                const referer = resolveDefault(config?.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
-                if (referer) headers["Referer"] = referer;
-            }
+            // Apply default User-Agent and Referer
+            const defaults = applyDefaultHeaders(mergedHeaders, undefined, config);
+            const headers = defaults.headers;
+            if (defaults.userAgent) headers["User-Agent"] = defaults.userAgent;
 
             // Determine jq filter
             const jqFilter = resolveJqFilter(endpoint, params);

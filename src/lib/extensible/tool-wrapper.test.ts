@@ -147,4 +147,60 @@ describe("applyConfigTransformsCurl — Referer defaults", () => {
         expect(result.headers?.["X-Custom"]).toBe("value");
         expect(result.headers?.["Referer"]).toBeUndefined();
     });
+
+    it("should prefer defaultHeaders over config.defaultReferer", () => {
+        const config: McpCurlConfig = {
+            defaultHeaders: { Referer: "https://headers.com" },
+            defaultReferer: "https://config.com",
+        };
+        const result = applyConfigTransformsCurl(makeParams(), config);
+        expect(result.headers?.["Referer"]).toBe("https://headers.com");
+    });
+});
+
+describe("applyConfigTransformsCurl — truthiness edge cases", () => {
+    it("should respect explicit empty user_agent param", () => {
+        const result = applyConfigTransformsCurl(
+            makeParams({ user_agent: "" }),
+            {}
+        );
+        // Empty string user_agent is falsy but was explicitly set — however,
+        // user_agent is resolved via applyDefaultHeaders which checks undefined,
+        // and empty string is not undefined, so the default should NOT be applied
+        expect(result.user_agent).toBe("");
+    });
+
+    it("should respect explicit empty User-Agent in headers", () => {
+        const result = applyConfigTransformsCurl(
+            makeParams({ headers: { "User-Agent": "" } }),
+            {}
+        );
+        expect(result.headers?.["User-Agent"]).toBe("");
+        expect(result.user_agent).toBeUndefined();
+    });
+
+    it("should respect explicit empty Referer in headers", () => {
+        const config: McpCurlConfig = { defaultReferer: "https://config.com" };
+        const result = applyConfigTransformsCurl(
+            makeParams({ headers: { Referer: "" } }),
+            config
+        );
+        expect(result.headers?.["Referer"]).toBe("");
+    });
+
+    it("should respect explicit empty User-Agent in defaultHeaders", () => {
+        const config: McpCurlConfig = { defaultHeaders: { "User-Agent": "" } };
+        const result = applyConfigTransformsCurl(makeParams(), config);
+        expect(result.headers?.["User-Agent"]).toBe("");
+        expect(result.user_agent).toBeUndefined();
+    });
+
+    it("should respect explicit empty Referer in defaultHeaders", () => {
+        const config: McpCurlConfig = {
+            defaultHeaders: { Referer: "" },
+            defaultReferer: "https://config.com",
+        };
+        const result = applyConfigTransformsCurl(makeParams(), config);
+        expect(result.headers?.["Referer"]).toBe("");
+    });
 });

@@ -1,11 +1,8 @@
 import {
-  DEFAULT_REFERER,
-  DEFAULT_USER_AGENT,
-  ENV,
+  applyDefaultHeaders,
   executeCurlRequest,
-  resolveBaseUrl,
-  resolveDefault
-} from "./chunk-A6KED6WW.js";
+  resolveBaseUrl
+} from "./chunk-DMQP2EFP.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -356,20 +353,15 @@ function createToolHandler(schema, endpoint, config) {
         pathParams,
         { ...queryParams, ...auth.queryParams }
       );
-      const headers = {
+      const mergedHeaders = {
         ...config?.defaultHeaders,
         ...schema.defaults?.headers,
         ...auth.headers,
         ...headerParams
       };
-      if (!headers["User-Agent"]) {
-        const ua = resolveDefault(config?.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
-        if (ua) headers["User-Agent"] = ua;
-      }
-      if (!headers["Referer"]) {
-        const referer = resolveDefault(config?.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
-        if (referer) headers["Referer"] = referer;
-      }
+      const defaults = applyDefaultHeaders(mergedHeaders, void 0, config);
+      const headers = defaults.headers;
+      if (defaults.userAgent) headers["User-Agent"] = defaults.userAgent;
       const jqFilter = resolveJqFilter(endpoint, params);
       const timeout = config?.timeout ?? schema.defaults?.timeout;
       const execExtra = {

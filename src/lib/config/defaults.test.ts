@@ -2,7 +2,7 @@
 // Tests for default User-Agent/Referer resolution logic
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { resolveDefault, DEFAULT_USER_AGENT, DEFAULT_REFERER } from "./defaults.js";
+import { resolveDefault, applyDefaultHeaders, DEFAULT_USER_AGENT, DEFAULT_REFERER } from "./defaults.js";
 
 describe("resolveDefault", () => {
     afterEach(() => {
@@ -67,5 +67,60 @@ describe("DEFAULT_USER_AGENT", () => {
 describe("DEFAULT_REFERER", () => {
     it("should be empty string (disabled by default)", () => {
         expect(DEFAULT_REFERER).toBe("");
+    });
+});
+
+describe("applyDefaultHeaders", () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
+    it("should not overwrite explicit empty User-Agent in headers", () => {
+        const result = applyDefaultHeaders({ "User-Agent": "" }, undefined);
+        expect(result.headers["User-Agent"]).toBe("");
+        expect(result.userAgent).toBeUndefined();
+    });
+
+    it("should not overwrite explicit empty Referer in headers", () => {
+        vi.stubEnv("MCP_CURL_REFERER", "https://env.com");
+        const result = applyDefaultHeaders({ "Referer": "" }, undefined);
+        expect(result.headers["Referer"]).toBe("");
+    });
+
+    it("should preserve existing user_agent param", () => {
+        const result = applyDefaultHeaders({}, "custom-ua");
+        expect(result.userAgent).toBe("custom-ua");
+        expect(result.headers["User-Agent"]).toBeUndefined();
+    });
+
+    it("should resolve UA when neither user_agent nor User-Agent header present", () => {
+        const result = applyDefaultHeaders({}, undefined);
+        expect(result.userAgent).toBe(DEFAULT_USER_AGENT);
+    });
+
+    it("should resolve Referer from config when not in headers", () => {
+        const result = applyDefaultHeaders({}, undefined, { defaultReferer: "https://config.com" });
+        expect(result.headers["Referer"]).toBe("https://config.com");
+    });
+
+    it("should use config overrides for both UA and Referer", () => {
+        const result = applyDefaultHeaders({}, undefined, {
+            defaultUserAgent: "config-ua",
+            defaultReferer: "https://config-ref.com",
+        });
+        expect(result.userAgent).toBe("config-ua");
+        expect(result.headers["Referer"]).toBe("https://config-ref.com");
+    });
+
+    it("should not inject Referer when built-in default is empty", () => {
+        const result = applyDefaultHeaders({}, undefined);
+        expect(result.headers["Referer"]).toBeUndefined();
+    });
+
+    it("should not modify original headers object", () => {
+        const original = { "X-Custom": "value" };
+        const result = applyDefaultHeaders(original, undefined);
+        expect(original).not.toHaveProperty("User-Agent");
+        expect(result.headers["X-Custom"]).toBe("value");
     });
 });

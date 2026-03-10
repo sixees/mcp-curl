@@ -4,7 +4,7 @@
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
 import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
 import { executeJqQuery, type JqQueryResult } from "../tools/jq-query.js";
-import { LIMITS, ENV, DEFAULT_USER_AGENT, DEFAULT_REFERER, resolveDefault } from "../config/index.js";
+import { LIMITS, applyDefaultHeaders } from "../config/index.js";
 import { resolveBaseUrl } from "../utils/index.js";
 
 /**
@@ -64,31 +64,22 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 };
             }
 
-            // Resolve User-Agent default
-            let resolvedUserAgent = params.user_agent;
-            if (!resolvedUserAgent && !params.headers?.["User-Agent"] && !config.defaultHeaders?.["User-Agent"]) {
-                resolvedUserAgent = resolveDefault(config.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
-            }
-
-            // Resolve Referer default
+            // Merge headers and apply UA/Referer defaults
             const mergedHeaders: Record<string, string> = { ...config.defaultHeaders, ...params.headers };
-            if (!params.headers?.["Referer"] && !config.defaultHeaders?.["Referer"]) {
-                const referer = resolveDefault(config.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
-                if (referer) mergedHeaders["Referer"] = referer;
-            }
+            const defaults = applyDefaultHeaders(mergedHeaders, params.user_agent, config);
 
             // Build full params with config defaults
             const fullParams: CurlExecuteInput = {
                 url,
                 method: params.method,
-                headers: mergedHeaders,
+                headers: defaults.headers,
                 data: params.data,
                 form: params.form,
                 follow_redirects: params.follow_redirects ?? true,
                 max_redirects: params.max_redirects,
                 insecure: params.insecure ?? false,
                 timeout: params.timeout ?? config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000,
-                user_agent: resolvedUserAgent,
+                user_agent: defaults.userAgent,
                 basic_auth: params.basic_auth,
                 bearer_token: params.bearer_token,
                 verbose: params.verbose ?? false,
