@@ -2,7 +2,7 @@ import {
   applyDefaultHeaders,
   executeCurlRequest,
   resolveBaseUrl
-} from "./chunk-DMQP2EFP.js";
+} from "./chunk-PH7FLIFM.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -361,7 +361,7 @@ function createToolHandler(schema, endpoint, config) {
       };
       const defaults = applyDefaultHeaders(mergedHeaders, void 0, config);
       const headers = defaults.headers;
-      if (defaults.userAgent) headers["User-Agent"] = defaults.userAgent;
+      if (defaults.userAgent !== void 0) headers["User-Agent"] = defaults.userAgent;
       const jqFilter = resolveJqFilter(endpoint, params);
       const timeout = config?.timeout ?? schema.defaults?.timeout;
       const execExtra = {

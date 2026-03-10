@@ -2,7 +2,7 @@
 // Tests for default User-Agent/Referer resolution logic
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { resolveDefault, applyDefaultHeaders, DEFAULT_USER_AGENT, DEFAULT_REFERER } from "./defaults.js";
+import { resolveDefault, applyDefaultHeaders, hasHeaderKey, DEFAULT_USER_AGENT, DEFAULT_REFERER } from "./defaults.js";
 
 describe("resolveDefault", () => {
     afterEach(() => {
@@ -70,6 +70,24 @@ describe("DEFAULT_REFERER", () => {
     });
 });
 
+describe("hasHeaderKey", () => {
+    it("should find exact-case match", () => {
+        expect(hasHeaderKey({ "User-Agent": "test" }, "User-Agent")).toBe(true);
+    });
+
+    it("should find lowercase key when searching title-case", () => {
+        expect(hasHeaderKey({ "user-agent": "test" }, "User-Agent")).toBe(true);
+    });
+
+    it("should find uppercase key when searching title-case", () => {
+        expect(hasHeaderKey({ "REFERER": "test" }, "Referer")).toBe(true);
+    });
+
+    it("should return false when key is absent", () => {
+        expect(hasHeaderKey({ "X-Custom": "test" }, "User-Agent")).toBe(false);
+    });
+});
+
 describe("applyDefaultHeaders", () => {
     afterEach(() => {
         vi.unstubAllEnvs();
@@ -115,6 +133,19 @@ describe("applyDefaultHeaders", () => {
     it("should not inject Referer when built-in default is empty", () => {
         const result = applyDefaultHeaders({}, undefined);
         expect(result.headers["Referer"]).toBeUndefined();
+    });
+
+    it("should detect lowercase user-agent as existing (case-insensitive)", () => {
+        const result = applyDefaultHeaders({ "user-agent": "custom" }, undefined);
+        expect(result.userAgent).toBeUndefined();
+    });
+
+    it("should detect uppercase REFERER as existing (case-insensitive)", () => {
+        const result = applyDefaultHeaders({ "REFERER": "https://custom.com" }, undefined, {
+            defaultReferer: "https://config.com",
+        });
+        expect(result.headers["Referer"]).toBeUndefined();
+        expect(result.headers["REFERER"]).toBe("https://custom.com");
     });
 
     it("should not modify original headers object", () => {

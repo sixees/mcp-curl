@@ -82,6 +82,13 @@ describe("applyConfigTransformsCurl — User-Agent defaults", () => {
         expect(result.user_agent).toBeUndefined();
         expect(result.headers?.["User-Agent"]).toBe("headers-ua");
     });
+
+    it("should detect lowercase user-agent in defaultHeaders (case-insensitive)", () => {
+        const config: McpCurlConfig = { defaultHeaders: { "user-agent": "custom" } };
+        const result = applyConfigTransformsCurl(makeParams(), config);
+        expect(result.user_agent).toBeUndefined();
+        expect(result.headers?.["user-agent"]).toBe("custom");
+    });
 });
 
 describe("applyConfigTransformsCurl — Referer defaults", () => {

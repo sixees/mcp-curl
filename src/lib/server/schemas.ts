@@ -59,7 +59,7 @@ export const CurlExecuteSchema = z.object({
         .describe("Request timeout in seconds (default: 30, max: 300)"),
     user_agent: z.string()
         .optional()
-        .describe("Custom User-Agent header"),
+        .describe("Custom User-Agent header. If not set, a browser-like User-Agent is sent automatically. Set to empty string to disable."),
     basic_auth: z.string()
         .optional()
         .describe("Basic authentication in format 'username:password'"),

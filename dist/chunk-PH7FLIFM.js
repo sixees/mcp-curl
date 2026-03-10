@@ -25,7 +25,7 @@ var CurlExecuteSchema = z.object({
    * "user explicitly passed 30" vs "user didn't provide a value".
    */
   timeout: z.number().int().min(1).max(300).optional().describe("Request timeout in seconds (default: 30, max: 300)"),
-  user_agent: z.string().optional().describe("Custom User-Agent header"),
+  user_agent: z.string().optional().describe("Custom User-Agent header. If not set, a browser-like User-Agent is sent automatically. Set to empty string to disable."),
   basic_auth: z.string().optional().describe("Basic authentication in format 'username:password'"),
   bearer_token: z.string().optional().describe("Bearer token for Authorization header"),
   verbose: z.boolean().default(false).describe("Include verbose output with request/response details"),
@@ -162,13 +162,14 @@ function resolveDefault(configValue, envVar, builtInDefault) {
   if (envValue !== void 0) return envValue || void 0;
   return builtInDefault || void 0;
 }
+var hasHeaderKey = (obj, key) => Object.keys(obj).some((k) => k.toLowerCase() === key.toLowerCase());
 function applyDefaultHeaders(headers, userAgent, config) {
   const result = { ...headers };
   let resolvedUA = userAgent;
-  if (resolvedUA === void 0 && !("User-Agent" in result)) {
+  if (resolvedUA === void 0 && !hasHeaderKey(result, "User-Agent")) {
     resolvedUA = resolveDefault(config?.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
   }
-  if (!("Referer" in result)) {
+  if (!hasHeaderKey(result, "Referer")) {
     const referer = resolveDefault(config?.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
     if (referer) result["Referer"] = referer;
   }
@@ -1597,7 +1598,7 @@ Args:
   - max_redirects (number): Maximum redirects to follow (0-50)
   - insecure (boolean): Skip SSL verification (default: false)
   - timeout (number): Request timeout in seconds (1-300, default: 30)
-  - user_agent (string): Custom User-Agent header
+  - user_agent (string): Custom User-Agent header (a browser-like default is sent automatically if not set; empty string disables)
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details

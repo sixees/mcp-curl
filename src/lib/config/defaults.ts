@@ -21,9 +21,13 @@ export function resolveDefault(
     return builtInDefault || undefined;
 }
 
+/** Case-insensitive key lookup for HTTP headers (RFC 9110: header names are case-insensitive). */
+export const hasHeaderKey = (obj: Record<string, string>, key: string): boolean =>
+    Object.keys(obj).some(k => k.toLowerCase() === key.toLowerCase());
+
 /**
  * Apply default User-Agent and Referer to already-merged headers.
- * Uses `in` operator for key-existence checks so explicit empty strings are respected.
+ * Uses case-insensitive key checks so explicit empty strings are respected.
  *
  * @param headers - Already-merged headers (defaultHeaders + request headers)
  * @param userAgent - Existing user_agent param value (undefined if not set)
@@ -38,11 +42,11 @@ export function applyDefaultHeaders(
     const result = { ...headers };
     let resolvedUA = userAgent;
 
-    if (resolvedUA === undefined && !("User-Agent" in result)) {
+    if (resolvedUA === undefined && !hasHeaderKey(result, "User-Agent")) {
         resolvedUA = resolveDefault(config?.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
     }
 
-    if (!("Referer" in result)) {
+    if (!hasHeaderKey(result, "Referer")) {
         const referer = resolveDefault(config?.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
         if (referer) result["Referer"] = referer;
     }

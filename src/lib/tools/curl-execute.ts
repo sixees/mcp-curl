@@ -51,7 +51,7 @@ Args:
   - max_redirects (number): Maximum redirects to follow (0-50)
   - insecure (boolean): Skip SSL verification (default: false)
   - timeout (number): Request timeout in seconds (1-300, default: 30)
-  - user_agent (string): Custom User-Agent header
+  - user_agent (string): Custom User-Agent header (a browser-like default is sent automatically if not set; empty string disables)
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
