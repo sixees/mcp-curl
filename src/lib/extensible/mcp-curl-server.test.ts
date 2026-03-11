@@ -3,8 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
-import { McpCurlServer, KNOWN_CONFIG_KEYS } from "./mcp-curl-server.js";
-import type { McpCurlConfig } from "../types/public.js";
+import { McpCurlServer } from "./mcp-curl-server.js";
 
 describe("McpCurlServer", () => {
     let server: McpCurlServer;
@@ -61,16 +60,6 @@ describe("McpCurlServer", () => {
             warnSpy.mockRestore();
         });
 
-        it("KNOWN_CONFIG_KEYS covers all McpCurlConfig fields", () => {
-            const allKeys: Required<McpCurlConfig> = {
-                baseUrl: "", defaultHeaders: {}, defaultTimeout: 0, outputDir: "",
-                maxResultSize: 0, allowLocalhost: false, port: 0, host: "",
-                authToken: "", allowedOrigins: [], defaultUserAgent: "", defaultReferer: "",
-            };
-            for (const key of Object.keys(allKeys)) {
-                expect(KNOWN_CONFIG_KEYS.has(key)).toBe(true);
-            }
-        });
     });
 
     describe("disableCurlExecute()", () => {
@@ -156,19 +145,21 @@ describe("McpCurlServer", () => {
         });
 
         it("should invalidate cached utilities after shutdown()", async () => {
-            // Access utilities before start to verify no crash
-            const utilsBefore = server.utilities();
-            expect(utilsBefore).toBeDefined();
+            // Simulate post-start frozen state
+            (server as any)._started = true;
+            (server as any)._frozenConfig = Object.freeze({});
 
-            // We can't fully start() without transport, but we can verify
-            // that shutdown resets _utilities by checking the internal state
-            // Start sets _frozenConfig and _utilities would be cached on next call
-            // After shutdown, utilities() should create fresh instances again
-            await server.shutdown(); // safe to call even if never started
-            const utilsAfter1 = server.utilities();
-            const utilsAfter2 = server.utilities();
-            // After shutdown, config is unfrozen so no caching — different instances
-            expect(utilsAfter1).not.toBe(utilsAfter2);
+            // With frozen config, utilities() should cache (same instance)
+            const cached1 = server.utilities();
+            const cached2 = server.utilities();
+            expect(cached1).toBe(cached2);
+
+            // After shutdown, cache is cleared — fresh instances again
+            await server.shutdown();
+            const fresh1 = server.utilities();
+            const fresh2 = server.utilities();
+            expect(fresh1).not.toBe(cached1);
+            expect(fresh1).not.toBe(fresh2);
         });
     });
 

@@ -453,7 +453,8 @@ function buildToolDescription(endpoint: EndpointDefinition): string {
         parts.push("Available filter presets:");
         for (const preset of endpoint.response.filterPresets) {
             if (preset.description) {
-                parts.push(`  - ${preset.name}: ${preset.description}`);
+                const desc = preset.description.replace(/\r?\n/g, " ");
+                parts.push(`  - ${preset.name}: ${desc}`);
             } else {
                 parts.push(`  - ${preset.name}: applies filter "${preset.jqFilter}"`);
             }

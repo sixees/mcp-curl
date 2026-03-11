@@ -79,8 +79,11 @@ const KNOWN_CONFIG_KEYS_ARRAY = [
     "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
 ] as const satisfies readonly (keyof McpCurlConfig)[];
 
-/** @internal Exported for exhaustiveness testing only */
-export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set(KNOWN_CONFIG_KEYS_ARRAY);
+// Compile-time check: fails if any McpCurlConfig key is missing from the array
+type _AssertExhaustive = [Exclude<keyof McpCurlConfig, (typeof KNOWN_CONFIG_KEYS_ARRAY)[number]>] extends [never] ? true : never;
+const _: _AssertExhaustive = true;
+
+const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set(KNOWN_CONFIG_KEYS_ARRAY);
 
 export class McpCurlServer {
     private _config: McpCurlConfig = {};
@@ -113,13 +116,13 @@ export class McpCurlServer {
     configure(config: Partial<McpCurlConfig>): this {
         this.ensureNotStarted("configure()");
         const picked: Partial<McpCurlConfig> = {};
+        const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
         for (const key of Object.keys(config)) {
             if (KNOWN_CONFIG_KEYS.has(key)) {
                 (picked as Record<string, unknown>)[key] = (config as Record<string, unknown>)[key];
             } else {
                 console.warn(
-                    `McpCurlServer.configure(): unknown config key "${key}" ignored. ` +
-                    `Known keys: ${[...KNOWN_CONFIG_KEYS].join(", ")}`
+                    `McpCurlServer.configure(): unknown config key "${key}" ignored. Known keys: ${knownKeysList}`
                 );
             }
         }
