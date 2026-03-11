@@ -452,7 +452,11 @@ function buildToolDescription(endpoint: EndpointDefinition): string {
         parts.push("");
         parts.push("Available filter presets:");
         for (const preset of endpoint.response.filterPresets) {
-            parts.push(`  - ${preset.name}: applies filter "${preset.jqFilter}"`);
+            if (preset.description) {
+                parts.push(`  - ${preset.name}: ${preset.description}`);
+            } else {
+                parts.push(`  - ${preset.name}: applies filter "${preset.jqFilter}"`);
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, o as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-CPvY9sSW.js';
+import { C as CurlExecuteInput, J as JqQueryInput, o as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-D2k1xoIf.js';
 
 /**
  * Configuration options for McpCurlServer.
@@ -163,22 +163,6 @@ interface CustomToolMeta {
         openWorldHint?: boolean;
     };
 }
-/**
- * Extensible MCP cURL server with fluent builder API.
- *
- * Provides hooks for request interception, configuration options,
- * and tool management while maintaining backward compatibility.
- *
- * @example
- * ```typescript
- * const server = new McpCurlServer()
- *   .configure({ baseUrl: "https://api.example.com" })
- *   .beforeRequest((ctx) => {
- *     console.log("Request:", ctx.tool, ctx.params);
- *   })
- *   .start("stdio");
- * ```
- */
 declare class McpCurlServer {
     private _config;
     private _frozenConfig;
@@ -190,6 +174,7 @@ declare class McpCurlServer {
     private _httpServer;
     private _sessionManager;
     private _rateLimitInterval;
+    private _utilities;
     /**
      * Configure server options.
      * Must be called before start().

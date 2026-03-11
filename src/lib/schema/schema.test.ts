@@ -149,6 +149,61 @@ describe("validateApiSchema", () => {
         expect(result.defaults?.timeout).toBe(60);
     });
 
+    it("accepts optional description on filter presets", () => {
+        const result = validateApiSchema({
+            ...validSchema,
+            endpoints: [
+                {
+                    ...validSchema.endpoints[0],
+                    response: {
+                        filterPresets: [
+                            { name: "summary", jqFilter: ".summary", description: "Brief overview" },
+                            { name: "raw", jqFilter: "." },
+                        ],
+                    },
+                },
+            ],
+        });
+        expect(result.endpoints[0].response?.filterPresets?.[0].description).toBe("Brief overview");
+        expect(result.endpoints[0].response?.filterPresets?.[1].description).toBeUndefined();
+    });
+
+    it("rejects overly long description on filter presets", () => {
+        expect(() =>
+            validateApiSchema({
+                ...validSchema,
+                endpoints: [
+                    {
+                        ...validSchema.endpoints[0],
+                        response: {
+                            filterPresets: [
+                                { name: "summary", jqFilter: ".summary", description: "x".repeat(501) },
+                            ],
+                        },
+                    },
+                ],
+            })
+        ).toThrow(ApiSchemaValidationError);
+    });
+
+    it("rejects empty description string on filter presets", () => {
+        expect(() =>
+            validateApiSchema({
+                ...validSchema,
+                endpoints: [
+                    {
+                        ...validSchema.endpoints[0],
+                        response: {
+                            filterPresets: [
+                                { name: "summary", jqFilter: ".summary", description: "" },
+                            ],
+                        },
+                    },
+                ],
+            })
+        ).toThrow(ApiSchemaValidationError);
+    });
+
     it("rejects timeout out of range", () => {
         expect(() =>
             validateApiSchema({
@@ -1058,6 +1113,78 @@ describe("generateToolDefinitions", () => {
             }),
             expect.objectContaining({ allowLocalhost: undefined })
         );
+    });
+
+    it("uses preset description in tool description when present", () => {
+        const schema: ApiSchema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "get_data",
+                    path: "/data",
+                    method: "GET",
+                    title: "Get Data",
+                    description: "Get data",
+                    response: {
+                        filterPresets: [
+                            { name: "summary", jqFilter: ".summary", description: "Returns a brief summary" },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        const tools = generateToolDefinitions(schema);
+        expect(tools[0].description).toContain("summary: Returns a brief summary");
+        expect(tools[0].description).not.toContain('applies filter');
+    });
+
+    it("falls back to jqFilter text when description is absent", () => {
+        const schema: ApiSchema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "get_data",
+                    path: "/data",
+                    method: "GET",
+                    title: "Get Data",
+                    description: "Get data",
+                    response: {
+                        filterPresets: [
+                            { name: "ids_only", jqFilter: ".results[].id" },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        const tools = generateToolDefinitions(schema);
+        expect(tools[0].description).toContain('ids_only: applies filter ".results[].id"');
+    });
+
+    it("handles mixed presets with and without descriptions", () => {
+        const schema: ApiSchema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "get_data",
+                    path: "/data",
+                    method: "GET",
+                    title: "Get Data",
+                    description: "Get data",
+                    response: {
+                        filterPresets: [
+                            { name: "summary", jqFilter: ".summary", description: "Brief overview" },
+                            { name: "raw", jqFilter: "." },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        const tools = generateToolDefinitions(schema);
+        expect(tools[0].description).toContain("summary: Brief overview");
+        expect(tools[0].description).toContain('raw: applies filter "."');
     });
 
     it("uses auth override from generator config", async () => {

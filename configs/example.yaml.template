@@ -162,5 +162,6 @@ endpoints:
   #     filterPresets:                           # Named presets LLM can choose from
   #       - name: ids_only
   #         jqFilter: ".results"
+  #         description: Return only result IDs
   #       - name: first_five
   #         jqFilter: ".results[0:5]"

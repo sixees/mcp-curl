@@ -34,7 +34,8 @@ var ResponseConfigSchema = z.object({
   jqFilter: z.string().optional(),
   filterPresets: z.array(z.object({
     name: z.string().min(1),
-    jqFilter: z.string().min(1)
+    jqFilter: z.string().min(1),
+    description: z.string().min(1).max(500).optional()
   })).optional()
 }).optional();
 var EndpointSchema = z.object({
@@ -427,7 +428,11 @@ function buildToolDescription(endpoint) {
     parts.push("");
     parts.push("Available filter presets:");
     for (const preset of endpoint.response.filterPresets) {
-      parts.push(`  - ${preset.name}: applies filter "${preset.jqFilter}"`);
+      if (preset.description) {
+        parts.push(`  - ${preset.name}: ${preset.description}`);
+      } else {
+        parts.push(`  - ${preset.name}: applies filter "${preset.jqFilter}"`);
+      }
     }
   }
   return parts.join("\n");

@@ -199,6 +199,8 @@ interface ResponseConfig {
         name: string;
         /** jq filter expression */
         jqFilter: string;
+        /** Human-readable description for LLM context */
+        description?: string;
     }>;
 }
 /**

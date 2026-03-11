@@ -57,6 +57,7 @@ const ResponseConfigSchema = z.object({
     filterPresets: z.array(z.object({
         name: z.string().min(1),
         jqFilter: z.string().min(1),
+        description: z.string().min(1).max(500).optional(),
     })).optional(),
 }).optional();
 

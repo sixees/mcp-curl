@@ -1,5 +1,5 @@
-import { b as ApiSchema } from '../../generator-CPvY9sSW.js';
-export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, p as getMethodAnnotations, r as registerEndpointTools } from '../../generator-CPvY9sSW.js';
+import { b as ApiSchema } from '../../generator-D2k1xoIf.js';
+export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, p as getMethodAnnotations, r as registerEndpointTools } from '../../generator-D2k1xoIf.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -123,24 +123,29 @@ declare const ApiSchemaValidator: z.ZodObject<{
             filterPresets: z.ZodOptional<z.ZodArray<z.ZodObject<{
                 name: z.ZodString;
                 jqFilter: z.ZodString;
+                description: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 name: string;
                 jqFilter: string;
+                description?: string | undefined;
             }, {
                 name: string;
                 jqFilter: string;
+                description?: string | undefined;
             }>, "many">>;
         }, "strip", z.ZodTypeAny, {
             jqFilter?: string | undefined;
             filterPresets?: {
                 name: string;
                 jqFilter: string;
+                description?: string | undefined;
             }[] | undefined;
         }, {
             jqFilter?: string | undefined;
             filterPresets?: {
                 name: string;
                 jqFilter: string;
+                description?: string | undefined;
             }[] | undefined;
         }>>;
     }, "strip", z.ZodTypeAny, {
@@ -154,6 +159,7 @@ declare const ApiSchemaValidator: z.ZodObject<{
             filterPresets?: {
                 name: string;
                 jqFilter: string;
+                description?: string | undefined;
             }[] | undefined;
         } | undefined;
         parameters?: {
@@ -176,6 +182,7 @@ declare const ApiSchemaValidator: z.ZodObject<{
             filterPresets?: {
                 name: string;
                 jqFilter: string;
+                description?: string | undefined;
             }[] | undefined;
         } | undefined;
         parameters?: {
@@ -208,6 +215,7 @@ declare const ApiSchemaValidator: z.ZodObject<{
             filterPresets?: {
                 name: string;
                 jqFilter: string;
+                description?: string | undefined;
             }[] | undefined;
         } | undefined;
         parameters?: {
@@ -256,6 +264,7 @@ declare const ApiSchemaValidator: z.ZodObject<{
             filterPresets?: {
                 name: string;
                 jqFilter: string;
+                description?: string | undefined;
             }[] | undefined;
         } | undefined;
         parameters?: {

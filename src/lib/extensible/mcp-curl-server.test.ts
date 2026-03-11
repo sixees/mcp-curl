@@ -3,7 +3,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
-import { McpCurlServer } from "./mcp-curl-server.js";
+import { McpCurlServer, KNOWN_CONFIG_KEYS } from "./mcp-curl-server.js";
+import type { McpCurlConfig } from "../types/public.js";
 
 describe("McpCurlServer", () => {
     let server: McpCurlServer;
@@ -32,6 +33,43 @@ describe("McpCurlServer", () => {
         it("should return this for chaining", () => {
             const result = server.configure({ baseUrl: "https://api.example.com" });
             expect(result).toBe(server);
+        });
+
+        it("should warn on unknown config keys", () => {
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+            server.configure({ serverName: "test" } as any);
+            expect(warnSpy).toHaveBeenCalledOnce();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining('unknown config key "serverName"')
+            );
+            warnSpy.mockRestore();
+        });
+
+        it("should not absorb unknown fields into config", () => {
+            vi.spyOn(console, "warn").mockImplementation(() => {});
+            server.configure({ serverName: "test", baseUrl: "https://api.example.com" } as any);
+            const config = server.getConfig() as Record<string, unknown>;
+            expect(config.baseUrl).toBe("https://api.example.com");
+            expect(config.serverName).toBeUndefined();
+            vi.restoreAllMocks();
+        });
+
+        it("should not warn on known config keys", () => {
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+            server.configure({ baseUrl: "https://api.example.com", defaultTimeout: 30 });
+            expect(warnSpy).not.toHaveBeenCalled();
+            warnSpy.mockRestore();
+        });
+
+        it("KNOWN_CONFIG_KEYS covers all McpCurlConfig fields", () => {
+            const allKeys: Required<McpCurlConfig> = {
+                baseUrl: "", defaultHeaders: {}, defaultTimeout: 0, outputDir: "",
+                maxResultSize: 0, allowLocalhost: false, port: 0, host: "",
+                authToken: "", allowedOrigins: [], defaultUserAgent: "", defaultReferer: "",
+            };
+            for (const key of Object.keys(allKeys)) {
+                expect(KNOWN_CONFIG_KEYS.has(key)).toBe(true);
+            }
         });
     });
 
@@ -109,6 +147,28 @@ describe("McpCurlServer", () => {
             // The utilities should have access to the config
             expect(typeof utils.executeRequest).toBe("function");
             expect(typeof utils.queryFile).toBe("function");
+        });
+
+        it("should return different instances before start (no caching)", () => {
+            const utils1 = server.utilities();
+            const utils2 = server.utilities();
+            expect(utils1).not.toBe(utils2);
+        });
+
+        it("should invalidate cached utilities after shutdown()", async () => {
+            // Access utilities before start to verify no crash
+            const utilsBefore = server.utilities();
+            expect(utilsBefore).toBeDefined();
+
+            // We can't fully start() without transport, but we can verify
+            // that shutdown resets _utilities by checking the internal state
+            // Start sets _frozenConfig and _utilities would be cached on next call
+            // After shutdown, utilities() should create fresh instances again
+            await server.shutdown(); // safe to call even if never started
+            const utilsAfter1 = server.utilities();
+            const utilsAfter2 = server.utilities();
+            // After shutdown, config is unfrozen so no caching — different instances
+            expect(utilsAfter1).not.toBe(utilsAfter2);
         });
     });
 

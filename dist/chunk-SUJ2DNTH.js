@@ -771,6 +771,21 @@ function registerJqToolWithHooks(server, options) {
 }
 
 // src/lib/extensible/mcp-curl-server.ts
+var KNOWN_CONFIG_KEYS_ARRAY = [
+  "baseUrl",
+  "defaultHeaders",
+  "defaultTimeout",
+  "outputDir",
+  "maxResultSize",
+  "allowLocalhost",
+  "port",
+  "host",
+  "authToken",
+  "allowedOrigins",
+  "defaultUserAgent",
+  "defaultReferer"
+];
+var KNOWN_CONFIG_KEYS = new Set(KNOWN_CONFIG_KEYS_ARRAY);
 var McpCurlServer = class {
   _config = {};
   _frozenConfig = null;
@@ -789,6 +804,7 @@ var McpCurlServer = class {
   _httpServer = null;
   _sessionManager = null;
   _rateLimitInterval = null;
+  _utilities = null;
   /**
    * Configure server options.
    * Must be called before start().
@@ -799,7 +815,17 @@ var McpCurlServer = class {
    */
   configure(config) {
     this.ensureNotStarted("configure()");
-    this._config = { ...this._config, ...config };
+    const picked = {};
+    for (const key of Object.keys(config)) {
+      if (KNOWN_CONFIG_KEYS.has(key)) {
+        picked[key] = config[key];
+      } else {
+        console.warn(
+          `McpCurlServer.configure(): unknown config key "${key}" ignored. Known keys: ${[...KNOWN_CONFIG_KEYS].join(", ")}`
+        );
+      }
+    }
+    this._config = { ...this._config, ...picked };
     return this;
   }
   /**
@@ -936,7 +962,13 @@ var McpCurlServer = class {
    * @returns Instance utilities object
    */
   utilities() {
-    return createInstanceUtilities(this.getConfig());
+    if (!this._frozenConfig) {
+      return createInstanceUtilities(this.getConfig());
+    }
+    if (!this._utilities) {
+      this._utilities = createInstanceUtilities(this._frozenConfig);
+    }
+    return this._utilities;
   }
   /**
    * Get the underlying MCP server instance.
@@ -1003,6 +1035,7 @@ var McpCurlServer = class {
       this._server = null;
       this._started = false;
       this._frozenConfig = null;
+      this._utilities = null;
       throw error;
     }
   }
@@ -1070,6 +1103,7 @@ var McpCurlServer = class {
     } finally {
       this._started = false;
       this._frozenConfig = null;
+      this._utilities = null;
       this._rateLimitInterval = null;
       this._sessionManager = null;
     }
