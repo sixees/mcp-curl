@@ -816,12 +816,13 @@ var McpCurlServer = class {
   configure(config) {
     this.ensureNotStarted("configure()");
     const picked = {};
+    const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
     for (const key of Object.keys(config)) {
       if (KNOWN_CONFIG_KEYS.has(key)) {
         picked[key] = config[key];
       } else {
         console.warn(
-          `McpCurlServer.configure(): unknown config key "${key}" ignored. Known keys: ${[...KNOWN_CONFIG_KEYS].join(", ")}`
+          `McpCurlServer.configure(): unknown config key "${key}" ignored. Known keys: ${knownKeysList}`
         );
       }
     }
