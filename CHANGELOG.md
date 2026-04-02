@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-04-03
+
+### Breaking Changes
+
+- **Zod v4 upgrade** – `zod` dependency bumped from `^3.23.8` to `^4.0.0`. Consumers who have their own
+  `zod@^3.x` dependency and use exported types from `mcp-curl` (e.g. `CurlExecuteInput`, `JqQueryInput`,
+  `ApiSchemaValidationError`) will encounter TypeScript type mismatches. Pin your `zod` dependency to v4 or use
+  type-only imports where possible.
+
+- **`ApiSchemaValidationError.issues` type changed** – The `issues` property on `ApiSchemaValidationError` now
+  carries Zod v4's `ZodIssue` type. The `invalid_type` issue no longer includes a `received` field. Code
+  pattern-matching on issue structure may need updates.
+
+- **URL validation error code changed** – Zod v4 `z.url()` emits `invalid_format` instead of `invalid_string`
+  for URL format failures. Code matching on `issue.code === "invalid_string"` for URL fields will no longer match.
+  Update to `issue.code === "invalid_format"`.
+
+### Changed
+
+- **`@modelcontextprotocol/sdk` bumped** from `^1.12.0` to `^1.29.0`. No breaking API changes in the tool
+  registration surface (`server.registerTool()` is unchanged).
+
+- **`z.string().url()` → `z.url()`** at all validation sites. The HTTP/HTTPS protocol `.refine()` guard on
+  `CurlExecuteSchema.url` is preserved.
+
+- **`z.record(z.string())` → `z.record(z.string(), z.string())`** for `headers` and `form` fields. The
+  single-argument form builds silently in Zod v4 but crashes at parse time.
+
 ## [2.0.1] - 2026-02-17
 
 ### Security
