@@ -51,7 +51,7 @@ export interface GeneratorConfig {
  * @returns Zod object schema for the endpoint
  */
 export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z.ZodRawShape> {
-    const shape: z.ZodRawShape = {};
+    const shape: Record<string, z.ZodTypeAny> = {};
 
     for (const param of endpoint.parameters ?? []) {
         let schema: z.ZodTypeAny = createParamSchema(param);

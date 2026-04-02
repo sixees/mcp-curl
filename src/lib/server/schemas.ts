@@ -8,8 +8,7 @@ import { z } from "zod";
  * Validates all parameters for the curl_execute tool.
  */
 export const CurlExecuteSchema = z.object({
-    url: z.string()
-        .url("Must be a valid URL")
+    url: z.url("Must be a valid URL")
         .refine(
             (url) => {
                 const scheme = url.split(":")[0].toLowerCase();
@@ -21,13 +20,13 @@ export const CurlExecuteSchema = z.object({
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
         .optional()
         .describe("HTTP method (defaults to GET, or POST if data is provided)"),
-    headers: z.record(z.string())
+    headers: z.record(z.string(), z.string())
         .optional()
         .describe("HTTP headers as key-value pairs (e.g., {\"Content-Type\": \"application/json\"})"),
     data: z.string()
         .optional()
         .describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
-    form: z.record(z.string())
+    form: z.record(z.string(), z.string())
         .optional()
         .describe("Form data as key-value pairs (uses multipart/form-data)"),
     follow_redirects: z.boolean()

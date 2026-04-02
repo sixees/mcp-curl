@@ -15,7 +15,7 @@ export function registerApiDiscoveryPrompt(server: McpServer): void {
             title: "REST API Discovery",
             description: "Explore a REST API to discover available endpoints",
             argsSchema: {
-                base_url: z.string().url().describe("Base URL of the API"),
+                base_url: z.url().describe("Base URL of the API"),
                 auth_token: z.string().optional().describe("Optional bearer token for authentication"),
             },
         },

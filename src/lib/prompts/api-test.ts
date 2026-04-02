@@ -15,7 +15,7 @@ export function registerApiTestPrompt(server: McpServer): void {
             title: "API Testing",
             description: "Test an API endpoint and analyze the response",
             argsSchema: {
-                url: z.string().url().describe("The API endpoint URL to test"),
+                url: z.url().describe("The API endpoint URL to test"),
                 method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (default: GET)"),
                 description: z.string().optional().describe("What this API endpoint does"),
             },
