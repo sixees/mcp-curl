@@ -98,38 +98,19 @@ export function registerCurlToolWithHooks(
 ): void {
     const { executor, enabled, config, hooks } = options;
 
+    const handler: ToolCallback<typeof CurlExecuteSchema> = (params, extra) => {
+        if (!enabled) {
+            return Promise.resolve({
+                content: [{ type: "text" as const, text: "Error: curl_execute tool is disabled" }],
+                isError: true,
+            });
+        }
+        const transformedParams = applyConfigTransformsCurl(params, config);
+        return executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
+    };
+
     // Register using the canonical meta object to preserve type inference
-    server.registerTool(
-        "curl_execute",
-        CURL_EXECUTE_TOOL_META,
-        ((params: CurlExecuteInput, extra?: { sessionId?: string }) => {
-            // Check if tool is enabled
-            if (!enabled) {
-                return Promise.resolve({
-                    content: [
-                        {
-                            type: "text" as const,
-                            text: "Error: curl_execute tool is disabled",
-                        },
-                    ],
-                    isError: true,
-                });
-            }
-
-            // Apply config transforms
-            const transformedParams = applyConfigTransformsCurl(params, config);
-
-            // Execute with hooks
-            return executeWithHooks(
-                "curl_execute",
-                transformedParams,
-                config,
-                hooks,
-                extra?.sessionId,
-                executor
-            );
-        }) as ToolCallback<typeof CurlExecuteSchema>
-    );
+    server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, handler);
 }
 
 /**
@@ -144,37 +125,18 @@ export function registerJqToolWithHooks(
 ): void {
     const { executor, enabled, config, hooks } = options;
 
+    const handler: ToolCallback<typeof JqQuerySchema> = (params, extra) => {
+        if (!enabled) {
+            return Promise.resolve({
+                content: [{ type: "text" as const, text: "Error: jq_query tool is disabled" }],
+                isError: true,
+            });
+        }
+        const transformedParams = applyConfigTransformsJq(params, config);
+        return executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
+    };
+
     // Register using the canonical meta object to preserve type inference
-    server.registerTool(
-        "jq_query",
-        JQ_QUERY_TOOL_META,
-        ((params: JqQueryInput, extra?: { sessionId?: string }) => {
-            // Check if tool is enabled
-            if (!enabled) {
-                return Promise.resolve({
-                    content: [
-                        {
-                            type: "text" as const,
-                            text: "Error: jq_query tool is disabled",
-                        },
-                    ],
-                    isError: true,
-                });
-            }
-
-            // Apply config transforms
-            const transformedParams = applyConfigTransformsJq(params, config);
-
-            // Execute with hooks
-            return executeWithHooks(
-                "jq_query",
-                transformedParams,
-                config,
-                hooks,
-                extra?.sessionId,
-                executor
-            );
-        }) as ToolCallback<typeof JqQuerySchema>
-    );
+    server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
 

@@ -70,21 +70,32 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
     // Add optional filter_preset parameter if presets exist
     if (endpoint.response?.filterPresets?.length) {
         const presetNames = endpoint.response.filterPresets.map((p) => p.name);
-        // z.enum() requires at least 2 elements, so handle single-element case with z.literal()
-        if (presetNames.length === 1) {
-            shape.filter_preset = z
-                .literal(presetNames[0])
-                .optional()
-                .describe("Apply a predefined response filter");
-        } else {
-            shape.filter_preset = z
-                .enum(presetNames as [string, ...string[]])
-                .optional()
-                .describe("Apply a predefined response filter");
-        }
+        shape.filter_preset = buildStringEnum(presetNames)
+            .optional()
+            .describe("Apply a predefined response filter");
     }
 
     return z.object(shape);
+}
+
+/**
+ * Build a string enum schema, falling back to z.literal() for single-element arrays
+ * because z.enum() requires at least 2 elements.
+ */
+function buildStringEnum(values: string[]): z.ZodTypeAny {
+    if (values.length === 1) return z.literal(values[0]);
+    return z.enum(values as [string, ...string[]]);
+}
+
+/**
+ * Build a number union schema, falling back to z.literal() for single-element arrays
+ * because z.union() requires at least 2 elements.
+ */
+function buildNumberUnion(values: number[]): z.ZodTypeAny {
+    if (values.length === 1) return z.literal(values[0]);
+    return z.union(
+        values.map((v) => z.literal(v)) as [z.ZodLiteral<number>, z.ZodLiteral<number>, ...z.ZodLiteral<number>[]]
+    );
 }
 
 /**
@@ -96,20 +107,9 @@ function createParamSchema(param: EndpointParameter): z.ZodTypeAny {
         // Enum can be strings or numbers
         const firstValue = param.enum[0];
         if (typeof firstValue === "string") {
-            // z.enum() requires at least 2 elements, so handle single-element case
-            if (param.enum.length === 1) {
-                return z.literal(firstValue);
-            }
-            return z.enum(param.enum as [string, ...string[]]);
+            return buildStringEnum(param.enum as string[]);
         } else {
-            // For number enums, use union of literals
-            // z.union() requires at least 2 elements, so handle single-element case
-            if (param.enum.length === 1) {
-                return z.literal(firstValue as number);
-            }
-            return z.union(
-                param.enum.map((v) => z.literal(v)) as [z.ZodLiteral<number>, z.ZodLiteral<number>, ...z.ZodLiteral<number>[]]
-            );
+            return buildNumberUnion(param.enum as number[]);
         }
     }
 
