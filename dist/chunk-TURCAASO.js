@@ -2,7 +2,7 @@ import {
   applyDefaultHeaders,
   executeCurlRequest,
   resolveBaseUrl
-} from "./chunk-PH7FLIFM.js";
+} from "./chunk-FBAV2EBE.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -56,13 +56,14 @@ var ApiInfoSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1),
   version: z.string().min(1),
-  baseUrl: z.string().url({
-    message: "Base URL must be a valid URL"
-  })
+  baseUrl: z.url("Base URL must be a valid URL").refine(
+    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
+    { message: "Base URL must use http or https scheme" }
+  )
 });
 var ApiDefaultsSchema = z.object({
   timeout: z.number().int().min(1).max(300).optional(),
-  headers: z.record(z.string()).optional()
+  headers: z.record(z.string(), z.string()).optional()
 }).optional();
 var ApiSchemaValidator = z.object({
   apiVersion: z.literal("1.0"),

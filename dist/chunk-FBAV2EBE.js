@@ -1,7 +1,7 @@
 // src/lib/server/schemas.ts
 import { z } from "zod";
 var CurlExecuteSchema = z.object({
-  url: z.string().url("Must be a valid URL").refine(
+  url: z.url("Must be a valid URL").refine(
     (url) => {
       const scheme = url.split(":")[0].toLowerCase();
       return ["http", "https"].includes(scheme);
@@ -9,9 +9,9 @@ var CurlExecuteSchema = z.object({
     { message: "URL must use http or https scheme" }
   ).describe("The URL to request"),
   method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (defaults to GET, or POST if data is provided)"),
-  headers: z.record(z.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
+  headers: z.record(z.string(), z.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
   data: z.string().optional().describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
-  form: z.record(z.string()).optional().describe("Form data as key-value pairs (uses multipart/form-data)"),
+  form: z.record(z.string(), z.string()).optional().describe("Form data as key-value pairs (uses multipart/form-data)"),
   follow_redirects: z.boolean().default(true).describe("Follow HTTP redirects (default: true)"),
   max_redirects: z.number().int().min(0).max(50).optional().describe("Maximum number of redirects to follow"),
   insecure: z.boolean().default(false).describe("Skip SSL certificate verification (default: false)"),
@@ -84,7 +84,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "2.0.1" : "0.0.0"
+  VERSION: true ? "3.0.0" : "0.0.0"
 };
 
 // src/lib/config/session.ts

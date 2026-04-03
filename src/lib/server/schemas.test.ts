@@ -50,8 +50,75 @@ describe("CurlExecuteSchema — boolean defaults (Zod v4 .default() parity)", ()
         expect(result.follow_redirects).toBe(true);
     });
 
+    it("applies verbose: false default when not provided", () => {
+        const result = CurlExecuteSchema.parse({ url: "https://example.com" });
+        expect(result.verbose).toBe(false);
+    });
+
+    it("applies compressed: true default when not provided", () => {
+        const result = CurlExecuteSchema.parse({ url: "https://example.com" });
+        expect(result.compressed).toBe(true);
+    });
+
+    it("applies include_headers: false default when not provided", () => {
+        const result = CurlExecuteSchema.parse({ url: "https://example.com" });
+        expect(result.include_headers).toBe(false);
+    });
+
+    it("applies include_metadata: false default when not provided", () => {
+        const result = CurlExecuteSchema.parse({ url: "https://example.com" });
+        expect(result.include_metadata).toBe(false);
+    });
+
     it("preserves explicit insecure: true when provided", () => {
         const result = CurlExecuteSchema.parse({ url: "https://example.com", insecure: true });
         expect(result.insecure).toBe(true);
+    });
+
+    it("preserves explicit follow_redirects: false when provided", () => {
+        const result = CurlExecuteSchema.parse({ url: "https://example.com", follow_redirects: false });
+        expect(result.follow_redirects).toBe(false);
+    });
+});
+
+describe("CurlExecuteSchema — headers and form field validation", () => {
+    it("accepts string-valued headers", () => {
+        const result = CurlExecuteSchema.safeParse({
+            url: "https://example.com",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer token" },
+        });
+        expect(result.success).toBe(true);
+    });
+
+    it("rejects numeric header values", () => {
+        const result = CurlExecuteSchema.safeParse({
+            url: "https://example.com",
+            headers: { "X-Count": 42 },
+        });
+        expect(result.success).toBe(false);
+    });
+
+    it("rejects array header values", () => {
+        const result = CurlExecuteSchema.safeParse({
+            url: "https://example.com",
+            headers: { "X-Values": ["a", "b"] },
+        });
+        expect(result.success).toBe(false);
+    });
+
+    it("accepts string-valued form fields", () => {
+        const result = CurlExecuteSchema.safeParse({
+            url: "https://example.com",
+            form: { username: "alice", token: "abc123" },
+        });
+        expect(result.success).toBe(true);
+    });
+
+    it("rejects numeric form values", () => {
+        const result = CurlExecuteSchema.safeParse({
+            url: "https://example.com",
+            form: { count: 3 },
+        });
+        expect(result.success).toBe(false);
     });
 });

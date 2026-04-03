@@ -70,6 +70,24 @@ describe("validateApiSchema", () => {
         ).toThrow(ApiSchemaValidationError);
     });
 
+    it("rejects ftp:// baseUrl", () => {
+        expect(() =>
+            validateApiSchema({
+                ...validSchema,
+                api: { ...validSchema.api, baseUrl: "ftp://evil.com" },
+            })
+        ).toThrow(ApiSchemaValidationError);
+    });
+
+    it("rejects file:// baseUrl", () => {
+        expect(() =>
+            validateApiSchema({
+                ...validSchema,
+                api: { ...validSchema.api, baseUrl: "file:///etc/passwd" },
+            })
+        ).toThrow(ApiSchemaValidationError);
+    });
+
     it("rejects empty endpoints array", () => {
         expect(() =>
             validateApiSchema({ ...validSchema, endpoints: [] })

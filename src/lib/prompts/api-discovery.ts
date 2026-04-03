@@ -4,6 +4,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+/** Base URL schema restricted to http/https schemes. Exported for testing. */
+export const apiDiscoveryBaseUrlSchema = z.url().refine(
+    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
+    { message: "Base URL must use http or https scheme" }
+).describe("Base URL of the API");
+
 /**
  * Registers the api-discovery prompt on the MCP server.
  * Provides a template for exploring REST APIs.
@@ -15,7 +21,7 @@ export function registerApiDiscoveryPrompt(server: McpServer): void {
             title: "REST API Discovery",
             description: "Explore a REST API to discover available endpoints",
             argsSchema: {
-                base_url: z.url().describe("Base URL of the API"),
+                base_url: apiDiscoveryBaseUrlSchema,
                 auth_token: z.string().optional().describe("Optional bearer token for authentication"),
             },
         },

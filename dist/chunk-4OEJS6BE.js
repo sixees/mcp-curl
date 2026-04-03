@@ -23,7 +23,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-PH7FLIFM.js";
+} from "./chunk-FBAV2EBE.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -370,6 +370,10 @@ function registerAllResources(server) {
 
 // src/lib/prompts/api-test.ts
 import { z } from "zod";
+var apiTestUrlSchema = z.url().refine(
+  (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
+  { message: "URL must use http or https scheme" }
+).describe("The API endpoint URL to test");
 function registerApiTestPrompt(server) {
   server.registerPrompt(
     "api-test",
@@ -377,7 +381,7 @@ function registerApiTestPrompt(server) {
       title: "API Testing",
       description: "Test an API endpoint and analyze the response",
       argsSchema: {
-        url: z.string().url().describe("The API endpoint URL to test"),
+        url: apiTestUrlSchema,
         method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (default: GET)"),
         description: z.string().optional().describe("What this API endpoint does")
       }
@@ -406,6 +410,10 @@ Please:
 
 // src/lib/prompts/api-discovery.ts
 import { z as z2 } from "zod";
+var apiDiscoveryBaseUrlSchema = z2.url().refine(
+  (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
+  { message: "Base URL must use http or https scheme" }
+).describe("Base URL of the API");
 function registerApiDiscoveryPrompt(server) {
   server.registerPrompt(
     "api-discovery",
@@ -413,7 +421,7 @@ function registerApiDiscoveryPrompt(server) {
       title: "REST API Discovery",
       description: "Explore a REST API to discover available endpoints",
       argsSchema: {
-        base_url: z2.string().url().describe("Base URL of the API"),
+        base_url: apiDiscoveryBaseUrlSchema,
         auth_token: z2.string().optional().describe("Optional bearer token for authentication")
       }
     },

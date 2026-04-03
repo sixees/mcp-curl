@@ -1,6 +1,6 @@
-import { b as ApiSchema } from '../../generator-D2k1xoIf.js';
-export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, p as getMethodAnnotations, r as registerEndpointTools } from '../../generator-D2k1xoIf.js';
-import { z } from 'zod';
+import { b as ApiSchema } from '../../generator-Ctr639v0.js';
+export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, p as getMethodAnnotations, r as registerEndpointTools } from '../../generator-Ctr639v0.js';
+import { ZodIssue, z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
@@ -13,293 +13,76 @@ declare const ApiSchemaValidator: z.ZodObject<{
         title: z.ZodString;
         description: z.ZodString;
         version: z.ZodString;
-        baseUrl: z.ZodString;
-    }, "strip", z.ZodTypeAny, {
-        version: string;
-        description: string;
-        name: string;
-        title: string;
-        baseUrl: string;
-    }, {
-        version: string;
-        description: string;
-        name: string;
-        title: string;
-        baseUrl: string;
-    }>;
+        baseUrl: z.ZodURL;
+    }, z.core.$strip>;
     auth: z.ZodOptional<z.ZodObject<{
         apiKey: z.ZodOptional<z.ZodObject<{
-            type: z.ZodEnum<["query", "header"]>;
+            type: z.ZodEnum<{
+                query: "query";
+                header: "header";
+            }>;
             name: z.ZodString;
             envVar: z.ZodString;
             required: z.ZodDefault<z.ZodBoolean>;
-        }, "strip", z.ZodTypeAny, {
-            type: "query" | "header";
-            name: string;
-            envVar: string;
-            required: boolean;
-        }, {
-            type: "query" | "header";
-            name: string;
-            envVar: string;
-            required?: boolean | undefined;
-        }>>;
+        }, z.core.$strip>>;
         bearer: z.ZodOptional<z.ZodObject<{
             envVar: z.ZodString;
             required: z.ZodDefault<z.ZodBoolean>;
-        }, "strip", z.ZodTypeAny, {
-            envVar: string;
-            required: boolean;
-        }, {
-            envVar: string;
-            required?: boolean | undefined;
-        }>>;
-    }, "strip", z.ZodTypeAny, {
-        apiKey?: {
-            type: "query" | "header";
-            name: string;
-            envVar: string;
-            required: boolean;
-        } | undefined;
-        bearer?: {
-            envVar: string;
-            required: boolean;
-        } | undefined;
-    }, {
-        apiKey?: {
-            type: "query" | "header";
-            name: string;
-            envVar: string;
-            required?: boolean | undefined;
-        } | undefined;
-        bearer?: {
-            envVar: string;
-            required?: boolean | undefined;
-        } | undefined;
-    }>>;
+        }, z.core.$strip>>;
+    }, z.core.$strip>>;
     defaults: z.ZodOptional<z.ZodObject<{
         timeout: z.ZodOptional<z.ZodNumber>;
         headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
-    }, "strip", z.ZodTypeAny, {
-        headers?: Record<string, string> | undefined;
-        timeout?: number | undefined;
-    }, {
-        headers?: Record<string, string> | undefined;
-        timeout?: number | undefined;
-    }>>;
+    }, z.core.$strip>>;
     endpoints: z.ZodArray<z.ZodObject<{
         id: z.ZodString;
         path: z.ZodString;
-        method: z.ZodEnum<["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]>;
+        method: z.ZodEnum<{
+            GET: "GET";
+            POST: "POST";
+            PUT: "PUT";
+            PATCH: "PATCH";
+            DELETE: "DELETE";
+            HEAD: "HEAD";
+            OPTIONS: "OPTIONS";
+        }>;
         title: z.ZodString;
         description: z.ZodString;
         parameters: z.ZodOptional<z.ZodArray<z.ZodObject<{
             name: z.ZodString;
-            in: z.ZodEnum<["path", "query", "header", "body"]>;
-            type: z.ZodEnum<["string", "number", "boolean", "integer"]>;
+            in: z.ZodEnum<{
+                path: "path";
+                body: "body";
+                query: "query";
+                header: "header";
+            }>;
+            type: z.ZodEnum<{
+                string: "string";
+                number: "number";
+                boolean: "boolean";
+                integer: "integer";
+            }>;
             required: z.ZodDefault<z.ZodBoolean>;
             description: z.ZodOptional<z.ZodString>;
-            default: z.ZodOptional<z.ZodUnion<[z.ZodString, z.ZodNumber, z.ZodBoolean]>>;
-            enum: z.ZodOptional<z.ZodArray<z.ZodUnion<[z.ZodString, z.ZodNumber]>, "many">>;
-        }, "strip", z.ZodTypeAny, {
-            type: "string" | "number" | "boolean" | "integer";
-            in: "path" | "body" | "query" | "header";
-            name: string;
-            required: boolean;
-            default?: string | number | boolean | undefined;
-            description?: string | undefined;
-            enum?: (string | number)[] | undefined;
-        }, {
-            type: "string" | "number" | "boolean" | "integer";
-            in: "path" | "body" | "query" | "header";
-            name: string;
-            default?: string | number | boolean | undefined;
-            description?: string | undefined;
-            required?: boolean | undefined;
-            enum?: (string | number)[] | undefined;
-        }>, "many">>;
+            default: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean]>>;
+            enum: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>>;
+        }, z.core.$strip>>>;
         response: z.ZodOptional<z.ZodObject<{
             jqFilter: z.ZodOptional<z.ZodString>;
             filterPresets: z.ZodOptional<z.ZodArray<z.ZodObject<{
                 name: z.ZodString;
                 jqFilter: z.ZodString;
                 description: z.ZodOptional<z.ZodString>;
-            }, "strip", z.ZodTypeAny, {
-                name: string;
-                jqFilter: string;
-                description?: string | undefined;
-            }, {
-                name: string;
-                jqFilter: string;
-                description?: string | undefined;
-            }>, "many">>;
-        }, "strip", z.ZodTypeAny, {
-            jqFilter?: string | undefined;
-            filterPresets?: {
-                name: string;
-                jqFilter: string;
-                description?: string | undefined;
-            }[] | undefined;
-        }, {
-            jqFilter?: string | undefined;
-            filterPresets?: {
-                name: string;
-                jqFilter: string;
-                description?: string | undefined;
-            }[] | undefined;
-        }>>;
-    }, "strip", z.ZodTypeAny, {
-        path: string;
-        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
-        description: string;
-        title: string;
-        id: string;
-        response?: {
-            jqFilter?: string | undefined;
-            filterPresets?: {
-                name: string;
-                jqFilter: string;
-                description?: string | undefined;
-            }[] | undefined;
-        } | undefined;
-        parameters?: {
-            type: "string" | "number" | "boolean" | "integer";
-            in: "path" | "body" | "query" | "header";
-            name: string;
-            required: boolean;
-            default?: string | number | boolean | undefined;
-            description?: string | undefined;
-            enum?: (string | number)[] | undefined;
-        }[] | undefined;
-    }, {
-        path: string;
-        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
-        description: string;
-        title: string;
-        id: string;
-        response?: {
-            jqFilter?: string | undefined;
-            filterPresets?: {
-                name: string;
-                jqFilter: string;
-                description?: string | undefined;
-            }[] | undefined;
-        } | undefined;
-        parameters?: {
-            type: "string" | "number" | "boolean" | "integer";
-            in: "path" | "body" | "query" | "header";
-            name: string;
-            default?: string | number | boolean | undefined;
-            description?: string | undefined;
-            required?: boolean | undefined;
-            enum?: (string | number)[] | undefined;
-        }[] | undefined;
-    }>, "many">;
-}, "strip", z.ZodTypeAny, {
-    apiVersion: "1.0";
-    api: {
-        version: string;
-        description: string;
-        name: string;
-        title: string;
-        baseUrl: string;
-    };
-    endpoints: {
-        path: string;
-        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
-        description: string;
-        title: string;
-        id: string;
-        response?: {
-            jqFilter?: string | undefined;
-            filterPresets?: {
-                name: string;
-                jqFilter: string;
-                description?: string | undefined;
-            }[] | undefined;
-        } | undefined;
-        parameters?: {
-            type: "string" | "number" | "boolean" | "integer";
-            in: "path" | "body" | "query" | "header";
-            name: string;
-            required: boolean;
-            default?: string | number | boolean | undefined;
-            description?: string | undefined;
-            enum?: (string | number)[] | undefined;
-        }[] | undefined;
-    }[];
-    auth?: {
-        apiKey?: {
-            type: "query" | "header";
-            name: string;
-            envVar: string;
-            required: boolean;
-        } | undefined;
-        bearer?: {
-            envVar: string;
-            required: boolean;
-        } | undefined;
-    } | undefined;
-    defaults?: {
-        headers?: Record<string, string> | undefined;
-        timeout?: number | undefined;
-    } | undefined;
-}, {
-    apiVersion: "1.0";
-    api: {
-        version: string;
-        description: string;
-        name: string;
-        title: string;
-        baseUrl: string;
-    };
-    endpoints: {
-        path: string;
-        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
-        description: string;
-        title: string;
-        id: string;
-        response?: {
-            jqFilter?: string | undefined;
-            filterPresets?: {
-                name: string;
-                jqFilter: string;
-                description?: string | undefined;
-            }[] | undefined;
-        } | undefined;
-        parameters?: {
-            type: "string" | "number" | "boolean" | "integer";
-            in: "path" | "body" | "query" | "header";
-            name: string;
-            default?: string | number | boolean | undefined;
-            description?: string | undefined;
-            required?: boolean | undefined;
-            enum?: (string | number)[] | undefined;
-        }[] | undefined;
-    }[];
-    auth?: {
-        apiKey?: {
-            type: "query" | "header";
-            name: string;
-            envVar: string;
-            required?: boolean | undefined;
-        } | undefined;
-        bearer?: {
-            envVar: string;
-            required?: boolean | undefined;
-        } | undefined;
-    } | undefined;
-    defaults?: {
-        headers?: Record<string, string> | undefined;
-        timeout?: number | undefined;
-    } | undefined;
-}>;
+            }, z.core.$strip>>>;
+        }, z.core.$strip>>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
 /**
  * Validation error with detailed information.
  */
 declare class ApiSchemaValidationError extends Error {
-    readonly issues: z.ZodIssue[];
-    constructor(message: string, issues: z.ZodIssue[]);
+    readonly issues: ZodIssue[];
+    constructor(message: string, issues: ZodIssue[]);
 }
 /**
  * Validate parsed YAML against the API schema.

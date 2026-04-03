@@ -87,7 +87,10 @@ const ApiInfoSchema = z.object({
     title: z.string().min(1),
     description: z.string().min(1),
     version: z.string().min(1),
-    baseUrl: z.url("Base URL must be a valid URL"),
+    baseUrl: z.url("Base URL must be a valid URL").refine(
+        (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
+        { message: "Base URL must use http or https scheme" }
+    ),
 });
 
 /**

@@ -6,23 +6,22 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * Validates all parameters for the curl_execute tool.
  */
 declare const CurlExecuteSchema: z.ZodObject<{
-    url: z.ZodEffects<z.ZodString, string, string>;
-    method: z.ZodOptional<z.ZodEnum<["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]>>;
+    url: z.ZodURL;
+    method: z.ZodOptional<z.ZodEnum<{
+        GET: "GET";
+        POST: "POST";
+        PUT: "PUT";
+        PATCH: "PATCH";
+        DELETE: "DELETE";
+        HEAD: "HEAD";
+        OPTIONS: "OPTIONS";
+    }>>;
     headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
     data: z.ZodOptional<z.ZodString>;
     form: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
     follow_redirects: z.ZodDefault<z.ZodBoolean>;
     max_redirects: z.ZodOptional<z.ZodNumber>;
     insecure: z.ZodDefault<z.ZodBoolean>;
-    /**
-     * Request timeout in seconds.
-     * Optional - if not provided, defaults are applied in this order:
-     * 1. McpCurlConfig.defaultTimeout (if configured)
-     * 2. LIMITS.DEFAULT_TIMEOUT_MS / 1000 (30 seconds)
-     *
-     * Note: This field intentionally has no .default() to distinguish between
-     * "user explicitly passed 30" vs "user didn't provide a value".
-     */
     timeout: z.ZodOptional<z.ZodNumber>;
     user_agent: z.ZodOptional<z.ZodString>;
     basic_auth: z.ZodOptional<z.ZodString>;
@@ -35,49 +34,7 @@ declare const CurlExecuteSchema: z.ZodObject<{
     max_result_size: z.ZodOptional<z.ZodNumber>;
     save_to_file: z.ZodOptional<z.ZodBoolean>;
     output_dir: z.ZodOptional<z.ZodString>;
-}, "strip", z.ZodTypeAny, {
-    url: string;
-    follow_redirects: boolean;
-    insecure: boolean;
-    verbose: boolean;
-    include_headers: boolean;
-    compressed: boolean;
-    include_metadata: boolean;
-    method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | undefined;
-    headers?: Record<string, string> | undefined;
-    data?: string | undefined;
-    form?: Record<string, string> | undefined;
-    max_redirects?: number | undefined;
-    timeout?: number | undefined;
-    user_agent?: string | undefined;
-    basic_auth?: string | undefined;
-    bearer_token?: string | undefined;
-    jq_filter?: string | undefined;
-    max_result_size?: number | undefined;
-    save_to_file?: boolean | undefined;
-    output_dir?: string | undefined;
-}, {
-    url: string;
-    method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | undefined;
-    headers?: Record<string, string> | undefined;
-    data?: string | undefined;
-    form?: Record<string, string> | undefined;
-    follow_redirects?: boolean | undefined;
-    max_redirects?: number | undefined;
-    insecure?: boolean | undefined;
-    timeout?: number | undefined;
-    user_agent?: string | undefined;
-    basic_auth?: string | undefined;
-    bearer_token?: string | undefined;
-    verbose?: boolean | undefined;
-    include_headers?: boolean | undefined;
-    compressed?: boolean | undefined;
-    include_metadata?: boolean | undefined;
-    jq_filter?: string | undefined;
-    max_result_size?: number | undefined;
-    save_to_file?: boolean | undefined;
-    output_dir?: string | undefined;
-}>;
+}, z.core.$strip>;
 /** Inferred TypeScript type from CurlExecuteSchema */
 type CurlExecuteInput = z.infer<typeof CurlExecuteSchema>;
 /**
@@ -89,19 +46,7 @@ declare const JqQuerySchema: z.ZodObject<{
     max_result_size: z.ZodOptional<z.ZodNumber>;
     save_to_file: z.ZodOptional<z.ZodBoolean>;
     output_dir: z.ZodOptional<z.ZodString>;
-}, "strip", z.ZodTypeAny, {
-    jq_filter: string;
-    filepath: string;
-    max_result_size?: number | undefined;
-    save_to_file?: boolean | undefined;
-    output_dir?: string | undefined;
-}, {
-    jq_filter: string;
-    filepath: string;
-    max_result_size?: number | undefined;
-    save_to_file?: boolean | undefined;
-    output_dir?: string | undefined;
-}>;
+}, z.core.$strip>;
 /** Inferred TypeScript type from JqQuerySchema */
 type JqQueryInput = z.infer<typeof JqQuerySchema>;
 
