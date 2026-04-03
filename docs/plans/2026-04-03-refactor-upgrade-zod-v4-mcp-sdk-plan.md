@@ -94,13 +94,16 @@ The casts work today because they paper over a type mismatch: the code passes a 
 > **Recommended approach:** Two commits on the same branch for bisectability — commit 1 upgrades the SDK only (Zod stays v3, all tests must pass), commit 2 upgrades Zod and applies all code fixes. This makes failures attributable.
 
 ### Step 1 — Pre-work (before any code)
+
 Review `@modelcontextprotocol/sdk` changelog for versions 1.26–1.29. Add any new findings above before proceeding.
 
 ### Step 2 — Commit 1: Bump SDK only
+
 - Update `@modelcontextprotocol/sdk` to `^1.29.0` in `package.json`
 - Run `npm run build` + `npm test` — must be green before proceeding
 
 ### Step 3 — Commit 2: Zod v4 upgrade + fixes
+
 1. Bump `zod` to `^4.0.0` in `package.json`
 2. Replace `z.record(z.string())` → `z.record(z.string(), z.string())` at the 3 locations
 3. Replace `z.string().url()` → `z.url()` at all 4 locations — preserve the `.refine()` on `schemas.ts:12` unchanged
@@ -109,15 +112,18 @@ Review `@modelcontextprotocol/sdk` changelog for versions 1.26–1.29. Add any n
 6. Grep test files for hardcoded Zod error codes/messages: `grep -r "invalid_string\|Invalid url\|Invalid string" src/` — fix any matches
 
 ### Step 4 — Security regression tests (required before merging)
+
 Add explicit tests for the items below. These are not covered by the existing suite.
 
 ### Step 5 — CHANGELOG + version bump
+
 - Bump to next major version (e.g., `v3.0.0`)
 - CHANGELOG entry: Zod v4 upgrade, major semver, breaking changes for TypeScript consumers, `.url()` error code change
 
 ## Acceptance Criteria
 
 ### Functional
+
 - [ ] `package.json` declares `zod: "^4.0.0"` and `@modelcontextprotocol/sdk: "^1.29.0"` in `dependencies` only (no `peerDependencies` section added)
 - [ ] All three `z.record(z.string())` calls replaced with `z.record(z.string(), z.string())`
 - [ ] All four `z.string().url()` usages replaced with `z.url()`; `.refine()` on `schemas.ts:12` is unchanged
@@ -127,6 +133,7 @@ Add explicit tests for the items below. These are not covered by the existing su
 - [ ] No grep hits for `z.string().url\(\)` or `z.record(z.string())` (single-arg) in `src/`
 
 ### Security (new tests required)
+
 - [ ] `CurlExecuteSchema.safeParse({ url: "ftp://evil.com" })` returns `success: false`
 - [ ] `CurlExecuteSchema.safeParse({ url: "file:///etc/passwd" })` returns `success: false`
 - [ ] `CurlExecuteSchema.safeParse({ url: "data:text/html,<script>" })` returns `success: false`
@@ -134,6 +141,7 @@ Add explicit tests for the items below. These are not covered by the existing su
 - [ ] Passing `{ url: "https://example.com" }` to the registered tool handler (via the MCP SDK registration path) results in `params.insecure === false` at the executor
 
 ### Release
+
 - [ ] Package bumped to next **major** version
 - [ ] CHANGELOG documents: Zod v4, major semver rationale, `ZodIssue` type structure change, `invalid_string` → `invalid_format` error code change for `.url()` validators
 
