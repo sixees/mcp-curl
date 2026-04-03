@@ -76,3 +76,45 @@ Upgraded `@modelcontextprotocol/sdk` from `^1.12.0` to `^1.29.0` and `zod` from 
 
 - [ ] Replace `as ToolCallback<...>` casts in `tool-wrapper.ts` with the SDK's correct structural type (ongoing tech debt, not introduced here)
 - [ ] Consider publishing to npm as `mcp-curl@3.0.0` with migration notes in README
+
+---
+
+## Code Review — 2026-04-03
+
+### Review Summary
+- **Reviewer:** automated multi-agent review (security-sentinel, typescript-reviewer, code-simplicity-reviewer)
+- **Tests verified:** 306/313 ✅ (7 pre-existing skips confirmed)
+- **Build verified:** clean ✅
+- **Findings:** 🔴 P1: 1 | 🟡 P2: 3 | 🔵 P3: 2
+
+### Handoff Assessment
+Builder's self-assessment was honest and surfaced the right structural risks (`.refine()` guard, generator shape type, ToolCallback casts). The core CurlExecuteSchema `.refine()` is intact and functioning — all four dangerous scheme test cases verified. Key undisclosed issue: `ApiInfoSchema.baseUrl` in `validator.ts` was touched during migration and left without the scheme guard, despite being in the same codebase and feeding the same execution path. The builder's "Known issues" list did not flag this gap. The handoff was accurate on what it mentioned; incomplete on what it omitted.
+
+### Key Findings
+
+| ID | Severity | Category | Description | Todo File |
+|----|----------|----------|-------------|-----------|
+| 1 | 🔴 P1 | Security | `validator.ts:90` `baseUrl` uses bare `z.url()` — no scheme allowlist `.refine()`. Accepts `ftp://`, `file://`, `gopher://` through schema validation. Blocked downstream by SSRF, but defence-in-depth is broken. | `001-pending-p1-baseur-scheme-guard-missing-in-validator.md` |
+| 2 | 🟡 P2 | Security | `api-test.ts:18`, `api-discovery.ts:18` prompt `argsSchema` URL fields also have no scheme guard. Dangerous scheme URLs pass schema validation and are interpolated into LLM prompt text verbatim. | `002-pending-p2-prompt-argschema-no-protocol-guard.md` |
+| 3 | 🟡 P2 | Testing | No tests for `headers`/`form` rejecting non-string values. The `z.record()` two-arg fix is the most behaviour-changing change in the PR and has zero test coverage. | `003-pending-p2-z-record-non-string-rejection-tests-missing.md` |
+| 4 | 🟡 P2 | Testing | `schemas.test.ts` boolean defaults only cover `insecure` and `follow_redirects`. Four defaults untested: `verbose`, `include_headers`, `compressed` (default `true`), `include_metadata`. | `004-pending-p2-schema-boolean-defaults-incomplete-coverage.md` |
+| 5 | 🔵 P3 | TypeScript | `ToolCallback` casts in `tool-wrapper.ts:131,177` and `mcp-curl-server.ts:56,240` — structurally valid today but pre-existing technical debt. Acknowledged by builder. | `005-pending-p3-toolcallback-cast-technical-debt.md` |
+| 6 | 🔵 P3 | DRY | Enum-to-literal fallback pattern duplicated 3× in `generator.ts:74,100,106`. Should be a private helper. | `006-pending-p3-generator-enum-to-literal-duplication.md` |
+
+### Important Verified Facts (not in handoff)
+- `z.url()` in Zod v4 accepts **every** dangerous scheme: `javascript:`, `data:`, `ftp://`, `file://`, `gopher://`, `blob:`, `vbscript:`, `ssh://`. It uses the WHATWG URL constructor. The `.refine()` in `schemas.ts` is NOT defence-in-depth — it is the **sole** protocol enforcement mechanism at the schema layer.
+- The test comment "rejects `data:` URLs" is technically accurate (test passes), but `z.url()` itself accepts `data:` — only the `.refine()` rejects it. This matters for any future reader who might consider removing the refine.
+- `generator.ts` return type `z.ZodObject<z.ZodRawShape>` is correct: `Record<string, z.ZodTypeAny>` is structurally identical to `z.ZodRawShape` in Zod v4 (confirmed via type definitions and clean build).
+
+### Verified Claims
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| Tests pass (306/313) | ✅ Yes | Independently run, confirmed |
+| `ToolCallback` casts verified clean via build | ✅ Yes | Structurally sound via SDK compat layer |
+| `.refine()` preserved on `schemas.ts` URL | ✅ Yes | Intact, confirmed blocking ftp/file/data/javascript |
+| Schema-level tests ≡ SDK registration path | ⚠️ Partial | Accurate only if `CURL_EXECUTE_TOOL_META.inputSchema` is the exact `CurlExecuteSchema` object — not independently verified through the full registration path |
+| No issues beyond listed | ❌ Incomplete | `validator.ts:90` scheme guard gap not disclosed; 4 of 6 boolean defaults untested; `z.record()` fix untested |
+
+### Blockers
+P1 finding must be resolved before merge:
+- **`001`**: Add `.refine()` scheme guard to `ApiInfoSchema.baseUrl` in `validator.ts:90`
