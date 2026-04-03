@@ -54,8 +54,13 @@ Upgraded `@modelcontextprotocol/sdk` from `^1.12.0` to `^1.29.0` and `zod` from 
 
 ## Testing summary
 
+```bash
+npm run build   # must exit clean (zero TypeScript errors)
+npm test        # must pass — 7 pre-existing skips are expected
+```
+
 - **Tests added:** 9 (URL scheme rejection × 4, valid URL acceptance × 2, boolean defaults × 3) | **Passing:** yes | **Linting:** N/A (no linter configured)
-- **Manual testing:** `npm run build` (clean), `npm test` (306/313)
+- **Result:** `npm run build` clean, `npm test` 306/313 (7 pre-existing skips)
 - **Test gaps:** No integration test exercising the full MCP protocol path (tool dispatch → schema parse → handler). Coverage relies on the schema-level equivalence argument above.
 
 ## Commit history
