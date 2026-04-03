@@ -118,3 +118,31 @@ Builder's self-assessment surfaced the key structural risks (`.refine()` guard, 
 | `ToolCallback` casts verified clean via build | ✅ Yes | Casts subsequently removed in `3d887b3` |
 | `.refine()` preserved on `schemas.ts` URL | ✅ Yes | Intact, confirmed blocking ftp/file/data/javascript |
 | Schema-level tests ≡ SDK registration path | ⚠️ Partial | Accurate only if `CURL_EXECUTE_TOOL_META.inputSchema` is the exact `CurlExecuteSchema` object — not independently verified through the full registration path |
+
+## PR Review Pass — 2026-04-03
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| mcp-sql docs included in branch | @gemini-code-assist | Fix needed | Removed 5 unrelated files (commit 4484ada) |
+| Unicode U+200E in docs/todos filenames | @gemini-code-assist | Fix needed | Renamed to remove stray chars (commit 8509833) |
+| Incorrect P1 blocker for ApiInfoSchema.baseUrl | @coderabbitai | Fix needed | Corrected stale Code Review section (commit 8509833) |
+| Contradictory ToolCallback statements | @coderabbitai | Fix needed | Unified to: casts removed in 3d887b3 (commit 8509833) |
+| MD040 missing language on commit-history fence | @coderabbitai | Fix needed | Added `text` tag (commit 8509833) |
+| data:/javascript: scheme tests missing | @coderabbitai | Fix needed | Added 2 tests to schema.test.ts (commit 8509833) |
+| Stale TODO: filterPresets.description | @coderabbitai | Fix needed | Deleted file — feature already implemented (commit 8509833) |
+| Centralize URL-scheme allowlist | @coderabbitai | Fix needed | Extracted httpOnlyUrl() in utils/url.ts (commit 8509833) |
+| MD040/MD031 in mcp-sql plan docs (×5 threads) | @coderabbitai | False positive | Moot — files removed |
+| Security/code notes on mcp-sql plan code samples (×3 threads) | @coderabbitai | False positive | Plan docs removed; notes valid for future implementation |
+
+### Files Modified
+- `src/lib/utils/url.ts` — added `httpOnlyUrl()` helper
+- `src/lib/utils/index.ts` — export `httpOnlyUrl`
+- `src/lib/prompts/api-test.ts` — use `httpOnlyUrl()`
+- `src/lib/prompts/api-discovery.ts` — use `httpOnlyUrl()`
+- `src/lib/schema/schema.test.ts` — data: and javascript: scheme tests
+- `docs/work/handoff-refactor-zod-v4-mcp-sdk-upgrade.md` — stale findings corrected
+- `docs/todos/filter-preset-description.md‎` — deleted
+- `docs/todos/cache-utilities.md‎` → `cache-utilities.md` (rename)
+- `docs/todos/configure-unknown-fields.md‎` → `configure-unknown-fields.md` (rename)
+- Removed: 5 mcp-sql docs/plan files
