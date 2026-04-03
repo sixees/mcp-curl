@@ -124,26 +124,26 @@ Add explicit tests for the items below. These are not covered by the existing su
 
 ### Functional
 
-- [ ] `package.json` declares `zod: "^4.0.0"` and `@modelcontextprotocol/sdk: "^1.29.0"` in `dependencies` only (no `peerDependencies` section added)
-- [ ] All three `z.record(z.string())` calls replaced with `z.record(z.string(), z.string())`
-- [ ] All four `z.string().url()` usages replaced with `z.url()`; `.refine()` on `schemas.ts:12` is unchanged
-- [ ] `import type { ZodIssue } from "zod"` in `validator.ts`, `z.ZodIssue` references removed
-- [ ] `npm run build` exits cleanly (zero TypeScript errors)
-- [ ] `npm test` passes (all tests green)
-- [ ] No grep hits for `z.string().url\(\)` or `z.record(z.string())` (single-arg) in `src/`
+- [x] `package.json` declares `zod: "^4.0.0"` and `@modelcontextprotocol/sdk: "^1.29.0"` in `dependencies` only (no `peerDependencies` section added)
+- [x] All three `z.record(z.string())` calls replaced with `z.record(z.string(), z.string())`
+- [x] All four `z.string().url()` usages replaced with `z.url()`; `.refine()` on `schemas.ts:12` is unchanged
+- [x] `import type { ZodIssue } from "zod"` in `validator.ts`, `z.ZodIssue` references removed
+- [x] `npm run build` exits cleanly (zero TypeScript errors)
+- [x] `npm test` passes (all tests green)
+- [x] No grep hits for `z.string().url\(\)` or `z.record(z.string())` (single-arg) in `src/`
 
 ### Security (new tests required)
 
-- [ ] `CurlExecuteSchema.safeParse({ url: "ftp://evil.com" })` returns `success: false`
-- [ ] `CurlExecuteSchema.safeParse({ url: "file:///etc/passwd" })` returns `success: false`
-- [ ] `CurlExecuteSchema.safeParse({ url: "data:text/html,<script>" })` returns `success: false`
-- [ ] `CurlExecuteSchema.safeParse({ url: "javascript:alert(1)" })` returns `success: false`
-- [ ] Passing `{ url: "https://example.com" }` to the registered tool handler (via the MCP SDK registration path) results in `params.insecure === false` at the executor
+- [x] `CurlExecuteSchema.safeParse({ url: "ftp://evil.com" })` returns `success: false`
+- [x] `CurlExecuteSchema.safeParse({ url: "file:///etc/passwd" })` returns `success: false`
+- [x] `CurlExecuteSchema.safeParse({ url: "data:text/html,<script>" })` returns `success: false`
+- [x] `CurlExecuteSchema.safeParse({ url: "javascript:alert(1)" })` returns `success: false`
+- [x] Passing `{ url: "https://example.com" }` to the registered tool handler (via the MCP SDK registration path) results in `params.insecure === false` at the executor
 
 ### Release
 
-- [ ] Package bumped to next **major** version
-- [ ] CHANGELOG documents: Zod v4, major semver rationale, `ZodIssue` type structure change, `invalid_string` → `invalid_format` error code change for `.url()` validators
+- [x] Package bumped to next **major** version
+- [x] CHANGELOG documents: Zod v4, major semver rationale, `ZodIssue` type structure change, `invalid_string` → `invalid_format` error code change for `.url()` validators
 
 ## Technical Considerations
 

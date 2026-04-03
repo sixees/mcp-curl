@@ -61,6 +61,12 @@ Upgraded `@modelcontextprotocol/sdk` from `^1.12.0` to `^1.29.0` and `zod` from 
 ## Commit history
 
 ```
+c32eb8a docs: fix MD022 blank-line violations in plan file
+3d887b3 refactor: remove ToolCallback casts and extract enum schema helpers
+ad43a8d docs: remove completed P1/P2 todo files
+19c2324 fix(security): add http/https scheme guard to baseUrl and prompt URL fields
+3ffa14e docs: add review findings to handoff document and create todos
+53ecd70 feat(release): v3.0.0 — Zod v4, MCP SDK 1.29, security tests
 10925fa refactor(zod): upgrade to Zod v4 and apply all breaking change fixes
 251efe7 chore(deps): bump @modelcontextprotocol/sdk to ^1.29.0
 ```
@@ -74,7 +80,7 @@ Upgraded `@modelcontextprotocol/sdk` from `^1.12.0` to `^1.29.0` and `zod` from 
 
 ## Follow-up work
 
-- [ ] Replace `as ToolCallback<...>` casts in `tool-wrapper.ts` with the SDK's correct structural type (ongoing tech debt, not introduced here)
+- [x] Replace `as ToolCallback<...>` casts in `tool-wrapper.ts` with the SDK's correct structural type — done in `3d887b3`
 - [ ] Consider publishing to npm as `mcp-curl@3.0.0` with migration notes in README
 
 ---
