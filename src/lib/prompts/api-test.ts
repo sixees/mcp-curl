@@ -3,12 +3,10 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { httpOnlyUrl } from "../utils/url.js";
 
 /** URL schema restricted to http/https schemes. Exported for testing. */
-export const apiTestUrlSchema = z.url().refine(
-    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
-    { message: "URL must use http or https scheme" }
-).describe("The API endpoint URL to test");
+export const apiTestUrlSchema = httpOnlyUrl("The API endpoint URL to test");
 
 /**
  * Registers the api-test prompt on the MCP server.

@@ -9,4 +9,4 @@ export {
     createConfigError,
 } from "./error.js";
 
-export { resolveBaseUrl } from "./url.js";
+export { resolveBaseUrl, httpOnlyUrl } from "./url.js";

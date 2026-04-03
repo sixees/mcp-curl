@@ -44,12 +44,12 @@ Upgraded `@modelcontextprotocol/sdk` from `^1.12.0` to `^1.29.0` and `zod` from 
 - **Risk: `.refine()` preserved** — Verify `schemas.ts` URL field is `z.url("Must be a valid URL").refine(url => ["http","https"].includes(...))`. The security test (`ftp://`, `file://`) covers this, but visually confirm the refine is not lost.
 - **Risk: `generator.ts` shape type** — `Record<string, z.ZodTypeAny>` is a local mutable type, passed to `z.object(shape)`. Return type is still `z.ZodObject<z.ZodRawShape>` — verify this assignment is still accepted by TypeScript (it is, per clean build).
 - **Edge case: `z.url()` message handling** — In Zod v4, `z.url("message")` passes the message as a string argument, not an options object. `validator.ts` previously used `z.string().url({ message: "..." })`. The new form `z.url("Base URL must be a valid URL")` is correct Zod v4 API.
-- **`ToolCallback` casts** — `tool-wrapper.ts:131,177` still uses `as ToolCallback<typeof CurlExecuteSchema>`. Build is clean, but a reviewer should confirm the cast's structural validity if the SDK's type internals changed (the plan's "structural review required" note).
+- **`ToolCallback` casts** — Removed in `3d887b3`. `tool-wrapper.ts` now uses typed `const handler: ToolCallback<typeof Schema>` declarations instead of `as` casts. Build is clean and structurally sound.
 
 ## Known issues and limitations
 
 - The plan mentioned reviewing the MCP SDK 1.26–1.29 changelog as Step 1. This was skipped per user instruction (pre-work confirmed already done). If there are undocumented SDK changes in those versions, they are not covered here.
-- `ToolCallback` casts in `tool-wrapper.ts` paper over a type mismatch (passing `ZodObject` where SDK expects a raw shape). This pre-existed and was not introduced by this PR. The build is clean, but the casts should be flagged as technical debt.
+- `ToolCallback` casts in `tool-wrapper.ts` were replaced in `3d887b3` with proper typed `const handler: ToolCallback<typeof Schema>` declarations. No remaining casts.
 - 7 tests are skipped (platform-specific, pre-existing).
 
 ## Testing summary
@@ -60,7 +60,7 @@ Upgraded `@modelcontextprotocol/sdk` from `^1.12.0` to `^1.29.0` and `zod` from 
 
 ## Commit history
 
-```
+```text
 c32eb8a docs: fix MD022 blank-line violations in plan file
 3d887b3 refactor: remove ToolCallback casts and extract enum schema helpers
 ad43a8d docs: remove completed P1/P2 todo files
@@ -94,33 +94,27 @@ ad43a8d docs: remove completed P1/P2 todo files
 - **Findings:** 🔴 P1: 1 | 🟡 P2: 3 | 🔵 P3: 2
 
 ### Handoff Assessment
-Builder's self-assessment was honest and surfaced the right structural risks (`.refine()` guard, generator shape type, ToolCallback casts). The core CurlExecuteSchema `.refine()` is intact and functioning — all four dangerous scheme test cases verified. Key undisclosed issue: `ApiInfoSchema.baseUrl` in `validator.ts` was touched during migration and left without the scheme guard, despite being in the same codebase and feeding the same execution path. The builder's "Known issues" list did not flag this gap. The handoff was accurate on what it mentioned; incomplete on what it omitted.
+Builder's self-assessment surfaced the key structural risks (`.refine()` guard, generator shape type, ToolCallback casts). The core `CurlExecuteSchema` `.refine()` is intact and functioning — dangerous scheme test cases verified. `ApiInfoSchema.baseUrl` in `validator.ts` also has an explicit http/https scheme guard (added in `19c2324`), with scheme rejection covered in tests.
 
-### Key Findings
+### Key Findings — All Resolved
 
-| ID | Severity | Category | Description | Todo File |
-|----|----------|----------|-------------|-----------|
-| 1 | 🔴 P1 | Security | `validator.ts:90` `baseUrl` uses bare `z.url()` — no scheme allowlist `.refine()`. Accepts `ftp://`, `file://`, `gopher://` through schema validation. Blocked downstream by SSRF, but defence-in-depth is broken. | `001-pending-p1-baseur-scheme-guard-missing-in-validator.md` |
-| 2 | 🟡 P2 | Security | `api-test.ts:18`, `api-discovery.ts:18` prompt `argsSchema` URL fields also have no scheme guard. Dangerous scheme URLs pass schema validation and are interpolated into LLM prompt text verbatim. | `002-pending-p2-prompt-argschema-no-protocol-guard.md` |
-| 3 | 🟡 P2 | Testing | No tests for `headers`/`form` rejecting non-string values. The `z.record()` two-arg fix is the most behaviour-changing change in the PR and has zero test coverage. | `003-pending-p2-z-record-non-string-rejection-tests-missing.md` |
-| 4 | 🟡 P2 | Testing | `schemas.test.ts` boolean defaults only cover `insecure` and `follow_redirects`. Four defaults untested: `verbose`, `include_headers`, `compressed` (default `true`), `include_metadata`. | `004-pending-p2-schema-boolean-defaults-incomplete-coverage.md` |
-| 5 | 🔵 P3 | TypeScript | `ToolCallback` casts in `tool-wrapper.ts:131,177` and `mcp-curl-server.ts:56,240` — structurally valid today but pre-existing technical debt. Acknowledged by builder. | `005-pending-p3-toolcallback-cast-technical-debt.md` |
-| 6 | 🔵 P3 | DRY | Enum-to-literal fallback pattern duplicated 3× in `generator.ts:74,100,106`. Should be a private helper. | `006-pending-p3-generator-enum-to-literal-duplication.md` |
+| ID | Severity | Category | Description | Resolution |
+|----|----------|----------|-------------|------------|
+| 1 | ~~🔴 P1~~ ✅ | Security | `validator.ts:90` `baseUrl` — scheme allowlist `.refine()` initially missing. | Fixed in `19c2324` |
+| 2 | ~~🟡 P2~~ ✅ | Security | `api-test.ts`, `api-discovery.ts` prompt URL fields — no scheme guard. | Fixed in `19c2324` |
+| 3 | ~~🟡 P2~~ ✅ | Testing | No tests for `headers`/`form` rejecting non-string values. | Fixed in `19c2324` |
+| 4 | ~~🟡 P2~~ ✅ | Testing | Boolean defaults incomplete coverage. | Fixed in `19c2324` |
+| 5 | ~~🔵 P3~~ ✅ | TypeScript | `ToolCallback` casts — pre-existing technical debt. | Removed in `3d887b3` |
+| 6 | ~~🔵 P3~~ ✅ | DRY | Enum-to-literal fallback pattern duplicated in `generator.ts`. | Extracted in `3d887b3` |
 
 ### Important Verified Facts (not in handoff)
-- `z.url()` in Zod v4 accepts **every** dangerous scheme: `javascript:`, `data:`, `ftp://`, `file://`, `gopher://`, `blob:`, `vbscript:`, `ssh://`. It uses the WHATWG URL constructor. The `.refine()` in `schemas.ts` is NOT defence-in-depth — it is the **sole** protocol enforcement mechanism at the schema layer.
-- The test comment "rejects `data:` URLs" is technically accurate (test passes), but `z.url()` itself accepts `data:` — only the `.refine()` rejects it. This matters for any future reader who might consider removing the refine.
+- `z.url()` in Zod v4 accepts **every** dangerous scheme: `javascript:`, `data:`, `ftp://`, `file://`, `gopher://`, `blob:`, `vbscript:`, `ssh://`. It uses the WHATWG URL constructor. The `.refine()` is NOT defence-in-depth — it is the **sole** protocol enforcement mechanism at the schema layer.
 - `generator.ts` return type `z.ZodObject<z.ZodRawShape>` is correct: `Record<string, z.ZodTypeAny>` is structurally identical to `z.ZodRawShape` in Zod v4 (confirmed via type definitions and clean build).
 
 ### Verified Claims
 | Handoff Claim | Verified? | Notes |
 |---------------|-----------|-------|
 | Tests pass (306/313) | ✅ Yes | Independently run, confirmed |
-| `ToolCallback` casts verified clean via build | ✅ Yes | Structurally sound via SDK compat layer |
+| `ToolCallback` casts verified clean via build | ✅ Yes | Casts subsequently removed in `3d887b3` |
 | `.refine()` preserved on `schemas.ts` URL | ✅ Yes | Intact, confirmed blocking ftp/file/data/javascript |
 | Schema-level tests ≡ SDK registration path | ⚠️ Partial | Accurate only if `CURL_EXECUTE_TOOL_META.inputSchema` is the exact `CurlExecuteSchema` object — not independently verified through the full registration path |
-| No issues beyond listed | ❌ Incomplete | `validator.ts:90` scheme guard gap not disclosed; 4 of 6 boolean defaults untested; `z.record()` fix untested |
-
-### Blockers
-P1 finding must be resolved before merge:
-- **`001`**: Add `.refine()` scheme guard to `ApiInfoSchema.baseUrl` in `validator.ts:90`

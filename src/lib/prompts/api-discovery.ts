@@ -3,12 +3,10 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { httpOnlyUrl } from "../utils/url.js";
 
 /** Base URL schema restricted to http/https schemes. Exported for testing. */
-export const apiDiscoveryBaseUrlSchema = z.url().refine(
-    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
-    { message: "Base URL must use http or https scheme" }
-).describe("Base URL of the API");
+export const apiDiscoveryBaseUrlSchema = httpOnlyUrl("Base URL of the API");
 
 /**
  * Registers the api-discovery prompt on the MCP server.

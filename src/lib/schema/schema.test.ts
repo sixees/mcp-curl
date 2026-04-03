@@ -88,6 +88,24 @@ describe("validateApiSchema", () => {
         ).toThrow(ApiSchemaValidationError);
     });
 
+    it("rejects data: baseUrl", () => {
+        expect(() =>
+            validateApiSchema({
+                ...validSchema,
+                api: { ...validSchema.api, baseUrl: "data:text/html,<h1>evil</h1>" },
+            })
+        ).toThrow(ApiSchemaValidationError);
+    });
+
+    it("rejects javascript: baseUrl", () => {
+        expect(() =>
+            validateApiSchema({
+                ...validSchema,
+                api: { ...validSchema.api, baseUrl: "javascript:alert(1)" },
+            })
+        ).toThrow(ApiSchemaValidationError);
+    });
+
     it("rejects empty endpoints array", () => {
         expect(() =>
             validateApiSchema({ ...validSchema, endpoints: [] })
