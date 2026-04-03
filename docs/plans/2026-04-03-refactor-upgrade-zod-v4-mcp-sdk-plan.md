@@ -97,6 +97,8 @@ The casts work today because they paper over a type mismatch: the code passes a 
 
 Review `@modelcontextprotocol/sdk` changelog for versions 1.26–1.29. Add any new findings above before proceeding.
 
+> **Skipped** — pre-work confirmed complete by user before implementation began. No SDK 1.26–1.29 issues were surfaced: test suite stayed green after the SDK bump (commit `251efe7`), build was clean, and no additional breaking changes were found in practice. The `registerPrompt` `argsSchema` risk mentioned above did not materialise.
+
 ### Step 2 — Commit 1: Bump SDK only
 
 - Update `@modelcontextprotocol/sdk` to `^1.29.0` in `package.json`
@@ -139,6 +141,7 @@ Add explicit tests for the items below. These are not covered by the existing su
 - [x] `CurlExecuteSchema.safeParse({ url: "data:text/html,<script>" })` returns `success: false`
 - [x] `CurlExecuteSchema.safeParse({ url: "javascript:alert(1)" })` returns `success: false`
 - [x] Passing `{ url: "https://example.com" }` to the registered tool handler (via the MCP SDK registration path) results in `params.insecure === false` at the executor
+  > Covered by schema-level tests. Equivalence verified: `CURL_EXECUTE_TOOL_META.inputSchema = CurlExecuteSchema` at `src/lib/tools/curl-execute.ts:112` — the SDK calls `.parse()` on this exact schema before invoking the handler, so schema tests exercise the same default-application path. Full end-to-end dispatch not separately tested.
 
 ### Release
 

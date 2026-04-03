@@ -117,7 +117,7 @@ Builder's self-assessment surfaced the key structural risks (`.refine()` guard, 
 | Tests pass (306/313) | ✅ Yes | Independently run, confirmed |
 | `ToolCallback` casts verified clean via build | ✅ Yes | Casts subsequently removed in `3d887b3` |
 | `.refine()` preserved on `schemas.ts` URL | ✅ Yes | Intact, confirmed blocking ftp/file/data/javascript |
-| Schema-level tests ≡ SDK registration path | ⚠️ Partial | Accurate only if `CURL_EXECUTE_TOOL_META.inputSchema` is the exact `CurlExecuteSchema` object — not independently verified through the full registration path |
+| Schema-level tests ≡ SDK registration path | ✅ Yes | `CURL_EXECUTE_TOOL_META.inputSchema = CurlExecuteSchema` confirmed at `src/lib/tools/curl-execute.ts:112` — the SDK calls `.parse()` on this exact object, so schema tests exercise the same default-application path. Full end-to-end dispatch not separately tested (documented in plan). |
 
 ## PR Review Pass — 2026-04-03
 
