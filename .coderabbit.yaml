@@ -1,0 +1,9 @@
+reviews:
+  profile: assertive
+  high_level_summary: true
+  high_level_summary_instructions:
+    Summarize only the cross-cutting concerns, architectural observations,
+    recurring patterns, and overall risks in this pull request.
+    Do not repeat issues already captured in inline comments.
+    Prioritize DRY, SRP, maintainability, test coverage, and security posture.
+    Framework and language specific best practices should be noted, but not at the expense of general software engineering principles.
