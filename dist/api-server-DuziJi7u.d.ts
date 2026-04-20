@@ -31,6 +31,8 @@ interface McpCurlConfig {
     defaultUserAgent?: string;
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
+    /** Wrap responses in per-request sentinel tags to resist prompt injection (spotlighting) */
+    enableSpotlighting?: boolean;
 }
 /**
  * Context provided to hooks during tool execution.
@@ -174,6 +176,7 @@ declare class McpCurlServer {
     private _httpServer;
     private _sessionManager;
     private _rateLimitInterval;
+    private _injectionCleanupInterval;
     private _utilities;
     /**
      * Configure server options.
