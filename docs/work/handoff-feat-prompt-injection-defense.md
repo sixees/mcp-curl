@@ -110,18 +110,18 @@ Implemented a layered prompt injection defense for the mcp-curl MCP server. The 
 - [ ] Consider metrics/telemetry integration point for `logInjectionDetected`
 
 ### Outstanding Todos
-<!-- Todos created during this review — see docs/todos/ for full content -->
+<!-- All todos from the code review have been resolved — see docs/todos/*-complete-* -->
 | File | Priority | Description | Source |
 |------|----------|-------------|--------|
-| `docs/todos/001-pending-p1-u2028-u2029-missing-sanitize.md` | P1 | U+2028/U+2029 missing from sanitize regex | code-review |
-| `docs/todos/002-pending-p2-detection-logger-lifecycle.md` | P2 | Detection logger missing start/stop lifecycle wrappers | code-review |
-| `docs/todos/003-pending-p2-post-jq-injection-detection.md` | P2 | detectInjectionPattern not called after jq filter in processor.ts | code-review |
-| `docs/todos/004-pending-p2-log-injection-unvalidated-filepath.md` | P2 | Unvalidated params.filepath in jq-query.ts error log | code-review |
-| `docs/todos/005-pending-p2-spotlighting-dry-violation.md` | P2 | Spotlighting block duplicated in tool-wrapper.ts | code-review |
-| `docs/todos/006-pending-p2-custom-tool-schema-sanitization.md` | P2 | registerCustomTool doesn't sanitize Zod schema field descriptions | code-review |
-| `docs/todos/007-pending-p3-spotlighting-file-save-messages.md` | P3 | Spotlighting wraps file-save acknowledgment messages | code-review |
-| `docs/todos/008-pending-p3-missing-binary-mime-types.md` | P3 | Missing binary MIME types in isBinaryContentType | code-review |
-| `docs/todos/009-pending-p3-test-coverage-gaps.md` | P3 | Test coverage gaps: pipeline, spotlighting, HTML stripping, binary gating | code-review |
+| ~~`docs/todos/001-complete-p1-u2028-u2029-missing-sanitize.md`~~ | P1 | ✅ U+2028/U+2029 added to sanitize regex | code-review |
+| ~~`docs/todos/002-complete-p2-detection-logger-lifecycle.md`~~ | P2 | ✅ startInjectionCleanup/stopInjectionCleanup added | code-review |
+| ~~`docs/todos/003-complete-p2-post-jq-injection-detection.md`~~ | P2 | ✅ post-jq detectInjectionPattern call added | code-review |
+| ~~`docs/todos/004-complete-p2-log-injection-unvalidated-filepath.md`~~ | P2 | ✅ sanitizeDescription wraps filepath in log | code-review |
+| ~~`docs/todos/005-complete-p2-spotlighting-dry-violation.md`~~ | P2 | ✅ maybeApplySpotlighting helper extracted | code-review |
+| ~~`docs/todos/006-complete-p2-custom-tool-schema-sanitization.md`~~ | P2 | ✅ JSDoc documents inputSchema sanitization responsibility | code-review |
+| ~~`docs/todos/007-complete-p3-spotlighting-file-save-messages.md`~~ | P3 | ✅ Comment documents file-save spotlighting semantics | code-review |
+| ~~`docs/todos/008-complete-p3-missing-binary-mime-types.md`~~ | P3 | ✅ wasm/zip/gzip/x-tar/multipart added | code-review |
+| ~~`docs/todos/009-complete-p3-test-coverage-gaps.md`~~ | P3 | ✅ processor.test.ts + spotlighting + U+2028/U+2029 tests added | code-review |
 
 ### Resolved Todos
 | File (removed) | Title | Summary | Resolved by | Date |

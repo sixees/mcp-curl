@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "005"
 tags: [spr-dry, code-review, prompt-injection]
