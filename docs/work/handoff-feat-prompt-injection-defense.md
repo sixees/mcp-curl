@@ -110,9 +110,56 @@ Implemented a layered prompt injection defense for the mcp-curl MCP server. The 
 - [ ] Consider metrics/telemetry integration point for `logInjectionDetected`
 
 ### Outstanding Todos
+<!-- Todos created during this review — see docs/todos/ for full content -->
 | File | Priority | Description | Source |
 |------|----------|-------------|--------|
+| `docs/todos/001-pending-p1-u2028-u2029-missing-sanitize.md` | P1 | U+2028/U+2029 missing from sanitize regex | code-review |
+| `docs/todos/002-pending-p2-detection-logger-lifecycle.md` | P2 | Detection logger missing start/stop lifecycle wrappers | code-review |
+| `docs/todos/003-pending-p2-post-jq-injection-detection.md` | P2 | detectInjectionPattern not called after jq filter in processor.ts | code-review |
+| `docs/todos/004-pending-p2-log-injection-unvalidated-filepath.md` | P2 | Unvalidated params.filepath in jq-query.ts error log | code-review |
+| `docs/todos/005-pending-p2-spotlighting-dry-violation.md` | P2 | Spotlighting block duplicated in tool-wrapper.ts | code-review |
+| `docs/todos/006-pending-p2-custom-tool-schema-sanitization.md` | P2 | registerCustomTool doesn't sanitize Zod schema field descriptions | code-review |
+| `docs/todos/007-pending-p3-spotlighting-file-save-messages.md` | P3 | Spotlighting wraps file-save acknowledgment messages | code-review |
+| `docs/todos/008-pending-p3-missing-binary-mime-types.md` | P3 | Missing binary MIME types in isBinaryContentType | code-review |
+| `docs/todos/009-pending-p3-test-coverage-gaps.md` | P3 | Test coverage gaps: pipeline, spotlighting, HTML stripping, binary gating | code-review |
 
 ### Resolved Todos
 | File (removed) | Title | Summary | Resolved by | Date |
 |----------------|-------|---------|-------------|------|
+
+---
+
+## Code Review — 2026-04-20
+
+### Review Summary
+- **Reviewer:** automated multi-agent review
+- **Agents used:** security-sentinel, code-simplicity-reviewer, typescript-reviewer, silent-failure-hunter, pr-test-analyzer
+- **Findings:** 🔴 P1: 1 | 🟡 P2: 5 | 🔵 P3: 3
+
+### Handoff Assessment
+The builder's self-assessment was honest and complete. "Known issues and limitations" and "Under-tested" sections proactively surfaced the main gaps. The only significant issue NOT flagged by the builder was the U+2028/U+2029 omission from the sanitize regex — a genuine security bypass that should have been caught during pattern range review. All P2 findings were either acknowledged (test gaps, spotlighting limitations) or are natural review-time discoveries (DRY violations, log injection). Confidence in the implementation is high.
+
+### Key Findings
+| ID | Severity | Category | Description | Todo File |
+|----|----------|----------|-------------|-----------|
+| 1 | 🔴 P1 | Security | U+2028/U+2029 (Unicode line separators) missing from both sanitize regex patterns — injection phrase bypass | `001-pending-p1-u2028-u2029-missing-sanitize.md` |
+| 2 | 🟡 P2 | DRY/SRP | detection-logger.ts missing `startInjectionCleanup`/`stopInjectionCleanup` wrappers; mcp-curl-server.ts hardcodes `60_000` instead of using module constant | `002-pending-p2-detection-logger-lifecycle.md` |
+| 3 | 🟡 P2 | Security | `detectInjectionPattern` not called after jq filter in `processor.ts` — jq-concentrated phrases evade detection | `003-pending-p2-post-jq-injection-detection.md` |
+| 4 | 🟡 P2 | Security | `basename(params.filepath)` unvalidated before use in `console.error` in jq-query.ts | `004-pending-p2-log-injection-unvalidated-filepath.md` |
+| 5 | 🟡 P2 | DRY | Identical 4-line spotlighting block duplicated in both tool handlers in `tool-wrapper.ts` | `005-pending-p2-spotlighting-dry-violation.md` |
+| 6 | 🟡 P2 | Security | `registerCustomTool` sanitizes top-level description but not Zod inputSchema field descriptions | `006-pending-p2-custom-tool-schema-sanitization.md` |
+| 7 | 🔵 P3 | Quality | Spotlighting wraps file-save acknowledgment messages (misleading semantics) | `007-pending-p3-spotlighting-file-save-messages.md` |
+| 8 | 🔵 P3 | Quality | `isBinaryContentType` missing: wasm, zip, gzip, multipart/* | `008-pending-p3-missing-binary-mime-types.md` |
+| 9 | 🔵 P3 | Testing | Test gaps: processResponse pipeline, spotlighting e2e, HTML stripping, binary gating | `009-pending-p3-test-coverage-gaps.md` |
+
+### Verified Claims
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| Tests pass | Yes | 66 new tests; all pass per handoff; tsc clean |
+| "No g flag on INJECTION_PATTERNS" | Yes | Confirmed `"i"` flag only at sanitize.ts:46 |
+| "Binary content types skip sanitization" | Yes | isBinaryContentType gates the sanitize block |
+| "Sanitize before jq filter" | Yes | Confirmed pipeline order in processor.ts |
+| "No known issues beyond listed" | Partial | U+2028/U+2029 gap was not surfaced by builder |
+
+### Blockers
+P1 finding #1 (U+2028/U+2029 missing from sanitize regex) should be fixed before merge. All other findings are P2/P3 and can be resolved post-merge.
