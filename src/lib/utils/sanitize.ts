@@ -21,13 +21,15 @@ const RESPONSE_SANITIZE_PATTERN =
     /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
 
 // No g flag — safe for repeated .test() without lastIndex accumulation.
+// [\s\S]{0,n} instead of .{0,n} so bounded wildcards match across newlines,
+// catching multi-line injection phrases like "Ignore\nprevious\ninstructions".
 const INJECTION_PATTERNS = new RegExp(
     [
         // Explicit instruction override
-        "ignore.{0,20}(previous|prior|all|your|above|system).{0,20}instructions?",
-        "disregard.{0,20}(previous|prior|all|your|above|system).{0,20}(instructions?|directives?|rules?)",
-        "forget.{0,20}(previous|prior|all|your|above|everything|instructions?)",
-        "override.{0,20}(your|the|all|previous).{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
+        "ignore[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}instructions?",
+        "disregard[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}(instructions?|directives?|rules?)",
+        "forget[\\s\\S]{0,20}(previous|prior|all|your|above|everything|instructions?)",
+        "override[\\s\\S]{0,20}(your|the|all|previous)[\\s\\S]{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
         // Persona takeover
         "you\\s+are\\s+now\\s+",
         "act\\s+as\\s+a\\s",
@@ -39,10 +41,10 @@ const INJECTION_PATTERNS = new RegExp(
         "system\\s+prompt",
         "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
         "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
-        "do\\s+not\\s+(follow|apply|use|obey|comply).{0,20}instructions?",
+        "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,20}instructions?",
         // Data exfiltration
         "exfiltrate",
-        "(extract|exfiltrate|leak|transmit|send\\s+me).{0,30}(passwords?|credentials?|secrets?|tokens?|api.{0,5}keys?)",
+        "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,30}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)",
     ].join("|"),
     "i"
 );

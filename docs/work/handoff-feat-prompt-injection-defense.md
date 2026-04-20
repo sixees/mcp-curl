@@ -89,7 +89,7 @@ Implemented a layered prompt injection defense for the mcp-curl MCP server. The 
 
 ## Commit history
 
-```
+```git
 49e87e7 feat(security): add prompt injection defense layer
 ```
 
@@ -105,7 +105,7 @@ Implemented a layered prompt injection defense for the mcp-curl MCP server. The 
 
 - [ ] Add integration tests for `processResponse` sanitization pipeline
 - [ ] Add spotlighting coverage for schema-generated endpoint tools (src/lib/schema/generator.ts createToolHandler)
-- [ ] Consider adding `s` (dotAll) flag to `INJECTION_PATTERNS` or adding `[\s\S]` alternatives for cross-line detection
+- [x] Added `[\s\S]{0,n}` to bounded wildcards in `INJECTION_PATTERNS` — covers cross-line detection
 - [ ] Add tests verifying binary content types are not sanitized
 - [ ] Consider metrics/telemetry integration point for `logInjectionDetected`
 
@@ -163,3 +163,39 @@ The builder's self-assessment was honest and complete. "Known issues and limitat
 
 ### Blockers
 P1 finding #1 (U+2028/U+2029 missing from sanitize regex) should be fixed before merge. All other findings are P2/P3 and can be resolved post-merge.
+
+---
+
+## Review Comments Addressed — 2026-04-20
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Handoff fenced code block missing language label | @coderabbitai | False positive | Added `git` language label to code block |
+| Truncation warning fires on sanitization-shrunk descriptions (false positive) | @coderabbitai | Fix needed | Compute `sanitizedDesc` before slicing; compare length to `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH` directly |
+| Normalize MIME before `text/html` check in `processor.ts` | @coderabbitai | Fix needed | Extract `normalizedMime` via `.split(";")[0].trim().toLowerCase()`; use `=== "text/html"` |
+| CRITICAL: Re-sanitize jq output before returning — JSON.parse decodes Unicode escapes | @coderabbitai | Fix needed | Added `content = sanitizeResponse(content)` after `applyJqFilterToParsed` |
+| `preset.name` used raw in `buildToolDescription` (schema/generator.ts) | @coderabbitai | Fix needed | Extract `presetName = sanitizeDescription(preset.name)` before interpolation |
+| Sanitize hostname in `logInjectionDetected` (log injection risk) | @coderabbitai | Fix needed | Added `normalizeDetectionLabel` helper (strips C0/C1, caps at 128 chars); applied in `logInjectionDetected` |
+| `INJECTION_PATTERNS` uses `.{0,n}` which doesn't match across newlines | @coderabbitai | Fix needed | Replaced all bounded `.{0,n}` wildcards with `[\s\S]{0,n}` in 6 patterns |
+| Why not extract post-jq detection into a shared helper? | @gemini-code-assist | Decision conflict | Kept separate: pre-jq block sanitizes (text only); post-jq block sanitizes AND re-sanitizes after JSON.parse decoding. Different responsibilities — premature DRY abstraction would obscure the intent |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| `INJECTION_PATTERNS` `.{0,n}` wildcards (acceptable for v1) | `[\s\S]{0,n}` — matches newlines | Multi-line injection bypasses noted in known issues; bounded wildcards make this safe | @coderabbitai |
+| Warn when `sanitizedMeta.description.length < meta.description.length` | Warn only when `sanitizedDesc.length > MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH` | Original condition fires when attack chars are stripped (not a truncation) | @coderabbitai |
+
+### Files Modified
+
+- `src/lib/utils/sanitize.ts` — `[\s\S]{0,n}` in INJECTION_PATTERNS
+- `src/lib/security/detection-logger.ts` — `normalizeDetectionLabel` helper in `logInjectionDetected`
+- `src/lib/response/processor.ts` — MIME normalization + CRITICAL post-jq `sanitizeResponse`
+- `src/lib/schema/generator.ts` — `sanitizeDescription(preset.name)`
+- `src/lib/extensible/mcp-curl-server.ts` — truncation warning false positive fix
+- `src/lib/utils/sanitize.test.ts` — multi-line injection detection tests
+- `src/lib/security/detection-logger.test.ts` — hostname normalization tests
+- `src/lib/response/processor.test.ts` — JSON-decoded attack char test (critical path)
+- `docs/work/handoff-feat-prompt-injection-defense.md` — markdownlint fix + this section

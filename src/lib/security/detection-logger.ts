@@ -7,6 +7,15 @@ const THROTTLE_WINDOW_MS = 60_000; // 1 detection log per hostname per 60 second
 const lastDetectedMap = new Map<string, number>();
 
 /**
+ * Normalize a hostname or label for safe log output.
+ * Strips C0/C1 control chars and limits length to prevent log injection.
+ */
+function normalizeDetectionLabel(label: string): string {
+    // eslint-disable-next-line no-control-regex
+    return label.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").slice(0, 128);
+}
+
+/**
  * Log a prompt injection detection event, throttled to once per hostname per minute.
  * Logs only the hostname and event class — never the matched phrase content,
  * which could itself contain injection payloads.
@@ -14,13 +23,14 @@ const lastDetectedMap = new Map<string, number>();
  * @param hostname - Target hostname where the pattern was detected
  */
 export function logInjectionDetected(hostname: string): void {
+    const safeLabel = normalizeDetectionLabel(hostname);
     const now = Date.now();
-    const lastSeen = lastDetectedMap.get(hostname);
+    const lastSeen = lastDetectedMap.get(safeLabel);
     if (lastSeen !== undefined && now - lastSeen < THROTTLE_WINDOW_MS) {
         return; // throttled — already logged within the last minute
     }
-    lastDetectedMap.set(hostname, now);
-    console.error(`[injection-defense] [${hostname}] InjectionDetected`);
+    lastDetectedMap.set(safeLabel, now);
+    console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
 }
 
 /**

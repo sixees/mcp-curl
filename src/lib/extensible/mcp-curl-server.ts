@@ -271,13 +271,19 @@ export class McpCurlServer {
         // (.describe() on individual Zod fields) are the caller's responsibility —
         // traversing arbitrary Zod v4 schemas safely is non-trivial. Callers should
         // apply sanitizeDescription() to any field descriptions sourced from external input.
+        const sanitizedTitle = sanitizeDescription(meta.title);
+        const sanitizedDesc = sanitizeDescription(meta.description);
+        const truncatedDesc = sanitizedDesc.slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH);
+
         const sanitizedMeta: CustomToolMeta = {
             ...meta,
-            title: sanitizeDescription(meta.title),
-            description: sanitizeDescription(meta.description).slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH),
+            title: sanitizedTitle,
+            description: truncatedDesc,
         };
 
-        if (sanitizedMeta.description.length < meta.description.length) {
+        // Warn only when sanitization itself caused truncation — not when the pre-existing
+        // description was already longer than the sanitized result (e.g. attack chars removed).
+        if (sanitizedDesc.length > MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) {
             console.warn(
                 `McpCurlServer.registerCustomTool("${name}"): description truncated to ${MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH} chars`
             );

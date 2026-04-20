@@ -105,3 +105,34 @@ describe("clearInjectionDetectionMap", () => {
         expect(console.error).toHaveBeenCalledTimes(1);
     });
 });
+
+describe("logInjectionDetected — hostname normalization", () => {
+    it("strips control chars from hostname before logging", () => {
+        // A hostname containing a newline could break log parsing or inject fake log lines
+        logInjectionDetected("evil.com\nfake log line");
+        const calls = (console.error as ReturnType<typeof vi.spyOn>).mock.calls;
+        const logMessage = String(calls[0][0]);
+        expect(logMessage).not.toContain("\n");
+        expect(logMessage).toContain("evil.comfake log line");
+    });
+
+    it("truncates hostname to 128 chars", () => {
+        const longHost = "a".repeat(200) + ".com";
+        logInjectionDetected(longHost);
+        const calls = (console.error as ReturnType<typeof vi.spyOn>).mock.calls;
+        const logMessage = String(calls[0][0]);
+        // The label in brackets should be at most 128 chars
+        const match = logMessage.match(/\[([^\]]+)\]/g);
+        expect(match).not.toBeNull();
+        const label = match![0].slice(1, -1); // strip [ and ]
+        expect(label.length).toBeLessThanOrEqual(128);
+    });
+
+    it("throttles on normalized label (control-char variant same as clean hostname)", () => {
+        // "host.com\x00" normalizes to "host.com" — same throttle key as clean hostname
+        logInjectionDetected("host.com");
+        (console.error as ReturnType<typeof vi.spyOn>).mockClear();
+        logInjectionDetected("host.com\x00");
+        expect(console.error).not.toHaveBeenCalled();
+    });
+});

@@ -78,8 +78,10 @@ export async function processResponse(
 
     // Steps 2-3: Sanitize and detect injection patterns (text responses only)
     if (!isBinaryContentType(options.contentType)) {
-        // Strip HTML comments before Unicode sanitization to prevent hiding injections in markup
-        if (options.contentType?.startsWith("text/html")) {
+        // Strip HTML comments before Unicode sanitization to prevent hiding injections in markup.
+        // Normalize MIME before comparison to handle parameters like "text/html; charset=utf-8".
+        const normalizedMime = options.contentType?.split(";")[0].trim().toLowerCase() ?? "";
+        if (normalizedMime === "text/html") {
             content = content.replace(HTML_COMMENT_PATTERN, "");
         }
 
@@ -125,9 +127,14 @@ export async function processResponse(
         // Apply filter to pre-parsed data (avoids double parse)
         content = applyJqFilterToParsed(parsedData, options.jqFilter);
 
-        // Re-detect after filter: jq may concentrate injection phrases from sparse fields
-        if (!isBinaryContentType(options.contentType) && detectInjectionPattern(content) !== null) {
-            logInjectionDetected(hostname);
+        // Re-sanitize and re-detect after filter: JSON.parse decodes Unicode escapes in string
+        // values (e.g. {"cmd":"Ig\u200Bnore..."} → zero-width space in jq output), so attack
+        // chars that were invisible in the raw text become real characters in the filtered result.
+        if (!isBinaryContentType(options.contentType)) {
+            content = sanitizeResponse(content);
+            if (detectInjectionPattern(content) !== null) {
+                logInjectionDetected(hostname);
+            }
         }
     }
 
