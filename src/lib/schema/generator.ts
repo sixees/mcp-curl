@@ -72,6 +72,12 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
     // and resolveJqFilter lookup — prevents bidi/zero-width chars in schema-presented values.
     if (endpoint.response?.filterPresets?.length) {
         const presetNames = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name));
+        const uniqueNames = new Set(presetNames);
+        if (uniqueNames.size !== presetNames.length) {
+            throw new Error(
+                `Endpoint "${endpoint.id}" has duplicate filter preset names after sanitization`
+            );
+        }
         shape.filter_preset = buildStringEnum(presetNames)
             .optional()
             .describe("Apply a predefined response filter");

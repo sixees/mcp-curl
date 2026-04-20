@@ -273,3 +273,20 @@ P1 finding #1 (U+2028/U+2029 missing from sanitize regex) should be fixed before
 - `src/lib/extensible/mcp-curl-server.test.ts` — 3 truncation boundary tests
 - `CLAUDE.md` — `[injection-defense]` log prefix documented
 - `docs/todos/` — 5 new todo files for out-of-scope items
+
+---
+
+## Review Comments Addressed — 2026-04-20 (Round 4)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Hardcoded `1000`/`1001` in boundary tests — use `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH` | @coderabbitai | Fix needed | Added import of constant; replaced all three literals with `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH` and `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH + 1` |
+| Sanitized preset names can collide — `resolveJqFilter` silently picks first match | @coderabbitai | Fix needed | Added duplicate detection in `generateInputSchema`: throws `"Endpoint X has duplicate filter preset names after sanitization"` if `Set.size !== array.length`; added test with `"\u200BSummary"` → `"Summary"` collision case |
+
+### Files Modified
+
+- `src/lib/extensible/mcp-curl-server.test.ts` — import `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH`; replace hardcoded literals
+- `src/lib/schema/generator.ts` — duplicate preset name check before `buildStringEnum`
+- `src/lib/schema/schema.test.ts` — collision detection test

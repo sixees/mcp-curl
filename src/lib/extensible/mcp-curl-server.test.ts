@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
 import { McpCurlServer } from "./mcp-curl-server.js";
+import { MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
 
 describe("McpCurlServer", () => {
     let server: McpCurlServer;
@@ -318,7 +319,7 @@ describe("McpCurlServer.registerCustomTool()", () => {
     it("should not warn when description is exactly MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH chars", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const handler = vi.fn().mockResolvedValue({ content: [] });
-        const exactDesc = "a".repeat(1000);
+        const exactDesc = "a".repeat(MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH);
         server.registerCustomTool(
             "my_tool",
             { title: "T", description: exactDesc, inputSchema: z.object({}) },
@@ -331,8 +332,8 @@ describe("McpCurlServer.registerCustomTool()", () => {
     it("should warn when sanitized description exceeds MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH chars", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const handler = vi.fn().mockResolvedValue({ content: [] });
-        // 1001 printable chars — no chars stripped by sanitizeDescription, so sanitized length = 1001 > 1000
-        const longDesc = "a".repeat(1001);
+        // MAX + 1 printable chars — no chars stripped by sanitizeDescription, so sanitized length exceeds limit
+        const longDesc = "a".repeat(MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH + 1);
         server.registerCustomTool(
             "my_tool",
             { title: "T", description: longDesc, inputSchema: z.object({}) },
@@ -346,12 +347,12 @@ describe("McpCurlServer.registerCustomTool()", () => {
     });
 
     it("should not warn when description shrinks to ≤MAX due to sanitization alone", () => {
-        // 1001 chars but the extra char is an attack char stripped by sanitizeDescription.
-        // Sanitized length = 1000 (exactly at limit), so no truncation warning.
+        // MAX + 1 chars but the extra char is an attack char stripped by sanitizeDescription.
+        // Sanitized length = MAX (exactly at limit), so no truncation warning.
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const handler = vi.fn().mockResolvedValue({ content: [] });
-        // 1000 printable chars + 1 zero-width space (U+200B stripped to empty by sanitizeDescription)
-        const descWithAttackChar = "a".repeat(1000) + "\u200B";
+        // MAX printable chars + 1 zero-width space (U+200B stripped to empty by sanitizeDescription)
+        const descWithAttackChar = "a".repeat(MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) + "\u200B";
         server.registerCustomTool(
             "my_tool",
             { title: "T", description: descWithAttackChar, inputSchema: z.object({}) },
