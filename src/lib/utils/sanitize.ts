@@ -32,7 +32,7 @@ const INJECTION_PATTERNS = new RegExp(
         "override[\\s\\S]{0,20}(your|the|all|previous)[\\s\\S]{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
         // Persona takeover
         "you\\s+are\\s+now\\s+",
-        "act\\s+as\\s+(an?\\s+)?",
+        "act\\s+as\\s+",
         "assume\\s+the\\s+role\\s+of",
         "pretend\\s+(you\\s+are|to\\s+be)",
         "roleplay\\s+as",

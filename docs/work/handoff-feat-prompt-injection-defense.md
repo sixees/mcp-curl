@@ -233,3 +233,43 @@ P1 finding #1 (U+2028/U+2029 missing from sanitize regex) should be fixed before
 - `src/lib/extensible/tool-wrapper.test.ts` — updated spotlighting sentinel regex
 - `src/lib/security/detection-logger.test.ts` — fixed hostname assertion
 - `src/lib/response/processor.test.ts` — x-gzip/x-tar + size guard tests
+
+---
+
+## Review Comments Addressed — 2026-04-20 (Round 3)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `act\\s+as\\s+(an?\\s+)?` misses "act as the", "act as my" | @coderabbitai | Fix needed | Broadened to `act\\s+as\\s+`; added 2 new tests |
+| Extract repeated `sanitizeResponse` + `detectInjectionPattern` + `logInjectionDetected` calls into helper | @coderabbitai | Fix needed | Reconsidered — extracted `sanitizeAndDetect(text, hostname)` private helper in `processor.ts`; deduplicates the two call sites |
+| `enableSpotlighting` JSDoc missing note about schema-generated tools | @coderabbitai | Documentation | Added note: "does not apply to tools registered via `generateToolDefinitions()`" |
+| Missing truncation warn boundary tests | @coderabbitai | Fix needed | Added 3 tests: exact boundary (1000 chars, no warn), over boundary (1001 chars, warns), attack-char shrink (1000 + U+200B sanitized to 1000, no warn) |
+| CLAUDE.md missing `[injection-defense]` log format | @coderabbitai | Documentation | Added `[injection-defense]` entry to Security section |
+
+### Out-of-Scope Todos Created
+
+| File | Description | Source |
+|------|-------------|--------|
+| `docs/todos/injection-defense-html-tag-stripping.md` | Strip HTML tags and markdown image beacons | @coderabbitai |
+| `docs/todos/jq-query-unit-tests.md` | Unit tests for `executeJqQuery()` | @coderabbitai |
+| `docs/todos/is-binary-content-type-location.md` | Move `isBinaryContentType` to utils/config | @coderabbitai |
+| `docs/todos/readme-register-custom-tool-sanitize-example.md` | README example for external input sanitization | @coderabbitai |
+| `docs/todos/auth-token-sanitize-consideration.md` | Design review for `auth_token` printable-ASCII pass-through | @coderabbitai |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| Keep sanitize+detect call sites inline (different responsibilities) | Extract `sanitizeAndDetect` helper | Same 3-line sequence appears twice; helper is cleaner without obscuring the different contexts | @coderabbitai |
+
+### Files Modified
+
+- `src/lib/utils/sanitize.ts` — broadened `act\\s+as\\s+` pattern
+- `src/lib/utils/sanitize.test.ts` — 2 new tests for broadened `act as` detection
+- `src/lib/response/processor.ts` — `sanitizeAndDetect` private helper extracted
+- `src/lib/types/public.ts` — `enableSpotlighting` JSDoc note
+- `src/lib/extensible/mcp-curl-server.test.ts` — 3 truncation boundary tests
+- `CLAUDE.md` — `[injection-defense]` log prefix documented
+- `docs/todos/` — 5 new todo files for out-of-scope items

@@ -16,6 +16,19 @@ import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.j
 const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
 
 /**
+ * Sanitize text and log any detected injection patterns.
+ * Extracts the repeated sanitizeResponse + detectInjectionPattern + logInjectionDetected
+ * call sequence that appears both before and after jq filtering.
+ */
+function sanitizeAndDetect(text: string, hostname: string): string {
+    const sanitized = sanitizeResponse(text);
+    if (detectInjectionPattern(sanitized) !== null) {
+        logInjectionDetected(hostname);
+    }
+    return sanitized;
+}
+
+/**
  * Returns true for MIME types that are binary (not text).
  * Binary responses are returned as-is without Unicode sanitization.
  */
@@ -85,13 +98,8 @@ export async function processResponse(
             content = content.replace(HTML_COMMENT_PATTERN, "");
         }
 
-        // Single-pass: remove Unicode attack chars + collapse whitespace padding
-        content = sanitizeResponse(content);
-
-        // Detection-only: scan for injection phrases and log (never suppresses content)
-        if (detectInjectionPattern(content) !== null) {
-            logInjectionDetected(hostname);
-        }
+        // Single-pass: remove Unicode attack chars + collapse whitespace padding; detect injections
+        content = sanitizeAndDetect(content, hostname);
     }
 
     // Step 4: Apply jq filter if provided AND response is JSON
@@ -131,10 +139,7 @@ export async function processResponse(
         // values (e.g. {"cmd":"Ig\u200Bnore..."} → zero-width space in jq output), so attack
         // chars that were invisible in the raw text become real characters in the filtered result.
         if (!isBinaryContentType(options.contentType)) {
-            content = sanitizeResponse(content);
-            if (detectInjectionPattern(content) !== null) {
-                logInjectionDetected(hostname);
-            }
+            content = sanitizeAndDetect(content, hostname);
         }
     }
 
