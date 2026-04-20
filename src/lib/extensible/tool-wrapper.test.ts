@@ -46,9 +46,9 @@ describe("spotlighting (maybeApplySpotlighting)", () => {
         }, { sessionId: undefined });
 
         const text = (result as { content: { text: string }[] }).content[0].text;
-        expect(text).toMatch(/^<response id="[0-9a-f-]{36}">/);
+        expect(text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-[0-9a-f-]{36}---/);
         expect(text).toContain("hello from api");
-        expect(text).toMatch(/<\/response>$/);
+        expect(text).toMatch(/---EXTERNAL-CONTENT-END-[0-9a-f-]{36}---$/);
     });
 
     it("does not wrap content when enableSpotlighting is false", async () => {

@@ -18,8 +18,10 @@ import { resolveBaseUrl, applySpotlighting } from "../utils/index.js";
 
 /**
  * Wrap the first text content item with spotlighting sentinels if enabled.
- * Non-text content items (image, resource) are returned unchanged.
  * Error results are never spotlighted.
+ *
+ * Note: `ToolResult.content` is a `[{ type: "text"; text: string }]` tuple —
+ * the type system guarantees exactly one text element; no runtime guard is needed.
  *
  * Note: when the response was saved to a file, content[0] is a file-path
  * acknowledgment message rather than the actual API response data.

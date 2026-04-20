@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { processResponse } from "./processor.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
+import { LIMITS } from "../config/index.js";
 
 // Silence console.error during tests (injection detection logs to stderr).
 // Also clear the throttle map so each test gets a fresh detection state.
@@ -56,6 +57,18 @@ describe("processResponse — binary content type gating", () => {
     it("does not sanitize multipart/* responses", async () => {
         const binary = "data\u202Evalue";
         const result = await processResponse(binary, { url: "http://example.com", contentType: "multipart/form-data" });
+        expect(result.content).toContain("\u202E");
+    });
+
+    it("does not sanitize application/x-gzip responses", async () => {
+        const binary = "data\u202Evalue";
+        const result = await processResponse(binary, { url: "http://example.com", contentType: "application/x-gzip" });
+        expect(result.content).toContain("\u202E");
+    });
+
+    it("does not sanitize application/x-tar responses", async () => {
+        const binary = "data\u202Evalue";
+        const result = await processResponse(binary, { url: "http://example.com", contentType: "application/x-tar" });
         expect(result.content).toContain("\u202E");
     });
 
@@ -163,5 +176,17 @@ describe("processResponse — post-jq injection detection", () => {
         expect(console.error).toHaveBeenCalledWith(
             "[injection-defense] [evil.com] InjectionDetected"
         );
+    });
+});
+
+describe("processResponse — size guard fires before sanitization", () => {
+    it("rejects oversized responses before incurring sanitization cost", async () => {
+        // Build a response 1 byte over the limit so it is rejected by the size guard
+        const oversized = "A".repeat(LIMITS.MAX_RESPONSE_SIZE + 1);
+        await expect(
+            processResponse(oversized, { url: "http://example.com" })
+        ).rejects.toThrow(/exceeds maximum allowed/);
+        // No injection log should fire — sanitization is never reached
+        expect(console.error).not.toHaveBeenCalled();
     });
 });

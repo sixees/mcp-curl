@@ -32,17 +32,26 @@ const INJECTION_PATTERNS = new RegExp(
         "override[\\s\\S]{0,20}(your|the|all|previous)[\\s\\S]{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
         // Persona takeover
         "you\\s+are\\s+now\\s+",
-        "act\\s+as\\s+a\\s",
+        "act\\s+as\\s+(an?\\s+)?",
+        "assume\\s+the\\s+role\\s+of",
         "pretend\\s+(you\\s+are|to\\s+be)",
         "roleplay\\s+as",
         "\\bDAN\\b",
         "jailbreak",
+        // Privilege escalation / structural override tokens
+        "\\[ADMIN[\\s_-]*OVERRIDE\\]",
+        "<\\s*admin\\s*>",
+        "<\\s*SYSTEM\\s*>",
+        "<\\s*IMPORTANT\\s*>",
+        "\\[INST\\]",
         // System/prompt manipulation
         "system\\s+prompt",
         "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
         "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
         "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,20}instructions?",
-        // Data exfiltration
+        // Data exfiltration — file system triggers
+        "read\\s+~\\/\\.(ssh|cursor|env|zshrc|bashrc|config|npmrc|gitconfig)",
+        "pass[\\s\\S]{0,20}(its|the)\\s+contents?\\s+as",
         "exfiltrate",
         "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,30}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)",
     ].join("|"),
@@ -105,13 +114,20 @@ export function detectInjectionPattern(input: string): string | null {
 /**
  * Wrap response content with per-request trust-boundary sentinels (spotlighting).
  *
+ * Uses opaque UUID-based delimiters that cannot appear naturally in text or markup,
+ * preventing a hostile payload from terminating the sentinel region early.
+ * XML-style tags (`<response>...</response>`) are NOT used because a payload containing
+ * `</response>` would break out of the trusted region.
+ *
  * Uses the caller-provided requestId (a fresh UUID per request, never a module-level constant)
- * to make it harder for injected instructions to break out of the labeled data region.
+ * to make cross-turn sentinel reuse attacks impractical.
  *
  * @param content - Response content to wrap
  * @param requestId - Unique identifier for this response (caller should pass randomUUID())
- * @returns Content wrapped in sentinel tags
+ * @returns Content wrapped in opaque sentinel delimiters
  */
 export function applySpotlighting(content: string, requestId: string): string {
-    return `<response id="${requestId}">\n${content}\n</response>`;
+    const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
+    const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
+    return `${begin}\n${content}\n${end}`;
 }

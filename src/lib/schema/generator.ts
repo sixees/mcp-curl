@@ -67,9 +67,11 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         shape[param.name] = schema;
     }
 
-    // Add optional filter_preset parameter if presets exist
+    // Add optional filter_preset parameter if presets exist.
+    // Sanitize preset names so the enum values are consistent with the description display
+    // and resolveJqFilter lookup — prevents bidi/zero-width chars in schema-presented values.
     if (endpoint.response?.filterPresets?.length) {
-        const presetNames = endpoint.response.filterPresets.map((p) => p.name);
+        const presetNames = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name));
         shape.filter_preset = buildStringEnum(presetNames)
             .optional()
             .describe("Apply a predefined response filter");
@@ -301,12 +303,18 @@ function resolveJqFilter(
     // Check for filter preset selection
     const presetName = params.filter_preset as string | undefined;
     if (presetName && endpoint.response?.filterPresets) {
-        const preset = endpoint.response.filterPresets.find((p) => p.name === presetName);
+        // Compare sanitized names — the enum was built from sanitized names so the
+        // LLM-supplied value is always a sanitized string, not the raw YAML value.
+        const preset = endpoint.response.filterPresets.find(
+            (p) => sanitizeDescription(p.name) === presetName
+        );
         if (preset) {
             return preset.jqFilter;
         }
         // Preset explicitly requested but not found - throw error
-        const available = endpoint.response.filterPresets.map((p) => p.name).join(", ");
+        const available = endpoint.response.filterPresets
+            .map((p) => sanitizeDescription(p.name))
+            .join(", ");
         throw new Error(
             `Unknown filter preset "${presetName}". Available presets: ${available}`
         );

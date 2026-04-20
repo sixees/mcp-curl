@@ -199,3 +199,37 @@ P1 finding #1 (U+2028/U+2029 missing from sanitize regex) should be fixed before
 - `src/lib/security/detection-logger.test.ts` — hostname normalization tests
 - `src/lib/response/processor.test.ts` — JSON-decoded attack char test (critical path)
 - `docs/work/handoff-feat-prompt-injection-defense.md` — markdownlint fix + this section
+
+---
+
+## Review Comments Addressed — 2026-04-20 (Round 2)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Preset names raw in `filter_preset` enum and `resolveJqFilter()` — desync with sanitized display | @coderabbitai | Fix needed | Sanitize preset names in `generateInputSchema()` and `resolveJqFilter()` lookup using same `sanitizeDescription` |
+| Hostname truncation test checks wrong bracket (`[injection-defense]` not hostname) | @coderabbitai | Fix needed | Fixed regex to `^\[injection-defense\] \[([^\]]+)\]...` capturing hostname in group 1 |
+| Suggest empty/non-text content guards in `maybeApplySpotlighting` | @coderabbitai | False positive | `ToolResult.content` is `[{type:"text";text:string}]` tuple — type system prevents empty/non-text at compile time; tests for impossible states add noise |
+| `maybeApplySpotlighting` accesses `content[0].text` without guard | @coderabbitai | Documentation | Fixed JSDoc to remove misleading "non-text items returned unchanged" claim; added clarifying note about type guarantee |
+| Missing x-gzip/x-tar tests + size guard before sanitization | @coderabbitai | Fix needed | Added `application/x-gzip`, `application/x-tar` binary gating tests; added oversized-response rejection test |
+| Extract repeated sanitize+detect into helper | @coderabbitai | False positive | Same reasoning as prior gemini-code-assist thread: blocks have different responsibilities (HTML strip + raw sanitize vs. post-JSON-decode sanitize); keeping separate preserves intent |
+| Detection patterns missing: `assume the role of`, `<SYSTEM>`, `[ADMIN OVERRIDE]`, `read ~/.ssh/`, `pass its contents as` | @coderabbitai | Fix needed | Added 9 patterns from original plan: `assume the role of`, `act as an?`, `[ADMIN OVERRIDE]`, `<admin>`, `<SYSTEM>`, `<IMPORTANT>`, `[INST]`, `read ~/.ssh/`, `pass its contents as` |
+| XML-style spotlighting (`<response id="...">`) spoofable by `</response>` in payload | @coderabbitai | Fix needed | Changed to opaque UUID delimiters `---EXTERNAL-CONTENT-BEGIN-uuid---` / `---EXTERNAL-CONTENT-END-uuid---` as originally specified in the plan; updated all tests |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| Spotlighting uses `<response id="uuid">` XML tags | Opaque `---EXTERNAL-CONTENT-BEGIN-uuid---` delimiters | XML tags are spoofable by payload containing `</response>`; plan originally specified UUID delimiters | @coderabbitai |
+| Preset names sanitized for display only | Sanitize preset names in enum AND lookup — single consistent representation | Desync between enum values and display labels; attack chars in schema-presented enum values | @coderabbitai |
+
+### Files Modified
+
+- `src/lib/utils/sanitize.ts` — new injection patterns + opaque spotlighting delimiters
+- `src/lib/schema/generator.ts` — sanitize preset names in `generateInputSchema()` + `resolveJqFilter()`
+- `src/lib/extensible/tool-wrapper.ts` — JSDoc correction
+- `src/lib/utils/sanitize.test.ts` — updated spotlighting format + new pattern tests
+- `src/lib/extensible/tool-wrapper.test.ts` — updated spotlighting sentinel regex
+- `src/lib/security/detection-logger.test.ts` — fixed hostname assertion
+- `src/lib/response/processor.test.ts` — x-gzip/x-tar + size guard tests

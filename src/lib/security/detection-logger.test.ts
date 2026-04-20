@@ -121,10 +121,10 @@ describe("logInjectionDetected — hostname normalization", () => {
         logInjectionDetected(longHost);
         const calls = (console.error as ReturnType<typeof vi.spyOn>).mock.calls;
         const logMessage = String(calls[0][0]);
-        // The label in brackets should be at most 128 chars
-        const match = logMessage.match(/\[([^\]]+)\]/g);
+        // Extract the hostname label: second bracketed segment in the log line
+        const match = logMessage.match(/^\[injection-defense\] \[([^\]]+)\] InjectionDetected$/);
         expect(match).not.toBeNull();
-        const label = match![0].slice(1, -1); // strip [ and ]
+        const label = match![1]; // capture group 1 is the hostname
         expect(label.length).toBeLessThanOrEqual(128);
     });
 
