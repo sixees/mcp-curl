@@ -30,6 +30,8 @@ export {
 export {
     logInjectionDetected,
     cleanupInjectionDetectionMap,
+    startInjectionCleanup,
+    stopInjectionCleanup,
     // Note: clearInjectionDetectionMap intentionally not exported here (test-only).
     // Tests should import directly from "./detection-logger.js" if needed.
 } from "./detection-logger.js";

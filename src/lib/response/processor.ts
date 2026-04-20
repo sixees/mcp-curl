@@ -26,9 +26,15 @@ function isBinaryContentType(contentType: string | undefined): boolean {
         mime.startsWith("image/") ||
         mime.startsWith("audio/") ||
         mime.startsWith("video/") ||
+        mime.startsWith("font/") ||
+        mime.startsWith("multipart/") ||
         mime === "application/octet-stream" ||
         mime === "application/pdf" ||
-        mime.startsWith("font/")
+        mime === "application/wasm" ||
+        mime === "application/zip" ||
+        mime === "application/gzip" ||
+        mime === "application/x-gzip" ||
+        mime === "application/x-tar"
     );
 }
 
@@ -62,6 +68,14 @@ export async function processResponse(
 
     let content = response;
 
+    // Resolve hostname once for injection detection logging (used in steps 2–4)
+    let hostname = "unknown";
+    try {
+        hostname = new URL(options.url).hostname;
+    } catch {
+        // URL parsing failed — keep "unknown"
+    }
+
     // Steps 2-3: Sanitize and detect injection patterns (text responses only)
     if (!isBinaryContentType(options.contentType)) {
         // Strip HTML comments before Unicode sanitization to prevent hiding injections in markup
@@ -73,14 +87,7 @@ export async function processResponse(
         content = sanitizeResponse(content);
 
         // Detection-only: scan for injection phrases and log (never suppresses content)
-        const phrase = detectInjectionPattern(content);
-        if (phrase !== null) {
-            let hostname = "unknown";
-            try {
-                hostname = new URL(options.url).hostname;
-            } catch {
-                // URL parsing failed — keep "unknown"
-            }
+        if (detectInjectionPattern(content) !== null) {
             logInjectionDetected(hostname);
         }
     }
@@ -117,6 +124,11 @@ export async function processResponse(
 
         // Apply filter to pre-parsed data (avoids double parse)
         content = applyJqFilterToParsed(parsedData, options.jqFilter);
+
+        // Re-detect after filter: jq may concentrate injection phrases from sparse fields
+        if (!isBinaryContentType(options.contentType) && detectInjectionPattern(content) !== null) {
+            logInjectionDetected(hostname);
+        }
     }
 
     // Step 5: Determine max size

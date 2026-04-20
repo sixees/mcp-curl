@@ -1,7 +1,7 @@
 // src/lib/security/detection-logger.ts
 // Throttled logger for prompt injection pattern detection events
 
-const THROTTLE_WINDOW_MS = 60_000; // 1 detection log per hostname per 60 seconds
+const THROTTLE_WINDOW_MS = 60_000; // 1 detection log per hostname per 60 seconds; also used as cleanup interval
 
 // Private map: hostname → timestamp of last logged detection
 const lastDetectedMap = new Map<string, number>();
@@ -21,6 +21,25 @@ export function logInjectionDetected(hostname: string): void {
     }
     lastDetectedMap.set(hostname, now);
     console.error(`[injection-defense] [${hostname}] InjectionDetected`);
+}
+
+/**
+ * Start the injection detection cleanup interval.
+ * Evicts expired throttle entries on the same cadence as the throttle window.
+ *
+ * @returns The interval handle (pass to stopInjectionCleanup to clear)
+ */
+export function startInjectionCleanup(): NodeJS.Timeout {
+    const interval = setInterval(cleanupInjectionDetectionMap, THROTTLE_WINDOW_MS);
+    interval.unref();
+    return interval;
+}
+
+/**
+ * Stop the injection detection cleanup interval.
+ */
+export function stopInjectionCleanup(interval: NodeJS.Timeout): void {
+    clearInterval(interval);
 }
 
 /**

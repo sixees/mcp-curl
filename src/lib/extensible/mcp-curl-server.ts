@@ -23,7 +23,7 @@ import { registerAllPrompts } from "../prompts/index.js";
 import { executeCurlRequest } from "../tools/curl-execute.js";
 import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
-import { startRateLimitCleanup, stopRateLimitCleanup, logInjectionDetected, cleanupInjectionDetectionMap } from "../security/index.js";
+import { startRateLimitCleanup, stopRateLimitCleanup, startInjectionCleanup, stopInjectionCleanup } from "../security/index.js";
 import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
 import { createHttpApp, resolveHost, formatHostForUrl } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
@@ -214,7 +214,10 @@ export class McpCurlServer {
      * implement it within the handler function itself.
      *
      * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
-     * @param meta - Tool metadata (title, description, inputSchema)
+     * @param meta - Tool metadata (title, description, inputSchema). title and description
+     *   are sanitized automatically. inputSchema field descriptions (.describe() strings)
+     *   are NOT sanitized — callers must sanitize any field descriptions sourced from
+     *   external input using sanitizeDescription() before registering.
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()
@@ -263,7 +266,11 @@ export class McpCurlServer {
             throw new Error(`Custom tool "${name}" is already registered`);
         }
 
-        // Store a sanitized defensive copy — never trust caller's object directly
+        // Store a sanitized defensive copy — never trust caller's object directly.
+        // title and description are sanitized here. inputSchema field descriptions
+        // (.describe() on individual Zod fields) are the caller's responsibility —
+        // traversing arbitrary Zod v4 schemas safely is non-trivial. Callers should
+        // apply sanitizeDescription() to any field descriptions sourced from external input.
         const sanitizedMeta: CustomToolMeta = {
             ...meta,
             title: sanitizeDescription(meta.title),
@@ -346,8 +353,7 @@ export class McpCurlServer {
 
             // Start rate limit cleanup and injection detection cleanup
             this._rateLimitInterval = startRateLimitCleanup();
-            this._injectionCleanupInterval = setInterval(cleanupInjectionDetectionMap, 60_000);
-            this._injectionCleanupInterval.unref();
+            this._injectionCleanupInterval = startInjectionCleanup();
 
             // Create and configure MCP server
             this._server = this.createConfiguredServer();
@@ -384,7 +390,7 @@ export class McpCurlServer {
                 this._rateLimitInterval = null;
             }
             if (this._injectionCleanupInterval) {
-                clearInterval(this._injectionCleanupInterval);
+                stopInjectionCleanup(this._injectionCleanupInterval);
                 this._injectionCleanupInterval = null;
             }
             this._server = null;
@@ -462,7 +468,7 @@ export class McpCurlServer {
             stopRateLimitCleanup(this._rateLimitInterval);
         }
         if (this._injectionCleanupInterval) {
-            clearInterval(this._injectionCleanupInterval);
+            stopInjectionCleanup(this._injectionCleanupInterval);
         }
 
         // Clean up temp directory (wrapped in try/finally to always reset state)

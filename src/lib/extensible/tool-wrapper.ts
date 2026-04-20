@@ -4,7 +4,7 @@
 import { randomUUID } from "crypto";
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
-import type { CurlRegisterToolOptions, JqRegisterToolOptions } from "./types.js";
+import type { CurlRegisterToolOptions, JqRegisterToolOptions, ToolResult } from "./types.js";
 import { executeWithHooks } from "./hook-executor.js";
 import { CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
 import {
@@ -15,6 +15,27 @@ import {
 } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders } from "../config/index.js";
 import { resolveBaseUrl, applySpotlighting } from "../utils/index.js";
+
+/**
+ * Wrap the first text content item with spotlighting sentinels if enabled.
+ * Non-text content items (image, resource) are returned unchanged.
+ * Error results are never spotlighted.
+ *
+ * Note: when the response was saved to a file, content[0] is a file-path
+ * acknowledgment message rather than the actual API response data.
+ * Spotlighting this message is semantically benign — it wraps an internal
+ * system message, not external untrusted data — but is accepted as a known
+ * cosmetic limitation rather than a functional concern.
+ */
+function maybeApplySpotlighting(result: ToolResult, config: Readonly<McpCurlConfig>): ToolResult {
+    if (!config.enableSpotlighting || result.isError) {
+        return result;
+    }
+    return {
+        ...result,
+        content: [{ type: "text" as const, text: applySpotlighting(result.content[0].text, randomUUID()) }],
+    };
+}
 
 interface ConfigDefaultableParams {
     output_dir?: string;
@@ -108,13 +129,7 @@ export function registerCurlToolWithHooks(
         }
         const transformedParams = applyConfigTransformsCurl(params, config);
         const result = await executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
-        if (config.enableSpotlighting && !result.isError && result.content.length > 0) {
-            return {
-                ...result,
-                content: [{ type: "text" as const, text: applySpotlighting(result.content[0].text, randomUUID()) }],
-            };
-        }
-        return result;
+        return maybeApplySpotlighting(result, config);
     };
 
     // Register using the canonical meta object to preserve type inference
@@ -142,13 +157,7 @@ export function registerJqToolWithHooks(
         }
         const transformedParams = applyConfigTransformsJq(params, config);
         const result = await executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
-        if (config.enableSpotlighting && !result.isError && result.content.length > 0) {
-            return {
-                ...result,
-                content: [{ type: "text" as const, text: applySpotlighting(result.content[0].text, randomUUID()) }],
-            };
-        }
-        return result;
+        return maybeApplySpotlighting(result, config);
     };
 
     // Register using the canonical meta object to preserve type inference

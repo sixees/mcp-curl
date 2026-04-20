@@ -9,7 +9,7 @@ import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
-import { getErrorMessage, sanitizeResponse, detectInjectionPattern } from "../utils/index.js";
+import { getErrorMessage, sanitizeResponse, detectInjectionPattern, sanitizeDescription } from "../utils/index.js";
 import { logInjectionDetected } from "../security/index.js";
 import { createSafeFilenameBase } from "../response/index.js";
 
@@ -147,7 +147,7 @@ export async function executeJqQuery(
     } catch (error) {
         const errorMessage = getErrorMessage(error);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";
-        console.error(`jq_query error: [${basename(params.filepath)}] ${errorClass}`);
+        console.error(`jq_query error: [${sanitizeDescription(basename(params.filepath))}] ${errorClass}`);
         return {
             content: [
                 {

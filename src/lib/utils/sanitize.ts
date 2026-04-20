@@ -10,14 +10,15 @@ export const MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1000;
 
 // NOT exported — g+u flags make regexes stateful; external .test() corrupts lastIndex.
 // Covers: C0/C1 control chars (excluding \t \n \r), soft hyphen, zero-width chars,
-// bidi embedding/override/isolation, word-joiner family, BOM, variation selectors, Tags block.
+// bidi embedding/override/isolation, word-joiner family, BOM, variation selectors, Tags block,
+// U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR (ECMAScript line terminators).
 const DESC_CONTROL_CHARS =
-    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
 
 // NOT exported — same stateful reasoning.
 // Single-pass: same Unicode ranges as DESC_CONTROL_CHARS PLUS 50+ consecutive spaces.
 const RESPONSE_SANITIZE_PATTERN =
-    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
 
 // No g flag — safe for repeated .test() without lastIndex accumulation.
 const INJECTION_PATTERNS = new RegExp(
