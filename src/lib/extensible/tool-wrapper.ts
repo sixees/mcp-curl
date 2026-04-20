@@ -1,6 +1,7 @@
 // src/lib/extensible/tool-wrapper.ts
 // Wraps tool handlers with hooks and config transforms
 
+import { randomUUID } from "crypto";
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
 import type { CurlRegisterToolOptions, JqRegisterToolOptions } from "./types.js";
@@ -13,7 +14,7 @@ import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders } from "../config/index.js";
-import { resolveBaseUrl } from "../utils/index.js";
+import { resolveBaseUrl, applySpotlighting } from "../utils/index.js";
 
 interface ConfigDefaultableParams {
     output_dir?: string;
@@ -98,15 +99,22 @@ export function registerCurlToolWithHooks(
 ): void {
     const { executor, enabled, config, hooks } = options;
 
-    const handler: ToolCallback<typeof CurlExecuteSchema> = (params, extra) => {
+    const handler: ToolCallback<typeof CurlExecuteSchema> = async (params, extra) => {
         if (!enabled) {
-            return Promise.resolve({
+            return {
                 content: [{ type: "text" as const, text: "Error: curl_execute tool is disabled" }],
                 isError: true,
-            });
+            };
         }
         const transformedParams = applyConfigTransformsCurl(params, config);
-        return executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
+        const result = await executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
+        if (config.enableSpotlighting && !result.isError && result.content.length > 0) {
+            return {
+                ...result,
+                content: [{ type: "text" as const, text: applySpotlighting(result.content[0].text, randomUUID()) }],
+            };
+        }
+        return result;
     };
 
     // Register using the canonical meta object to preserve type inference
@@ -125,15 +133,22 @@ export function registerJqToolWithHooks(
 ): void {
     const { executor, enabled, config, hooks } = options;
 
-    const handler: ToolCallback<typeof JqQuerySchema> = (params, extra) => {
+    const handler: ToolCallback<typeof JqQuerySchema> = async (params, extra) => {
         if (!enabled) {
-            return Promise.resolve({
+            return {
                 content: [{ type: "text" as const, text: "Error: jq_query tool is disabled" }],
                 isError: true,
-            });
+            };
         }
         const transformedParams = applyConfigTransformsJq(params, config);
-        return executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
+        const result = await executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
+        if (config.enableSpotlighting && !result.isError && result.content.length > 0) {
+            return {
+                ...result,
+                content: [{ type: "text" as const, text: applySpotlighting(result.content[0].text, randomUUID()) }],
+            };
+        }
+        return result;
     };
 
     // Register using the canonical meta object to preserve type inference

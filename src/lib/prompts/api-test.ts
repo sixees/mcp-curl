@@ -4,6 +4,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { httpOnlyUrl } from "../utils/url.js";
+import { sanitizeDescription } from "../utils/index.js";
 
 /** URL schema restricted to http/https schemes. Exported for testing. */
 export const apiTestUrlSchema = httpOnlyUrl("The API endpoint URL to test");
@@ -33,7 +34,7 @@ export function registerApiTestPrompt(server: McpServer): void {
 
 URL: ${url}
 Method: ${method}
-${description ? `Description: ${description}` : ""}
+${description ? `Description: ${sanitizeDescription(description)}` : ""}
 
 Please:
 1. Make the request using curl_execute

@@ -23,7 +23,8 @@ import { registerAllPrompts } from "../prompts/index.js";
 import { executeCurlRequest } from "../tools/curl-execute.js";
 import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
-import { startRateLimitCleanup, stopRateLimitCleanup } from "../security/index.js";
+import { startRateLimitCleanup, stopRateLimitCleanup, logInjectionDetected, cleanupInjectionDetectionMap } from "../security/index.js";
+import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
 import { createHttpApp, resolveHost, formatHostForUrl } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
 import { ENV, LIMITS, parsePort } from "../config/index.js";
@@ -77,6 +78,7 @@ const KNOWN_CONFIG_KEYS_ARRAY = [
     "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
     "maxResultSize", "allowLocalhost", "port", "host",
     "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
+    "enableSpotlighting",
 ] as const satisfies readonly (keyof McpCurlConfig)[];
 
 // Compile-time check: fails if any McpCurlConfig key is missing from the array
@@ -103,6 +105,7 @@ export class McpCurlServer {
     private _httpServer: Server | null = null;
     private _sessionManager: SessionManager | null = null;
     private _rateLimitInterval: NodeJS.Timeout | null = null;
+    private _injectionCleanupInterval: NodeJS.Timeout | null = null;
     private _utilities: InstanceUtilities | null = null;
 
     /**
@@ -260,7 +263,20 @@ export class McpCurlServer {
             throw new Error(`Custom tool "${name}" is already registered`);
         }
 
-        this._customTools.push({ name, meta, handler });
+        // Store a sanitized defensive copy — never trust caller's object directly
+        const sanitizedMeta: CustomToolMeta = {
+            ...meta,
+            title: sanitizeDescription(meta.title),
+            description: sanitizeDescription(meta.description).slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH),
+        };
+
+        if (sanitizedMeta.description.length < meta.description.length) {
+            console.warn(
+                `McpCurlServer.registerCustomTool("${name}"): description truncated to ${MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH} chars`
+            );
+        }
+
+        this._customTools.push({ name, meta: sanitizedMeta, handler });
         return this;
     }
 
@@ -328,8 +344,10 @@ export class McpCurlServer {
             // Clean up orphaned temp directories from previous runs
             await cleanupOrphanedTempDirs();
 
-            // Start rate limit cleanup
+            // Start rate limit cleanup and injection detection cleanup
             this._rateLimitInterval = startRateLimitCleanup();
+            this._injectionCleanupInterval = setInterval(cleanupInjectionDetectionMap, 60_000);
+            this._injectionCleanupInterval.unref();
 
             // Create and configure MCP server
             this._server = this.createConfiguredServer();
@@ -364,6 +382,10 @@ export class McpCurlServer {
             if (this._rateLimitInterval) {
                 stopRateLimitCleanup(this._rateLimitInterval);
                 this._rateLimitInterval = null;
+            }
+            if (this._injectionCleanupInterval) {
+                clearInterval(this._injectionCleanupInterval);
+                this._injectionCleanupInterval = null;
             }
             this._server = null;
             this._started = false;
@@ -435,9 +457,12 @@ export class McpCurlServer {
             }
         }
 
-        // Stop rate limit cleanup
+        // Stop rate limit cleanup and injection detection cleanup
         if (this._rateLimitInterval) {
             stopRateLimitCleanup(this._rateLimitInterval);
+        }
+        if (this._injectionCleanupInterval) {
+            clearInterval(this._injectionCleanupInterval);
         }
 
         // Clean up temp directory (wrapped in try/finally to always reset state)
@@ -451,6 +476,7 @@ export class McpCurlServer {
             this._frozenConfig = null;
             this._utilities = null;
             this._rateLimitInterval = null;
+            this._injectionCleanupInterval = null;
             this._sessionManager = null;
         }
     }

@@ -11,7 +11,7 @@ import type {
     HttpMethod,
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
-import { resolveBaseUrl } from "../utils/index.js";
+import { resolveBaseUrl, sanitizeDescription } from "../utils/index.js";
 import { applyDefaultHeaders } from "../config/index.js";
 
 /**
@@ -57,7 +57,7 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         let schema: z.ZodTypeAny = createParamSchema(param);
 
         if (param.description) {
-            schema = schema.describe(param.description);
+            schema = schema.describe(sanitizeDescription(param.description));
         }
 
         if (!param.required) {
@@ -445,8 +445,7 @@ export function getMethodAnnotations(method: HttpMethod) {
  * Build tool description including parameter docs and filter presets.
  */
 function buildToolDescription(endpoint: EndpointDefinition): string {
-    const parts: string[] = [endpoint.description];
-    const CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]+/g;
+    const parts: string[] = [sanitizeDescription(endpoint.description)];
 
     // Document filter presets if available
     if (endpoint.response?.filterPresets?.length) {
@@ -454,11 +453,9 @@ function buildToolDescription(endpoint: EndpointDefinition): string {
         parts.push("Available filter presets:");
         for (const preset of endpoint.response.filterPresets) {
             if (preset.description) {
-                const desc = preset.description.replace(CONTROL_CHARS, " ");
-                parts.push(`  - ${preset.name}: ${desc}`);
+                parts.push(`  - ${preset.name}: ${sanitizeDescription(preset.description)}`);
             } else {
-                const safeFilter = preset.jqFilter.replace(CONTROL_CHARS, " ");
-                parts.push(`  - ${preset.name}: applies filter "${safeFilter}"`);
+                parts.push(`  - ${preset.name}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
             }
         }
     }
@@ -485,7 +482,7 @@ export function registerEndpointTools(
         server.registerTool(
             endpoint.id,
             {
-                title: endpoint.title,
+                title: sanitizeDescription(endpoint.title),
                 description: buildToolDescription(endpoint),
                 inputSchema,
                 annotations: getMethodAnnotations(endpoint.method),
@@ -515,7 +512,7 @@ export function generateToolDefinitions(
 }> {
     return schema.endpoints.map((endpoint) => ({
         id: endpoint.id,
-        title: endpoint.title,
+        title: sanitizeDescription(endpoint.title),
         description: buildToolDescription(endpoint),
         method: endpoint.method,
         inputSchema: generateInputSchema(endpoint),

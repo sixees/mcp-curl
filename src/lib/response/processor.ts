@@ -5,18 +5,43 @@ import { LIMITS } from "../config/limits.js";
 import { applyJqFilterToParsed } from "../jq/index.js";
 import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
+import { sanitizeResponse, detectInjectionPattern } from "../utils/index.js";
+import { logInjectionDetected } from "../security/index.js";
 
 // Re-export types from lib/types for convenience
 export type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
 import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
 
+// NOT exported — g flag makes it stateful; used only with .replace() here (safe)
+const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+
+/**
+ * Returns true for MIME types that are binary (not text).
+ * Binary responses are returned as-is without Unicode sanitization.
+ */
+function isBinaryContentType(contentType: string | undefined): boolean {
+    if (!contentType) return false;
+    const mime = contentType.split(";")[0].trim().toLowerCase();
+    return (
+        mime.startsWith("image/") ||
+        mime.startsWith("audio/") ||
+        mime.startsWith("video/") ||
+        mime === "application/octet-stream" ||
+        mime === "application/pdf" ||
+        mime.startsWith("font/")
+    );
+}
+
 /**
  * Process response with filtering and size handling.
  *
- * Processing stages:
- * 1. Apply jq_filter if provided AND response is JSON (or looks like JSON)
- * 2. Check content size against maxResultSize
- * 3. Auto-save to file if size exceeds limit OR saveToFile=true
+ * Processing pipeline:
+ * 1. Early size guard: reject responses exceeding absolute limit
+ * 2. Sanitize: strip Unicode attack vectors and whitespace padding (text only)
+ * 3. Detect injection patterns and log (observability only — content unchanged)
+ * 4. Apply jq_filter if provided AND response is JSON (or looks like JSON)
+ * 5. Check content size against maxResultSize
+ * 6. Auto-save to file if size exceeds limit OR saveToFile=true
  *
  * @param response - The response content to process
  * @param options - Processing options (url, jqFilter, maxResultSize, etc.)
@@ -27,7 +52,7 @@ export async function processResponse(
     response: string,
     options: ProcessResponseOptions
 ): Promise<ProcessedResponse> {
-    // Early size guard: reject responses exceeding absolute limit before processing
+    // Step 1: Early size guard — runs BEFORE sanitization to avoid wasting CPU on oversized responses
     const rawBytes = Buffer.byteLength(response, "utf8");
     if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
         throw new Error(
@@ -37,7 +62,30 @@ export async function processResponse(
 
     let content = response;
 
-    // Step 1: Apply jq filter if provided AND response is JSON
+    // Steps 2-3: Sanitize and detect injection patterns (text responses only)
+    if (!isBinaryContentType(options.contentType)) {
+        // Strip HTML comments before Unicode sanitization to prevent hiding injections in markup
+        if (options.contentType?.startsWith("text/html")) {
+            content = content.replace(HTML_COMMENT_PATTERN, "");
+        }
+
+        // Single-pass: remove Unicode attack chars + collapse whitespace padding
+        content = sanitizeResponse(content);
+
+        // Detection-only: scan for injection phrases and log (never suppresses content)
+        const phrase = detectInjectionPattern(content);
+        if (phrase !== null) {
+            let hostname = "unknown";
+            try {
+                hostname = new URL(options.url).hostname;
+            } catch {
+                // URL parsing failed — keep "unknown"
+            }
+            logInjectionDetected(hostname);
+        }
+    }
+
+    // Step 4: Apply jq filter if provided AND response is JSON
     if (options.jqFilter) {
         const isJson = isJsonContentType(options.contentType);
         const trimmed = content.trim();
@@ -71,11 +119,11 @@ export async function processResponse(
         content = applyJqFilterToParsed(parsedData, options.jqFilter);
     }
 
-    // Step 2: Determine max size
+    // Step 5: Determine max size
     const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const contentBytes = Buffer.byteLength(content, "utf8");
 
-    // Step 3: Check if we need to save to file
+    // Step 6: Check if we need to save to file
     const shouldSave = options.saveToFile || contentBytes > maxSize;
 
     if (shouldSave) {

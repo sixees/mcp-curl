@@ -1,0 +1,49 @@
+// src/lib/security/detection-logger.ts
+// Throttled logger for prompt injection pattern detection events
+
+const THROTTLE_WINDOW_MS = 60_000; // 1 detection log per hostname per 60 seconds
+
+// Private map: hostname → timestamp of last logged detection
+const lastDetectedMap = new Map<string, number>();
+
+/**
+ * Log a prompt injection detection event, throttled to once per hostname per minute.
+ * Logs only the hostname and event class — never the matched phrase content,
+ * which could itself contain injection payloads.
+ *
+ * @param hostname - Target hostname where the pattern was detected
+ */
+export function logInjectionDetected(hostname: string): void {
+    const now = Date.now();
+    const lastSeen = lastDetectedMap.get(hostname);
+    if (lastSeen !== undefined && now - lastSeen < THROTTLE_WINDOW_MS) {
+        return; // throttled — already logged within the last minute
+    }
+    lastDetectedMap.set(hostname, now);
+    console.error(`[injection-defense] [${hostname}] InjectionDetected`);
+}
+
+/**
+ * Evict entries older than the throttle window.
+ * Called on a periodic interval to prevent unbounded map growth.
+ */
+export function cleanupInjectionDetectionMap(): void {
+    const now = Date.now();
+    for (const [key, timestamp] of lastDetectedMap) {
+        if (now - timestamp >= THROTTLE_WINDOW_MS) {
+            lastDetectedMap.delete(key);
+        }
+    }
+}
+
+/**
+ * Clear all detection map entries.
+ *
+ * **WARNING: For testing purposes only.** Do not call in production code.
+ * Resets throttle state between test cases.
+ *
+ * @internal
+ */
+export function clearInjectionDetectionMap(): void {
+    lastDetectedMap.clear();
+}

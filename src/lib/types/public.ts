@@ -32,6 +32,8 @@ export interface McpCurlConfig {
     defaultUserAgent?: string;
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
+    /** Wrap responses in per-request sentinel tags to resist prompt injection (spotlighting) */
+    enableSpotlighting?: boolean;
 }
 
 /**
