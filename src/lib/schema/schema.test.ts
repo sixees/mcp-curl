@@ -543,6 +543,28 @@ describe("generateInputSchema", () => {
         expect(schema.safeParse({ filter_preset: "invalid" }).success).toBe(false);
     });
 
+    it("throws when two preset names collide after sanitization", () => {
+        // "\u200BSummary" → leading zero-width space replaced with space → " Summary" → trimmed → "Summary"
+        // "Summary" → "Summary". Both sanitize to the same string — collision must be caught at schema
+        // construction time rather than silently applying the wrong filter at runtime.
+        const endpoint: EndpointDefinition = {
+            id: "test",
+            path: "/test",
+            method: "GET",
+            title: "Test",
+            description: "Test endpoint",
+            response: {
+                filterPresets: [
+                    { name: "Summary", jqFilter: ".a" },
+                    { name: "\u200BSummary", jqFilter: ".b" }, // leading zero-width space → trimmed → "Summary"
+                ],
+            },
+        };
+        expect(() => generateInputSchema(endpoint)).toThrow(
+            /duplicate filter preset names after sanitization/
+        );
+    });
+
     it("handles single-element filter preset with z.literal()", () => {
         const endpoint: EndpointDefinition = {
             id: "test",

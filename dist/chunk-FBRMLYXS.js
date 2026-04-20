@@ -1,8 +1,9 @@
 import {
   applyDefaultHeaders,
   executeCurlRequest,
-  resolveBaseUrl
-} from "./chunk-XO4ZMBBW.js";
+  resolveBaseUrl,
+  sanitizeDescription
+} from "./chunk-6B4CXS7K.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -188,7 +189,7 @@ function generateInputSchema(endpoint) {
   for (const param of endpoint.parameters ?? []) {
     let schema = createParamSchema(param);
     if (param.description) {
-      schema = schema.describe(param.description);
+      schema = schema.describe(sanitizeDescription(param.description));
     }
     if (!param.required) {
       schema = schema.optional();
@@ -422,18 +423,15 @@ function getMethodAnnotations(method) {
   };
 }
 function buildToolDescription(endpoint) {
-  const parts = [endpoint.description];
-  const CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]+/g;
+  const parts = [sanitizeDescription(endpoint.description)];
   if (endpoint.response?.filterPresets?.length) {
     parts.push("");
     parts.push("Available filter presets:");
     for (const preset of endpoint.response.filterPresets) {
       if (preset.description) {
-        const desc = preset.description.replace(CONTROL_CHARS, " ");
-        parts.push(`  - ${preset.name}: ${desc}`);
+        parts.push(`  - ${preset.name}: ${sanitizeDescription(preset.description)}`);
       } else {
-        const safeFilter = preset.jqFilter.replace(CONTROL_CHARS, " ");
-        parts.push(`  - ${preset.name}: applies filter "${safeFilter}"`);
+        parts.push(`  - ${preset.name}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
       }
     }
   }
@@ -446,7 +444,7 @@ function registerEndpointTools(server, schema, config) {
     server.registerTool(
       endpoint.id,
       {
-        title: endpoint.title,
+        title: sanitizeDescription(endpoint.title),
         description: buildToolDescription(endpoint),
         inputSchema,
         annotations: getMethodAnnotations(endpoint.method)
@@ -458,7 +456,7 @@ function registerEndpointTools(server, schema, config) {
 function generateToolDefinitions(schema, config) {
   return schema.endpoints.map((endpoint) => ({
     id: endpoint.id,
-    title: endpoint.title,
+    title: sanitizeDescription(endpoint.title),
     description: buildToolDescription(endpoint),
     method: endpoint.method,
     inputSchema: generateInputSchema(endpoint),

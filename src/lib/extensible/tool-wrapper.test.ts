@@ -1,10 +1,128 @@
 // src/lib/extensible/tool-wrapper.test.ts
-// Tests for applyConfigTransformsCurl default User-Agent and Referer behavior
+// Tests for applyConfigTransformsCurl default User-Agent and Referer behavior,
+// and maybeApplySpotlighting via registerCurlToolWithHooks.
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { applyConfigTransformsCurl } from "./tool-wrapper.js";
+import { applyConfigTransformsCurl, registerCurlToolWithHooks } from "./tool-wrapper.js";
 import type { McpCurlConfig, CurlExecuteInput } from "../types/public.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
+
+// ---------------------------------------------------------------------------
+// Spotlighting tests
+// ---------------------------------------------------------------------------
+
+describe("spotlighting (maybeApplySpotlighting)", () => {
+    it("wraps text content in sentinel tags when enableSpotlighting is true", async () => {
+        // Build a minimal fake McpServer that captures the registered handler
+        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
+        const fakeServer = {
+            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
+                capturedHandler = handler;
+            },
+        };
+
+        // Mock executeWithHooks to return a simple text result
+        const mockExecutor = vi.fn().mockResolvedValue({
+            content: [{ type: "text", text: "hello from api" }],
+            isError: false,
+        });
+
+        registerCurlToolWithHooks(fakeServer as never, {
+            executor: mockExecutor as never,
+            enabled: true,
+            config: { enableSpotlighting: true } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [], onError: [] },
+        });
+
+        expect(capturedHandler).not.toBeNull();
+        const result = await capturedHandler!({
+            url: "https://example.com",
+            follow_redirects: true,
+            insecure: false,
+            verbose: false,
+            include_headers: false,
+            compressed: true,
+            include_metadata: false,
+        }, { sessionId: undefined });
+
+        const text = (result as { content: { text: string }[] }).content[0].text;
+        expect(text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-[0-9a-f-]{36}---/);
+        expect(text).toContain("hello from api");
+        expect(text).toMatch(/---EXTERNAL-CONTENT-END-[0-9a-f-]{36}---$/);
+    });
+
+    it("does not wrap content when enableSpotlighting is false", async () => {
+        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
+        const fakeServer = {
+            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
+                capturedHandler = handler;
+            },
+        };
+
+        const mockExecutor = vi.fn().mockResolvedValue({
+            content: [{ type: "text", text: "hello from api" }],
+            isError: false,
+        });
+
+        registerCurlToolWithHooks(fakeServer as never, {
+            executor: mockExecutor as never,
+            enabled: true,
+            config: { enableSpotlighting: false } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [], onError: [] },
+        });
+
+        const result = await capturedHandler!({
+            url: "https://example.com",
+            follow_redirects: true,
+            insecure: false,
+            verbose: false,
+            include_headers: false,
+            compressed: true,
+            include_metadata: false,
+        }, { sessionId: undefined });
+
+        const text = (result as { content: { text: string }[] }).content[0].text;
+        expect(text).toBe("hello from api");
+    });
+
+    it("does not wrap error results", async () => {
+        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
+        const fakeServer = {
+            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
+                capturedHandler = handler;
+            },
+        };
+
+        const mockExecutor = vi.fn().mockResolvedValue({
+            content: [{ type: "text", text: "Error: something went wrong" }],
+            isError: true,
+        });
+
+        registerCurlToolWithHooks(fakeServer as never, {
+            executor: mockExecutor as never,
+            enabled: true,
+            config: { enableSpotlighting: true } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [], onError: [] },
+        });
+
+        const result = await capturedHandler!({
+            url: "https://example.com",
+            follow_redirects: true,
+            insecure: false,
+            verbose: false,
+            include_headers: false,
+            compressed: true,
+            include_metadata: false,
+        }, { sessionId: undefined });
+
+        const text = (result as { content: { text: string }[] }).content[0].text;
+        expect(text).toBe("Error: something went wrong");
+        expect(text).not.toContain("<response");
+    });
+
+    // Note: ToolResult guarantees content[0].type === "text" via the type system.
+    // Non-text content items cannot be returned by the executor in practice.
+});
 
 function makeParams(overrides: Partial<CurlExecuteInput> = {}): CurlExecuteInput {
     return {

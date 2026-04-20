@@ -81,6 +81,8 @@ src/lib/
 
 **Error logging:** Minimal — `tool_name error: [hostname/filename] ErrorClassName` (no message content)
 
+**Prompt injection defense:** `[injection-defense] [hostname] InjectionDetected` logged to stderr when a suspicious pattern is detected in an HTTP response. Throttled to once per 60 seconds per hostname. Sanitization and detection never suppress content returned to the LLM — observability only.
+
 **Timeout defaults:** `McpCurlConfig.defaultTimeout` → system default 30s (`LIMITS.DEFAULT_TIMEOUT_MS / 1000`)
 
 ## Code Style

@@ -3,26 +3,35 @@ import {
   ENV,
   JqQuerySchema,
   LIMITS,
+  MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   SERVER,
   SESSION,
+  applyDefaultHeaders,
   applyJqFilter,
+  applySpotlighting,
+  cleanupInjectionDetectionMap,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   createSafeFilenameBase,
+  detectInjectionPattern,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
+  httpOnlyUrl,
   isValidSessionId,
+  logInjectionDetected,
   parsePort,
   registerCurlExecuteTool,
   resolveBaseUrl,
   resolveOutputDir,
   safeStringCompare,
+  sanitizeDescription,
+  sanitizeResponse,
   startRateLimitCleanup,
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-PQTR4AXO.js";
+} from "./chunk-6B4CXS7K.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -145,8 +154,13 @@ async function executeJqQuery(params, _extra) {
     const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : void 0;
     const content = await readFile(validatedFilePath, { encoding: "utf-8" });
     const filtered = applyJqFilter(content, params.jq_filter);
+    const sanitized = sanitizeResponse(filtered);
+    const phrase = detectInjectionPattern(sanitized);
+    if (phrase !== null) {
+      logInjectionDetected(basename(validatedFilePath));
+    }
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-    const contentBytes = Buffer.byteLength(filtered, "utf8");
+    const contentBytes = Buffer.byteLength(sanitized, "utf8");
     const shouldSave = params.save_to_file || contentBytes > maxSize;
     if (shouldSave) {
       const sourceBasename = basename(validatedFilePath) || "query_result";
@@ -154,7 +168,7 @@ async function executeJqQuery(params, _extra) {
       const filename = `${safeName}_${Date.now()}.txt`;
       const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
       const filepath = join(targetDir, filename);
-      await writeFile(filepath, filtered, { encoding: "utf-8", mode: 384 });
+      await writeFile(filepath, sanitized, { encoding: "utf-8", mode: 384 });
       return {
         content: [
           {
@@ -168,7 +182,7 @@ async function executeJqQuery(params, _extra) {
       content: [
         {
           type: "text",
-          text: filtered
+          text: sanitized
         }
       ]
     };
@@ -369,6 +383,7 @@ function registerAllResources(server) {
 
 // src/lib/prompts/api-test.ts
 import { z } from "zod";
+var apiTestUrlSchema = httpOnlyUrl("The API endpoint URL to test");
 function registerApiTestPrompt(server) {
   server.registerPrompt(
     "api-test",
@@ -376,7 +391,7 @@ function registerApiTestPrompt(server) {
       title: "API Testing",
       description: "Test an API endpoint and analyze the response",
       argsSchema: {
-        url: z.string().url().describe("The API endpoint URL to test"),
+        url: apiTestUrlSchema,
         method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (default: GET)"),
         description: z.string().optional().describe("What this API endpoint does")
       }
@@ -390,7 +405,7 @@ function registerApiTestPrompt(server) {
 
 URL: ${url}
 Method: ${method}
-${description ? `Description: ${description}` : ""}
+${description ? `Description: ${sanitizeDescription(description)}` : ""}
 
 Please:
 1. Make the request using curl_execute
@@ -405,6 +420,7 @@ Please:
 
 // src/lib/prompts/api-discovery.ts
 import { z as z2 } from "zod";
+var apiDiscoveryBaseUrlSchema = httpOnlyUrl("Base URL of the API");
 function registerApiDiscoveryPrompt(server) {
   server.registerPrompt(
     "api-discovery",
@@ -412,7 +428,7 @@ function registerApiDiscoveryPrompt(server) {
       title: "REST API Discovery",
       description: "Explore a REST API to discover available endpoints",
       argsSchema: {
-        base_url: z2.string().url().describe("Base URL of the API"),
+        base_url: apiDiscoveryBaseUrlSchema,
         auth_token: z2.string().optional().describe("Optional bearer token for authentication")
       }
     },
@@ -423,7 +439,7 @@ function registerApiDiscoveryPrompt(server) {
           type: "text",
           text: `Explore the REST API at: ${base_url}
 
-${auth_token ? `Use bearer token for authentication: ${auth_token}` : "No authentication token provided."}
+${auth_token ? `Use bearer token for authentication: ${sanitizeDescription(auth_token)}` : "No authentication token provided."}
 
 Please:
 1. Try common discovery endpoints (/api, /api/v1, /health, /swagger.json, /openapi.json)
@@ -461,17 +477,19 @@ function createInstanceUtilities(config) {
           isError: true
         };
       }
+      const mergedHeaders = { ...config.defaultHeaders, ...params.headers };
+      const defaults = applyDefaultHeaders(mergedHeaders, params.user_agent, config);
       const fullParams = {
         url,
         method: params.method,
-        headers: { ...config.defaultHeaders, ...params.headers },
+        headers: defaults.headers,
         data: params.data,
         form: params.form,
         follow_redirects: params.follow_redirects ?? true,
         max_redirects: params.max_redirects,
         insecure: params.insecure ?? false,
         timeout: params.timeout ?? config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3,
-        user_agent: params.user_agent,
+        user_agent: defaults.userAgent,
         basic_auth: params.basic_auth,
         bearer_token: params.bearer_token,
         verbose: params.verbose ?? false,
@@ -500,7 +518,7 @@ function createInstanceUtilities(config) {
 // src/lib/transports/http.ts
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 
 // src/lib/session/session-manager.ts
 var SessionManager = class {
@@ -629,6 +647,9 @@ function registerAllCapabilities(server) {
 // src/lib/extensible/mcp-curl-server.ts
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
+// src/lib/extensible/tool-wrapper.ts
+import { randomUUID } from "crypto";
+
 // src/lib/extensible/hook-executor.ts
 async function executeWithHooks(tool, params, config, hooks, sessionId, executor) {
   const ctx = {
@@ -693,9 +714,10 @@ function applyConfigTransformsCurl(params, config) {
   if (config.baseUrl && !params.url.match(/^https?:\/\//i)) {
     transformed.url = resolveBaseUrl(config.baseUrl, params.url);
   }
-  if (config.defaultHeaders) {
-    transformed.headers = { ...config.defaultHeaders, ...params.headers };
-  }
+  const mergedHeaders = { ...config.defaultHeaders, ...params.headers };
+  const defaults = applyDefaultHeaders(mergedHeaders, transformed.user_agent, config);
+  transformed.headers = defaults.headers;
+  if (defaults.userAgent !== void 0) transformed.user_agent = defaults.userAgent;
   if (params.timeout === void 0) {
     transformed.timeout = config.defaultTimeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3;
   }
@@ -709,64 +731,64 @@ function applyConfigTransformsJq(params, config) {
 }
 function registerCurlToolWithHooks(server, options) {
   const { executor, enabled, config, hooks } = options;
-  server.registerTool(
-    "curl_execute",
-    CURL_EXECUTE_TOOL_META,
-    ((params, extra) => {
-      if (!enabled) {
-        return Promise.resolve({
-          content: [
-            {
-              type: "text",
-              text: "Error: curl_execute tool is disabled"
-            }
-          ],
-          isError: true
-        });
-      }
-      const transformedParams = applyConfigTransformsCurl(params, config);
-      return executeWithHooks(
-        "curl_execute",
-        transformedParams,
-        config,
-        hooks,
-        extra?.sessionId,
-        executor
-      );
-    })
-  );
+  const handler = async (params, extra) => {
+    if (!enabled) {
+      return {
+        content: [{ type: "text", text: "Error: curl_execute tool is disabled" }],
+        isError: true
+      };
+    }
+    const transformedParams = applyConfigTransformsCurl(params, config);
+    const result = await executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
+    if (config.enableSpotlighting && !result.isError && result.content.length > 0) {
+      return {
+        ...result,
+        content: [{ type: "text", text: applySpotlighting(result.content[0].text, randomUUID()) }]
+      };
+    }
+    return result;
+  };
+  server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, handler);
 }
 function registerJqToolWithHooks(server, options) {
   const { executor, enabled, config, hooks } = options;
-  server.registerTool(
-    "jq_query",
-    JQ_QUERY_TOOL_META,
-    ((params, extra) => {
-      if (!enabled) {
-        return Promise.resolve({
-          content: [
-            {
-              type: "text",
-              text: "Error: jq_query tool is disabled"
-            }
-          ],
-          isError: true
-        });
-      }
-      const transformedParams = applyConfigTransformsJq(params, config);
-      return executeWithHooks(
-        "jq_query",
-        transformedParams,
-        config,
-        hooks,
-        extra?.sessionId,
-        executor
-      );
-    })
-  );
+  const handler = async (params, extra) => {
+    if (!enabled) {
+      return {
+        content: [{ type: "text", text: "Error: jq_query tool is disabled" }],
+        isError: true
+      };
+    }
+    const transformedParams = applyConfigTransformsJq(params, config);
+    const result = await executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
+    if (config.enableSpotlighting && !result.isError && result.content.length > 0) {
+      return {
+        ...result,
+        content: [{ type: "text", text: applySpotlighting(result.content[0].text, randomUUID()) }]
+      };
+    }
+    return result;
+  };
+  server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
 
 // src/lib/extensible/mcp-curl-server.ts
+var KNOWN_CONFIG_KEYS_ARRAY = [
+  "baseUrl",
+  "defaultHeaders",
+  "defaultTimeout",
+  "outputDir",
+  "maxResultSize",
+  "allowLocalhost",
+  "port",
+  "host",
+  "authToken",
+  "allowedOrigins",
+  "defaultUserAgent",
+  "defaultReferer",
+  "enableSpotlighting"
+];
+var KNOWN_CONFIG_KEYS = new Set(KNOWN_CONFIG_KEYS_ARRAY);
 var McpCurlServer = class {
   _config = {};
   _frozenConfig = null;
@@ -785,6 +807,8 @@ var McpCurlServer = class {
   _httpServer = null;
   _sessionManager = null;
   _rateLimitInterval = null;
+  _injectionCleanupInterval = null;
+  _utilities = null;
   /**
    * Configure server options.
    * Must be called before start().
@@ -795,7 +819,18 @@ var McpCurlServer = class {
    */
   configure(config) {
     this.ensureNotStarted("configure()");
-    this._config = { ...this._config, ...config };
+    const picked = {};
+    const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
+    for (const key of Object.keys(config)) {
+      if (KNOWN_CONFIG_KEYS.has(key)) {
+        picked[key] = config[key];
+      } else {
+        console.warn(
+          `McpCurlServer.configure(): unknown config key "${key}" ignored. Known keys: ${knownKeysList}`
+        );
+      }
+    }
+    this._config = { ...this._config, ...picked };
     return this;
   }
   /**
@@ -912,7 +947,17 @@ var McpCurlServer = class {
     if (this._customTools.some((t) => t.name === name)) {
       throw new Error(`Custom tool "${name}" is already registered`);
     }
-    this._customTools.push({ name, meta, handler });
+    const sanitizedMeta = {
+      ...meta,
+      title: sanitizeDescription(meta.title),
+      description: sanitizeDescription(meta.description).slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH)
+    };
+    if (sanitizedMeta.description.length < meta.description.length) {
+      console.warn(
+        `McpCurlServer.registerCustomTool("${name}"): description truncated to ${MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH} chars`
+      );
+    }
+    this._customTools.push({ name, meta: sanitizedMeta, handler });
     return this;
   }
   /**
@@ -932,7 +977,13 @@ var McpCurlServer = class {
    * @returns Instance utilities object
    */
   utilities() {
-    return createInstanceUtilities(this.getConfig());
+    if (!this._frozenConfig) {
+      return createInstanceUtilities(this.getConfig());
+    }
+    if (!this._utilities) {
+      this._utilities = createInstanceUtilities(this._frozenConfig);
+    }
+    return this._utilities;
   }
   /**
    * Get the underlying MCP server instance.
@@ -967,6 +1018,8 @@ var McpCurlServer = class {
     try {
       await cleanupOrphanedTempDirs();
       this._rateLimitInterval = startRateLimitCleanup();
+      this._injectionCleanupInterval = setInterval(cleanupInjectionDetectionMap, 6e4);
+      this._injectionCleanupInterval.unref();
       this._server = this.createConfiguredServer();
       if (transport === "http") {
         await this.startHttp();
@@ -996,9 +1049,14 @@ var McpCurlServer = class {
         stopRateLimitCleanup(this._rateLimitInterval);
         this._rateLimitInterval = null;
       }
+      if (this._injectionCleanupInterval) {
+        clearInterval(this._injectionCleanupInterval);
+        this._injectionCleanupInterval = null;
+      }
       this._server = null;
       this._started = false;
       this._frozenConfig = null;
+      this._utilities = null;
       throw error;
     }
   }
@@ -1059,6 +1117,9 @@ var McpCurlServer = class {
     if (this._rateLimitInterval) {
       stopRateLimitCleanup(this._rateLimitInterval);
     }
+    if (this._injectionCleanupInterval) {
+      clearInterval(this._injectionCleanupInterval);
+    }
     try {
       await cleanupTempDir();
     } catch (error) {
@@ -1066,7 +1127,9 @@ var McpCurlServer = class {
     } finally {
       this._started = false;
       this._frozenConfig = null;
+      this._utilities = null;
       this._rateLimitInterval = null;
+      this._injectionCleanupInterval = null;
       this._sessionManager = null;
     }
   }
@@ -1268,7 +1331,7 @@ function createHttpApp(options) {
       }
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
+        sessionIdGenerator: () => randomUUID2(),
         enableJsonResponse: true
       });
       transport.onclose = () => {

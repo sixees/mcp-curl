@@ -11,7 +11,7 @@ import type {
     HttpMethod,
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
-import { resolveBaseUrl } from "../utils/index.js";
+import { resolveBaseUrl, sanitizeDescription } from "../utils/index.js";
 import { applyDefaultHeaders } from "../config/index.js";
 
 /**
@@ -57,7 +57,7 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         let schema: z.ZodTypeAny = createParamSchema(param);
 
         if (param.description) {
-            schema = schema.describe(param.description);
+            schema = schema.describe(sanitizeDescription(param.description));
         }
 
         if (!param.required) {
@@ -67,9 +67,17 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         shape[param.name] = schema;
     }
 
-    // Add optional filter_preset parameter if presets exist
+    // Add optional filter_preset parameter if presets exist.
+    // Sanitize preset names so the enum values are consistent with the description display
+    // and resolveJqFilter lookup — prevents bidi/zero-width chars in schema-presented values.
     if (endpoint.response?.filterPresets?.length) {
-        const presetNames = endpoint.response.filterPresets.map((p) => p.name);
+        const presetNames = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name));
+        const uniqueNames = new Set(presetNames);
+        if (uniqueNames.size !== presetNames.length) {
+            throw new Error(
+                `Endpoint "${endpoint.id}" has duplicate filter preset names after sanitization`
+            );
+        }
         shape.filter_preset = buildStringEnum(presetNames)
             .optional()
             .describe("Apply a predefined response filter");
@@ -301,12 +309,18 @@ function resolveJqFilter(
     // Check for filter preset selection
     const presetName = params.filter_preset as string | undefined;
     if (presetName && endpoint.response?.filterPresets) {
-        const preset = endpoint.response.filterPresets.find((p) => p.name === presetName);
+        // Compare sanitized names — the enum was built from sanitized names so the
+        // LLM-supplied value is always a sanitized string, not the raw YAML value.
+        const preset = endpoint.response.filterPresets.find(
+            (p) => sanitizeDescription(p.name) === presetName
+        );
         if (preset) {
             return preset.jqFilter;
         }
         // Preset explicitly requested but not found - throw error
-        const available = endpoint.response.filterPresets.map((p) => p.name).join(", ");
+        const available = endpoint.response.filterPresets
+            .map((p) => sanitizeDescription(p.name))
+            .join(", ");
         throw new Error(
             `Unknown filter preset "${presetName}". Available presets: ${available}`
         );
@@ -445,20 +459,18 @@ export function getMethodAnnotations(method: HttpMethod) {
  * Build tool description including parameter docs and filter presets.
  */
 function buildToolDescription(endpoint: EndpointDefinition): string {
-    const parts: string[] = [endpoint.description];
-    const CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]+/g;
+    const parts: string[] = [sanitizeDescription(endpoint.description)];
 
     // Document filter presets if available
     if (endpoint.response?.filterPresets?.length) {
         parts.push("");
         parts.push("Available filter presets:");
         for (const preset of endpoint.response.filterPresets) {
+            const presetName = sanitizeDescription(preset.name);
             if (preset.description) {
-                const desc = preset.description.replace(CONTROL_CHARS, " ");
-                parts.push(`  - ${preset.name}: ${desc}`);
+                parts.push(`  - ${presetName}: ${sanitizeDescription(preset.description)}`);
             } else {
-                const safeFilter = preset.jqFilter.replace(CONTROL_CHARS, " ");
-                parts.push(`  - ${preset.name}: applies filter "${safeFilter}"`);
+                parts.push(`  - ${presetName}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
             }
         }
     }
@@ -485,7 +497,7 @@ export function registerEndpointTools(
         server.registerTool(
             endpoint.id,
             {
-                title: endpoint.title,
+                title: sanitizeDescription(endpoint.title),
                 description: buildToolDescription(endpoint),
                 inputSchema,
                 annotations: getMethodAnnotations(endpoint.method),
@@ -515,7 +527,7 @@ export function generateToolDefinitions(
 }> {
     return schema.endpoints.map((endpoint) => ({
         id: endpoint.id,
-        title: endpoint.title,
+        title: sanitizeDescription(endpoint.title),
         description: buildToolDescription(endpoint),
         method: endpoint.method,
         inputSchema: generateInputSchema(endpoint),

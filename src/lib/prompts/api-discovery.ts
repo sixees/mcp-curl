@@ -4,6 +4,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { httpOnlyUrl } from "../utils/url.js";
+import { sanitizeDescription } from "../utils/index.js";
 
 /** Base URL schema restricted to http/https schemes. Exported for testing. */
 export const apiDiscoveryBaseUrlSchema = httpOnlyUrl("Base URL of the API");
@@ -30,7 +31,7 @@ export function registerApiDiscoveryPrompt(server: McpServer): void {
                     type: "text",
                     text: `Explore the REST API at: ${base_url}
 
-${auth_token ? `Use bearer token for authentication: ${auth_token}` : "No authentication token provided."}
+${auth_token ? `Use bearer token for authentication: ${sanitizeDescription(auth_token)}` : "No authentication token provided."}
 
 Please:
 1. Try common discovery endpoints (/api, /api/v1, /health, /swagger.json, /openapi.json)

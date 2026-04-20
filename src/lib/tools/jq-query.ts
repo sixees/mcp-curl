@@ -9,7 +9,8 @@ import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
-import { getErrorMessage } from "../utils/index.js";
+import { getErrorMessage, sanitizeResponse, detectInjectionPattern, sanitizeDescription } from "../utils/index.js";
+import { logInjectionDetected } from "../security/index.js";
 import { createSafeFilenameBase } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
@@ -101,9 +102,18 @@ export async function executeJqQuery(
         // Apply jq filter
         const filtered = applyJqFilter(content, params.jq_filter);
 
+        // Sanitize after filtering — jq may concentrate injection strings from sparse input
+        const sanitized = sanitizeResponse(filtered);
+
+        // Detection-only: scan for injection phrases in the filtered+sanitized result
+        const phrase = detectInjectionPattern(sanitized);
+        if (phrase !== null) {
+            logInjectionDetected(basename(validatedFilePath));
+        }
+
         // Handle result size and file saving
         const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-        const contentBytes = Buffer.byteLength(filtered, "utf8");
+        const contentBytes = Buffer.byteLength(sanitized, "utf8");
         const shouldSave = params.save_to_file || contentBytes > maxSize;
 
         if (shouldSave) {
@@ -114,7 +124,7 @@ export async function executeJqQuery(
             const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
             const filepath = join(targetDir, filename);
 
-            await writeFile(filepath, filtered, { encoding: "utf-8", mode: 0o600 });
+            await writeFile(filepath, sanitized, { encoding: "utf-8", mode: 0o600 });
 
             return {
                 content: [
@@ -130,14 +140,14 @@ export async function executeJqQuery(
             content: [
                 {
                     type: "text",
-                    text: filtered,
+                    text: sanitized,
                 },
             ],
         };
     } catch (error) {
         const errorMessage = getErrorMessage(error);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";
-        console.error(`jq_query error: [${basename(params.filepath)}] ${errorClass}`);
+        console.error(`jq_query error: [${sanitizeDescription(basename(params.filepath))}] ${errorClass}`);
         return {
             content: [
                 {

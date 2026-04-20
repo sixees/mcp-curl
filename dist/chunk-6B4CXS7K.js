@@ -1,7 +1,7 @@
 // src/lib/server/schemas.ts
 import { z } from "zod";
 var CurlExecuteSchema = z.object({
-  url: z.string().url("Must be a valid URL").refine(
+  url: z.url("Must be a valid URL").refine(
     (url) => {
       const scheme = url.split(":")[0].toLowerCase();
       return ["http", "https"].includes(scheme);
@@ -9,9 +9,9 @@ var CurlExecuteSchema = z.object({
     { message: "URL must use http or https scheme" }
   ).describe("The URL to request"),
   method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (defaults to GET, or POST if data is provided)"),
-  headers: z.record(z.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
+  headers: z.record(z.string(), z.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
   data: z.string().optional().describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
-  form: z.record(z.string()).optional().describe("Form data as key-value pairs (uses multipart/form-data)"),
+  form: z.record(z.string(), z.string()).optional().describe("Form data as key-value pairs (uses multipart/form-data)"),
   follow_redirects: z.boolean().default(true).describe("Follow HTTP redirects (default: true)"),
   max_redirects: z.number().int().min(0).max(50).optional().describe("Maximum number of redirects to follow"),
   insecure: z.boolean().default(false).describe("Skip SSL certificate verification (default: false)"),
@@ -25,7 +25,7 @@ var CurlExecuteSchema = z.object({
    * "user explicitly passed 30" vs "user didn't provide a value".
    */
   timeout: z.number().int().min(1).max(300).optional().describe("Request timeout in seconds (default: 30, max: 300)"),
-  user_agent: z.string().optional().describe("Custom User-Agent header"),
+  user_agent: z.string().optional().describe("Custom User-Agent header. If not set, a browser-like User-Agent is sent automatically. Set to empty string to disable."),
   basic_auth: z.string().optional().describe("Basic authentication in format 'username:password'"),
   bearer_token: z.string().optional().describe("Bearer token for Authorization header"),
   verbose: z.boolean().default(false).describe("Include verbose output with request/response details"),
@@ -84,7 +84,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "1.1.5" : "0.0.0"
+  VERSION: true ? "3.0.2" : "0.0.0"
 };
 
 // src/lib/config/session.ts
@@ -146,8 +146,35 @@ var ENV = {
   /** HTTP transport bind address (default: 127.0.0.1) */
   HOST: "MCP_CURL_HOST",
   /** HTTP transport port (default: 3000) */
-  PORT: "PORT"
+  PORT: "PORT",
+  /** Override default User-Agent header (empty string disables) */
+  USER_AGENT: "MCP_CURL_USER_AGENT",
+  /** Override default Referer header (empty string disables) */
+  REFERER: "MCP_CURL_REFERER"
 };
+
+// src/lib/config/defaults.ts
+var DEFAULT_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 mcp-curl/${SERVER.VERSION}`;
+var DEFAULT_REFERER = "";
+function resolveDefault(configValue, envVar, builtInDefault) {
+  if (configValue !== void 0) return configValue || void 0;
+  const envValue = process.env[envVar];
+  if (envValue !== void 0) return envValue || void 0;
+  return builtInDefault || void 0;
+}
+var hasHeaderKey = (obj, key) => Object.keys(obj).some((k) => k.toLowerCase() === key.toLowerCase());
+function applyDefaultHeaders(headers, userAgent, config) {
+  const result = { ...headers };
+  let resolvedUA = userAgent;
+  if (resolvedUA === void 0 && !hasHeaderKey(result, "User-Agent")) {
+    resolvedUA = resolveDefault(config?.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
+  }
+  if (!hasHeaderKey(result, "Referer")) {
+    const referer = resolveDefault(config?.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
+    if (referer) result["Referer"] = referer;
+  }
+  return { headers: result, userAgent: resolvedUA };
+}
 
 // src/lib/config/security/ssrf.ts
 var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
@@ -495,10 +522,68 @@ function createConfigError(configName, value, reason) {
 }
 
 // src/lib/utils/url.ts
+import { z as z2 } from "zod";
 function resolveBaseUrl(baseUrl, path) {
   const base = baseUrl.replace(/\/$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${base}${normalizedPath}`;
+}
+function httpOnlyUrl(description) {
+  return z2.url().refine(
+    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
+    { message: "URL must use http or https scheme" }
+  ).describe(description);
+}
+
+// src/lib/utils/sanitize.ts
+var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
+var DESC_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
+var RESPONSE_SANITIZE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
+var INJECTION_PATTERNS = new RegExp(
+  [
+    // Explicit instruction override
+    "ignore.{0,20}(previous|prior|all|your|above|system).{0,20}instructions?",
+    "disregard.{0,20}(previous|prior|all|your|above|system).{0,20}(instructions?|directives?|rules?)",
+    "forget.{0,20}(previous|prior|all|your|above|everything|instructions?)",
+    "override.{0,20}(your|the|all|previous).{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
+    // Persona takeover
+    "you\\s+are\\s+now\\s+",
+    "act\\s+as\\s+a\\s",
+    "pretend\\s+(you\\s+are|to\\s+be)",
+    "roleplay\\s+as",
+    "\\bDAN\\b",
+    "jailbreak",
+    // System/prompt manipulation
+    "system\\s+prompt",
+    "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
+    "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
+    "do\\s+not\\s+(follow|apply|use|obey|comply).{0,20}instructions?",
+    // Data exfiltration
+    "exfiltrate",
+    "(extract|exfiltrate|leak|transmit|send\\s+me).{0,30}(passwords?|credentials?|secrets?|tokens?|api.{0,5}keys?)"
+  ].join("|"),
+  "i"
+);
+function sanitizeDescription(input) {
+  if (input == null) return "";
+  return input.replace(DESC_CONTROL_CHARS, " ").trim();
+}
+function sanitizeResponse(input) {
+  if (input == null) return "";
+  return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
+    if (match[0] === " ") return "[WHITESPACE REMOVED]";
+    return "";
+  });
+}
+function detectInjectionPattern(input) {
+  const match = input.match(INJECTION_PATTERNS);
+  if (!match) return null;
+  return match[0].replace(/[\n\r]+/g, " ").slice(0, 200);
+}
+function applySpotlighting(content, requestId) {
+  return `<response id="${requestId}">
+${content}
+</response>`;
 }
 
 // src/lib/files/output-dir.ts
@@ -826,6 +911,27 @@ async function validateFilePath(filepath) {
     );
   }
   return realFilePath;
+}
+
+// src/lib/security/detection-logger.ts
+var THROTTLE_WINDOW_MS = 6e4;
+var lastDetectedMap = /* @__PURE__ */ new Map();
+function logInjectionDetected(hostname) {
+  const now = Date.now();
+  const lastSeen = lastDetectedMap.get(hostname);
+  if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS) {
+    return;
+  }
+  lastDetectedMap.set(hostname, now);
+  console.error(`[injection-defense] [${hostname}] InjectionDetected`);
+}
+function cleanupInjectionDetectionMap() {
+  const now = Date.now();
+  for (const [key, timestamp] of lastDetectedMap) {
+    if (now - timestamp >= THROTTLE_WINDOW_MS) {
+      lastDetectedMap.delete(key);
+    }
+  }
 }
 
 // src/lib/execution/command-executor.ts
@@ -1499,6 +1605,12 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 }
 
 // src/lib/response/processor.ts
+var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+function isBinaryContentType(contentType) {
+  if (!contentType) return false;
+  const mime = contentType.split(";")[0].trim().toLowerCase();
+  return mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/") || mime === "application/octet-stream" || mime === "application/pdf" || mime.startsWith("font/");
+}
 async function processResponse(response, options) {
   const rawBytes = Buffer.byteLength(response, "utf8");
   if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
@@ -1507,6 +1619,21 @@ async function processResponse(response, options) {
     );
   }
   let content = response;
+  if (!isBinaryContentType(options.contentType)) {
+    if (options.contentType?.startsWith("text/html")) {
+      content = content.replace(HTML_COMMENT_PATTERN, "");
+    }
+    content = sanitizeResponse(content);
+    const phrase = detectInjectionPattern(content);
+    if (phrase !== null) {
+      let hostname = "unknown";
+      try {
+        hostname = new URL(options.url).hostname;
+      } catch {
+      }
+      logInjectionDetected(hostname);
+    }
+  }
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);
     const trimmed = content.trim();
@@ -1571,7 +1698,7 @@ Args:
   - max_redirects (number): Maximum redirects to follow (0-50)
   - insecure (boolean): Skip SSL verification (default: false)
   - timeout (number): Request timeout in seconds (1-300, default: 30)
-  - user_agent (string): Custom User-Agent header
+  - user_agent (string): Custom User-Agent header (a browser-like default is sent automatically if not set; empty string disables)
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
@@ -1723,6 +1850,12 @@ export {
   ENV,
   getErrorMessage,
   resolveBaseUrl,
+  httpOnlyUrl,
+  MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+  sanitizeDescription,
+  sanitizeResponse,
+  detectInjectionPattern,
+  applySpotlighting,
   SESSION,
   startRateLimitCleanup,
   stopRateLimitCleanup,
@@ -1731,10 +1864,13 @@ export {
   LIMITS,
   parsePort,
   SERVER,
+  applyDefaultHeaders,
   getOrCreateTempDir,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   validateFilePath,
+  logInjectionDetected,
+  cleanupInjectionDetectionMap,
   resolveOutputDir,
   validateOutputDir,
   CurlExecuteSchema,

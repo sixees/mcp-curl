@@ -23,7 +23,8 @@ import { registerAllPrompts } from "../prompts/index.js";
 import { executeCurlRequest } from "../tools/curl-execute.js";
 import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
-import { startRateLimitCleanup, stopRateLimitCleanup } from "../security/index.js";
+import { startRateLimitCleanup, stopRateLimitCleanup, startInjectionCleanup, stopInjectionCleanup } from "../security/index.js";
+import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
 import { createHttpApp, resolveHost, formatHostForUrl } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
 import { ENV, LIMITS, parsePort } from "../config/index.js";
@@ -77,6 +78,7 @@ const KNOWN_CONFIG_KEYS_ARRAY = [
     "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
     "maxResultSize", "allowLocalhost", "port", "host",
     "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
+    "enableSpotlighting",
 ] as const satisfies readonly (keyof McpCurlConfig)[];
 
 // Compile-time check: fails if any McpCurlConfig key is missing from the array
@@ -103,6 +105,7 @@ export class McpCurlServer {
     private _httpServer: Server | null = null;
     private _sessionManager: SessionManager | null = null;
     private _rateLimitInterval: NodeJS.Timeout | null = null;
+    private _injectionCleanupInterval: NodeJS.Timeout | null = null;
     private _utilities: InstanceUtilities | null = null;
 
     /**
@@ -211,7 +214,10 @@ export class McpCurlServer {
      * implement it within the handler function itself.
      *
      * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
-     * @param meta - Tool metadata (title, description, inputSchema)
+     * @param meta - Tool metadata (title, description, inputSchema). title and description
+     *   are sanitized automatically. inputSchema field descriptions (.describe() strings)
+     *   are NOT sanitized — callers must sanitize any field descriptions sourced from
+     *   external input using sanitizeDescription() before registering.
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()
@@ -260,7 +266,30 @@ export class McpCurlServer {
             throw new Error(`Custom tool "${name}" is already registered`);
         }
 
-        this._customTools.push({ name, meta, handler });
+        // Store a sanitized defensive copy — never trust caller's object directly.
+        // title and description are sanitized here. inputSchema field descriptions
+        // (.describe() on individual Zod fields) are the caller's responsibility —
+        // traversing arbitrary Zod v4 schemas safely is non-trivial. Callers should
+        // apply sanitizeDescription() to any field descriptions sourced from external input.
+        const sanitizedTitle = sanitizeDescription(meta.title);
+        const sanitizedDesc = sanitizeDescription(meta.description);
+        const truncatedDesc = sanitizedDesc.slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH);
+
+        const sanitizedMeta: CustomToolMeta = {
+            ...meta,
+            title: sanitizedTitle,
+            description: truncatedDesc,
+        };
+
+        // Warn only when sanitization itself caused truncation — not when the pre-existing
+        // description was already longer than the sanitized result (e.g. attack chars removed).
+        if (sanitizedDesc.length > MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) {
+            console.warn(
+                `McpCurlServer.registerCustomTool("${name}"): description truncated to ${MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH} chars`
+            );
+        }
+
+        this._customTools.push({ name, meta: sanitizedMeta, handler });
         return this;
     }
 
@@ -328,8 +357,9 @@ export class McpCurlServer {
             // Clean up orphaned temp directories from previous runs
             await cleanupOrphanedTempDirs();
 
-            // Start rate limit cleanup
+            // Start rate limit cleanup and injection detection cleanup
             this._rateLimitInterval = startRateLimitCleanup();
+            this._injectionCleanupInterval = startInjectionCleanup();
 
             // Create and configure MCP server
             this._server = this.createConfiguredServer();
@@ -364,6 +394,10 @@ export class McpCurlServer {
             if (this._rateLimitInterval) {
                 stopRateLimitCleanup(this._rateLimitInterval);
                 this._rateLimitInterval = null;
+            }
+            if (this._injectionCleanupInterval) {
+                stopInjectionCleanup(this._injectionCleanupInterval);
+                this._injectionCleanupInterval = null;
             }
             this._server = null;
             this._started = false;
@@ -435,9 +469,12 @@ export class McpCurlServer {
             }
         }
 
-        // Stop rate limit cleanup
+        // Stop rate limit cleanup and injection detection cleanup
         if (this._rateLimitInterval) {
             stopRateLimitCleanup(this._rateLimitInterval);
+        }
+        if (this._injectionCleanupInterval) {
+            stopInjectionCleanup(this._injectionCleanupInterval);
         }
 
         // Clean up temp directory (wrapped in try/finally to always reset state)
@@ -451,6 +488,7 @@ export class McpCurlServer {
             this._frozenConfig = null;
             this._utilities = null;
             this._rateLimitInterval = null;
+            this._injectionCleanupInterval = null;
             this._sessionManager = null;
         }
     }

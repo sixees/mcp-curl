@@ -26,3 +26,12 @@ export {
     // Note: clearAllowedDirsCache intentionally not exported here (test-only).
     // Tests should import directly from "./file-validation.js" if needed.
 } from "./file-validation.js";
+
+export {
+    logInjectionDetected,
+    cleanupInjectionDetectionMap,
+    startInjectionCleanup,
+    stopInjectionCleanup,
+    // Note: clearInjectionDetectionMap intentionally not exported here (test-only).
+    // Tests should import directly from "./detection-logger.js" if needed.
+} from "./detection-logger.js";
