@@ -109,5 +109,14 @@ Six parallel reviewers (simplicity, security, performance, TypeScript, architect
 
 ## Follow-up work
 
-- Consider closing the spotlighting gap for `generateToolDefinitions()` tools (or formally document the asymmetry on the `enableSpotlighting` config field).
-- Consider sanitization improvements: NBSP/tab whitespace runs, NFKC normalization before injection-pattern detection, expanded `UNICODE_ATTACK_RANGES` coverage (Hangul fillers, U+180E). All observability-only changes.
+The deferred review findings have been captured as todos in `docs/todos/`:
+
+| Todo | Source |
+|------|--------|
+| `spotlighting-yaml-driven-tools.md` | security-sentinel, architecture-strategist |
+| `sanitize-custom-tool-zod-descriptions.md` | security-sentinel |
+| `injection-defense-threat-model-expansion.md` | security-sentinel |
+| `public-api-spotlighting-symmetry.md` | typescript-reviewer |
+| `sanitize-yaml-schema-at-load.md` | code-simplicity-reviewer |
+
+Cosmetic suggestions (test-setup boilerplate, `satisfies` constraint, truncation warn enrichment) were intentionally not captured as todos — they are noise for the backlog.
