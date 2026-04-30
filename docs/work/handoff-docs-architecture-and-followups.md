@@ -55,8 +55,8 @@ The fourth originally-rescued todo (`is-binary-content-type-location.md`) was dr
 | MD040: fenced code block missing language at upstream-contributions.md:277 | @coderabbitai | Fix needed | Added `text` language tag |
 | Add dist-entry preflight in integration-test.mjs | @coderabbitai | Fix needed | Added `fs.existsSync(serverEntry)` check that fails fast with a "run the build first" message |
 | Close MCP client in all paths; avoid early `process.exit()` before teardown | @coderabbitai | Fix needed | Wrapped `main()` body in `try/finally`, replaced `process.exit(1)` with thrown errors inside the flow, and switched the top-level `.catch` to `process.exitCode = 1` so `client.close()` always runs |
-| `axon-brainstorm.md` belongs in a separate repo | @gemini-code-assist | Decision conflict | Surfaced to user — same concern was already flagged in the PR description |
-| `upstream-contributions.md` is private-fork audit material | @gemini-code-assist | Decision conflict | Surfaced to user — same concern was already flagged in the PR description |
+| `axon-brainstorm.md` belongs in a separate repo | @gemini-code-assist | Decision conflict | **Resolved 2026-04-30** — user confirmed both files stay in this repo as brainstorms for future-build work. Reviewer concern noted but rejected on author intent |
+| `upstream-contributions.md` is private-fork audit material | @gemini-code-assist | Decision conflict | **Resolved 2026-04-30** — user confirmed both files stay in this repo as brainstorms for future-build work. Reviewer concern noted but rejected on author intent |
 
 ### Decisions Revised
 
@@ -91,7 +91,7 @@ The fourth originally-rescued todo (`is-binary-content-type-location.md`) was dr
 
 ## Known issues and limitations
 
-- `axon-brainstorm.md` and `upstream-contributions.md` repository fit is unresolved — pending user decision.
+- None outstanding. Repository fit for `axon-brainstorm.md` and `upstream-contributions.md` was raised by @gemini-code-assist and resolved 2026-04-30 — user confirmed both files remain in this repo as brainstorms for future-build work.
 
 ## Testing summary
 
@@ -102,5 +102,5 @@ The fourth originally-rescued todo (`is-binary-content-type-location.md`) was dr
 
 ## Follow-up work
 
-- [ ] User decides on the location of `axon-brainstorm.md` and `upstream-contributions.md` (keep / move / drop).
+- [x] ~~User decides on the location of `axon-brainstorm.md` and `upstream-contributions.md`~~ — resolved 2026-04-30: both kept in this repo as future-build brainstorms.
 - [ ] Reply to and resolve the 14 review threads (see `sixees-workflow:resolve-pr-comments #22`).
