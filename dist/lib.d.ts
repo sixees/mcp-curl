@@ -3,3 +3,22 @@ export { A as ApiDefaults, a as ApiInfo, b as ApiSchema, c as ApiSchemaVersion, 
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 import 'zod';
+
+/**
+ * Maximum length for custom tool descriptions.
+ * Clients (OpenAI-compatible) truncate descriptions beyond ~1024 chars;
+ * staying under 1000 provides a safe margin.
+ */
+declare const MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1000;
+/**
+ * Sanitize a string for use in tool metadata or prompt templates.
+ * Strips dangerous Unicode attack vectors (bidi overrides, zero-width chars, soft hyphen,
+ * variation selectors, Tags block) while preserving normal whitespace (\t, \n, \r, space)
+ * and all printable characters.
+ *
+ * @param input - String to sanitize (null/undefined returns "")
+ * @returns Sanitized string with attack characters replaced by space
+ */
+declare function sanitizeDescription(input: string | null | undefined): string;
+
+export { MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, sanitizeDescription };

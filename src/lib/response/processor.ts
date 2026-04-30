@@ -5,7 +5,7 @@ import { LIMITS } from "../config/limits.js";
 import { applyJqFilterToParsed } from "../jq/index.js";
 import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
-import { sanitizeResponse, detectInjectionPattern, isBinaryContentType } from "../utils/index.js";
+import { sanitizeResponse, detectInjectionPattern, isBinaryContentType, parseMimeType } from "../utils/index.js";
 import { logInjectionDetected } from "../security/index.js";
 
 // Re-export types from lib/types for convenience
@@ -69,9 +69,7 @@ export async function processResponse(
     // Steps 2-3: Sanitize and detect injection patterns (text responses only)
     if (!isBinaryContentType(options.contentType)) {
         // Strip HTML comments before Unicode sanitization to prevent hiding injections in markup.
-        // Normalize MIME before comparison to handle parameters like "text/html; charset=utf-8".
-        const normalizedMime = options.contentType?.split(";")[0].trim().toLowerCase() ?? "";
-        if (normalizedMime === "text/html") {
+        if (parseMimeType(options.contentType) === "text/html") {
             content = content.replace(HTML_COMMENT_PATTERN, "");
         }
 

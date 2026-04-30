@@ -2,6 +2,7 @@
 // Parse cURL output and check content types
 
 import { LIMITS } from "../config/limits.js";
+import { parseMimeType } from "../utils/index.js";
 
 /**
  * Parsed response with body and optional content type.
@@ -24,10 +25,8 @@ export interface ParsedResponse {
  * @returns true if the content type indicates JSON
  */
 export function isJsonContentType(contentType: string | undefined): boolean {
-    if (!contentType) return false;
-    const ct = contentType.toLowerCase();
-    const mimeType = ct.split(";")[0].trim();
-    return mimeType === "application/json" || mimeType.endsWith("+json");
+    const mime = parseMimeType(contentType);
+    return mime === "application/json" || mime.endsWith("+json");
 }
 
 /**

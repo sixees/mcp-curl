@@ -87,15 +87,10 @@ await server.start("stdio");
 
 ## Sanitizing External Tool Metadata
 
-`registerCustomTool()` automatically sanitizes the `title` and `description` fields you pass in `meta` —
-you do not need to call `sanitizeDescription()` yourself when those values come from a trusted source
-(your own source code, a vetted internal config).
-
-When the metadata comes from an **external** source (a database, user input, a remote API, a YAML file
-authored by someone else), sanitize it explicitly before registering. This protects against prompt
-injection payloads embedded in tool descriptions, and lets you verify the sanitized value before passing
-it on. The same applies to `inputSchema` field descriptions (`.describe()` strings) — those are **not**
-sanitized by `registerCustomTool()`, so you must sanitize them yourself if they come from external input.
+`registerCustomTool()` auto-sanitizes only `meta.title` and `meta.description`. Anything passed
+through `inputSchema` — `.describe()` strings, `z.enum([...])` literals, `.default(...)` values,
+field key names — reaches the LLM verbatim. When any of these originate from an external source
+(database, user input, remote API, third-party YAML), sanitize them explicitly before registration:
 
 ```typescript
 import { McpCurlServer, sanitizeDescription } from "mcp-curl";
@@ -111,8 +106,6 @@ server.registerCustomTool(
         title: sanitizeDescription(toolMeta.title),
         description: sanitizeDescription(toolMeta.description),
         inputSchema: z.object({
-            // .describe() values are NOT sanitized by registerCustomTool —
-            // sanitize them yourself when sourced externally.
             query: z.string().describe(sanitizeDescription(toolMeta.queryDescription)),
         }),
     },

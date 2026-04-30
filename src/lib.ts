@@ -69,3 +69,7 @@ export type {
     CurlExecuteInput,
     JqQueryInput,
 } from "./lib/types/public.js";
+
+// Sanitization helpers (callers need these to defend against prompt injection
+// in externally-sourced tool metadata — see docs/custom-tools.md).
+export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/utils/index.js";

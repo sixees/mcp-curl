@@ -1,20 +1,131 @@
-// src/lib/server/schemas.ts
+// src/lib/utils/sanitize.ts
+var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
+var DESC_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
+var RESPONSE_SANITIZE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
+var INJECTION_PATTERNS = new RegExp(
+  [
+    // Explicit instruction override
+    "ignore[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}instructions?",
+    "disregard[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}(instructions?|directives?|rules?)",
+    "forget[\\s\\S]{0,20}(previous|prior|all|your|above|everything|instructions?)",
+    "override[\\s\\S]{0,20}(your|the|all|previous)[\\s\\S]{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
+    // Persona takeover
+    "you\\s+are\\s+now\\s+",
+    "act\\s+as\\s+",
+    "assume\\s+the\\s+role\\s+of",
+    "pretend\\s+(you\\s+are|to\\s+be)",
+    "roleplay\\s+as",
+    "\\bDAN\\b",
+    "jailbreak",
+    // Privilege escalation / structural override tokens
+    "\\[ADMIN[\\s_-]*OVERRIDE\\]",
+    "<\\s*admin\\s*>",
+    "<\\s*SYSTEM\\s*>",
+    "<\\s*IMPORTANT\\s*>",
+    "\\[INST\\]",
+    // System/prompt manipulation
+    "system\\s+prompt",
+    "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
+    "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
+    "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,20}instructions?",
+    // Data exfiltration — file system triggers
+    "read\\s+~\\/\\.(ssh|cursor|env|zshrc|bashrc|config|npmrc|gitconfig)",
+    "pass[\\s\\S]{0,20}(its|the)\\s+contents?\\s+as",
+    "exfiltrate",
+    "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,30}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)"
+  ].join("|"),
+  "i"
+);
+function sanitizeDescription(input) {
+  if (input == null) return "";
+  return input.replace(DESC_CONTROL_CHARS, " ").trim();
+}
+function sanitizeResponse(input) {
+  if (input == null) return "";
+  return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
+    if (match[0] === " ") return "[WHITESPACE REMOVED]";
+    return "";
+  });
+}
+function detectInjectionPattern(input) {
+  const match = input.match(INJECTION_PATTERNS);
+  if (!match) return null;
+  return match[0].replace(/[\n\r]+/g, " ").slice(0, 200);
+}
+function applySpotlighting(content, requestId) {
+  const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
+  const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
+  return `${begin}
+${content}
+${end}`;
+}
+
+// src/lib/utils/error.ts
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+function createValidationError(field, reason, suggestion) {
+  let message = `Invalid ${field}: ${reason}.`;
+  if (suggestion) {
+    message += ` ${suggestion}`;
+    if (!suggestion.endsWith(".")) {
+      message += ".";
+    }
+  }
+  return new Error(message);
+}
+function createFileError(filepath, reason) {
+  return new Error(`File "${filepath}" ${reason}.`);
+}
+function createConfigError(configName, value, reason) {
+  return new Error(`Invalid ${configName} value "${value}": ${reason}.`);
+}
+
+// src/lib/utils/url.ts
 import { z } from "zod";
-var CurlExecuteSchema = z.object({
-  url: z.url("Must be a valid URL").refine(
+function resolveBaseUrl(baseUrl, path) {
+  const base = baseUrl.replace(/\/$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
+}
+function httpOnlyUrl(description) {
+  return z.url().refine(
+    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
+    { message: "URL must use http or https scheme" }
+  ).describe(description);
+}
+
+// src/lib/utils/content-type.ts
+function parseMimeType(contentType) {
+  if (!contentType) return "";
+  return contentType.split(";")[0].trim().toLowerCase();
+}
+function isBinaryContentType(contentType) {
+  const mime = parseMimeType(contentType);
+  if (!mime) return false;
+  return mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/") || mime.startsWith("font/") || mime.startsWith("multipart/") || mime === "application/octet-stream" || mime === "application/pdf" || mime === "application/wasm" || mime === "application/zip" || mime === "application/gzip" || mime === "application/x-gzip" || mime === "application/x-tar" || mime === "application/x-bzip2" || mime === "application/x-7z-compressed" || mime === "application/x-rar-compressed" || mime === "application/protobuf" || mime === "application/x-protobuf" || mime === "application/x-msgpack" || mime === "application/cbor" || mime.startsWith("application/vnd.ms-") || mime.startsWith("application/vnd.openxmlformats-");
+}
+
+// src/lib/server/schemas.ts
+import { z as z2 } from "zod";
+var CurlExecuteSchema = z2.object({
+  url: z2.url("Must be a valid URL").refine(
     (url) => {
       const scheme = url.split(":")[0].toLowerCase();
       return ["http", "https"].includes(scheme);
     },
     { message: "URL must use http or https scheme" }
   ).describe("The URL to request"),
-  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (defaults to GET, or POST if data is provided)"),
-  headers: z.record(z.string(), z.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
-  data: z.string().optional().describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
-  form: z.record(z.string(), z.string()).optional().describe("Form data as key-value pairs (uses multipart/form-data)"),
-  follow_redirects: z.boolean().default(true).describe("Follow HTTP redirects (default: true)"),
-  max_redirects: z.number().int().min(0).max(50).optional().describe("Maximum number of redirects to follow"),
-  insecure: z.boolean().default(false).describe("Skip SSL certificate verification (default: false)"),
+  method: z2.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (defaults to GET, or POST if data is provided)"),
+  headers: z2.record(z2.string(), z2.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
+  data: z2.string().optional().describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
+  form: z2.record(z2.string(), z2.string()).optional().describe("Form data as key-value pairs (uses multipart/form-data)"),
+  follow_redirects: z2.boolean().default(true).describe("Follow HTTP redirects (default: true)"),
+  max_redirects: z2.number().int().min(0).max(50).optional().describe("Maximum number of redirects to follow"),
+  insecure: z2.boolean().default(false).describe("Skip SSL certificate verification (default: false)"),
   /**
    * Request timeout in seconds.
    * Optional - if not provided, defaults are applied in this order:
@@ -24,25 +135,25 @@ var CurlExecuteSchema = z.object({
    * Note: This field intentionally has no .default() to distinguish between
    * "user explicitly passed 30" vs "user didn't provide a value".
    */
-  timeout: z.number().int().min(1).max(300).optional().describe("Request timeout in seconds (default: 30, max: 300)"),
-  user_agent: z.string().optional().describe("Custom User-Agent header. If not set, a browser-like User-Agent is sent automatically. Set to empty string to disable."),
-  basic_auth: z.string().optional().describe("Basic authentication in format 'username:password'"),
-  bearer_token: z.string().optional().describe("Bearer token for Authorization header"),
-  verbose: z.boolean().default(false).describe("Include verbose output with request/response details"),
-  include_headers: z.boolean().default(false).describe("Include response headers in output"),
-  compressed: z.boolean().default(true).describe("Request compressed response and automatically decompress"),
-  include_metadata: z.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
-  jq_filter: z.string().optional().describe('JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check.'),
-  max_result_size: z.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger responses auto-save to temp file"),
-  save_to_file: z.boolean().optional().describe("Force save response to temp file. Returns filepath instead of content"),
-  output_dir: z.string().optional().describe("Directory to save response files (must exist and be writable). Overrides MCP_CURL_OUTPUT_DIR env var. Falls back to system temp directory.")
+  timeout: z2.number().int().min(1).max(300).optional().describe("Request timeout in seconds (default: 30, max: 300)"),
+  user_agent: z2.string().optional().describe("Custom User-Agent header. If not set, a browser-like User-Agent is sent automatically. Set to empty string to disable."),
+  basic_auth: z2.string().optional().describe("Basic authentication in format 'username:password'"),
+  bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
+  verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
+  include_headers: z2.boolean().default(false).describe("Include response headers in output"),
+  compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
+  include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
+  jq_filter: z2.string().optional().describe('JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check.'),
+  max_result_size: z2.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger responses auto-save to temp file"),
+  save_to_file: z2.boolean().optional().describe("Force save response to temp file. Returns filepath instead of content"),
+  output_dir: z2.string().optional().describe("Directory to save response files (must exist and be writable). Overrides MCP_CURL_OUTPUT_DIR env var. Falls back to system temp directory.")
 });
-var JqQuerySchema = z.object({
-  filepath: z.string().describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
-  jq_filter: z.string().describe('JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported.'),
-  max_result_size: z.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger results auto-save to file"),
-  save_to_file: z.boolean().optional().describe("Force save result to file. Returns filepath instead of content"),
-  output_dir: z.string().optional().describe("Directory to save result files (must exist and be writable)")
+var JqQuerySchema = z2.object({
+  filepath: z2.string().describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
+  jq_filter: z2.string().describe('JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported.'),
+  max_result_size: z2.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger results auto-save to file"),
+  save_to_file: z2.boolean().optional().describe("Force save result to file. Returns filepath instead of content"),
+  output_dir: z2.string().optional().describe("Directory to save result files (must exist and be writable)")
 });
 
 // src/lib/config/limits.ts
@@ -496,115 +607,6 @@ async function cleanupTempDir() {
 // src/lib/files/output-dir.ts
 import { resolve } from "path";
 import { stat as stat2, access, realpath, constants as fsConstants } from "fs/promises";
-
-// src/lib/utils/error.ts
-function getErrorMessage(error) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-function createValidationError(field, reason, suggestion) {
-  let message = `Invalid ${field}: ${reason}.`;
-  if (suggestion) {
-    message += ` ${suggestion}`;
-    if (!suggestion.endsWith(".")) {
-      message += ".";
-    }
-  }
-  return new Error(message);
-}
-function createFileError(filepath, reason) {
-  return new Error(`File "${filepath}" ${reason}.`);
-}
-function createConfigError(configName, value, reason) {
-  return new Error(`Invalid ${configName} value "${value}": ${reason}.`);
-}
-
-// src/lib/utils/url.ts
-import { z as z2 } from "zod";
-function resolveBaseUrl(baseUrl, path) {
-  const base = baseUrl.replace(/\/$/, "");
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${normalizedPath}`;
-}
-function httpOnlyUrl(description) {
-  return z2.url().refine(
-    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
-    { message: "URL must use http or https scheme" }
-  ).describe(description);
-}
-
-// src/lib/utils/content-type.ts
-function isBinaryContentType(contentType) {
-  if (!contentType) return false;
-  const mime = contentType.split(";")[0].trim().toLowerCase();
-  return mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/") || mime.startsWith("font/") || mime.startsWith("multipart/") || mime === "application/octet-stream" || mime === "application/pdf" || mime === "application/wasm" || mime === "application/zip" || mime === "application/gzip" || mime === "application/x-gzip" || mime === "application/x-tar";
-}
-
-// src/lib/utils/sanitize.ts
-var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
-var DESC_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
-var RESPONSE_SANITIZE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
-var INJECTION_PATTERNS = new RegExp(
-  [
-    // Explicit instruction override
-    "ignore[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}instructions?",
-    "disregard[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}(instructions?|directives?|rules?)",
-    "forget[\\s\\S]{0,20}(previous|prior|all|your|above|everything|instructions?)",
-    "override[\\s\\S]{0,20}(your|the|all|previous)[\\s\\S]{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
-    // Persona takeover
-    "you\\s+are\\s+now\\s+",
-    "act\\s+as\\s+",
-    "assume\\s+the\\s+role\\s+of",
-    "pretend\\s+(you\\s+are|to\\s+be)",
-    "roleplay\\s+as",
-    "\\bDAN\\b",
-    "jailbreak",
-    // Privilege escalation / structural override tokens
-    "\\[ADMIN[\\s_-]*OVERRIDE\\]",
-    "<\\s*admin\\s*>",
-    "<\\s*SYSTEM\\s*>",
-    "<\\s*IMPORTANT\\s*>",
-    "\\[INST\\]",
-    // System/prompt manipulation
-    "system\\s+prompt",
-    "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
-    "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
-    "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,20}instructions?",
-    // Data exfiltration — file system triggers
-    "read\\s+~\\/\\.(ssh|cursor|env|zshrc|bashrc|config|npmrc|gitconfig)",
-    "pass[\\s\\S]{0,20}(its|the)\\s+contents?\\s+as",
-    "exfiltrate",
-    "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,30}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)"
-  ].join("|"),
-  "i"
-);
-function sanitizeDescription(input) {
-  if (input == null) return "";
-  return input.replace(DESC_CONTROL_CHARS, " ").trim();
-}
-function sanitizeResponse(input) {
-  if (input == null) return "";
-  return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
-    if (match[0] === " ") return "[WHITESPACE REMOVED]";
-    return "";
-  });
-}
-function detectInjectionPattern(input) {
-  const match = input.match(INJECTION_PATTERNS);
-  if (!match) return null;
-  return match[0].replace(/[\n\r]+/g, " ").slice(0, 200);
-}
-function applySpotlighting(content, requestId) {
-  const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
-  const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
-  return `${begin}
-${content}
-${end}`;
-}
-
-// src/lib/files/output-dir.ts
 function resolveOutputDir(paramDir) {
   if (paramDir !== void 0) {
     const trimmedParam = paramDir.trim();
@@ -1180,10 +1182,8 @@ function buildCurlArgs(params) {
 
 // src/lib/response/parser.ts
 function isJsonContentType(contentType) {
-  if (!contentType) return false;
-  const ct = contentType.toLowerCase();
-  const mimeType = ct.split(";")[0].trim();
-  return mimeType === "application/json" || mimeType.endsWith("+json");
+  const mime = parseMimeType(contentType);
+  return mime === "application/json" || mime.endsWith("+json");
 }
 function parseResponseWithMetadata(rawResponse, separator) {
   const searchStart = Math.max(0, rawResponse.length - LIMITS.MAX_METADATA_TAIL_LENGTH);
@@ -1657,8 +1657,7 @@ async function processResponse(response, options) {
   } catch {
   }
   if (!isBinaryContentType(options.contentType)) {
-    const normalizedMime = options.contentType?.split(";")[0].trim().toLowerCase() ?? "";
-    if (normalizedMime === "text/html") {
+    if (parseMimeType(options.contentType) === "text/html") {
       content = content.replace(HTML_COMMENT_PATTERN, "");
     }
     content = sanitizeAndDetect(content, hostname);
