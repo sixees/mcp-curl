@@ -13,6 +13,36 @@ export function parseMimeType(contentType: string | undefined): string {
     return contentType.split(";")[0].trim().toLowerCase();
 }
 
+// Binary MIME domain — extracted as auditable, typed collections so new
+// entries can be added without growing the conditional.
+const BINARY_MIME_PREFIXES = [
+    "image/",
+    "audio/",
+    "video/",
+    "font/",
+    "multipart/",
+    "application/vnd.ms-",
+    "application/vnd.openxmlformats-",
+] as const;
+
+const BINARY_MIME_EXACT: ReadonlySet<string> = new Set([
+    "application/octet-stream",
+    "application/pdf",
+    "application/wasm",
+    "application/zip",
+    "application/gzip",
+    "application/x-gzip",
+    "application/x-tar",
+    "application/x-bzip2",
+    "application/x-7z-compressed",
+    "application/x-rar-compressed",
+    "application/protobuf",
+    "application/x-protobuf",
+    "application/x-msgpack",
+    "application/cbor",
+    "application/msword",
+]);
+
 /**
  * Returns true for MIME types that are binary (not text).
  * Binary responses should be returned as-is without Unicode sanitization.
@@ -23,27 +53,7 @@ export function isBinaryContentType(contentType: string | undefined): boolean {
     const mime = parseMimeType(contentType);
     if (!mime) return false;
     return (
-        mime.startsWith("image/") ||
-        mime.startsWith("audio/") ||
-        mime.startsWith("video/") ||
-        mime.startsWith("font/") ||
-        mime.startsWith("multipart/") ||
-        mime === "application/octet-stream" ||
-        mime === "application/pdf" ||
-        mime === "application/wasm" ||
-        mime === "application/zip" ||
-        mime === "application/gzip" ||
-        mime === "application/x-gzip" ||
-        mime === "application/x-tar" ||
-        mime === "application/x-bzip2" ||
-        mime === "application/x-7z-compressed" ||
-        mime === "application/x-rar-compressed" ||
-        mime === "application/protobuf" ||
-        mime === "application/x-protobuf" ||
-        mime === "application/x-msgpack" ||
-        mime === "application/cbor" ||
-        mime === "application/msword" ||
-        mime.startsWith("application/vnd.ms-") ||
-        mime.startsWith("application/vnd.openxmlformats-")
+        BINARY_MIME_EXACT.has(mime) ||
+        BINARY_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix))
     );
 }

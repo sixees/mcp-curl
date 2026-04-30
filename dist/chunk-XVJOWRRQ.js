@@ -103,10 +103,36 @@ function parseMimeType(contentType) {
   if (!contentType) return "";
   return contentType.split(";")[0].trim().toLowerCase();
 }
+var BINARY_MIME_PREFIXES = [
+  "image/",
+  "audio/",
+  "video/",
+  "font/",
+  "multipart/",
+  "application/vnd.ms-",
+  "application/vnd.openxmlformats-"
+];
+var BINARY_MIME_EXACT = /* @__PURE__ */ new Set([
+  "application/octet-stream",
+  "application/pdf",
+  "application/wasm",
+  "application/zip",
+  "application/gzip",
+  "application/x-gzip",
+  "application/x-tar",
+  "application/x-bzip2",
+  "application/x-7z-compressed",
+  "application/x-rar-compressed",
+  "application/protobuf",
+  "application/x-protobuf",
+  "application/x-msgpack",
+  "application/cbor",
+  "application/msword"
+]);
 function isBinaryContentType(contentType) {
   const mime = parseMimeType(contentType);
   if (!mime) return false;
-  return mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/") || mime.startsWith("font/") || mime.startsWith("multipart/") || mime === "application/octet-stream" || mime === "application/pdf" || mime === "application/wasm" || mime === "application/zip" || mime === "application/gzip" || mime === "application/x-gzip" || mime === "application/x-tar" || mime === "application/x-bzip2" || mime === "application/x-7z-compressed" || mime === "application/x-rar-compressed" || mime === "application/protobuf" || mime === "application/x-protobuf" || mime === "application/x-msgpack" || mime === "application/cbor" || mime === "application/msword" || mime.startsWith("application/vnd.ms-") || mime.startsWith("application/vnd.openxmlformats-");
+  return BINARY_MIME_EXACT.has(mime) || BINARY_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix));
 }
 
 // src/lib/server/schemas.ts
