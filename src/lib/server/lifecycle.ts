@@ -3,13 +3,14 @@
 
 import type { Server } from "http";
 import type { SessionManager } from "../session/index.js";
-import { stopRateLimitCleanup } from "../security/index.js";
+import { stopRateLimitCleanup, stopInjectionCleanup } from "../security/index.js";
 import { cleanupTempDir } from "../files/index.js";
 
 // Module-level state for graceful shutdown
 let httpServer: Server | null = null;
 let sessionManager: SessionManager | null = null;
 let rateLimitCleanupInterval: NodeJS.Timeout | null = null;
+let injectionCleanupInterval: NodeJS.Timeout | null = null;
 
 /**
  * Initialize lifecycle state.
@@ -17,10 +18,12 @@ let rateLimitCleanupInterval: NodeJS.Timeout | null = null;
  */
 export function initializeLifecycle(
     sessions: SessionManager | null,
-    rateLimitInterval: NodeJS.Timeout
+    rateLimitInterval: NodeJS.Timeout,
+    injectionInterval: NodeJS.Timeout
 ): void {
     sessionManager = sessions;
     rateLimitCleanupInterval = rateLimitInterval;
+    injectionCleanupInterval = injectionInterval;
 }
 
 /**
@@ -69,6 +72,11 @@ export async function shutdown(signal: string): Promise<void> {
     // Stop rate limit cleanup interval
     if (rateLimitCleanupInterval) {
         stopRateLimitCleanup(rateLimitCleanupInterval);
+    }
+
+    // Stop injection detection cleanup interval
+    if (injectionCleanupInterval) {
+        stopInjectionCleanup(injectionCleanupInterval);
     }
 
     // Clean up temp directory (handles errors internally)

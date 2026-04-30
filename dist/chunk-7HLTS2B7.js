@@ -52,6 +52,9 @@ function detectInjectionPattern(input) {
   return INJECTION_PATTERNS.test(input);
 }
 function applySpotlighting(content, requestId) {
+  if (!requestId) {
+    throw new Error("applySpotlighting: requestId must be a non-empty string");
+  }
   const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
   const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
   return `${begin}
@@ -1703,7 +1706,8 @@ async function processResponse(response, options) {
   }
   let content = response;
   const hostname = safeHostname(options.url);
-  if (!isBinaryContentType(options.contentType)) {
+  const isText = !isBinaryContentType(options.contentType);
+  if (isText) {
     if (supportsMarkupComments(options.contentType)) {
       content = content.replace(HTML_COMMENT_PATTERN, "");
     }
@@ -1732,7 +1736,7 @@ async function processResponse(response, options) {
       throw error;
     }
     content = applyJqFilterToParsed(parsedData, options.jqFilter);
-    if (!isBinaryContentType(options.contentType)) {
+    if (isText) {
       content = sanitizeAndDetect(content, hostname);
     }
   }

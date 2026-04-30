@@ -48,8 +48,11 @@ export async function processResponse(
     // Resolve hostname once for injection detection logging (used in steps 2–4)
     const hostname = safeHostname(options.url);
 
+    // Compute once — content-type classification is reused in steps 2–4 below.
+    const isText = !isBinaryContentType(options.contentType);
+
     // Steps 2-3: Sanitize and detect injection patterns (text responses only)
-    if (!isBinaryContentType(options.contentType)) {
+    if (isText) {
         // Strip markup comments (HTML, XHTML, generic XML, SVG, *+xml) before
         // Unicode sanitization. All these grammars share the `<!-- -->` syntax,
         // and comments in any of them can hide injection content from a quick
@@ -98,7 +101,7 @@ export async function processResponse(
         // Re-sanitize and re-detect after filter: JSON.parse decodes Unicode escapes in string
         // values (e.g. {"cmd":"Ig\u200Bnore..."} → zero-width space in jq output), so attack
         // chars that were invisible in the raw text become real characters in the filtered result.
-        if (!isBinaryContentType(options.contentType)) {
+        if (isText) {
             content = sanitizeAndDetect(content, hostname);
         }
     }

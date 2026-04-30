@@ -141,6 +141,13 @@ export function detectInjectionPattern(input: string): boolean {
  * @returns Content wrapped in opaque sentinel delimiters
  */
 export function applySpotlighting(content: string, requestId: string): string {
+    // Empty requestId would produce sentinels like "---EXTERNAL-CONTENT-BEGIN-----..."
+    // that an attacker could spoof in payload content. The sentinel's security depends
+    // on the requestId being unguessable per request — fail loudly rather than silently
+    // emit a degraded boundary.
+    if (!requestId) {
+        throw new Error("applySpotlighting: requestId must be a non-empty string");
+    }
     const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
     const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
     return `${begin}\n${content}\n${end}`;

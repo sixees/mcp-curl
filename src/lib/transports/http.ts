@@ -7,7 +7,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { randomUUID } from "crypto";
 import { cleanupOrphanedTempDirs } from "../files/index.js";
-import { startRateLimitCleanup, isValidSessionId, safeStringCompare } from "../security/index.js";
+import {
+    startRateLimitCleanup,
+    startInjectionCleanup,
+    isValidSessionId,
+    safeStringCompare,
+} from "../security/index.js";
 import { SessionManager } from "../session/index.js";
 import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
 import {
@@ -346,9 +351,10 @@ export async function runHTTP(): Promise<void> {
     const sessionManager = new SessionManager();
     sessionManager.startCleanup();
 
-    // Start rate limit cleanup and initialize lifecycle
+    // Start background cleanup intervals and initialize lifecycle
     const rateLimitInterval = startRateLimitCleanup();
-    initializeLifecycle(sessionManager, rateLimitInterval);
+    const injectionInterval = startInjectionCleanup();
+    initializeLifecycle(sessionManager, rateLimitInterval, injectionInterval);
 
     const app = createHttpApp({
         createMcpServer: () => {

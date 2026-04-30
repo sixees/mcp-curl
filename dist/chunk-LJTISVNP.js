@@ -30,15 +30,17 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-WL5YULRH.js";
+} from "./chunk-7HLTS2B7.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
 var sessionManager = null;
 var rateLimitCleanupInterval = null;
-function initializeLifecycle(sessions, rateLimitInterval) {
+var injectionCleanupInterval = null;
+function initializeLifecycle(sessions, rateLimitInterval, injectionInterval) {
   sessionManager = sessions;
   rateLimitCleanupInterval = rateLimitInterval;
+  injectionCleanupInterval = injectionInterval;
 }
 function setHttpServer(server) {
   httpServer = server;
@@ -71,6 +73,9 @@ Received ${signal}, shutting down gracefully...`);
   }
   if (rateLimitCleanupInterval) {
     stopRateLimitCleanup(rateLimitCleanupInterval);
+  }
+  if (injectionCleanupInterval) {
+    stopInjectionCleanup(injectionCleanupInterval);
   }
   await cleanupTempDir();
   process.exit(hasError ? 1 : 0);
@@ -702,7 +707,11 @@ function maybeApplySpotlighting(result, config) {
   }
   const first = result.content[0];
   if (!first || first.type !== "text" || typeof first.text !== "string") {
-    return result;
+    console.error("[tool-wrapper] invalid result shape \u2014 failing closed");
+    return {
+      content: [{ type: "text", text: "Error: invalid tool response shape" }],
+      isError: true
+    };
   }
   return {
     ...result,
@@ -1434,7 +1443,8 @@ async function runHTTP() {
   const sessionManager2 = new SessionManager();
   sessionManager2.startCleanup();
   const rateLimitInterval = startRateLimitCleanup();
-  initializeLifecycle(sessionManager2, rateLimitInterval);
+  const injectionInterval = startInjectionCleanup();
+  initializeLifecycle(sessionManager2, rateLimitInterval, injectionInterval);
   const app = createHttpApp({
     createMcpServer: () => {
       const server = createServer();

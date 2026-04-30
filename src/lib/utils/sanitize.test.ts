@@ -406,4 +406,10 @@ describe("applySpotlighting", () => {
         const payloadIdx = result.indexOf("</response>");
         expect(payloadIdx).toBeLessThan(endIdx);
     });
+
+    it("throws when requestId is empty (boundary depends on unguessable id)", () => {
+        expect(() => applySpotlighting("data", "")).toThrow(
+            /requestId must be a non-empty string/
+        );
+    });
 });

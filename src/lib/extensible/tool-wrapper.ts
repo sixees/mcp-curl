@@ -39,6 +39,10 @@ function maybeApplySpotlighting(result: ToolResult, config: Readonly<McpCurlConf
     }
     const first = result.content[0];
     if (!first || first.type !== "text" || typeof first.text !== "string") {
+        // Surface the fail-closed event for ops visibility — type system allows the
+        // tuple to be subverted via the index signature, so a violation here points
+        // at a real bug (a custom tool or future executor returning the wrong shape).
+        console.error("[tool-wrapper] invalid result shape — failing closed");
         return {
             content: [{ type: "text" as const, text: "Error: invalid tool response shape" }],
             isError: true,
