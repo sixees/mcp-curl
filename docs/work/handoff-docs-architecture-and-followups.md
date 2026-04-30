@@ -11,14 +11,17 @@ Rescues branch-unique work that lived as untracked files / committed todos on th
 ## What was implemented
 
 ### Documentation
+
 - **`docs/architecture/architecture.md`** — full architecture overview produced by `/sixees-workflow:architect` (entities, request lifecycle, security model, ADRs). Referenced from `CLAUDE.md`.
 - **`docs/axon-brainstorm.md`** — Axon (AI Access Layer) product brainstorm. Captures the "deterministic OpenAPI → typed MCP tool" framing that came out of the agent-native synthesis work.
-- **`docs/upstream-contributions.md`** — fork → upstream contribution audit identifying 7 fork-ahead changes worth upstreaming back from the `mcp-pagespeed` fork (URL-parser hardening, helper re-exports, regression coverage).
+- **`docs/upstream-contributions.md`** — fork → upstream contribution audit identifying 7 fork-ahead files (consolidated into 5 candidate upstream PRs) worth upstreaming back from the `mcp-pagespeed` fork (URL-parser hardening, helper re-exports, regression coverage).
 
 ### Scripts
+
 - **`scripts/integration-test.mjs`** — stdio MCP integration test that lists tools and exercises `curl_execute` end-to-end against the Google PageSpeed API.
 
 ### Deferred todos
+
 - `docs/todos/cache-utilities.md` — obsoleted at PR review (see Resolved Todos below).
 - `docs/todos/configure-unknown-fields.md` — obsoleted at PR review (see Resolved Todos below).
 - `docs/todos/readme-register-custom-tool-sanitize-example.md` — refined at PR review (see Changes Made below).
@@ -89,6 +92,35 @@ The fourth originally-rescued todo (`is-binary-content-type-location.md`) was dr
 - `docs/todos/cache-utilities.md` — **deleted** (work already done on main)
 - `docs/todos/configure-unknown-fields.md` — **deleted** (work already done on main)
 
+## Review Comments Addressed — 2026-04-30 (round 2)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `extractJsonBlock` is not actually top-level-safe — `indexOf("{")` + `lastIndexOf("}")` over-captures when stray braces appear before/after the payload | @coderabbitai | Fix needed | Rewrote as a brace-depth scanner that tracks string state (handles `}` inside JSON strings and escaped quotes), returns the **first** complete top-level object whose substring `JSON.parse`s cleanly. Smoke-tested: stray-brace cases, nested objects, and escaped quotes all parse correctly |
+| Fork-ahead count says 7 but the table lists 5 | @coderabbitai | Fix needed | Reworded the audit-scope line: "**7 files are fork-ahead, consolidated below into 5 candidate upstream PRs**" — preserves the 20-file diff math and explains why the table is shorter |
+| Item #3 references the wrong export location for `httpOnlyUrl` | @coderabbitai | Fix needed | Verified: `httpOnlyUrl` is exported from `src/lib/utils/index.ts:12` only, not from `src/lib/index.ts`. Updated the table row, the prose at lines 160-163, and the References section to reflect the actual export location and reframe the candidate PR as additive (closes the gap rather than mirroring an existing export) |
+| MD022: subheadings need blank lines below (`### Documentation`, `### Scripts`, `### Deferred todos`) | @coderabbitai | Fix needed | Added blank line after each `###` subheading in the handoff. Also fixed the docs-list count to match the audit reword (5 candidate PRs not 7 changes) |
+
+### Decisions Revised
+
+(none in this round)
+
+### Resolved Todos
+
+(none in this round)
+
+### Outstanding Todos
+
+(none in this round)
+
+### Files Modified
+
+- `scripts/integration-test.mjs` — replaced `extractJsonBlock()` with a brace-depth + string-state scanner that returns the first top-level JSON object that `JSON.parse`s cleanly
+- `docs/upstream-contributions.md` — reworded fork-ahead count (audit scope), corrected item #3 export-location claims (table row + section 3 prose + References)
+- `docs/work/handoff-docs-architecture-and-followups.md` — MD022 blank lines added after subheadings; appended this round-2 section
+
 ## Known issues and limitations
 
 - None outstanding. Repository fit for `axon-brainstorm.md` and `upstream-contributions.md` was raised by @gemini-code-assist and resolved 2026-04-30 — user confirmed both files remain in this repo as brainstorms for future-build work.
@@ -96,9 +128,9 @@ The fourth originally-rescued todo (`is-binary-content-type-location.md`) was dr
 ## Testing summary
 
 - Tests added: 0 (PR contains no source changes).
-- Passing: `npm test` — 485 passed, 7 skipped (run before commit).
-- Linting: not run in this pass; markdown lint findings raised by coderabbitai (MD038, MD040) addressed individually.
-- Manual testing: `scripts/integration-test.mjs` not re-executed after the rewrite — reviewer can verify locally with `npm run build && node scripts/integration-test.mjs`.
+- Passing: `npm test` — 485 passed, 7 skipped (re-run after round-2 fixes).
+- Linting: markdown findings raised by coderabbitai (MD022, MD038, MD040) addressed individually across rounds.
+- Manual testing (round 2): `extractJsonBlock` smoke-tested against five edge cases (stray braces, `}` inside strings, malformed input, no JSON, escaped quotes) — all pass. Live `scripts/integration-test.mjs` run hit a real PageSpeed quota error (HTTP 429), and the script correctly extracted the error JSON, parsed it, and exited non-zero from the `!lhr` branch — confirming both the brace-depth parser and the round-1 codex fix are working as designed.
 
 ## Follow-up work
 

@@ -30,15 +30,57 @@ function section(title) {
 }
 
 /**
- * Extract the largest top-level JSON object from the tool's formatted output.
- * Uses indexOf/lastIndexOf rather than a greedy regex so unrelated braces in
- * surrounding metadata (headers, separators) don't pull in extra characters.
+ * Extract the first complete top-level JSON object from the tool's formatted output.
+ * Scans char-by-char tracking brace depth and string state so braces inside JSON
+ * strings don't toggle depth, and stray braces in surrounding metadata don't
+ * over-capture. Returns null if no parseable top-level object is found.
  */
 function extractJsonBlock(text) {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
-  return text.slice(start, end + 1);
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+      continue;
+    }
+
+    if (ch === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        const candidate = text.slice(start, i + 1);
+        try {
+          JSON.parse(candidate);
+          return candidate;
+        } catch {
+          start = -1;
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────

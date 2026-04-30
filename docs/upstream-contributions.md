@@ -19,7 +19,8 @@ and a recommended title.
   every shared `src/lib/**` path.
 - Result: **20 files differ.** 13 are upstream-ahead (security PR #20 — already covered by
   `docs/plans/2026-04-30-feat-cherry-pick-prompt-injection-defense-plan.md`). The remaining
-  **7 are fork-ahead and are the subject of this document.**
+  **7 files are fork-ahead, consolidated below into 5 candidate upstream PRs** (some PRs
+  cover multiple related files — e.g. a helper plus its test).
 
 ## Summary
 
@@ -27,7 +28,7 @@ and a recommended title.
 |---|---|---|---|---|
 | 1 | Harden `httpOnlyUrl()` to use `new URL().protocol` instead of `.split(":")` | **Security** | `src/lib/utils/url.ts`, `src/lib/utils/url.test.ts` | `fix(security): harden httpOnlyUrl scheme check via WHATWG URL parser` |
 | 2 | Consume `httpOnlyUrl()` helper in built-in schemas (deduplicates inline `.refine()`s) | **Security / DRY** | `src/lib/schema/validator.ts`, `src/lib/server/schemas.ts` | `refactor(schema): consume httpOnlyUrl helper in built-in schemas` |
-| 3 | Re-export `httpOnlyUrl` from the public barrel | **DX / Extensibility** | `src/lib/index.ts` | `feat(public-api): re-export httpOnlyUrl for custom-tool authors` |
+| 3 | Re-export `httpOnlyUrl` from the package public barrel | **DX / Extensibility** | `src/lib/index.ts` (target — currently only in `src/lib/utils/index.ts`) | `feat(public-api): re-export httpOnlyUrl for custom-tool authors` |
 | 4 | Restore `data:` URL rejection regression tests in prompt schemas | **Test coverage** | `src/lib/prompts/api-discovery.test.ts`, `src/lib/prompts/api-test.test.ts` | `test(prompts): restore data: URL rejection regression coverage` |
 | 5 | Real-world custom-tool example (`configs/pagespeed.ts`) | **Docs / Examples** | `configs/pagespeed.ts` | `docs(examples): add PageSpeed-Insights custom-tool example` |
 
@@ -157,8 +158,10 @@ together rather than the sites still inlining the old logic at the time of the r
 
 ### What
 
-`src/lib/index.ts` is the public package barrel. The fork re-exports `httpOnlyUrl` from it;
-upstream stopped doing so somewhere between 3.0.0 and current.
+`src/lib/index.ts` is the public package barrel. Today, `httpOnlyUrl` is available via the
+utils barrel (`src/lib/utils/index.ts:12`) but **not** the package public barrel — both fork
+and upstream are missing it from `src/lib/index.ts`. This candidate PR adds it there so
+custom-tool authors don't need to deep-import.
 
 ### Why it matters
 
@@ -326,5 +329,6 @@ should:
 - Cherry-pick plan for upstream PR #20: `docs/plans/2026-04-30-feat-cherry-pick-prompt-injection-defense-plan.md`.
 - Fork's hardened helper: `src/lib/utils/url.ts:21-32`.
 - Fork's helper-consumer sites: `src/lib/schema/validator.ts:91`, `src/lib/server/schemas.ts:12`.
-- Fork's barrel export: `src/lib/index.ts:30-32`.
+- Fork's utils-barrel export: `src/lib/utils/index.ts:12` (note: `src/lib/index.ts` does **not**
+  re-export `httpOnlyUrl` — that's the gap item #3 closes).
 - Fork's added tests: `src/lib/utils/url.test.ts:45-93`.
