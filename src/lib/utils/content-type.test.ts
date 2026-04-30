@@ -92,6 +92,12 @@ describe("isBinaryContentType", () => {
         )).toBe(true);
     });
 
+    it("returns true for legacy Microsoft Word MIME type", () => {
+        // application/msword has no hyphen separator, so vnd.ms-* startsWith
+        // would not match it — equality check must cover it explicitly.
+        expect(isBinaryContentType("application/msword")).toBe(true);
+    });
+
     it("is case-insensitive", () => {
         expect(isBinaryContentType("IMAGE/PNG")).toBe(true);
         expect(isBinaryContentType("Application/Pdf")).toBe(true);

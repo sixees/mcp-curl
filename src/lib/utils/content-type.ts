@@ -42,6 +42,7 @@ export function isBinaryContentType(contentType: string | undefined): boolean {
         mime === "application/x-protobuf" ||
         mime === "application/x-msgpack" ||
         mime === "application/cbor" ||
+        mime === "application/msword" ||
         mime.startsWith("application/vnd.ms-") ||
         mime.startsWith("application/vnd.openxmlformats-")
     );
