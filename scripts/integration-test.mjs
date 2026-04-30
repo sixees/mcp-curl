@@ -93,7 +93,7 @@ async function main() {
     console.log(`\nSpawning MCP server: ${serverEntry}`);
 
     const transport = new StdioClientTransport({
-      command: "node",
+      command: process.execPath,
       args: [serverEntry],
     });
 
