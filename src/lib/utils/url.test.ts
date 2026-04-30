@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveBaseUrl } from "./url.js";
+import { resolveBaseUrl, safeHostname } from "./url.js";
 
 describe("resolveBaseUrl", () => {
     it("strips trailing slash from base and joins with path", () => {
@@ -42,5 +42,38 @@ describe("resolveBaseUrl", () => {
         expect(resolveBaseUrl("https://api.example.com", "/")).toBe(
             "https://api.example.com/"
         );
+    });
+});
+
+describe("safeHostname", () => {
+    it("returns hostname for a valid URL", () => {
+        expect(safeHostname("https://api.example.com/foo/bar")).toBe("api.example.com");
+    });
+
+    it("returns hostname stripped of port", () => {
+        expect(safeHostname("https://api.example.com:8443/foo")).toBe("api.example.com");
+    });
+
+    it("returns default fallback for malformed URL", () => {
+        expect(safeHostname("not-a-url")).toBe("unknown");
+    });
+
+    it("returns default fallback for undefined", () => {
+        expect(safeHostname(undefined)).toBe("unknown");
+    });
+
+    it("returns default fallback for empty string", () => {
+        expect(safeHostname("")).toBe("unknown");
+    });
+
+    it("returns custom fallback when provided", () => {
+        expect(safeHostname("not-a-url", "no-host")).toBe("no-host");
+        expect(safeHostname(undefined, "no-host")).toBe("no-host");
+    });
+
+    it("does not throw for inputs WHATWG URL would reject", () => {
+        // Each call must return the fallback rather than propagate a TypeError.
+        expect(() => safeHostname("javascript:alert(1)")).not.toThrow();
+        expect(() => safeHostname("://broken")).not.toThrow();
     });
 });

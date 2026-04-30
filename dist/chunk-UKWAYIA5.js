@@ -12,27 +12,25 @@ import {
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   createSafeFilenameBase,
-  detectInjectionPattern,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
   httpOnlyUrl,
   isValidSessionId,
-  logInjectionDetected,
   parsePort,
   registerCurlExecuteTool,
   resolveBaseUrl,
   resolveOutputDir,
   safeStringCompare,
+  sanitizeAndDetect,
   sanitizeDescription,
-  sanitizeResponse,
   startInjectionCleanup,
   startRateLimitCleanup,
   stopInjectionCleanup,
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-XVJOWRRQ.js";
+} from "./chunk-WL5YULRH.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -155,11 +153,7 @@ async function executeJqQuery(params, _extra) {
     const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : void 0;
     const content = await readFile(validatedFilePath, { encoding: "utf-8" });
     const filtered = applyJqFilter(content, params.jq_filter);
-    const sanitized = sanitizeResponse(filtered);
-    const phrase = detectInjectionPattern(sanitized);
-    if (phrase !== null) {
-      logInjectionDetected(basename(validatedFilePath));
-    }
+    const sanitized = sanitizeAndDetect(filtered, basename(validatedFilePath));
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const contentBytes = Buffer.byteLength(sanitized, "utf8");
     const shouldSave = params.save_to_file || contentBytes > maxSize;
@@ -706,9 +700,13 @@ function maybeApplySpotlighting(result, config) {
   if (!config.enableSpotlighting || result.isError) {
     return result;
   }
+  const first = result.content[0];
+  if (!first || first.type !== "text" || typeof first.text !== "string") {
+    return result;
+  }
   return {
     ...result,
-    content: [{ type: "text", text: applySpotlighting(result.content[0].text, randomUUID()) }]
+    content: [{ type: "text", text: applySpotlighting(first.text, randomUUID()) }]
   };
 }
 function applySharedConfigDefaults(params, config) {

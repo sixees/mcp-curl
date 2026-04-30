@@ -8,17 +8,25 @@
  */
 export const MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1000;
 
+// Single source of truth for the Unicode-attack character class used by both
+// the description and response sanitizers. Covers: C0/C1 control chars
+// (excluding \t \n \r), soft hyphen, zero-width chars, bidi embedding /
+// override / isolation, word-joiner family, BOM, variation selectors, Tags
+// block, U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR (ECMAScript
+// line terminators).
+//
+// Stored as a string fragment (not a RegExp) so each consumer builds its own
+// RegExp instance — RegExp objects with the g flag are stateful and must not
+// be shared across call sites.
+const UNICODE_ATTACK_RANGES =
+    "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\u00AD\\u200B-\\u200F\\u2028\\u2029\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF\\uFE00-\\uFE0F\\u{E0000}-\\u{E007F}";
+
 // NOT exported — g+u flags make regexes stateful; external .test() corrupts lastIndex.
-// Covers: C0/C1 control chars (excluding \t \n \r), soft hyphen, zero-width chars,
-// bidi embedding/override/isolation, word-joiner family, BOM, variation selectors, Tags block,
-// U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR (ECMAScript line terminators).
-const DESC_CONTROL_CHARS =
-    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
+const DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
 
 // NOT exported — same stateful reasoning.
 // Single-pass: same Unicode ranges as DESC_CONTROL_CHARS PLUS 50+ consecutive spaces.
-const RESPONSE_SANITIZE_PATTERN =
-    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
+const RESPONSE_SANITIZE_PATTERN = new RegExp(`[${UNICODE_ATTACK_RANGES}]+| {50,}`, "gu");
 
 // No g flag — safe for repeated .test() without lastIndex accumulation.
 // [\s\S]{0,n} instead of .{0,n} so bounded wildcards match across newlines,
@@ -77,9 +85,18 @@ export function sanitizeDescription(input: string | null | undefined): string {
  *
  * Single-pass sanitization:
  * 1. Unicode attack vectors (bidi overrides, zero-width chars, Tags block, etc.) → removed
- * 2. Whitespace-padding runs (50+ consecutive spaces) → "[WHITESPACE REMOVED]" marker
+ * 2. Whitespace-padding runs (50+ consecutive spaces) → collapsed to a single space
  *
  * Normal whitespace (\t, \n, \r) is preserved to maintain response formatting.
+ *
+ * Whitespace runs collapse to a single space (rather than a marker like
+ * "[WHITESPACE REMOVED]") because callers may JSON.parse the sanitized output
+ * (see response/processor.ts → applyJqFilterToParsed). Inserting a non-whitespace
+ * marker into the middle of a JSON document — between tokens or inside a deeply
+ * pretty-printed value — would break the parse. A single space preserves
+ * JSON validity while still neutralising the padding attack (the hidden tail
+ * is no longer hidden behind a wall of whitespace), and detectInjectionPattern
+ * still fires on the collapsed content for observability.
  *
  * @param input - Response content to sanitize (null/undefined returns "")
  * @returns Sanitized content
@@ -87,8 +104,8 @@ export function sanitizeDescription(input: string | null | undefined): string {
 export function sanitizeResponse(input: string | null | undefined): string {
     if (input == null) return "";
     return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
-        // Whitespace-padding attack: match is 50+ spaces (first char is always a space)
-        if (match[0] === " ") return "[WHITESPACE REMOVED]";
+        // Whitespace-padding attack: collapse 50+ spaces to one (JSON-safe).
+        if (match[0] === " ") return " ";
         // Unicode control/invisible char — remove entirely
         return "";
     });
@@ -99,16 +116,13 @@ export function sanitizeResponse(input: string | null | undefined): string {
  * Observability-only: never suppresses or modifies the content.
  *
  * Call this on sanitized content so that invisible-char-split phrases
- * (e.g., "Ig\u200Bnore" → "Ignore" after sanitizeResponse) are detectable.
+ * (e.g., "Ig​nore" → "Ignore" after sanitizeResponse) are detectable.
  *
  * @param input - Content to scan (already sanitized)
- * @returns Sanitized matched phrase (newlines collapsed, max 200 chars) if detected, null otherwise
+ * @returns true if any injection pattern matched
  */
-export function detectInjectionPattern(input: string): string | null {
-    const match = input.match(INJECTION_PATTERNS);
-    if (!match) return null;
-    // Return the phrase with newlines collapsed — never let raw injected content into logs
-    return match[0].replace(/[\n\r]+/g, " ").slice(0, 200);
+export function detectInjectionPattern(input: string): boolean {
+    return INJECTION_PATTERNS.test(input);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isBinaryContentType, parseMimeType } from "./content-type.js";
+import { isBinaryContentType, parseMimeType, supportsMarkupComments } from "./content-type.js";
 
 describe("parseMimeType", () => {
     it("returns empty string for undefined", () => {
@@ -49,10 +49,20 @@ describe("isBinaryContentType", () => {
         expect(isBinaryContentType("application/javascript")).toBe(false);
     });
 
-    it("returns true for image MIME types", () => {
+    it("returns true for raster/binary image MIME types", () => {
         expect(isBinaryContentType("image/png")).toBe(true);
         expect(isBinaryContentType("image/jpeg")).toBe(true);
-        expect(isBinaryContentType("image/svg+xml")).toBe(true);
+        expect(isBinaryContentType("image/webp")).toBe(true);
+        expect(isBinaryContentType("image/gif")).toBe(true);
+    });
+
+    it("returns false for image/svg+xml (text XML — must go through sanitization)", () => {
+        // SVG is text XML and can carry <script>, comments, and bidi/zero-width
+        // injection just like any other text payload. Despite the image/* prefix,
+        // it must NOT be treated as binary.
+        expect(isBinaryContentType("image/svg+xml")).toBe(false);
+        expect(isBinaryContentType("IMAGE/SVG+XML")).toBe(false);
+        expect(isBinaryContentType("image/svg+xml; charset=utf-8")).toBe(false);
     });
 
     it("returns true for audio/video/font MIME types", () => {
@@ -111,5 +121,49 @@ describe("isBinaryContentType", () => {
     it("returns false for unknown MIME types (safe-default: treat as text)", () => {
         expect(isBinaryContentType("application/x-unknown-format")).toBe(false);
         expect(isBinaryContentType("application/vnd.custom-vendor")).toBe(false);
+    });
+});
+
+describe("supportsMarkupComments", () => {
+    it("returns false for undefined/empty", () => {
+        expect(supportsMarkupComments(undefined)).toBe(false);
+        expect(supportsMarkupComments("")).toBe(false);
+    });
+
+    it("returns true for text/html", () => {
+        expect(supportsMarkupComments("text/html")).toBe(true);
+        expect(supportsMarkupComments("text/html; charset=utf-8")).toBe(true);
+    });
+
+    it("returns true for XHTML", () => {
+        expect(supportsMarkupComments("application/xhtml+xml")).toBe(true);
+    });
+
+    it("returns true for generic XML", () => {
+        expect(supportsMarkupComments("application/xml")).toBe(true);
+        expect(supportsMarkupComments("text/xml")).toBe(true);
+    });
+
+    it("returns true for SVG (image/svg+xml)", () => {
+        expect(supportsMarkupComments("image/svg+xml")).toBe(true);
+    });
+
+    it("returns true for any +xml structured-syntax suffix", () => {
+        expect(supportsMarkupComments("application/atom+xml")).toBe(true);
+        expect(supportsMarkupComments("application/rss+xml")).toBe(true);
+        expect(supportsMarkupComments("application/vnd.custom+xml")).toBe(true);
+    });
+
+    it("is case-insensitive", () => {
+        expect(supportsMarkupComments("TEXT/HTML")).toBe(true);
+        expect(supportsMarkupComments("Application/XHTML+XML")).toBe(true);
+    });
+
+    it("returns false for non-markup content types", () => {
+        expect(supportsMarkupComments("application/json")).toBe(false);
+        expect(supportsMarkupComments("text/plain")).toBe(false);
+        expect(supportsMarkupComments("text/css")).toBe(false);
+        expect(supportsMarkupComments("application/javascript")).toBe(false);
+        expect(supportsMarkupComments("image/png")).toBe(false);
     });
 });

@@ -1,7 +1,8 @@
 // src/lib/utils/sanitize.ts
 var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
-var DESC_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
-var RESPONSE_SANITIZE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
+var UNICODE_ATTACK_RANGES = "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\u00AD\\u200B-\\u200F\\u2028\\u2029\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF\\uFE00-\\uFE0F\\u{E0000}-\\u{E007F}";
+var DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
+var RESPONSE_SANITIZE_PATTERN = new RegExp(`[${UNICODE_ATTACK_RANGES}]+| {50,}`, "gu");
 var INJECTION_PATTERNS = new RegExp(
   [
     // Explicit instruction override
@@ -43,14 +44,12 @@ function sanitizeDescription(input) {
 function sanitizeResponse(input) {
   if (input == null) return "";
   return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
-    if (match[0] === " ") return "[WHITESPACE REMOVED]";
+    if (match[0] === " ") return " ";
     return "";
   });
 }
 function detectInjectionPattern(input) {
-  const match = input.match(INJECTION_PATTERNS);
-  if (!match) return null;
-  return match[0].replace(/[\n\r]+/g, " ").slice(0, 200);
+  return INJECTION_PATTERNS.test(input);
 }
 function applySpotlighting(content, requestId) {
   const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
@@ -97,6 +96,14 @@ function httpOnlyUrl(description) {
     { message: "URL must use http or https scheme" }
   ).describe(description);
 }
+function safeHostname(url, fallback = "unknown") {
+  if (!url) return fallback;
+  try {
+    return new URL(url).hostname || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 // src/lib/utils/content-type.ts
 function parseMimeType(contentType) {
@@ -112,6 +119,9 @@ var BINARY_MIME_PREFIXES = [
   "application/vnd.ms-",
   "application/vnd.openxmlformats-"
 ];
+var TEXTUAL_MIME_OVERRIDES = /* @__PURE__ */ new Set([
+  "image/svg+xml"
+]);
 var BINARY_MIME_EXACT = /* @__PURE__ */ new Set([
   "application/octet-stream",
   "application/pdf",
@@ -132,7 +142,22 @@ var BINARY_MIME_EXACT = /* @__PURE__ */ new Set([
 function isBinaryContentType(contentType) {
   const mime = parseMimeType(contentType);
   if (!mime) return false;
+  if (TEXTUAL_MIME_OVERRIDES.has(mime)) return false;
   return BINARY_MIME_EXACT.has(mime) || BINARY_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix));
+}
+var MARKUP_COMMENT_MIME_EXACT = /* @__PURE__ */ new Set([
+  "text/html",
+  "application/xhtml+xml",
+  "application/xml",
+  "text/xml",
+  "image/svg+xml"
+]);
+var MARKUP_COMMENT_MIME_SUFFIXES = ["+xml"];
+function supportsMarkupComments(contentType) {
+  const mime = parseMimeType(contentType);
+  if (!mime) return false;
+  if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return true;
+  return MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
 }
 
 // src/lib/server/schemas.ts
@@ -975,6 +1000,13 @@ function logInjectionDetected(hostname) {
   lastDetectedMap.set(safeLabel, now);
   console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
 }
+function sanitizeAndDetect(text, label) {
+  const sanitized = sanitizeResponse(text);
+  if (detectInjectionPattern(sanitized)) {
+    logInjectionDetected(label);
+  }
+  return sanitized;
+}
 function startInjectionCleanup() {
   const interval = setInterval(cleanupInjectionDetectionMap, THROTTLE_WINDOW_MS);
   interval.unref();
@@ -1662,13 +1694,6 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 
 // src/lib/response/processor.ts
 var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
-function sanitizeAndDetect(text, hostname) {
-  const sanitized = sanitizeResponse(text);
-  if (detectInjectionPattern(sanitized) !== null) {
-    logInjectionDetected(hostname);
-  }
-  return sanitized;
-}
 async function processResponse(response, options) {
   const rawBytes = Buffer.byteLength(response, "utf8");
   if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
@@ -1677,13 +1702,9 @@ async function processResponse(response, options) {
     );
   }
   let content = response;
-  let hostname = "unknown";
-  try {
-    hostname = new URL(options.url).hostname;
-  } catch {
-  }
+  const hostname = safeHostname(options.url);
   if (!isBinaryContentType(options.contentType)) {
-    if (parseMimeType(options.contentType) === "text/html") {
+    if (supportsMarkupComments(options.contentType)) {
       content = content.replace(HTML_COMMENT_PATTERN, "");
     }
     content = sanitizeAndDetect(content, hostname);
@@ -1877,11 +1898,7 @@ async function executeCurlRequest(params, extra = {}) {
   } catch (error) {
     const rawMessage = getErrorMessage(error);
     const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
-    let hostname = "unknown";
-    try {
-      hostname = new URL(params.url).hostname;
-    } catch {
-    }
+    const hostname = safeHostname(params.url);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";
     console.error(`curl_execute error: [${hostname}] ${errorClass}`);
     return {
@@ -1910,8 +1927,6 @@ export {
   httpOnlyUrl,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   sanitizeDescription,
-  sanitizeResponse,
-  detectInjectionPattern,
   applySpotlighting,
   SESSION,
   startRateLimitCleanup,
@@ -1926,7 +1941,7 @@ export {
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   validateFilePath,
-  logInjectionDetected,
+  sanitizeAndDetect,
   startInjectionCleanup,
   stopInjectionCleanup,
   resolveOutputDir,

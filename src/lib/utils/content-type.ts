@@ -25,6 +25,15 @@ const BINARY_MIME_PREFIXES = [
     "application/vnd.openxmlformats-",
 ] as const;
 
+// Text-readable MIME types that share a prefix with a binary family above
+// (e.g. image/svg+xml is text XML, not a raster image). They must take
+// precedence over the prefix match so they go through normal sanitization
+// — SVG can carry <script> tags, XML comments, and bidi/zero-width chars
+// the same as any other text payload.
+const TEXTUAL_MIME_OVERRIDES: ReadonlySet<string> = new Set([
+    "image/svg+xml",
+]);
+
 const BINARY_MIME_EXACT: ReadonlySet<string> = new Set([
     "application/octet-stream",
     "application/pdf",
@@ -52,8 +61,43 @@ const BINARY_MIME_EXACT: ReadonlySet<string> = new Set([
 export function isBinaryContentType(contentType: string | undefined): boolean {
     const mime = parseMimeType(contentType);
     if (!mime) return false;
+    if (TEXTUAL_MIME_OVERRIDES.has(mime)) return false;
     return (
         BINARY_MIME_EXACT.has(mime) ||
         BINARY_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix))
     );
+}
+
+// Markup MIME types whose grammar supports `<!-- ... -->` comments.
+// HTML, XHTML, generic XML, and SVG all share this syntax — comments in any
+// of them can hide injection content from a quick visual review of the body,
+// so they must be stripped before sanitization.
+const MARKUP_COMMENT_MIME_EXACT: ReadonlySet<string> = new Set([
+    "text/html",
+    "application/xhtml+xml",
+    "application/xml",
+    "text/xml",
+    "image/svg+xml",
+]);
+
+const MARKUP_COMMENT_MIME_SUFFIXES = ["+xml"] as const;
+
+/**
+ * Returns true for MIME types whose grammar supports `<!-- ... -->` comments.
+ * Used to decide whether to strip comments from the response body before
+ * Unicode sanitization (so injections cannot hide inside markup comments).
+ *
+ * Matches:
+ *  - Exact set above (text/html, application/xhtml+xml, application/xml,
+ *    text/xml, image/svg+xml)
+ *  - Any vendor MIME with the `+xml` structured-syntax suffix
+ *    (e.g. application/atom+xml, application/rss+xml)
+ *
+ * Pure: depends only on its input. Safe to import anywhere.
+ */
+export function supportsMarkupComments(contentType: string | undefined): boolean {
+    const mime = parseMimeType(contentType);
+    if (!mime) return false;
+    if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return true;
+    return MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
 }

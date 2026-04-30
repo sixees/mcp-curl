@@ -9,8 +9,8 @@ import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
-import { getErrorMessage, sanitizeResponse, detectInjectionPattern, sanitizeDescription } from "../utils/index.js";
-import { logInjectionDetected } from "../security/index.js";
+import { getErrorMessage, sanitizeDescription } from "../utils/index.js";
+import { sanitizeAndDetect } from "../security/index.js";
 import { createSafeFilenameBase } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
@@ -102,14 +102,9 @@ export async function executeJqQuery(
         // Apply jq filter
         const filtered = applyJqFilter(content, params.jq_filter);
 
-        // Sanitize after filtering — jq may concentrate injection strings from sparse input
-        const sanitized = sanitizeResponse(filtered);
-
-        // Detection-only: scan for injection phrases in the filtered+sanitized result
-        const phrase = detectInjectionPattern(sanitized);
-        if (phrase !== null) {
-            logInjectionDetected(basename(validatedFilePath));
-        }
+        // Sanitize after filtering — jq may concentrate injection strings from
+        // sparse input. Detection logging is throttled per label inside the helper.
+        const sanitized = sanitizeAndDetect(filtered, basename(validatedFilePath));
 
         // Handle result size and file saving
         const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
