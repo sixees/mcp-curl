@@ -3,7 +3,7 @@ import {
   executeCurlRequest,
   resolveBaseUrl,
   sanitizeDescription
-} from "./chunk-6B4CXS7K.js";
+} from "./chunk-IBIOC3XU.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -197,7 +197,13 @@ function generateInputSchema(endpoint) {
     shape[param.name] = schema;
   }
   if (endpoint.response?.filterPresets?.length) {
-    const presetNames = endpoint.response.filterPresets.map((p) => p.name);
+    const presetNames = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name));
+    const uniqueNames = new Set(presetNames);
+    if (uniqueNames.size !== presetNames.length) {
+      throw new Error(
+        `Endpoint "${endpoint.id}" has duplicate filter preset names after sanitization`
+      );
+    }
     shape.filter_preset = buildStringEnum(presetNames).optional().describe("Apply a predefined response filter");
   }
   return z2.object(shape);
@@ -329,11 +335,13 @@ function separateParams(endpoint, params) {
 function resolveJqFilter(endpoint, params) {
   const presetName = params.filter_preset;
   if (presetName && endpoint.response?.filterPresets) {
-    const preset = endpoint.response.filterPresets.find((p) => p.name === presetName);
+    const preset = endpoint.response.filterPresets.find(
+      (p) => sanitizeDescription(p.name) === presetName
+    );
     if (preset) {
       return preset.jqFilter;
     }
-    const available = endpoint.response.filterPresets.map((p) => p.name).join(", ");
+    const available = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name)).join(", ");
     throw new Error(
       `Unknown filter preset "${presetName}". Available presets: ${available}`
     );
@@ -428,10 +436,11 @@ function buildToolDescription(endpoint) {
     parts.push("");
     parts.push("Available filter presets:");
     for (const preset of endpoint.response.filterPresets) {
+      const presetName = sanitizeDescription(preset.name);
       if (preset.description) {
-        parts.push(`  - ${preset.name}: ${sanitizeDescription(preset.description)}`);
+        parts.push(`  - ${presetName}: ${sanitizeDescription(preset.description)}`);
       } else {
-        parts.push(`  - ${preset.name}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
+        parts.push(`  - ${presetName}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
       }
     }
   }

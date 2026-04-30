@@ -535,32 +535,48 @@ function httpOnlyUrl(description) {
   ).describe(description);
 }
 
+// src/lib/utils/content-type.ts
+function isBinaryContentType(contentType) {
+  if (!contentType) return false;
+  const mime = contentType.split(";")[0].trim().toLowerCase();
+  return mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/") || mime.startsWith("font/") || mime.startsWith("multipart/") || mime === "application/octet-stream" || mime === "application/pdf" || mime === "application/wasm" || mime === "application/zip" || mime === "application/gzip" || mime === "application/x-gzip" || mime === "application/x-tar";
+}
+
 // src/lib/utils/sanitize.ts
 var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
-var DESC_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
-var RESPONSE_SANITIZE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
+var DESC_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+/gu;
+var RESPONSE_SANITIZE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFE00-\uFE0F\u{E0000}-\u{E007F}]+| {50,}/gu;
 var INJECTION_PATTERNS = new RegExp(
   [
     // Explicit instruction override
-    "ignore.{0,20}(previous|prior|all|your|above|system).{0,20}instructions?",
-    "disregard.{0,20}(previous|prior|all|your|above|system).{0,20}(instructions?|directives?|rules?)",
-    "forget.{0,20}(previous|prior|all|your|above|everything|instructions?)",
-    "override.{0,20}(your|the|all|previous).{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
+    "ignore[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}instructions?",
+    "disregard[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}(instructions?|directives?|rules?)",
+    "forget[\\s\\S]{0,20}(previous|prior|all|your|above|everything|instructions?)",
+    "override[\\s\\S]{0,20}(your|the|all|previous)[\\s\\S]{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
     // Persona takeover
     "you\\s+are\\s+now\\s+",
-    "act\\s+as\\s+a\\s",
+    "act\\s+as\\s+",
+    "assume\\s+the\\s+role\\s+of",
     "pretend\\s+(you\\s+are|to\\s+be)",
     "roleplay\\s+as",
     "\\bDAN\\b",
     "jailbreak",
+    // Privilege escalation / structural override tokens
+    "\\[ADMIN[\\s_-]*OVERRIDE\\]",
+    "<\\s*admin\\s*>",
+    "<\\s*SYSTEM\\s*>",
+    "<\\s*IMPORTANT\\s*>",
+    "\\[INST\\]",
     // System/prompt manipulation
     "system\\s+prompt",
     "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
     "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
-    "do\\s+not\\s+(follow|apply|use|obey|comply).{0,20}instructions?",
-    // Data exfiltration
+    "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,20}instructions?",
+    // Data exfiltration — file system triggers
+    "read\\s+~\\/\\.(ssh|cursor|env|zshrc|bashrc|config|npmrc|gitconfig)",
+    "pass[\\s\\S]{0,20}(its|the)\\s+contents?\\s+as",
     "exfiltrate",
-    "(extract|exfiltrate|leak|transmit|send\\s+me).{0,30}(passwords?|credentials?|secrets?|tokens?|api.{0,5}keys?)"
+    "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,30}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)"
   ].join("|"),
   "i"
 );
@@ -581,9 +597,11 @@ function detectInjectionPattern(input) {
   return match[0].replace(/[\n\r]+/g, " ").slice(0, 200);
 }
 function applySpotlighting(content, requestId) {
-  return `<response id="${requestId}">
+  const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
+  const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
+  return `${begin}
 ${content}
-</response>`;
+${end}`;
 }
 
 // src/lib/files/output-dir.ts
@@ -916,14 +934,26 @@ async function validateFilePath(filepath) {
 // src/lib/security/detection-logger.ts
 var THROTTLE_WINDOW_MS = 6e4;
 var lastDetectedMap = /* @__PURE__ */ new Map();
+function normalizeDetectionLabel(label) {
+  return label.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").slice(0, 128);
+}
 function logInjectionDetected(hostname) {
+  const safeLabel = normalizeDetectionLabel(hostname);
   const now = Date.now();
-  const lastSeen = lastDetectedMap.get(hostname);
+  const lastSeen = lastDetectedMap.get(safeLabel);
   if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS) {
     return;
   }
-  lastDetectedMap.set(hostname, now);
-  console.error(`[injection-defense] [${hostname}] InjectionDetected`);
+  lastDetectedMap.set(safeLabel, now);
+  console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
+}
+function startInjectionCleanup() {
+  const interval = setInterval(cleanupInjectionDetectionMap, THROTTLE_WINDOW_MS);
+  interval.unref();
+  return interval;
+}
+function stopInjectionCleanup(interval) {
+  clearInterval(interval);
 }
 function cleanupInjectionDetectionMap() {
   const now = Date.now();
@@ -1606,10 +1636,12 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 
 // src/lib/response/processor.ts
 var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
-function isBinaryContentType(contentType) {
-  if (!contentType) return false;
-  const mime = contentType.split(";")[0].trim().toLowerCase();
-  return mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/") || mime === "application/octet-stream" || mime === "application/pdf" || mime.startsWith("font/");
+function sanitizeAndDetect(text, hostname) {
+  const sanitized = sanitizeResponse(text);
+  if (detectInjectionPattern(sanitized) !== null) {
+    logInjectionDetected(hostname);
+  }
+  return sanitized;
 }
 async function processResponse(response, options) {
   const rawBytes = Buffer.byteLength(response, "utf8");
@@ -1619,20 +1651,17 @@ async function processResponse(response, options) {
     );
   }
   let content = response;
+  let hostname = "unknown";
+  try {
+    hostname = new URL(options.url).hostname;
+  } catch {
+  }
   if (!isBinaryContentType(options.contentType)) {
-    if (options.contentType?.startsWith("text/html")) {
+    const normalizedMime = options.contentType?.split(";")[0].trim().toLowerCase() ?? "";
+    if (normalizedMime === "text/html") {
       content = content.replace(HTML_COMMENT_PATTERN, "");
     }
-    content = sanitizeResponse(content);
-    const phrase = detectInjectionPattern(content);
-    if (phrase !== null) {
-      let hostname = "unknown";
-      try {
-        hostname = new URL(options.url).hostname;
-      } catch {
-      }
-      logInjectionDetected(hostname);
-    }
+    content = sanitizeAndDetect(content, hostname);
   }
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);
@@ -1657,6 +1686,9 @@ async function processResponse(response, options) {
       throw error;
     }
     content = applyJqFilterToParsed(parsedData, options.jqFilter);
+    if (!isBinaryContentType(options.contentType)) {
+      content = sanitizeAndDetect(content, hostname);
+    }
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
   const contentBytes = Buffer.byteLength(content, "utf8");
@@ -1870,7 +1902,8 @@ export {
   cleanupTempDir,
   validateFilePath,
   logInjectionDetected,
-  cleanupInjectionDetectionMap,
+  startInjectionCleanup,
+  stopInjectionCleanup,
   resolveOutputDir,
   validateOutputDir,
   CurlExecuteSchema,

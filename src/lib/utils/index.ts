@@ -11,6 +11,8 @@ export {
 
 export { resolveBaseUrl, httpOnlyUrl } from "./url.js";
 
+export { isBinaryContentType } from "./content-type.js";
+
 export {
     sanitizeDescription,
     sanitizeResponse,
