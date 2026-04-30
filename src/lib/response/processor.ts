@@ -5,8 +5,8 @@ import { LIMITS } from "../config/limits.js";
 import { applyJqFilterToParsed } from "../jq/index.js";
 import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
-import { sanitizeResponse, detectInjectionPattern } from "../utils/index.js";
-import { logInjectionDetected } from "../security/index.js";
+import { isBinaryContentType, safeHostname, supportsMarkupComments } from "../utils/index.js";
+import { sanitizeAndDetect } from "../security/index.js";
 
 // Re-export types from lib/types for convenience
 export type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
@@ -14,42 +14,6 @@ import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.j
 
 // NOT exported — g flag makes it stateful; used only with .replace() here (safe)
 const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
-
-/**
- * Sanitize text and log any detected injection patterns.
- * Extracts the repeated sanitizeResponse + detectInjectionPattern + logInjectionDetected
- * call sequence that appears both before and after jq filtering.
- */
-function sanitizeAndDetect(text: string, hostname: string): string {
-    const sanitized = sanitizeResponse(text);
-    if (detectInjectionPattern(sanitized) !== null) {
-        logInjectionDetected(hostname);
-    }
-    return sanitized;
-}
-
-/**
- * Returns true for MIME types that are binary (not text).
- * Binary responses are returned as-is without Unicode sanitization.
- */
-function isBinaryContentType(contentType: string | undefined): boolean {
-    if (!contentType) return false;
-    const mime = contentType.split(";")[0].trim().toLowerCase();
-    return (
-        mime.startsWith("image/") ||
-        mime.startsWith("audio/") ||
-        mime.startsWith("video/") ||
-        mime.startsWith("font/") ||
-        mime.startsWith("multipart/") ||
-        mime === "application/octet-stream" ||
-        mime === "application/pdf" ||
-        mime === "application/wasm" ||
-        mime === "application/zip" ||
-        mime === "application/gzip" ||
-        mime === "application/x-gzip" ||
-        mime === "application/x-tar"
-    );
-}
 
 /**
  * Process response with filtering and size handling.
@@ -82,19 +46,18 @@ export async function processResponse(
     let content = response;
 
     // Resolve hostname once for injection detection logging (used in steps 2–4)
-    let hostname = "unknown";
-    try {
-        hostname = new URL(options.url).hostname;
-    } catch {
-        // URL parsing failed — keep "unknown"
-    }
+    const hostname = safeHostname(options.url);
+
+    // Compute once — content-type classification is reused in steps 2–4 below.
+    const isText = !isBinaryContentType(options.contentType);
 
     // Steps 2-3: Sanitize and detect injection patterns (text responses only)
-    if (!isBinaryContentType(options.contentType)) {
-        // Strip HTML comments before Unicode sanitization to prevent hiding injections in markup.
-        // Normalize MIME before comparison to handle parameters like "text/html; charset=utf-8".
-        const normalizedMime = options.contentType?.split(";")[0].trim().toLowerCase() ?? "";
-        if (normalizedMime === "text/html") {
+    if (isText) {
+        // Strip markup comments (HTML, XHTML, generic XML, SVG, *+xml) before
+        // Unicode sanitization. All these grammars share the `<!-- -->` syntax,
+        // and comments in any of them can hide injection content from a quick
+        // visual review.
+        if (supportsMarkupComments(options.contentType)) {
             content = content.replace(HTML_COMMENT_PATTERN, "");
         }
 
@@ -138,7 +101,7 @@ export async function processResponse(
         // Re-sanitize and re-detect after filter: JSON.parse decodes Unicode escapes in string
         // values (e.g. {"cmd":"Ig\u200Bnore..."} → zero-width space in jq output), so attack
         // chars that were invisible in the raw text become real characters in the filtered result.
-        if (!isBinaryContentType(options.contentType)) {
+        if (isText) {
             content = sanitizeAndDetect(content, hostname);
         }
     }

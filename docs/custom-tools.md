@@ -85,6 +85,34 @@ server.registerCustomTool(
 await server.start("stdio");
 ```
 
+## Sanitizing External Tool Metadata
+
+`registerCustomTool()` auto-sanitizes only `meta.title` and `meta.description`. Anything passed
+through `inputSchema` — `.describe()` strings, `z.enum([...])` literals, `.default(...)` values,
+field key names — reaches the LLM verbatim. When any of these originate from an external source
+(database, user input, remote API, third-party YAML), sanitize them explicitly before registration:
+
+```typescript
+import { McpCurlServer, sanitizeDescription } from "mcp-curl";
+import { z } from "zod";
+
+const toolMeta = await fetchToolMetaFromDb();  // external source
+
+const server = new McpCurlServer();
+
+server.registerCustomTool(
+    "search_records",
+    {
+        title: sanitizeDescription(toolMeta.title),
+        description: sanitizeDescription(toolMeta.description),
+        inputSchema: z.object({
+            query: z.string().describe(sanitizeDescription(toolMeta.queryDescription)),
+        }),
+    },
+    handler
+);
+```
+
 ## Using Instance Utilities
 
 Access config-aware utilities for making HTTP requests within custom tools:

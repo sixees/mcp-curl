@@ -7,7 +7,7 @@ import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
-import { getErrorMessage } from "../utils/index.js";
+import { getErrorMessage, safeHostname } from "../utils/index.js";
 import { executeCommand, buildCurlArgs } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
@@ -214,12 +214,7 @@ export async function executeCurlRequest(
     } catch (error) {
         const rawMessage = getErrorMessage(error);
         const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
-        let hostname = "unknown";
-        try {
-            hostname = new URL(params.url).hostname;
-        } catch {
-            // URL parsing failed — keep "unknown"
-        }
+        const hostname = safeHostname(params.url);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";
         console.error(`curl_execute error: [${hostname}] ${errorClass}`);
         return {

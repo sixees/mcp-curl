@@ -20,8 +20,12 @@ import { resolveBaseUrl, applySpotlighting } from "../utils/index.js";
  * Wrap the first text content item with spotlighting sentinels if enabled.
  * Error results are never spotlighted.
  *
- * Note: `ToolResult.content` is a `[{ type: "text"; text: string }]` tuple —
- * the type system guarantees exactly one text element; no runtime guard is needed.
+ * `ToolResult.content` is typed as `[{ type: "text"; text: string }]`, but the
+ * surrounding `[key: string]: unknown` index signature means a value reaching
+ * this function via cast may not actually have that shape. When spotlighting
+ * is enabled, an unexpected shape fails closed: returning the unwrapped result
+ * would let external content bypass the injection boundary, so we replace it
+ * with an explicit error instead.
  *
  * Note: when the response was saved to a file, content[0] is a file-path
  * acknowledgment message rather than the actual API response data.
@@ -33,9 +37,20 @@ function maybeApplySpotlighting(result: ToolResult, config: Readonly<McpCurlConf
     if (!config.enableSpotlighting || result.isError) {
         return result;
     }
+    const first = result.content[0];
+    if (!first || first.type !== "text" || typeof first.text !== "string") {
+        // Surface the fail-closed event for ops visibility — type system allows the
+        // tuple to be subverted via the index signature, so a violation here points
+        // at a real bug (a custom tool or future executor returning the wrong shape).
+        console.error("[tool-wrapper] invalid result shape — failing closed");
+        return {
+            content: [{ type: "text" as const, text: "Error: invalid tool response shape" }],
+            isError: true,
+        };
+    }
     return {
         ...result,
-        content: [{ type: "text" as const, text: applySpotlighting(result.content[0].text, randomUUID()) }],
+        content: [{ type: "text" as const, text: applySpotlighting(first.text, randomUUID()) }],
     };
 }
 

@@ -24,3 +24,20 @@ export function httpOnlyUrl(description: string) {
         { message: "URL must use http or https scheme" }
     ).describe(description);
 }
+
+/**
+ * Extract a hostname from a URL string for use as a log label.
+ * Returns the configured fallback (default: "unknown") if the URL is malformed
+ * or missing — used in error paths where we still want a stable label without
+ * letting URL-parse failures shadow the original error.
+ *
+ * Pure: depends only on its inputs.
+ */
+export function safeHostname(url: string | undefined, fallback = "unknown"): string {
+    if (!url) return fallback;
+    try {
+        return new URL(url).hostname || fallback;
+    } catch {
+        return fallback;
+    }
+}

@@ -9,7 +9,9 @@ export {
     createConfigError,
 } from "./error.js";
 
-export { resolveBaseUrl, httpOnlyUrl } from "./url.js";
+export { resolveBaseUrl, httpOnlyUrl, safeHostname } from "./url.js";
+
+export { isBinaryContentType, parseMimeType, supportsMarkupComments } from "./content-type.js";
 
 export {
     sanitizeDescription,

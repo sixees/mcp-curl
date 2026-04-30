@@ -14,8 +14,11 @@ import type {
  * Result returned by tool executor functions.
  * Includes index signature for MCP SDK compatibility.
  *
- * Note: content is a tuple type guaranteeing exactly one text element.
- * All tool implementations return single-element content arrays.
+ * `content` is *declared* as a single-element tuple, but the `[key: string]: unknown`
+ * index signature relaxes structural enforcement — a value reaching consumers via
+ * cast or spread from a less-specific source may not actually have that shape.
+ * Consumers that depend on the tuple shape (notably the spotlighting boundary in
+ * `tool-wrapper.ts`) MUST runtime-check `content[0]` before using it.
  */
 export interface ToolResult {
     [key: string]: unknown;

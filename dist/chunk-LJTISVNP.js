@@ -9,37 +9,38 @@ import {
   applyDefaultHeaders,
   applyJqFilter,
   applySpotlighting,
-  cleanupInjectionDetectionMap,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   createSafeFilenameBase,
-  detectInjectionPattern,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
   httpOnlyUrl,
   isValidSessionId,
-  logInjectionDetected,
   parsePort,
   registerCurlExecuteTool,
   resolveBaseUrl,
   resolveOutputDir,
   safeStringCompare,
+  sanitizeAndDetect,
   sanitizeDescription,
-  sanitizeResponse,
+  startInjectionCleanup,
   startRateLimitCleanup,
+  stopInjectionCleanup,
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-6B4CXS7K.js";
+} from "./chunk-7HLTS2B7.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
 var sessionManager = null;
 var rateLimitCleanupInterval = null;
-function initializeLifecycle(sessions, rateLimitInterval) {
+var injectionCleanupInterval = null;
+function initializeLifecycle(sessions, rateLimitInterval, injectionInterval) {
   sessionManager = sessions;
   rateLimitCleanupInterval = rateLimitInterval;
+  injectionCleanupInterval = injectionInterval;
 }
 function setHttpServer(server) {
   httpServer = server;
@@ -72,6 +73,9 @@ Received ${signal}, shutting down gracefully...`);
   }
   if (rateLimitCleanupInterval) {
     stopRateLimitCleanup(rateLimitCleanupInterval);
+  }
+  if (injectionCleanupInterval) {
+    stopInjectionCleanup(injectionCleanupInterval);
   }
   await cleanupTempDir();
   process.exit(hasError ? 1 : 0);
@@ -154,11 +158,7 @@ async function executeJqQuery(params, _extra) {
     const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : void 0;
     const content = await readFile(validatedFilePath, { encoding: "utf-8" });
     const filtered = applyJqFilter(content, params.jq_filter);
-    const sanitized = sanitizeResponse(filtered);
-    const phrase = detectInjectionPattern(sanitized);
-    if (phrase !== null) {
-      logInjectionDetected(basename(validatedFilePath));
-    }
+    const sanitized = sanitizeAndDetect(filtered, basename(validatedFilePath));
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const contentBytes = Buffer.byteLength(sanitized, "utf8");
     const shouldSave = params.save_to_file || contentBytes > maxSize;
@@ -189,7 +189,7 @@ async function executeJqQuery(params, _extra) {
   } catch (error) {
     const errorMessage = getErrorMessage(error);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";
-    console.error(`jq_query error: [${basename(params.filepath)}] ${errorClass}`);
+    console.error(`jq_query error: [${sanitizeDescription(basename(params.filepath))}] ${errorClass}`);
     return {
       content: [
         {
@@ -701,6 +701,23 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
 }
 
 // src/lib/extensible/tool-wrapper.ts
+function maybeApplySpotlighting(result, config) {
+  if (!config.enableSpotlighting || result.isError) {
+    return result;
+  }
+  const first = result.content[0];
+  if (!first || first.type !== "text" || typeof first.text !== "string") {
+    console.error("[tool-wrapper] invalid result shape \u2014 failing closed");
+    return {
+      content: [{ type: "text", text: "Error: invalid tool response shape" }],
+      isError: true
+    };
+  }
+  return {
+    ...result,
+    content: [{ type: "text", text: applySpotlighting(first.text, randomUUID()) }]
+  };
+}
 function applySharedConfigDefaults(params, config) {
   if (config.outputDir && !params.output_dir) {
     params.output_dir = config.outputDir;
@@ -740,13 +757,7 @@ function registerCurlToolWithHooks(server, options) {
     }
     const transformedParams = applyConfigTransformsCurl(params, config);
     const result = await executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
-    if (config.enableSpotlighting && !result.isError && result.content.length > 0) {
-      return {
-        ...result,
-        content: [{ type: "text", text: applySpotlighting(result.content[0].text, randomUUID()) }]
-      };
-    }
-    return result;
+    return maybeApplySpotlighting(result, config);
   };
   server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, handler);
 }
@@ -761,13 +772,7 @@ function registerJqToolWithHooks(server, options) {
     }
     const transformedParams = applyConfigTransformsJq(params, config);
     const result = await executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
-    if (config.enableSpotlighting && !result.isError && result.content.length > 0) {
-      return {
-        ...result,
-        content: [{ type: "text", text: applySpotlighting(result.content[0].text, randomUUID()) }]
-      };
-    }
-    return result;
+    return maybeApplySpotlighting(result, config);
   };
   server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
@@ -909,7 +914,10 @@ var McpCurlServer = class {
    * implement it within the handler function itself.
    *
    * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
-   * @param meta - Tool metadata (title, description, inputSchema)
+   * @param meta - Tool metadata (title, description, inputSchema). title and description
+   *   are sanitized automatically. inputSchema field descriptions (.describe() strings)
+   *   are NOT sanitized — callers must sanitize any field descriptions sourced from
+   *   external input using sanitizeDescription() before registering.
    * @param handler - Tool handler function
    * @returns this for chaining
    * @throws Error if called after start()
@@ -947,12 +955,15 @@ var McpCurlServer = class {
     if (this._customTools.some((t) => t.name === name)) {
       throw new Error(`Custom tool "${name}" is already registered`);
     }
+    const sanitizedTitle = sanitizeDescription(meta.title);
+    const sanitizedDesc = sanitizeDescription(meta.description);
+    const truncatedDesc = sanitizedDesc.slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH);
     const sanitizedMeta = {
       ...meta,
-      title: sanitizeDescription(meta.title),
-      description: sanitizeDescription(meta.description).slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH)
+      title: sanitizedTitle,
+      description: truncatedDesc
     };
-    if (sanitizedMeta.description.length < meta.description.length) {
+    if (sanitizedDesc.length > MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) {
       console.warn(
         `McpCurlServer.registerCustomTool("${name}"): description truncated to ${MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH} chars`
       );
@@ -1018,8 +1029,7 @@ var McpCurlServer = class {
     try {
       await cleanupOrphanedTempDirs();
       this._rateLimitInterval = startRateLimitCleanup();
-      this._injectionCleanupInterval = setInterval(cleanupInjectionDetectionMap, 6e4);
-      this._injectionCleanupInterval.unref();
+      this._injectionCleanupInterval = startInjectionCleanup();
       this._server = this.createConfiguredServer();
       if (transport === "http") {
         await this.startHttp();
@@ -1050,7 +1060,7 @@ var McpCurlServer = class {
         this._rateLimitInterval = null;
       }
       if (this._injectionCleanupInterval) {
-        clearInterval(this._injectionCleanupInterval);
+        stopInjectionCleanup(this._injectionCleanupInterval);
         this._injectionCleanupInterval = null;
       }
       this._server = null;
@@ -1118,7 +1128,7 @@ var McpCurlServer = class {
       stopRateLimitCleanup(this._rateLimitInterval);
     }
     if (this._injectionCleanupInterval) {
-      clearInterval(this._injectionCleanupInterval);
+      stopInjectionCleanup(this._injectionCleanupInterval);
     }
     try {
       await cleanupTempDir();
@@ -1433,7 +1443,8 @@ async function runHTTP() {
   const sessionManager2 = new SessionManager();
   sessionManager2.startCleanup();
   const rateLimitInterval = startRateLimitCleanup();
-  initializeLifecycle(sessionManager2, rateLimitInterval);
+  const injectionInterval = startInjectionCleanup();
+  initializeLifecycle(sessionManager2, rateLimitInterval, injectionInterval);
   const app = createHttpApp({
     createMcpServer: () => {
       const server = createServer();

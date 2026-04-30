@@ -1,6 +1,8 @@
 // src/lib/security/detection-logger.ts
 // Throttled logger for prompt injection pattern detection events
 
+import { sanitizeResponse, detectInjectionPattern } from "../utils/sanitize.js";
+
 const THROTTLE_WINDOW_MS = 60_000; // 1 detection log per hostname per 60 seconds; also used as cleanup interval
 
 // Private map: hostname → timestamp of last logged detection
@@ -31,6 +33,26 @@ export function logInjectionDetected(hostname: string): void {
     }
     lastDetectedMap.set(safeLabel, now);
     console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
+}
+
+/**
+ * Sanitize text and log any detected injection patterns.
+ *
+ * Bundles the sanitize → detect → log triplet that callers ran by hand.
+ * Detection-only: the sanitized text is returned regardless of whether
+ * an injection pattern was matched. Logging is throttled per label by
+ * `logInjectionDetected`.
+ *
+ * @param text - Raw response text (or filtered output) to sanitize
+ * @param label - Hostname or filename used as the log label
+ * @returns Sanitized text
+ */
+export function sanitizeAndDetect(text: string, label: string): string {
+    const sanitized = sanitizeResponse(text);
+    if (detectInjectionPattern(sanitized)) {
+        logInjectionDetected(label);
+    }
+    return sanitized;
 }
 
 /**

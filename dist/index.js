@@ -5,19 +5,22 @@ import {
   registerAllCapabilities,
   registerShutdownHandlers,
   runHTTP
-} from "./chunk-Z2GL7Z65.js";
+} from "./chunk-LJTISVNP.js";
 import {
   cleanupOrphanedTempDirs,
+  startInjectionCleanup,
   startRateLimitCleanup,
+  stopInjectionCleanup,
   stopRateLimitCleanup
-} from "./chunk-6B4CXS7K.js";
+} from "./chunk-7HLTS2B7.js";
 
 // src/lib/transports/stdio.ts
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 async function runStdio() {
   await cleanupOrphanedTempDirs();
   const rateLimitInterval = startRateLimitCleanup();
-  initializeLifecycle(null, rateLimitInterval);
+  const injectionInterval = startInjectionCleanup();
+  initializeLifecycle(null, rateLimitInterval, injectionInterval);
   try {
     const server = createServer();
     registerAllCapabilities(server);
@@ -26,6 +29,7 @@ async function runStdio() {
     console.error("cURL MCP server running on stdio");
   } catch (error) {
     stopRateLimitCleanup(rateLimitInterval);
+    stopInjectionCleanup(injectionInterval);
     throw error;
   }
 }
