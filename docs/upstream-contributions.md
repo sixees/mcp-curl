@@ -274,7 +274,7 @@ stable.
 
 ## Recommended sequencing
 
-```
+```text
 Day 0  ──→  Open upstream PRs in this order (all small, independent):
           1. fix(security): harden httpOnlyUrl scheme check via WHATWG URL parser
           2. refactor(schema): consume httpOnlyUrl helper in built-in schemas

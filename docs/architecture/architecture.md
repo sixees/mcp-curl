@@ -167,7 +167,7 @@ Two fixed-window counters (per-host, per-client) — `security/rate-limiter.ts`.
 - Zod schemas (`server/schemas.ts`) — `url` http/https refine, `max_redirects 0–50`, `timeout 1–300 s`, `max_result_size 1 KB–1 MB`.
 - **Command allowlist** — `ALLOWED_COMMANDS = ["curl"] as const` checked at compile time and runtime.
 - **`spawn()` without shell** — argv array; **shell-level command injection is structurally impossible.**
-- **Flag injection.** Header names accept any non-CR/LF/NUL string (Zod `z.record(z.string(), z.string())`); only `validateNoCRLF` filters CR/LF/NUL. Flag injection is prevented by argv ordering (`args.push("-H", \`${key}: ${value}\`)`) — every future builder edit must preserve this. Header names are not constrained to RFC 7230 `tchar`, so malformed names with whitespace or `:` may produce inconsistent behavior at downstream proxies.
+- **Flag injection.** Header names accept any non-CR/LF/NUL string (Zod `z.record(z.string(), z.string())`); only `validateNoCRLF` filters CR/LF/NUL. Flag injection is prevented by argv ordering (``args.push("-H", `${key}: ${value}`)``) — every future builder edit must preserve this. Header names are not constrained to RFC 7230 `tchar`, so malformed names with whitespace or `:` may produce inconsistent behavior at downstream proxies.
 - **CRLF prevention** — `validateNoCRLF` rejects `\r`, `\n`, `\0` in header names/values, form fields, user agent, basic-auth, bearer token.
 - **`@`-file exfil prevention** — bodies use `--data-raw`, forms use `--form-string` so cURL never reads from `@filename`.
 - **Per-request metadata separator** — random UUID prevents response-content collision attacks against the `-w` boundary; tail-only `lastIndexOf` window adds defense in depth.
