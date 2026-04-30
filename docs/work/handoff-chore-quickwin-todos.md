@@ -72,6 +72,42 @@ Quick-win follow-ups from the PR #20 (prompt-injection defense) review. Pulls to
 - `npm test` — 484 passed, 7 skipped
 - New regression test covers fail-closed branch in `maybeApplySpotlighting`
 
+## Review Comments Addressed — 2026-04-30 (round 2 — comprehensive review)
+
+Six parallel reviewers (simplicity, security, performance, TypeScript, architecture, pattern-recognition) ran against the PR. No Critical findings. One Important production bug + four Suggestion fixes applied.
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `runStdio()`/`runHTTP()` never call `startInjectionCleanup()` — `lastDetectedMap` grows unbounded in production stdio/HTTP transports | pattern-recognition | Fix needed (real bug) | Wired `startInjectionCleanup`/`stopInjectionCleanup` through `lifecycle.ts` (`initializeLifecycle` now takes the injection interval), and started/stopped it in both `runStdio()` and `runHTTP()`. Fixed in `2ce1f05`. |
+| `ToolResult` docstring claims tuple guarantees one text element, but the `[key: string]: unknown` index signature defeats the tuple type | typescript-reviewer | Doc fix | Rewrote the docstring on `types.ts:13-21` to flag the index-signature hazard and require consumers to runtime-check. |
+| `applySpotlighting(content, "")` would silently emit a degraded sentinel | typescript-reviewer | Defensive fix | Added a non-empty `requestId` invariant — throws if violated. Regression test added. |
+| Fail-closed branch in `maybeApplySpotlighting` produced no operational signal | security-sentinel | Suggestion | Added a single `console.error` line so ops can see when an executor returns the wrong shape. |
+| Redundant `isBinaryContentType(options.contentType)` recomputation on `processor.ts:101` | code-simplicity | Suggestion | Hoisted `const isText = !isBinaryContentType(...)` and reused at both call sites. |
+
+### Findings deferred
+| Finding | Reviewer | Reason |
+|---------|----------|--------|
+| YAML-driven tools bypass spotlighting | security-sentinel | Already documented in `types/public.ts:38`; bigger feature decision |
+| Custom-tool Zod `.describe()` field is not auto-sanitized | security-sentinel | Explicitly delegated to caller per documented contract on `registerCustomTool` |
+| Whitespace-padding edge cases (tabs, NBSP, 49-space threshold) | security-sentinel | Threat-model scope; warrants a dedicated PR |
+| Detection patterns trivially bypassable (homoglyphs, leetspeak, NFKC) | security-sentinel | Observability-only; warrants a dedicated PR with bypass tests |
+| Re-export `applySpotlighting`/`sanitizeResponse` for symmetry | typescript-reviewer | Public API design decision |
+| `ConfigDefaultableParams` constraint could use `satisfies` | typescript-reviewer | Cosmetic |
+| Sanitize at YAML load time instead of every `generator.ts` call | code-simplicity | Sound but larger refactor; current calls are pure and cheap |
+| Test setup duplication in `tool-wrapper.test.ts` spotlighting tests | pattern-recognition | Cosmetic |
+
+### Files Modified (round 2)
+- `src/lib/extensible/tool-wrapper.ts`
+- `src/lib/extensible/types.ts`
+- `src/lib/response/processor.ts`
+- `src/lib/server/lifecycle.ts`
+- `src/lib/transports/http.ts`
+- `src/lib/transports/stdio.ts`
+- `src/lib/utils/sanitize.ts`
+- `src/lib/utils/sanitize.test.ts`
+
 ## Follow-up work
 
-- None outstanding from this review pass.
+- Consider closing the spotlighting gap for `generateToolDefinitions()` tools (or formally document the asymmetry on the `enableSpotlighting` config field).
+- Consider sanitization improvements: NBSP/tab whitespace runs, NFKC normalization before injection-pattern detection, expanded `UNICODE_ATTACK_RANGES` coverage (Hangul fillers, U+180E). All observability-only changes.
