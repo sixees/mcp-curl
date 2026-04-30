@@ -120,8 +120,48 @@ describe("spotlighting (maybeApplySpotlighting)", () => {
         expect(text).not.toContain("<response");
     });
 
-    // Note: ToolResult guarantees content[0].type === "text" via the type system.
-    // Non-text content items cannot be returned by the executor in practice.
+    it("fails closed when result shape is invalid (spotlighting enabled)", async () => {
+        // ToolResult is typed as [{ type: "text"; text: string }] but the index
+        // signature lets cast values bypass the type. If a malformed result
+        // reaches this function with spotlighting on, returning it unwrapped
+        // would let external content escape the injection boundary — so we
+        // replace it with an explicit error instead.
+        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
+        const fakeServer = {
+            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
+                capturedHandler = handler;
+            },
+        };
+
+        // Executor returns an invalid shape: content[0] is not the expected
+        // { type: "text"; text: string }
+        const mockExecutor = vi.fn().mockResolvedValue({
+            content: [{ type: "image", data: "AAAA" }],
+            isError: false,
+        });
+
+        registerCurlToolWithHooks(fakeServer as never, {
+            executor: mockExecutor as never,
+            enabled: true,
+            config: { enableSpotlighting: true } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [], onError: [] },
+        });
+
+        const result = await capturedHandler!({
+            url: "https://example.com",
+            follow_redirects: true,
+            insecure: false,
+            verbose: false,
+            include_headers: false,
+            compressed: true,
+            include_metadata: false,
+        }, { sessionId: undefined });
+
+        const r = result as { content: { type: string; text: string }[]; isError?: boolean };
+        expect(r.isError).toBe(true);
+        expect(r.content[0].type).toBe("text");
+        expect(r.content[0].text).toBe("Error: invalid tool response shape");
+    });
 });
 
 function makeParams(overrides: Partial<CurlExecuteInput> = {}): CurlExecuteInput {

@@ -22,9 +22,10 @@ import { resolveBaseUrl, applySpotlighting } from "../utils/index.js";
  *
  * `ToolResult.content` is typed as `[{ type: "text"; text: string }]`, but the
  * surrounding `[key: string]: unknown` index signature means a value reaching
- * this function via cast may not actually have that shape. The runtime guard
- * keeps spotlighting fail-safe: an unexpected shape passes through unchanged
- * instead of throwing.
+ * this function via cast may not actually have that shape. When spotlighting
+ * is enabled, an unexpected shape fails closed: returning the unwrapped result
+ * would let external content bypass the injection boundary, so we replace it
+ * with an explicit error instead.
  *
  * Note: when the response was saved to a file, content[0] is a file-path
  * acknowledgment message rather than the actual API response data.
@@ -38,7 +39,10 @@ function maybeApplySpotlighting(result: ToolResult, config: Readonly<McpCurlConf
     }
     const first = result.content[0];
     if (!first || first.type !== "text" || typeof first.text !== "string") {
-        return result;
+        return {
+            content: [{ type: "text" as const, text: "Error: invalid tool response shape" }],
+            isError: true,
+        };
     }
     return {
         ...result,
