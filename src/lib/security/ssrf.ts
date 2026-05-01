@@ -10,6 +10,7 @@ import {
     isLocalhostIp,
     isAllowedLocalhostPort,
 } from "../config/security/ssrf.js";
+import { isAllowedUrlScheme } from "../config/security/url-schemes.js";
 import type { UrlValidationResult } from "../types/index.js";
 import { getErrorMessage } from "../utils/index.js";
 
@@ -82,8 +83,8 @@ export async function validateUrlAndResolveDns(
     const hostname = parsed.hostname.toLowerCase();
     const port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === "https:" ? 443 : 80);
 
-    // Only allow http:// and https:// protocols
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    // Only allow schemes from the shared allowlist (defense-in-depth alongside the schema-layer check in utils/url.ts)
+    if (!isAllowedUrlScheme(parsed.protocol)) {
         throw new Error(`Protocol "${parsed.protocol}" is not allowed - only http:// and https:// are supported`);
     }
 

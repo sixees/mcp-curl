@@ -20,3 +20,9 @@ export {
     isBlockedSystemDirectory,
     createBlockedDirectoryError,
 } from "./blocked-dirs.js";
+
+export {
+    ALLOWED_URL_SCHEMES,
+    ALLOWED_URL_SCHEMES_CURL_FLAG,
+    isAllowedUrlScheme,
+} from "./url-schemes.js";

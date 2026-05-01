@@ -1,5 +1,14 @@
 // src/lib/utils/url.ts
 import { z } from "zod";
+
+// src/lib/config/security/url-schemes.ts
+var ALLOWED_URL_SCHEMES = ["http:", "https:"];
+var ALLOWED_URL_SCHEMES_CURL_FLAG = `=${ALLOWED_URL_SCHEMES.map((s) => s.replace(":", "")).join(",")}`;
+function isAllowedUrlScheme(protocol) {
+  return ALLOWED_URL_SCHEMES.includes(protocol);
+}
+
+// src/lib/utils/url.ts
 function resolveBaseUrl(baseUrl, path) {
   const base = baseUrl.replace(/\/$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
@@ -9,7 +18,7 @@ function httpOnlyUrl(description) {
   return z.url().refine(
     (url) => {
       try {
-        return ["http:", "https:"].includes(new URL(url).protocol);
+        return isAllowedUrlScheme(new URL(url).protocol);
       } catch {
         return false;
       }
@@ -757,7 +766,7 @@ async function validateUrlAndResolveDns(url, options) {
   }
   const hostname = parsed.hostname.toLowerCase();
   const port = parsed.port ? parseInt(parsed.port, 10) : parsed.protocol === "https:" ? 443 : 80;
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+  if (!isAllowedUrlScheme(parsed.protocol)) {
     throw new Error(`Protocol "${parsed.protocol}" is not allowed - only http:// and https:// are supported`);
   }
   if (isBlockedHostname(hostname)) {
@@ -1170,7 +1179,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
 // src/lib/execution/curl-args-builder.ts
 function buildCurlArgs(params) {
   const args = [];
-  args.push("--proto", "=http,https");
+  args.push("--proto", ALLOWED_URL_SCHEMES_CURL_FLAG);
   if (params.method) {
     args.push("-X", params.method.toUpperCase());
   }
@@ -1194,7 +1203,7 @@ function buildCurlArgs(params) {
   if (params.follow_redirects !== false) {
     args.push("-L");
     args.push("--max-redirs", String(params.max_redirects ?? LIMITS.MAX_REDIRECTS));
-    args.push("--proto-redir", "=http,https");
+    args.push("--proto-redir", ALLOWED_URL_SCHEMES_CURL_FLAG);
   }
   if (params.insecure) {
     args.push("-k");

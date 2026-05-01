@@ -3,6 +3,7 @@
 
 import { validateNoCRLF } from "../security/index.js";
 import { LIMITS } from "../config/index.js";
+import { ALLOWED_URL_SCHEMES_CURL_FLAG } from "../config/security/url-schemes.js";
 
 /**
  * Parameters for building cURL command arguments.
@@ -70,8 +71,8 @@ export interface CurlArgsParams {
 export function buildCurlArgs(params: CurlArgsParams): string[] {
     const args: string[] = [];
 
-    // Restrict initial request to http/https only (defense-in-depth alongside URL validation in ssrf.ts)
-    args.push("--proto", "=http,https");
+    // Restrict initial request to the shared scheme allowlist (defense-in-depth alongside URL validation in ssrf.ts)
+    args.push("--proto", ALLOWED_URL_SCHEMES_CURL_FLAG);
 
     // Method
     if (params.method) {
@@ -106,8 +107,8 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
     if (params.follow_redirects !== false) {
         args.push("-L");
         args.push("--max-redirs", String(params.max_redirects ?? LIMITS.MAX_REDIRECTS));
-        // Restrict redirect protocols to http/https only (prevents file://, ftp://, etc. via redirects)
-        args.push("--proto-redir", "=http,https");
+        // Restrict redirect protocols to the shared scheme allowlist (prevents file://, ftp://, etc. via redirects)
+        args.push("--proto-redir", ALLOWED_URL_SCHEMES_CURL_FLAG);
     }
 
     // Insecure (skip SSL verification)

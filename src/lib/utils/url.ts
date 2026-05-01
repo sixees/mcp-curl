@@ -2,6 +2,7 @@
 // URL resolution utilities
 
 import { z } from "zod";
+import { isAllowedUrlScheme } from "../config/security/url-schemes.js";
 
 /**
  * Strip trailing slash from a base URL and prepend it to a path,
@@ -27,7 +28,7 @@ export function httpOnlyUrl(description: string) {
     return z.url().refine(
         (url) => {
             try {
-                return ["http:", "https:"].includes(new URL(url).protocol);
+                return isAllowedUrlScheme(new URL(url).protocol);
             } catch {
                 return false;
             }
