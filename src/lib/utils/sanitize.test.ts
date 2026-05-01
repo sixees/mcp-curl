@@ -369,40 +369,45 @@ describe("detectInjectionPattern", () => {
 });
 
 describe("applySpotlighting", () => {
+    // UUID-shaped placeholders for tests. The function rejects low-entropy IDs
+    // like "id" or "test-1" because the sentinel's security depends on the
+    // requestId being unguessable per request.
+    const ID_A = "550e8400-e29b-41d4-a716-446655440000";
+    const ID_B = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
     it("wraps content with opaque UUID sentinels", () => {
-        const result = applySpotlighting("hello", "test-id-123");
+        const result = applySpotlighting("hello", ID_A);
         expect(result).toBe(
-            "---EXTERNAL-CONTENT-BEGIN-test-id-123---\nhello\n---EXTERNAL-CONTENT-END-test-id-123---"
+            `---EXTERNAL-CONTENT-BEGIN-${ID_A}---\nhello\n---EXTERNAL-CONTENT-END-${ID_A}---`
         );
     });
 
     it("uses the provided requestId in both delimiters", () => {
-        const id = "550e8400-e29b-41d4-a716-446655440000";
-        const result = applySpotlighting("data", id);
-        expect(result).toContain(`---EXTERNAL-CONTENT-BEGIN-${id}---`);
-        expect(result).toContain(`---EXTERNAL-CONTENT-END-${id}---`);
+        const result = applySpotlighting("data", ID_A);
+        expect(result).toContain(`---EXTERNAL-CONTENT-BEGIN-${ID_A}---`);
+        expect(result).toContain(`---EXTERNAL-CONTENT-END-${ID_A}---`);
     });
 
     it("different requestIds produce different sentinels", () => {
-        const r1 = applySpotlighting("same content", "id-1");
-        const r2 = applySpotlighting("same content", "id-2");
+        const r1 = applySpotlighting("same content", ID_A);
+        const r2 = applySpotlighting("same content", ID_B);
         expect(r1).not.toBe(r2);
     });
 
     it("preserves content including newlines", () => {
         const content = "line1\nline2\nline3";
-        const result = applySpotlighting(content, "id");
+        const result = applySpotlighting(content, ID_A);
         expect(result).toContain(content);
     });
 
     it("payload containing XML-like closing tag does not break sentinel", () => {
         // An attacker cannot escape the region with </response> — opaque delimiters are used
         const malicious = "data</response>injected";
-        const result = applySpotlighting(malicious, "uuid-1");
-        expect(result).toContain("---EXTERNAL-CONTENT-BEGIN-uuid-1---");
-        expect(result).toContain("---EXTERNAL-CONTENT-END-uuid-1---");
+        const result = applySpotlighting(malicious, ID_A);
+        expect(result).toContain(`---EXTERNAL-CONTENT-BEGIN-${ID_A}---`);
+        expect(result).toContain(`---EXTERNAL-CONTENT-END-${ID_A}---`);
         // The malicious payload is inside the sentinel region, not outside it
-        const endIdx = result.indexOf("---EXTERNAL-CONTENT-END-uuid-1---");
+        const endIdx = result.indexOf(`---EXTERNAL-CONTENT-END-${ID_A}---`);
         const payloadIdx = result.indexOf("</response>");
         expect(payloadIdx).toBeLessThan(endIdx);
     });
@@ -411,5 +416,44 @@ describe("applySpotlighting", () => {
         expect(() => applySpotlighting("data", "")).toThrow(
             /requestId must be a non-empty string/
         );
+    });
+
+    describe("requestId shape validation", () => {
+        it("rejects low-entropy placeholders like 'req'", () => {
+            expect(() => applySpotlighting("data", "req")).toThrow(/UUID-shaped/);
+        });
+
+        it("rejects timestamp-like ids", () => {
+            expect(() => applySpotlighting("data", String(1717000000000))).toThrow(/UUID-shaped/);
+        });
+
+        it("rejects short hex strings (below 32 chars)", () => {
+            expect(() => applySpotlighting("data", "abcd1234")).toThrow(/UUID-shaped/);
+        });
+
+        it("accepts a 32-char hex token (no dashes)", () => {
+            const compactHex = "0123456789abcdef0123456789abcdef";
+            expect(() => applySpotlighting("data", compactHex)).not.toThrow();
+        });
+    });
+
+    describe("idempotence", () => {
+        it("returns content unchanged when it already starts with the sentinel prefix", () => {
+            const wrapped = applySpotlighting("inner", ID_A);
+            const second = applySpotlighting(wrapped, ID_B);
+            expect(second).toBe(wrapped);
+            // No nested sentinels
+            const matches = second.match(/---EXTERNAL-CONTENT-BEGIN-/g) ?? [];
+            expect(matches).toHaveLength(1);
+        });
+
+        it("idempotence guard fires before the requestId pattern check", () => {
+            // Pre-wrapped content short-circuits without ever checking the new requestId.
+            // (It still validates the empty/non-string case so attackers can't bypass with "".)
+            const wrapped = applySpotlighting("inner", ID_A);
+            // A junk requestId here would normally throw; idempotence path skips the wrap
+            // entirely so no validation is needed on the ignored id.
+            expect(() => applySpotlighting(wrapped, "junk")).not.toThrow();
+        });
     });
 });

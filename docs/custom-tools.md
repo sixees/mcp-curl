@@ -141,36 +141,52 @@ server.registerCustomTool(
 
 When a custom tool returns content sourced from an external system (HTTP body,
 file content, third-party API response), it crosses the same trust boundary the
-built-in `curl_execute` tool defends. The library exports three response-side
-helpers so custom tools can replicate the same defence without deep-importing or
-reimplementing it:
+built-in `curl_execute` tool defends. The library exports response-side
+helpers so custom tools can replicate the same defence without deep-importing
+or reimplementing it.
 
-- `sanitizeResponse(text)` — strip Unicode invisibles + collapse whitespace-padding
-  attacks.
-- `detectInjectionPattern(text)` — return `true` if the text matches a known
-  injection-defense pattern; intended for stderr logging only (does not modify
-  content).
-- `applySpotlighting(text, sentinel)` — wrap the text with UUID-keyed sentinels so
-  the LLM treats the content as data, not instructions. Use a fresh UUID per
-  request — sessions are user-scoped; sentinels need per-prompt isolation.
+**Recommended:** use `sanitizeAndDetect(text, label)` — it locks the
+sanitize → detect → log ordering and is the same composer the built-in tools
+use internally:
 
 ```typescript
-import {
-    applySpotlighting,
-    detectInjectionPattern,
-    sanitizeResponse,
-} from "mcp-curl";
+import { sanitizeAndDetect, applySpotlighting } from "mcp-curl";
 import { randomUUID } from "node:crypto";
 
-const sanitized = sanitizeResponse(externalContent);
-if (detectInjectionPattern(sanitized)) {
-    // Observability only — sanitization already neutralised the content.
-    console.error(`[injection-defense] [${hostname}] InjectionDetected`);
-}
+const sanitized = sanitizeAndDetect(externalContent, hostname);
 const wrapped = config.enableSpotlighting
     ? applySpotlighting(sanitized, randomUUID())
     : sanitized;
 ```
+
+If you need finer-grained control (custom telemetry sink, alternative
+detection threshold), the underlying primitives are also exported:
+
+- `sanitizeResponse(text)` — strip Unicode invisibles + collapse whitespace-padding
+  attacks.
+- `detectInjectionPattern(text)` — return `true` if the (already-sanitized) text
+  matches a known injection-defense pattern. **Observability only** — see the
+  warning below.
+- `logInjectionDetected(label)` — throttled-per-label stderr log emitter that
+  matches the built-in default. Use this if you replace `sanitizeAndDetect`
+  with your own composer; it keeps the log format consistent across the server.
+- `applySpotlighting(text, requestId)` — wrap the text with UUID-keyed
+  sentinels so the LLM treats the content as data, not instructions. Use a
+  fresh UUID per request — sessions are user-scoped; sentinels need per-prompt
+  isolation. The function is idempotent: passing already-wrapped content
+  through it is a no-op, so a custom tool that pre-wraps will not be
+  double-wrapped by the framework.
+
+> **⚠️ Do not use `detectInjectionPattern` to refuse, redact, or alter
+> responses.** Pattern detection is unreliable as an enforcement boundary:
+> it has false positives, is trivially bypassed (paraphrase, encoding, novel
+> jailbreak phrasing), and gating on it leaks the rule-set to whoever can
+> probe the behaviour. The defence layer is `sanitizeResponse` (which always
+> runs) plus `applySpotlighting` (the trust-boundary sentinel). Detection is
+> a logging signal, never a gate. If you find yourself reaching for the
+> primitive to make a refusal decision, prefer `sanitizeAndDetect` instead
+> — it is the safe alternative because it cannot be misused this way (it
+> always returns the sanitized text).
 
 The library uses these same helpers internally on `curl_execute` and YAML-tool
 output. Calling them from a custom tool keeps the trust boundary symmetric.

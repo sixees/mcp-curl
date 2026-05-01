@@ -15,6 +15,7 @@ import {
 } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders } from "../config/index.js";
 import { resolveBaseUrl, applySpotlighting } from "../utils/index.js";
+import { SPOTLIGHT_SENTINEL_PREFIX } from "../utils/sanitize.js";
 
 /**
  * Wrap the first text content item with spotlighting sentinels if enabled.
@@ -47,6 +48,12 @@ function maybeApplySpotlighting(result: ToolResult, config: Readonly<McpCurlConf
             content: [{ type: "text" as const, text: "Error: invalid tool response shape" }],
             isError: true,
         };
+    }
+    // Idempotence: a custom tool that pre-wrapped its own response (e.g. by calling
+    // applySpotlighting itself) would otherwise be re-wrapped here under a fresh UUID,
+    // producing two nested sentinel pairs. Detect the existing prefix and short-circuit.
+    if (first.text.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) {
+        return result;
     }
     return {
         ...result,

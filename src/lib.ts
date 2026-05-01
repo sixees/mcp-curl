@@ -3,20 +3,40 @@
 //
 // This module exports the extensible McpCurlServer class and all public types
 // for building custom MCP servers with cURL capabilities.
+//
+// Public-barrel structure (kept flat for now; future PRs adding more security
+// helpers should append within the relevant section, not invent new sections):
+//
+//   1. Server class                     — McpCurlServer + CustomToolMeta
+//   2. Instance utilities               — createInstanceUtilities + types
+//   3. API server factory               — createApiServer (YAML-driven)
+//   4. Schema types + utilities         — ApiSchema, validators, loaders, generators
+//   5. Public API types                 — McpCurlConfig, hooks, tool inputs
+//   6. Sanitization helpers (metadata)  — sanitizeDescription
+//   7. Response-side defence helpers    — sanitize / detect / spotlight / composer
+//   8. URL validation helper            — createHttpOnlyUrlSchema
+//
+// PR-6b will add `wrapWithDefence(handler)`. Decision recorded for that PR:
+// `wrapWithDefence` becomes the canonical higher-level helper; the underlying
+// primitives (`sanitizeResponse`, `detectInjectionPattern`, `applySpotlighting`,
+// `sanitizeAndDetect`) stay public for callers needing finer-grained control,
+// but the JSDoc for the primitives will point at `wrapWithDefence` as the
+// recommended entry point. No subpath exports — flat barrel + section comments
+// is the convention.
 
-// Main server class
+// 1. Main server class
 export { McpCurlServer } from "./lib/extensible/index.js";
 export type { CustomToolMeta } from "./lib/extensible/index.js";
 
-// Instance utilities for direct tool execution
+// 2. Instance utilities for direct tool execution
 export { createInstanceUtilities } from "./lib/extensible/index.js";
 export type { InstanceUtilities, ExecuteRequestParams } from "./lib/extensible/index.js";
 
-// API server factory (creates servers from YAML schema definitions)
+// 3. API server factory (creates servers from YAML schema definitions)
 export { createApiServer, createApiServerSync } from "./lib/api-server.js";
 export type { CreateApiServerOptions } from "./lib/api-server.js";
 
-// Schema types and utilities
+// 4. Schema types and utilities
 export type {
     // Schema types
     ApiSchemaVersion,
@@ -52,7 +72,7 @@ export {
     generateToolDefinitions,
 } from "./lib/schema/index.js";
 
-// Public API types
+// 5. Public API types
 export type {
     // Configuration
     McpCurlConfig,
@@ -70,17 +90,25 @@ export type {
     JqQueryInput,
 } from "./lib/types/public.js";
 
-// Sanitization helpers (callers need these to defend against prompt injection
+// 6. Sanitization helpers (callers need these to defend against prompt injection
 // in externally-sourced tool metadata — see docs/custom-tools.md).
 export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/utils/index.js";
 
-// Response-side defence helpers — callers emitting external content (HTTP body,
+// 7. Response-side defence helpers — callers emitting external content (HTTP body,
 // file content, third-party API response) should sanitise + spotlight to honour
-// the same trust boundary the server enforces on built-in tools. Key the
-// spotlight by `randomUUID()` per request. See docs/custom-tools.md.
+// the same trust boundary the server enforces on built-in tools.
+//
+// Prefer `sanitizeAndDetect(text, label)` over hand-wiring `sanitizeResponse` +
+// `detectInjectionPattern` + `logInjectionDetected` — it locks the
+// sanitize → detect → log ordering invariant. Calling `detectInjectionPattern`
+// on raw (un-sanitized) text silently degrades detection coverage because the
+// matcher will not see invisible-char-split phrases like "Ig​nore" → "Ignore".
+//
+// Key spotlight by `randomUUID()` per request. See docs/custom-tools.md.
 export { applySpotlighting, sanitizeResponse, detectInjectionPattern } from "./lib/utils/index.js";
+export { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 
-// URL validation helper for custom tool authors that take URL parameters.
+// 8. URL validation helper for custom tool authors that take URL parameters.
 // Built-in tools and YAML schemas use this same helper internally; exporting it
 // keeps custom tools at parity without deep-importing.
 export { createHttpOnlyUrlSchema } from "./lib/utils/index.js";
