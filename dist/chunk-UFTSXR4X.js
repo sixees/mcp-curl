@@ -624,29 +624,52 @@ var SessionManager = class {
    * The MCP SDK's `StreamableHTTPServerTransport.close()` is asynchronous
    * (it drains in-flight SSE streams via `_onsessionclosed`); awaiting it
    * is required for a clean shutdown. Sessions close in parallel via
-   * `Promise.allSettled` so one hung session can't block the rest.
+   * `Promise.allSettled`, and each individual close is bounded by
+   * {@link CLOSE_TIMEOUT_MS} so a transport that never drains can't keep
+   * the shutdown wait open indefinitely.
    */
   async closeAll() {
     const entries = Array.from(this.sessions.entries());
     this.sessions.clear();
     await Promise.allSettled(
-      entries.map(async ([_sessionId, session]) => {
-        try {
-          await session.transport.close();
-        } catch (error) {
-          const errorClass = error instanceof Error ? error.constructor.name : "unknown";
-          console.error(`session_close_transport error: [${errorClass}]`);
-        }
-        try {
-          await session.server.close();
-        } catch (error) {
-          const errorClass = error instanceof Error ? error.constructor.name : "unknown";
-          console.error(`session_close_server error: [${errorClass}]`);
-        }
+      entries.map(async ([sessionId, session]) => {
+        await closeWithTimeout(
+          () => session.transport.close(),
+          "session_close_transport",
+          sessionId
+        );
+        await closeWithTimeout(
+          () => session.server.close(),
+          "session_close_server",
+          sessionId
+        );
       })
     );
   }
 };
+var CLOSE_TIMEOUT_MS = 5e3;
+async function closeWithTimeout(op, label, sessionId) {
+  let timer;
+  try {
+    await Promise.race([
+      op(),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label}_timeout`)),
+          CLOSE_TIMEOUT_MS
+        );
+        timer.unref?.();
+      })
+    ]);
+  } catch (error) {
+    const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+    console.error(`${label} error: [${sessionId}] ${errorClass}`);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 // src/lib/tools/index.ts
 function registerAllTools(server) {
@@ -1427,7 +1450,10 @@ function createHttpApp(options) {
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
       const errorClass = error instanceof Error ? error.constructor.name : "unknown";
-      console.error(`http_post error: [${errorClass}]`);
+      const rawSid = req.headers["mcp-session-id"];
+      const candidate = Array.isArray(rawSid) ? rawSid[0] : rawSid;
+      const ctx = candidate && isValidSessionId(candidate) ? candidate : "no-session";
+      console.error(`http_post error: [${ctx}] ${errorClass}`);
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: "2.0",

@@ -116,26 +116,68 @@ export class SessionManager {
      * The MCP SDK's `StreamableHTTPServerTransport.close()` is asynchronous
      * (it drains in-flight SSE streams via `_onsessionclosed`); awaiting it
      * is required for a clean shutdown. Sessions close in parallel via
-     * `Promise.allSettled` so one hung session can't block the rest.
+     * `Promise.allSettled`, and each individual close is bounded by
+     * {@link CLOSE_TIMEOUT_MS} so a transport that never drains can't keep
+     * the shutdown wait open indefinitely.
      */
     async closeAll(): Promise<void> {
         const entries = Array.from(this.sessions.entries());
         this.sessions.clear();
         await Promise.allSettled(
-            entries.map(async ([_sessionId, session]) => {
-                try {
-                    await session.transport.close();
-                } catch (error) {
-                    const errorClass = error instanceof Error ? error.constructor.name : "unknown";
-                    console.error(`session_close_transport error: [${errorClass}]`);
-                }
-                try {
-                    await session.server.close();
-                } catch (error) {
-                    const errorClass = error instanceof Error ? error.constructor.name : "unknown";
-                    console.error(`session_close_server error: [${errorClass}]`);
-                }
+            entries.map(async ([sessionId, session]) => {
+                await closeWithTimeout(
+                    () => session.transport.close(),
+                    "session_close_transport",
+                    sessionId,
+                );
+                await closeWithTimeout(
+                    () => session.server.close(),
+                    "session_close_server",
+                    sessionId,
+                );
             }),
         );
+    }
+}
+
+/**
+ * Maximum time we wait for a single session-component close. Mirrors the
+ * 5-second budget {@link McpCurlServer.shutdown} uses for `_httpServer.close`,
+ * so a single-transport hang during shutdown still completes within the same
+ * envelope the operator already expects.
+ */
+const CLOSE_TIMEOUT_MS = 5_000;
+
+/**
+ * Run `op()` and reject if it hasn't settled within {@link CLOSE_TIMEOUT_MS}.
+ * Errors and timeouts are logged in the
+ * `<label> error: [<sessionId>] <ErrorClassName>` shape the rest of the
+ * codebase uses (see CLAUDE.md "Error logging") — no message bodies, so a
+ * misbehaving close cannot leak transport-internal state to stderr.
+ */
+async function closeWithTimeout(
+    op: () => Promise<void>,
+    label: string,
+    sessionId: string,
+): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+        await Promise.race([
+            op(),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(
+                    () => reject(new Error(`${label}_timeout`)),
+                    CLOSE_TIMEOUT_MS,
+                );
+                timer.unref?.();
+            }),
+        ]);
+    } catch (error) {
+        const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+        console.error(`${label} error: [${sessionId}] ${errorClass}`);
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
     }
 }

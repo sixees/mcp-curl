@@ -18,13 +18,13 @@ PR-4 of the 9-PR pre-bigwork hardening track. Closes plan item **B5**: validates
 
 ### B5 — `validateAuthToken()` (PR-4)
 
-- **What:** new exported function in `src/lib/transports/http.ts` plus call sites in `runHTTP()` and `McpCurlServer.startHttp()`. Constants land in their convention-mandated homes; the function imports them.
+- **What:** new exported function in `src/lib/transports/http.ts` plus call sites in `runHTTP()` and `McpCurlServer.startHttp()`. Constants land in their convention-mandated homes; the function imports them. _(Superseded: the call site moved from `startHttp()` to `start()` during Round 2 review — see "Review Comments Addressed — 2026-05-01" below.)_
 - **Key files (5):**
   - `src/lib/config/limits.ts` — added `MAX_AUTH_TOKEN_LENGTH: 4096` to `LIMITS` with a JSDoc explaining the choice (covers RSA-256 JWTs ~700–900 chars, OIDC ID tokens 1500–2500 chars, JWE up to ~4 KB, well under the 8 KB HTTP header line limit).
   - `src/lib/config/security/validation.ts` — added `PRINTABLE_ASCII = /^[\x20-\x7E]+$/` regex with JSDoc explaining what it excludes (C0 controls, DEL, high-bit bytes).
   - `src/lib/config/security/index.ts` — re-export `PRINTABLE_ASCII` for symmetry with the other validation patterns (`UUID_REGEX`, `WINDOWS_RESERVED_BASENAMES`).
   - `src/lib/transports/http.ts` — added `validateAuthToken()` exported function; inserted call sites in `runHTTP()` (now the **first** statement, before `cleanupOrphanedTempDirs`) and `createHttpApp` continues to receive the validated `authToken` value.
-  - `src/lib/extensible/mcp-curl-server.ts` — imported `validateAuthToken`; called from `startHttp()` **before** session manager / cleanup-interval setup, so a bad token aborts cleanly without orphaned timers.
+  - `src/lib/extensible/mcp-curl-server.ts` — imported `validateAuthToken`; called from `startHttp()` **before** session manager / cleanup-interval setup, so a bad token aborts cleanly without orphaned timers. _(Superseded: now called from `start()` itself, before any side effects — see "Review Comments Addressed — 2026-05-01" below.)_
 - **Approach:** mirrors the plan diff almost verbatim. Function lives in the transport file (close to its caller) but pulls constants from `config/`. Errors flow through the existing `createConfigError(name, value, reason)` helper for formatting consistency with `MCP_CURL_OUTPUT_DIR` and `MCP_CURL_SESSION_TIMEOUT` errors. Validation runs before any side-effecting setup so a failed start leaves no temp dirs, intervals, or listening sockets behind.
 
 ### S11 — timing-safe auth compare (no-op finding)
@@ -97,7 +97,7 @@ PR-4 of the 9-PR pre-bigwork hardening track. Closes plan item **B5**: validates
 ## Known issues and limitations
 
 - **Operator paste-error class is narrowed but not eliminated.** A token that *passes* the regex but happens to be wrong (typo, wrong env variable copied) still fails at request time with a 401. The validator only catches structural problems — content correctness is outside scope by design.
-- **The validator does not log on success.** A successfully-validated token leaves no startup log line. If operators want to confirm the validation ran, they have no positive signal — only the absence of an error. Considered adding a `console.error("auth token validated")` line; rejected because the project's stderr-logging convention is "errors only." If a future operability concern surfaces, a single info line is a one-line addition.
+- **The validator does not log on success.** A successfully-validated token leaves no startup log line. If operators want to confirm the validation ran, they have no positive signal — only the absence of an error. Considered adding a `console.error("auth token validated")` line; rejected because the project's stderr-logging convention is "errors only." If a future operability concern surfaces, a single info line is a one-line addition. _(Superseded by Pass 2 P3-7: HTTP startup now logs `bearer auth enabled` / `DISABLED` via `formatAuthStatus` — see "Code Review (Pass 2)" below.)_
 - **The S11 finding is closed by inheritance, not by a direct PR-4 change.** A reviewer following the plan's "deferred to PR-4 (B5)" trail will look for a `crypto.timingSafeEqual` call in this PR's diff and not find one. The handoff `What was implemented → S11` section explains the no-op disposition; flagging here as well so it's hard to miss.
 - **`PRINTABLE_ASCII` is not a public-barrel export.** It's a config-internal constant, used only by `validateAuthToken`. If a future consumer wants to validate operator strings (other env vars, CLI args), they'd need to either deep-import or we'd promote the regex to a public utility. Not in scope for PR-4.
 
@@ -371,3 +371,45 @@ The Pass 1 "duplicate validation in `runHTTP` is intentional" decision (P2-B rej
 
 - `npm test` — **629 passing / 7 skipped / 0 failing** (unchanged — no new tests; behaviour-preserving refactors)
 - `npm run build` — clean
+
+---
+
+## Review Comments Addressed — 2026-05-01 (round 3)
+
+Two further unresolved threads after pushing the round-2 fixes — both from `@coderabbitai`. Triage applied SRP/DRY + the CLAUDE.md error-logging convention again, and both findings were validated as real (no false positives).
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `closeAll()` JSDoc claim "one hung session can't block the rest" is misleading — `Promise.allSettled` still waits for every promise to settle, so a `transport.close()` that never settles hangs shutdown indefinitely (`session-manager.ts:119`) | @coderabbitai | Fix needed | Introduced `closeWithTimeout(op, label, sessionId)` helper using `Promise.race` with a 5-second `CLOSE_TIMEOUT_MS` budget (mirrors `McpCurlServer.shutdown`'s existing `_httpServer.close` envelope). The race rejects with `<label>_timeout` if the close never settles; `closeAll` now wraps both `transport.close()` and `server.close()` per session through the helper. JSDoc updated to drop the false claim and document the per-close budget. The timeout `setTimeout` is `unref`ed so it cannot itself keep the process alive. |
+| Round 2's minimal log shape `session_close_transport error: [${errorClass}]` puts the error class **inside** the brackets — CLAUDE.md's convention is `tool_name error: [<context>] <ErrorClassName>` with the class **outside**, and the bracketed context should identify the affected resource (`session-manager.ts:128`/`134`) | @coderabbitai | Fix needed | Reshaped logs to `<label> error: [<sessionId>] <ErrorClassName>` (sessionId in brackets, class outside) — the per-session context is what an operator needs to correlate a stuck session with the error class. Same fix applied to the analogous `http_post error: [...]` log in `transports/http.ts`: the bracketed context is now the (validated) `Mcp-Session-Id` if the request had one, or `"no-session"` otherwise. The session-id is gated through `isValidSessionId` before logging so a malicious client cannot inject control bytes into stderr. |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| Round 2: parallelise `closeAll` via `Promise.allSettled` and rely on it to keep one hung session from blocking the rest | Round 3: same parallelisation, **plus** a per-close timeout via `Promise.race` (`CLOSE_TIMEOUT_MS = 5_000`) so an SSE drain that never settles cannot hang shutdown | `Promise.allSettled` waits for *every* input promise to settle — it does not include a deadline. The Round 2 JSDoc claim was wrong. The 5s budget matches the existing `_httpServer.close` envelope inside `McpCurlServer.shutdown` so operators see consistent shutdown behaviour. | @coderabbitai |
+| Round 2: log shape `session_close_<thing> error: [${errorClass}]` (class inside brackets, no per-session context) | Round 3: log shape `session_close_<thing> error: [${sessionId}] <ErrorClassName>` (context inside, class outside) — applied to `http_post` too | Matches the CLAUDE.md convention exactly; lets operators correlate "which session got stuck" with "what error class" without grepping through per-session timestamps. | @coderabbitai |
+
+### Doc Cleanup
+
+The Pass 1 narrative referenced the pre-Round-2 state in three places (`What:` / `Key files:` line for `startHttp` validation, and the "validator does not log on success" item under Known Issues). Each line now carries an inline _(Superseded: …)_ marker pointing to the section that documents the post-fix behaviour, so future readers don't have to reconcile contradictory claims by scanning the whole document.
+
+### Files Modified
+
+- `src/lib/session/session-manager.ts` — added `closeWithTimeout` helper + `CLOSE_TIMEOUT_MS` constant; `closeAll` now wraps each component close through it; logs reshaped to `<label> error: [<sessionId>] <ErrorClassName>`; JSDoc corrected.
+- `src/lib/transports/http.ts` — `http_post` catch handler now logs `[<sessionId-or-no-session>] <ErrorClassName>` (validated session id only — gated through `isValidSessionId`).
+- `docs/work/handoff-feat-hardening-pr-4-auth-token.md` — three inline supersession markers added; this Round 3 section appended.
+- `dist/*` — rebuilt.
+
+### Tests
+
+- `npm test` — expected unchanged: behaviour-preserving (timeout only fires on a hung close, which no existing test simulates; log-shape change doesn't break existing assertions which check substrings like `/DISABLED/`, not the full line).
+- `npm run build` — clean (verified before commit).
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | P3 | RFC 6750 case-insensitive scheme matching | code-review (Pass 1) |

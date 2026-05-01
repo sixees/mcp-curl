@@ -337,9 +337,16 @@ export function createHttpApp(options: HttpAppOptions): Express {
             await transport.handleRequest(req, res, req.body);
         } catch (error) {
             // Minimal error logging: shape only, never message contents — matches
-            // the project-wide stderr convention (see CLAUDE.md "Error logging").
+            // the project-wide stderr convention (see CLAUDE.md "Error logging":
+            // `tool_name error: [<context>] <ErrorClassName>`). The bracketed
+            // context is the session id when one passed validation, otherwise
+            // "no-session". An unvalidated header is treated as absent so a
+            // malicious client cannot inject arbitrary bytes into stderr.
             const errorClass = error instanceof Error ? error.constructor.name : "unknown";
-            console.error(`http_post error: [${errorClass}]`);
+            const rawSid = req.headers["mcp-session-id"];
+            const candidate = Array.isArray(rawSid) ? rawSid[0] : rawSid;
+            const ctx = candidate && isValidSessionId(candidate) ? candidate : "no-session";
+            console.error(`http_post error: [${ctx}] ${errorClass}`);
             if (!res.headersSent) {
                 res.status(500).json({
                     jsonrpc: "2.0",
