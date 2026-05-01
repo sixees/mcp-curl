@@ -33,7 +33,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-CEMT7YCC.js";
+} from "./chunk-4CBQKI7Q.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -525,6 +525,7 @@ function createInstanceUtilities(config) {
 // src/lib/transports/http.ts
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID as randomUUID2 } from "crypto";
 
 // src/lib/session/session-manager.ts
@@ -619,22 +620,29 @@ var SessionManager = class {
   }
   /**
    * Close all active sessions gracefully.
-   * Used during server shutdown.
+   *
+   * The MCP SDK's `StreamableHTTPServerTransport.close()` is asynchronous
+   * (it drains in-flight SSE streams via `_onsessionclosed`); awaiting it
+   * is required for a clean shutdown. Sessions close in parallel via
+   * `Promise.allSettled` so one hung session can't block the rest.
    */
   async closeAll() {
-    for (const [sessionId, session] of this.sessions) {
-      try {
-        session.transport.close();
-      } catch (error) {
-        console.error(`Warning: Error closing session ${sessionId} transport:`, error);
-      }
-      try {
-        await session.server.close();
-      } catch (error) {
-        console.error(`Warning: Error closing session ${sessionId} server:`, error);
-      }
-      this.sessions.delete(sessionId);
-    }
+    const entries = Array.from(this.sessions.entries());
+    this.sessions.clear();
+    await Promise.allSettled(
+      entries.map(async ([sessionId, session]) => {
+        try {
+          await session.transport.close();
+        } catch (error) {
+          console.error(`Warning: Error closing session ${sessionId} transport:`, error);
+        }
+        try {
+          await session.server.close();
+        } catch (error) {
+          console.error(`Warning: Error closing session ${sessionId} server:`, error);
+        }
+      })
+    );
   }
 };
 
@@ -1219,6 +1227,7 @@ var McpCurlServer = class {
       this._httpServer = app.listen(port, host);
       this._httpServer.on("listening", () => {
         console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
+        console.error(formatAuthStatus(authToken));
         resolve();
       });
       this._httpServer.on("error", (err) => {
@@ -1324,8 +1333,7 @@ function createAuthMiddleware(authToken) {
   return (req, res, next) => {
     const rawAuth = req.headers.authorization;
     const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
-    const lengthOk = authHeader !== void 0 && authHeader.length === expectedLength;
-    if (!lengthOk || !safeStringCompare(authHeader, expectedHeader)) {
+    if (!hasExpectedLength(authHeader, expectedLength) || !safeStringCompare(authHeader, expectedHeader)) {
       res.status(401).json({
         jsonrpc: "2.0",
         error: {
@@ -1338,14 +1346,15 @@ function createAuthMiddleware(authToken) {
     next();
   };
 }
+function hasExpectedLength(value, expected) {
+  return value !== void 0 && value.length === expected;
+}
 function createHttpApp(options) {
   const { createMcpServer, sessionManager: sessionManager2, authToken, allowedOrigins } = options;
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
   const originMiddleware = createOriginMiddleware(allowedOrigins);
-  app.use("/mcp", originMiddleware);
   const authMiddleware = createAuthMiddleware(authToken);
-  app.use("/mcp", authMiddleware);
+  app.use("/mcp", originMiddleware, authMiddleware, express.json({ limit: "1mb" }));
   app.post("/mcp", async (req, res) => {
     try {
       const rawSessionId = req.headers["mcp-session-id"];
@@ -1363,6 +1372,23 @@ function createHttpApp(options) {
         await session.transport.handleRequest(req, res, req.body);
         return;
       }
+      if (sessionId) {
+        res.status(404).json({
+          jsonrpc: "2.0",
+          error: { code: -32001, message: "Session not found" }
+        });
+        return;
+      }
+      if (!isInitializeRequest(req.body)) {
+        res.status(400).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32600,
+            message: "Bad Request: Mcp-Session-Id header is required for non-initialize requests"
+          }
+        });
+        return;
+      }
       if (sessionManager2.size >= SESSION.MAX_SESSIONS) {
         res.status(503).json({
           jsonrpc: "2.0",
@@ -1373,7 +1399,14 @@ function createHttpApp(options) {
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID2(),
-        enableJsonResponse: true
+        enableJsonResponse: true,
+        onsessioninitialized: (sid) => {
+          sessionManager2.set(sid, {
+            server,
+            transport,
+            lastActivity: Date.now()
+          });
+        }
       });
       transport.onclose = () => {
         const sid = transport.sessionId;
@@ -1382,16 +1415,10 @@ function createHttpApp(options) {
         }
       };
       await server.connect(transport);
-      if (transport.sessionId) {
-        sessionManager2.set(transport.sessionId, {
-          server,
-          transport,
-          lastActivity: Date.now()
-        });
-      }
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
-      console.error("MCP request error:", error);
+      const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+      console.error(`http_post error: [${errorClass}]`);
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: "2.0",
@@ -1460,6 +1487,12 @@ function createHttpApp(options) {
   });
   return app;
 }
+function formatAuthStatus(authToken) {
+  if (authToken === void 0 || authToken === "") {
+    return "HTTP transport: bearer auth DISABLED (set MCP_AUTH_TOKEN to require auth)";
+  }
+  return "HTTP transport: bearer auth enabled";
+}
 function formatHostForUrl(host) {
   if (host.includes(":") && !host.startsWith("[")) {
     return `[${host}]`;
@@ -1492,6 +1525,7 @@ async function runHTTP() {
   const httpServer2 = app.listen(port, host);
   httpServer2.on("listening", () => {
     console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
+    console.error(formatAuthStatus(authToken));
   });
   httpServer2.on("error", (err) => {
     if (err.code === "EADDRINUSE") {

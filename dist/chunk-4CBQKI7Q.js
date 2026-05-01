@@ -143,7 +143,8 @@ function createFileError(filepath, reason) {
   return new Error(`File "${filepath}" ${reason}.`);
 }
 function createConfigError(configName, value, reason) {
-  return new Error(`Invalid ${configName} value "${value}": ${reason}.`);
+  const safeValue = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\0/g, "\\0");
+  return new Error(`Invalid ${configName} value "${safeValue}": ${reason}.`);
 }
 
 // src/lib/utils/content-type.ts
