@@ -410,5 +410,34 @@ None. The historical-context decision (preserving original `httpOnlyUrl` referen
 - 4 unresolved threads, all from @coderabbitai (AI)
 - 4 actionable fixes applied (100% applicable rate — round-2 findings were of higher quality than round-1's 50% rate, all targeted real issues)
 - 0 false positives, 0 deferred, 0 decision conflicts
-- 1 optional cosmetic finding deferred (17%)
 - No findings conflicted with documented decisions; no escalation to user required
+
+## Review Comments Addressed — 2026-05-01 (round 3)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Inconsistent round-2 reviewer-breakdown totals (handoff:412–413) | @coderabbitai | Fix needed | Removed the stray `1 optional cosmetic finding deferred (17%)` line — it was a copy-paste leftover from the round-1 breakdown and contradicted the adjacent `0 deferred` count. Round-2 totals are now internally consistent. |
+| Stale JSDoc warning about manual curl-flag drift (`url-schemes.ts:14–15`) | @coderabbitai | Fix needed | Replaced the pre-extraction warning ("adding a scheme here without also updating `ALLOWED_URL_SCHEMES_CURL_FLAG`…") with the post-extraction reality: the curl flag is derived at module init from `ALLOWED_URL_SCHEMES`, so new schemes propagate automatically. The warning was inverted — derivation was added in commit `7711563` (P2 #007) but the comment wasn't updated then. |
+
+### Decisions Revised
+
+None.
+
+### Files Modified
+
+- `docs/work/handoff-feat-hardening-pr-1-url-helpers.md` — round-2 breakdown count fix + this section
+- `src/lib/config/security/url-schemes.ts` — JSDoc comment update (no code change)
+
+### Verification
+
+- Build: `npm run build` ✅ clean
+- Tests: `npm test` ✅ **591 passed | 7 skipped | 0 failed**
+
+### Reviewer breakdown (round 3)
+
+- 2 unresolved threads, both from @coderabbitai (AI)
+- 2 actionable fixes applied (100% applicable rate)
+- 0 false positives, 0 deferred, 0 decision conflicts
+- Both findings caught real bugs in the round-2 work — handoff arithmetic and a stale JSDoc that survived a refactor

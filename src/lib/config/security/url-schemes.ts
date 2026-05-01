@@ -11,8 +11,10 @@
  * - `createHttpOnlyUrlSchema` schema validator (rejects URLs whose `.protocol` is not in this set)
  * - `validateUrlAndResolveDns` (mirrors the rejection at DNS-resolution time)
  *
- * Adding a scheme here without also updating `ALLOWED_URL_SCHEMES_CURL_FLAG`
- * silently disables the new scheme at the curl transport layer.
+ * Keep schemes in trailing-colon form (matching `URL.protocol`, e.g. `http:`).
+ * `ALLOWED_URL_SCHEMES_CURL_FLAG` is derived from this list at module init,
+ * so a new scheme added here is automatically picked up by the curl transport
+ * layer without a second edit.
  */
 export const ALLOWED_URL_SCHEMES = Object.freeze(["http:", "https:"] as const);
 
