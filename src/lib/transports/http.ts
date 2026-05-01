@@ -456,7 +456,7 @@ export function createHttpApp(options: HttpAppOptions): Express {
     // [<route>] <ErrorClassName>` — see CLAUDE.md "Error logging") and never
     // echoes the error message, so a thrown error from upstream code can't
     // surface request-specific detail (path/headers) into operator stderr.
-    app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+    app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
         const errorClass = err instanceof Error ? err.constructor.name : "unknown";
         const route = `${req.method} ${req.path}`;
         console.error(`http_unhandled error: [${route}] ${errorClass}`);
