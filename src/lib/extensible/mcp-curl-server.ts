@@ -555,9 +555,12 @@ export class McpCurlServer {
      * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
      */
     private async startHttp(): Promise<void> {
-        // Validate first so a misconfigured authToken aborts the boot sequence
-        // before any side-effecting state (session manager, cleanup intervals,
-        // listening socket) is created.
+        // Snapshot the resolved token once so validation and the auth
+        // middleware see the same value. `start()` wraps this method in a
+        // try/catch with rollback (intervals, listening socket), so a thrown
+        // `validateAuthToken` here is recoverable; we still validate before
+        // the SessionManager is constructed to keep failure-mode shutdown
+        // cheap.
         const authToken = this._frozenConfig!.authToken ?? process.env[ENV.AUTH_TOKEN];
         validateAuthToken(authToken);
 
