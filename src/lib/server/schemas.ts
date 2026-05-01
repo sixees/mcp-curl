@@ -2,21 +2,14 @@
 // Zod schemas for tool input validation
 
 import { z } from "zod";
+import { httpOnlyUrl } from "../utils/url.js";
 
 /**
  * Schema for structured cURL execution.
  * Validates all parameters for the curl_execute tool.
  */
 export const CurlExecuteSchema = z.object({
-    url: z.url("Must be a valid URL")
-        .refine(
-            (url) => {
-                const scheme = url.split(":")[0].toLowerCase();
-                return ["http", "https"].includes(scheme);
-            },
-            { message: "URL must use http or https scheme" }
-        )
-        .describe("The URL to request"),
+    url: httpOnlyUrl("The URL to request"),
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
         .optional()
         .describe("HTTP method (defaults to GET, or POST if data is provided)"),
