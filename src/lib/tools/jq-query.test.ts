@@ -45,8 +45,10 @@ afterEach(async () => {
     clearInjectionDetectionMap();
     vi.restoreAllMocks();
 
-    await rm(allowedDir, { recursive: true, force: true });
-    await rm(outsideCwdDir, { recursive: true, force: true });
+    // Defensive: if a fixture mkdtemp failed in beforeEach the variable is undefined,
+    // and rm(undefined, …) would throw and mask the real test error.
+    if (allowedDir) await rm(allowedDir, { recursive: true, force: true });
+    if (outsideCwdDir) await rm(outsideCwdDir, { recursive: true, force: true });
 });
 
 describe("executeJqQuery — happy path", () => {

@@ -115,3 +115,17 @@ None. PR-2 introduces no deferred work. The existing `docs/todos/` directory doe
 ### Resolved Todos
 
 None resolved by this PR. PR-1's handoff confirmed `docs/todos/` was empty going into PR-2; B1 was a plan-only item with no preceding todo file.
+
+## Review Comments Addressed — 2026-05-01
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Reorder imports to built-ins → external → internal → relative per `.gemini/styleguide.md` (line 12) | @gemini-code-assist | False positive | No change. Existing tests in this repo (e.g. `src/lib/schema/schema.test.ts`) place `vitest` first, then built-ins, then relative — matching this file. Applying the styleguide ordering would make `jq-query.test.ts` the only test file in the repo that diverges from the established convention. Replied with explanation. |
+| Defensive nil-check before `rm` in `afterEach` to handle a failed `mkdtemp` in `beforeEach` (line 49) | @gemini-code-assist | Fix needed | Added `if (allowedDir)` / `if (outsideCwdDir)` guards plus a one-line comment explaining the intent. Cheap defence; prevents `rm(undefined, …)` from masking the real test error if a future fixture-setup change introduces a partial-init path. |
+
+### Decisions Revised
+None. The import-order styleguide deviation was already an implicit project decision visible in `schema.test.ts`; this PR did not introduce or reverse it.
+
+### Files Modified
+- `src/lib/tools/jq-query.test.ts` — afterEach nil-check + 1-line comment.
