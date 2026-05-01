@@ -83,4 +83,5 @@ export { applySpotlighting, sanitizeResponse, detectInjectionPattern } from "./l
 // URL validation helper for custom tool authors that take URL parameters.
 // Built-in tools and YAML schemas use this same helper internally; exporting it
 // keeps custom tools at parity without deep-importing.
-export { httpOnlyUrl } from "./lib/utils/index.js";
+export { createHttpOnlyUrlSchema } from "./lib/utils/index.js";
+export type { CreateHttpOnlyUrlSchemaOptions } from "./lib/utils/index.js";

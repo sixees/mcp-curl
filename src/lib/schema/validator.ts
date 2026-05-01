@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { ZodIssue } from "zod";
 import type { ApiSchema } from "./types.js";
-import { httpOnlyUrl } from "../utils/url.js";
+import { createHttpOnlyUrlSchema } from "../utils/url.js";
 
 /**
  * Regex for valid endpoint IDs.
@@ -88,7 +88,7 @@ const ApiInfoSchema = z.object({
     title: z.string().min(1),
     description: z.string().min(1),
     version: z.string().min(1),
-    baseUrl: httpOnlyUrl("Base URL (must use http or https)"),
+    baseUrl: createHttpOnlyUrlSchema({ description: "Base URL of the API" }),
 });
 
 /**

@@ -1,20 +1,59 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-2OaCkild.js';
-export { A as ApiDefaults, a as ApiInfo, b as ApiSchema, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, r as registerEndpointTools } from './generator-Ctr639v0.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-BgqSkYkj.js';
+export { A as ApiDefaults, a as ApiInfo, b as ApiSchema, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, r as registerEndpointTools } from './generator-BE50DdFe.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
- * Zod schema for a URL restricted to http/https schemes.
- *
- * z.url() in Zod v4 accepts any WHATWG-valid URL (including javascript:, data:, ftp://);
- * the .refine() is the sole scheme enforcement at the schema layer. Uses the WHATWG URL
- * parser (matching how src/lib/security/ssrf.ts and Node fetch resolve URLs) so the schema
- * agrees with what the network layer will actually parse — a URL that string-splits to
- * "http:" but parses to a different scheme would otherwise pass the schema and surprise
- * the SSRF check.
+ * Options for `createHttpOnlyUrlSchema`.
  */
-declare function httpOnlyUrl(description: string): z.ZodURL;
+interface CreateHttpOnlyUrlSchemaOptions {
+    /**
+     * Caller-facing description registered with Zod's `.describe()`. Surfaced to
+     * MCP clients via `globalRegistry`, so phrase it in terms of *what the URL
+     * is for* (e.g. "Base URL of the API"), not in terms of the scheme rule —
+     * the scheme rule is enforced by this helper and shouldn't leak into every
+     * call-site description.
+     */
+    description?: string;
+    /**
+     * Custom validation error message returned when the URL parses but uses a
+     * disallowed scheme. Defaults to "URL must use http or https scheme".
+     */
+    message?: string;
+}
+/**
+ * Create a Zod schema for a URL restricted to the http/https allowlist.
+ *
+ * Strict HTTP/HTTPS-only by design — the allowlist is the single source of
+ * truth in `config/security/url-schemes.ts`, shared with the DNS layer
+ * (`security/ssrf.ts`) and the cURL transport (`execution/curl-args-builder.ts`).
+ * **Do not relax this helper to add `mailto:`, `data:`, etc. under pressure.**
+ * If a different allowlist is ever needed, add a separate
+ * `createUrlSchemaWithSchemes(allowedSchemes, options)` factory rather than
+ * widening the strict default — defence-in-depth across three layers depends
+ * on this list staying narrow.
+ *
+ * Validation logic:
+ * - `z.url()` accepts any WHATWG-valid URL (including `javascript:`, `data:`,
+ *   `ftp://`); the `.refine()` is the sole scheme enforcement at the schema
+ *   layer.
+ * - Uses the WHATWG URL parser (matching `security/ssrf.ts` and Node fetch),
+ *   so the schema agrees with what the network layer will actually parse — a
+ *   URL that string-splits to "http:" but parses to a different scheme would
+ *   otherwise pass the schema and surprise the SSRF check.
+ *
+ * Return type is pinned to `z.ZodType<string>` rather than the inferred
+ * `ZodEffects<ZodURL>` so a future Zod minor that reshapes `.refine()` (or the
+ * Standard Schema migration in MCP SDK 2.0, which rewrites `.refine()` to a
+ * `validate()` callback) can't silently flip the public type. Callers needing
+ * `.optional()` / `.default()` chainability should compose with `z.optional()`
+ * at the call site.
+ *
+ * @param options - Optional `description` (default: "URL (http or https)") and `message`.
+ * @returns A Zod schema validating a string is an http/https URL.
+ */
+declare function createHttpOnlyUrlSchema(options?: CreateHttpOnlyUrlSchemaOptions): z.ZodType<string>;
 
 /**
  * Maximum length for custom tool descriptions.
@@ -82,4 +121,4 @@ declare function detectInjectionPattern(input: string): boolean;
  */
 declare function applySpotlighting(content: string, requestId: string): string;
 
-export { MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, applySpotlighting, detectInjectionPattern, httpOnlyUrl, sanitizeDescription, sanitizeResponse };
+export { type CreateHttpOnlyUrlSchemaOptions, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, applySpotlighting, createHttpOnlyUrlSchema, detectInjectionPattern, sanitizeDescription, sanitizeResponse };

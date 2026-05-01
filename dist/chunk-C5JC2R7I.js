@@ -14,7 +14,8 @@ function resolveBaseUrl(baseUrl, path) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${base}${normalizedPath}`;
 }
-function httpOnlyUrl(description) {
+function createHttpOnlyUrlSchema(options = {}) {
+  const { description = "URL (http or https)", message = "URL must use http or https scheme" } = options;
   return z.url().refine(
     (url) => {
       try {
@@ -23,7 +24,7 @@ function httpOnlyUrl(description) {
         return false;
       }
     },
-    { message: "URL must use http or https scheme" }
+    { message }
   ).describe(description);
 }
 function safeHostname(url, fallback = "unknown") {
@@ -181,7 +182,7 @@ function supportsMarkupComments(contentType) {
 // src/lib/server/schemas.ts
 import { z as z2 } from "zod";
 var CurlExecuteSchema = z2.object({
-  url: httpOnlyUrl("The URL to request"),
+  url: createHttpOnlyUrlSchema({ description: "The URL to request (http or https)" }),
   method: z2.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (defaults to GET, or POST if data is provided)"),
   headers: z2.record(z2.string(), z2.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
   data: z2.string().optional().describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
@@ -1937,7 +1938,7 @@ export {
   ENV,
   getErrorMessage,
   resolveBaseUrl,
-  httpOnlyUrl,
+  createHttpOnlyUrlSchema,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   sanitizeDescription,
   sanitizeResponse,

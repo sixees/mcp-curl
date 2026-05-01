@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * Validates all parameters for the curl_execute tool.
  */
 declare const CurlExecuteSchema: z.ZodObject<{
-    url: z.ZodURL;
+    url: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     method: z.ZodOptional<z.ZodEnum<{
         GET: "GET";
         POST: "POST";

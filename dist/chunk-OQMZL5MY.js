@@ -11,11 +11,11 @@ import {
   applySpotlighting,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
+  createHttpOnlyUrlSchema,
   createSafeFilenameBase,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
-  httpOnlyUrl,
   isValidSessionId,
   parsePort,
   registerCurlExecuteTool,
@@ -30,7 +30,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-TCJMAZUG.js";
+} from "./chunk-C5JC2R7I.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -383,7 +383,9 @@ function registerAllResources(server) {
 
 // src/lib/prompts/api-test.ts
 import { z } from "zod";
-var apiTestUrlSchema = httpOnlyUrl("The API endpoint URL to test");
+var apiTestUrlSchema = createHttpOnlyUrlSchema({
+  description: "The API endpoint URL to test"
+});
 function registerApiTestPrompt(server) {
   server.registerPrompt(
     "api-test",
@@ -420,7 +422,9 @@ Please:
 
 // src/lib/prompts/api-discovery.ts
 import { z as z2 } from "zod";
-var apiDiscoveryBaseUrlSchema = httpOnlyUrl("Base URL of the API");
+var apiDiscoveryBaseUrlSchema = createHttpOnlyUrlSchema({
+  description: "Base URL of the API"
+});
 function registerApiDiscoveryPrompt(server) {
   server.registerPrompt(
     "api-discovery",

@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { httpOnlyUrl, resolveBaseUrl, safeHostname } from "./url.js";
+import { describe, it, expect, expectTypeOf } from "vitest";
+import { z } from "zod";
+import { createHttpOnlyUrlSchema, resolveBaseUrl, safeHostname } from "./url.js";
 
 describe("resolveBaseUrl", () => {
     it("strips trailing slash from base and joins with path", () => {
@@ -78,8 +79,8 @@ describe("safeHostname", () => {
     });
 });
 
-describe("httpOnlyUrl", () => {
-    const schema = httpOnlyUrl("test url");
+describe("createHttpOnlyUrlSchema", () => {
+    const schema = createHttpOnlyUrlSchema({ description: "test url" });
 
     describe("accepts valid http(s) URLs", () => {
         it("accepts http://example.com", () => {
@@ -119,11 +120,30 @@ describe("httpOnlyUrl", () => {
             expect(schema.safeParse("javascript:alert(1)").success).toBe(false);
         });
 
+        it("rejects vbscript:", () => {
+            // Legacy IE script scheme — same exfiltration class as javascript:.
+            expect(schema.safeParse("vbscript:msgbox(1)").success).toBe(false);
+        });
+
         it("rejects look-alike scheme httpx:", () => {
             // The previous .split(":")[0] form would have classified the scheme as
             // "httpx" and rejected; the parser-based form classifies as "httpx:" and
             // rejects too. Asserted explicitly to lock the behaviour.
             expect(schema.safeParse("httpx://example.com").success).toBe(false);
+        });
+
+        it("rejects upper-cased disallowed schemes (FTP://)", () => {
+            // WHATWG normalises scheme to lowercase, so "FTP" parses to protocol
+            // "ftp:" and the allowlist comparison catches it. Locks the
+            // case-insensitive behaviour against future regressions.
+            expect(schema.safeParse("FTP://example.com").success).toBe(false);
+        });
+
+        it("rejects URLs with leading whitespace before a disallowed scheme", () => {
+            // WHATWG strips leading C0/whitespace; a string like "  ftp://x"
+            // parses as ftp: rather than failing parse. The refine must still
+            // reject.
+            expect(schema.safeParse("  ftp://example.com").success).toBe(false);
         });
     });
 
@@ -141,6 +161,38 @@ describe("httpOnlyUrl", () => {
             // the .split(":")[0] form would silently classify scheme as "https" and
             // pass. Asserted to lock the parser-based rejection.
             expect(schema.safeParse("https::").success).toBe(false);
+        });
+    });
+
+    describe("options bag", () => {
+        it("defaults description to 'URL (http or https)' when not provided", () => {
+            const defaulted = createHttpOnlyUrlSchema();
+            expect(defaulted.description).toBe("URL (http or https)");
+        });
+
+        it("uses the caller-supplied description", () => {
+            const labelled = createHttpOnlyUrlSchema({ description: "Webhook target" });
+            expect(labelled.description).toBe("Webhook target");
+        });
+
+        it("uses the caller-supplied error message on scheme rejection", () => {
+            const customMsg = createHttpOnlyUrlSchema({ message: "must be http(s)" });
+            const result = customMsg.safeParse("ftp://example.com");
+            expect(result.success).toBe(false);
+            if (!result.success) {
+                expect(result.error.issues.some((i) => i.message === "must be http(s)")).toBe(true);
+            }
+        });
+    });
+
+    describe("public type stability", () => {
+        it("returns z.ZodType<string> (pinned for forward-compat with Zod minor bumps and Standard Schema migration)", () => {
+            // Compile-time assertion: the inferred output is `string`.
+            // This locks the public surface so a future Zod patch that reshapes
+            // .refine() (or the MCP SDK 2.0 Standard Schema migration) cannot
+            // silently change what consumers see.
+            type Inferred = z.infer<ReturnType<typeof createHttpOnlyUrlSchema>>;
+            expectTypeOf<Inferred>().toEqualTypeOf<string>();
         });
     });
 });

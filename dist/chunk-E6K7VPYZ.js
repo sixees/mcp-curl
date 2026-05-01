@@ -1,10 +1,10 @@
 import {
   applyDefaultHeaders,
+  createHttpOnlyUrlSchema,
   executeCurlRequest,
-  httpOnlyUrl,
   resolveBaseUrl,
   sanitizeDescription
-} from "./chunk-TCJMAZUG.js";
+} from "./chunk-C5JC2R7I.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -58,7 +58,7 @@ var ApiInfoSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1),
   version: z.string().min(1),
-  baseUrl: httpOnlyUrl("Base URL (must use http or https)")
+  baseUrl: createHttpOnlyUrlSchema({ description: "Base URL of the API" })
 });
 var ApiDefaultsSchema = z.object({
   timeout: z.number().int().min(1).max(300).optional(),

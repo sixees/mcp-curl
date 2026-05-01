@@ -1,5 +1,5 @@
-import { b as ApiSchema } from '../../generator-Ctr639v0.js';
-export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, p as getMethodAnnotations, r as registerEndpointTools } from '../../generator-Ctr639v0.js';
+import { b as ApiSchema } from '../../generator-BE50DdFe.js';
+export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, p as getMethodAnnotations, r as registerEndpointTools } from '../../generator-BE50DdFe.js';
 import { ZodIssue, z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -13,7 +13,7 @@ declare const ApiSchemaValidator: z.ZodObject<{
         title: z.ZodString;
         description: z.ZodString;
         version: z.ZodString;
-        baseUrl: z.ZodURL;
+        baseUrl: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     }, z.core.$strip>;
     auth: z.ZodOptional<z.ZodObject<{
         apiKey: z.ZodOptional<z.ZodObject<{
