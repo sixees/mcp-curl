@@ -59,7 +59,7 @@ Extras (chosen for branch coverage, not present in the plan):
 - **Edge cases considered:**
   - Path-traversal regex catches `foo/../etc/passwd` before any IO — verified the test response message is "path traversal detected", not "does not exist" (the latter would imply the regex didn't match and the IO branch was reached).
   - Symlink-escape and dangling-symlink land on different branches; both are tested.
-  - `jq_query error` log-line format is asserted on the full prefix `^jq_query error: \[basename\] ` to lock the contract `[basename] ErrorClass` shape (no full path leak).
+  - `jq_query error` log-line format is asserted on the full prefix `^jq_query error: \[basename\]\s` to lock the contract `[basename] ErrorClass` shape (no full path leak).
 - **Under-tested:**
   - **`readFile` failure after `validateFilePath` succeeds.** Realistically requires a TOCTOU-style race or filesystem mocking — the validateFilePath layer already guards against the obvious cases. Skipped: low marginal coverage value vs. the cost of mocking, and the handoff plan didn't list it.
   - **`writeFile` failure on save.** Same reasoning — would require mocking `fs.promises.writeFile`. Out of scope for B1 per the plan.
@@ -129,3 +129,19 @@ None. The import-order styleguide deviation was already an implicit project deci
 
 ### Files Modified
 - `src/lib/tools/jq-query.test.ts` — afterEach nil-check + 1-line comment.
+
+## Review Comments Addressed — 2026-05-01 (round 2)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| MD038 markdownlint: trailing space inside inline code span on handoff line 62 | @coderabbitai | Fix needed | Replaced trailing space with `\s` escape inside the code span. |
+| Save-path tests don't verify the file actually exists — a regression returning the success string without writing the file would still pass | @coderabbitai | Fix needed | Added `stat` import + shared `extractSavedPath` helper + `await expect(stat(savedPath)).resolves.toBeDefined()` assertion to all three save tests. Genuine regression protection — the previous tests only asserted the response text. |
+| Replace literal U+200B character with named `"\u200B"` escape constant for auditability | @coderabbitai | Fix needed | Introduced `const ZWSP = "\u200B"` and switched both the JSON payload and the negative-assertion to use it. |
+
+### Decisions Revised
+None.
+
+### Files Modified
+- `src/lib/tools/jq-query.test.ts` — `stat` import, `SAVED_TO_PREFIX` + `extractSavedPath` helper, three new file-existence assertions, `ZWSP` constant.
+- `docs/work/handoff-feat-hardening-pr-2-jq-query-tests.md` — MD038 fix on line 62; this section.

@@ -3,7 +3,7 @@
 // sanitization, and injection-detection observability per plan B1 (PR-2).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, writeFile, rm, symlink, mkdir } from "fs/promises";
+import { mkdtemp, writeFile, rm, symlink, mkdir, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join, basename } from "path";
 import { executeJqQuery } from "./jq-query.js";
@@ -18,6 +18,10 @@ import { ENV } from "../config/index.js";
 //      validateOutputDir() blocks via isBlockedSystemDirectory (no writes
 //      to /private/var). Cwd-rooted fixtures sidestep both issues.
 const FIXTURE_PREFIX = ".test-tmp-jq-query-";
+
+// Extract the saved filepath from a "Result (N bytes) saved to: <path>" message.
+const SAVED_TO_PREFIX = /^Result \(\d+ bytes\) saved to: /;
+const extractSavedPath = (text: string) => text.replace(SAVED_TO_PREFIX, "");
 
 let allowedDir: string;       // a cwd-rooted dir; files here pass validateFilePath via cwd
 let outsideCwdDir: string;    // a tmpdir-rooted dir; files here fail validateFilePath
@@ -174,8 +178,10 @@ describe("executeJqQuery — file save behavior", () => {
         );
 
         expect(result.isError).toBeUndefined();
-        expect(result.content[0].text).toMatch(/^Result \(\d+ bytes\) saved to: /);
+        expect(result.content[0].text).toMatch(SAVED_TO_PREFIX);
         expect(result.content[0].text).toContain(allowedDir);
+        const savedPath = extractSavedPath(result.content[0].text);
+        await expect(stat(savedPath)).resolves.toBeDefined();
     });
 
     it("auto-saves when filtered output exceeds max_result_size", async () => {
@@ -194,12 +200,14 @@ describe("executeJqQuery — file save behavior", () => {
         );
 
         expect(result.isError).toBeUndefined();
-        expect(result.content[0].text).toMatch(/^Result \(\d+ bytes\) saved to: /);
+        expect(result.content[0].text).toMatch(SAVED_TO_PREFIX);
         expect(result.content[0].text).toContain(allowedDir);
         // Saved-bytes count reflects the (sanitized) filtered output, not the source file size.
         const match = result.content[0].text.match(/^Result \((\d+) bytes\)/);
         expect(match).not.toBeNull();
         expect(Number(match![1])).toBeGreaterThan(1000);
+        const savedPath = extractSavedPath(result.content[0].text);
+        await expect(stat(savedPath)).resolves.toBeDefined();
     });
 
     it("honors a custom output_dir different from the source-file directory", async () => {
@@ -221,6 +229,8 @@ describe("executeJqQuery — file save behavior", () => {
             expect(result.isError).toBeUndefined();
             expect(result.content[0].text).toContain(customDir);
             expect(result.content[0].text).not.toContain(`saved to: ${allowedDir}`);
+            const savedPath = extractSavedPath(result.content[0].text);
+            await expect(stat(savedPath)).resolves.toBeDefined();
         } finally {
             await rm(customDir, { recursive: true, force: true });
         }
@@ -230,8 +240,9 @@ describe("executeJqQuery — file save behavior", () => {
 describe("executeJqQuery — defence-in-depth observability", () => {
     it("strips Unicode-attack characters from filtered output (sanitization)", async () => {
         // Zero-width space (U+200B) inside a string value — must not survive sanitization.
+        const ZWSP = "\u200B";
         const file = join(allowedDir, "zwsp.json");
-        await writeFile(file, JSON.stringify({ msg: "hel​lo" }));
+        await writeFile(file, JSON.stringify({ msg: `hel${ZWSP}lo` }));
 
         const result = await executeJqQuery(
             { filepath: file, jq_filter: ".msg" },
@@ -239,7 +250,7 @@ describe("executeJqQuery — defence-in-depth observability", () => {
         );
 
         expect(result.isError).toBeUndefined();
-        expect(result.content[0].text).not.toContain("​");
+        expect(result.content[0].text).not.toContain(ZWSP);
         expect(result.content[0].text).toBe('"hello"');
     });
 
