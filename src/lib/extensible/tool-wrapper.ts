@@ -14,7 +14,7 @@ import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders } from "../config/index.js";
-import { resolveBaseUrl, applySpotlighting, SPOTLIGHT_SENTINEL_PREFIX } from "../utils/index.js";
+import { resolveBaseUrl, applySpotlighting, isSpotlightEnvelope } from "../utils/index.js";
 
 /**
  * Wrap the first text content item with spotlighting sentinels if enabled.
@@ -50,8 +50,11 @@ function maybeApplySpotlighting(result: ToolResult, config: Readonly<McpCurlConf
     }
     // Idempotence: a custom tool that pre-wrapped its own response (e.g. by calling
     // applySpotlighting itself) would otherwise be re-wrapped here under a fresh UUID,
-    // producing two nested sentinel pairs. Detect the existing prefix and short-circuit.
-    if (first.text.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) {
+    // producing two nested sentinel pairs. The check requires a *complete* envelope
+    // (begin + matching end + same UUID), not just the begin prefix — an attacker who
+    // controls the HTTP response body cannot bypass the wrap by prepending the public
+    // sentinel prefix.
+    if (isSpotlightEnvelope(first.text)) {
         return result;
     }
     return {

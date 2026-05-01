@@ -6,7 +6,6 @@ import {
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   SERVER,
   SESSION,
-  SPOTLIGHT_SENTINEL_PREFIX,
   applyDefaultHeaders,
   applyJqFilter,
   applySpotlighting,
@@ -17,6 +16,7 @@ import {
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
+  isSpotlightEnvelope,
   isValidSessionId,
   parsePort,
   registerCurlExecuteTool,
@@ -31,7 +31,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-7JE5YYSA.js";
+} from "./chunk-5LTDJK4X.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -718,7 +718,7 @@ function maybeApplySpotlighting(result, config) {
       isError: true
     };
   }
-  if (first.text.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) {
+  if (isSpotlightEnvelope(first.text)) {
     return result;
   }
   return {

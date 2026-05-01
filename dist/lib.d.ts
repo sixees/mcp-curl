@@ -186,9 +186,12 @@ declare function detectInjectionPattern(input: string): boolean;
  * Uses the caller-provided requestId (a fresh UUID per request, never a module-level constant)
  * to make cross-turn sentinel reuse attacks impractical.
  *
- * **Idempotence:** if `content` already begins with the spotlight sentinel
- * prefix, the function returns it unchanged. The `extensible/tool-wrapper`
- * also short-circuits when the inner result is already wrapped — both layers
+ * **Idempotence:** if `content` is already a *complete* spotlight envelope
+ * (`isSpotlightEnvelope(content)` returns `true`), the function returns it
+ * unchanged. The check requires both the begin sentinel AND a matching end
+ * sentinel with the same UUID — an attacker prepending only the public begin
+ * prefix cannot bypass spotlighting. The `extensible/tool-wrapper` also
+ * short-circuits when the inner result is already wrapped — both layers
  * defend against double-wrapping (which would otherwise nest two different
  * UUID sentinels and confuse the LLM about where the trust boundary lies).
  *

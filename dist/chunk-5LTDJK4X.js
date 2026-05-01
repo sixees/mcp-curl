@@ -90,9 +90,21 @@ function detectInjectionPattern(input) {
   return INJECTION_PATTERNS.test(input);
 }
 var SPOTLIGHT_SENTINEL_PREFIX = "---EXTERNAL-CONTENT-BEGIN-";
-var SPOTLIGHT_REQUEST_ID_PATTERN = /^[0-9a-f-]{32,36}$/i;
+var SPOTLIGHT_REQUEST_ID_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+var SPOTLIGHT_HEADER_PATTERN = /^---EXTERNAL-CONTENT-BEGIN-([0-9a-f-]{32,36})---\n/i;
+function isSpotlightEnvelope(text) {
+  if (typeof text !== "string" || text.length < SPOTLIGHT_SENTINEL_PREFIX.length) return false;
+  if (!text.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) return false;
+  const headerMatch = SPOTLIGHT_HEADER_PATTERN.exec(text);
+  if (!headerMatch) return false;
+  const uuid = headerMatch[1];
+  if (!SPOTLIGHT_REQUEST_ID_PATTERN.test(uuid)) return false;
+  const expectedEnd = `
+---EXTERNAL-CONTENT-END-${uuid}---`;
+  return text.endsWith(expectedEnd);
+}
 function applySpotlighting(content, requestId) {
-  if (content.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) {
+  if (isSpotlightEnvelope(content)) {
     return content;
   }
   if (!requestId) {
@@ -1966,7 +1978,7 @@ export {
   sanitizeDescription,
   sanitizeResponse,
   detectInjectionPattern,
-  SPOTLIGHT_SENTINEL_PREFIX,
+  isSpotlightEnvelope,
   applySpotlighting,
   SESSION,
   startRateLimitCleanup,
