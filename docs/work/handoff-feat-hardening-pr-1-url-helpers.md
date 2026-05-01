@@ -219,3 +219,52 @@ The builder's instinct to flag the integration-test gap proactively is exactly t
 ### Blockers
 
 **None.** No P1 findings; clear to merge after P2 fixes (which can be addressed across PR-2…PR-6 as they touch adjacent code, rather than blocking PR-1's merge). The 5 undisclosed P2 items the builder didn't surface (T1, T6+S4, S3, S1, T5) are genuine gaps but none represent a regression introduced by PR-1 — they are pre-existing-or-now-visible issues in helpers PR-1 promoted to public API. Address them in upcoming PRs that touch the same modules.
+
+## Code Review Pass 2 — 2026-05-01
+
+### Pass 2 Summary
+
+- **Reviewer:** automated multi-agent second pass — meta-review of pass 1 plus angles pass 1 didn't deeply cover (performance, pattern-recognition).
+- **Agents used:** performance-oracle, pattern-recognition-specialist, plus a meta-review general-purpose pass auditing the 20 prior todos.
+- **New findings:** 🔴 P1: 0 | 🟡 P2: 2 | 🔵 P3: 1 (3 new todos #021, #022, #023). Plus 2 calibration edits to existing todos (#007 extended, #004 dependency added).
+- **Verdict unchanged from pass 1:** clear to merge after P2 fixes. No new merge-blockers.
+
+### Pass 2 Independent Verifications
+
+| Claim | Verified? | Notes |
+|-------|-----------|-------|
+| Triple-layer scheme defense (`httpOnlyUrl` + `ssrf.ts` + `--proto`) actually wired | yes | `src/lib/execution/curl-args-builder.ts:74,110` confirmed; `ssrf.ts:86-88` confirmed; `url.ts:30` confirmed. |
+| `httpOnlyUrl` is the only `z.url()` call site in production code | yes | `Grep` confirms one production hit at `url.ts:27`. |
+| Performance impact of WHATWG parser is negligible | yes (independent) | Performance oracle: refine fires once per `.parse()`; the call is module-init for schema construction, then once per HTTP-tool invocation (which spawns a subprocess taking 10–1000+ ms). Parser overhead is six orders of magnitude below dominant cost. No benchmark warranted. |
+| Pass 1's 20 todos are factually accurate | yes (10/10 spot-checked) | Meta-review verified #001, #002, #005, #006, #007 against source — all correct. No factual errors found. |
+| `dist/` files consistent with source after rebuild commit `b246726` | yes | Subsequent commits `697be5d`, `af06996`, `8749572`, `a7ee43e`, `b3d17f4` only modified source/tests/docs that don't change `dist/` output, OR were already-built source. (Pass 1 should have stated this verification explicitly — flagging here.) |
+| `package.json` exports map covers all new public symbols | yes | `./` → `dist/lib.js` resolves; all 4 new exports landed in `dist/lib.d.ts`. No subpath exports for individual modules — deliberate, tracked under #011. |
+
+### New Findings (Pass 2)
+
+| ID | Severity | Category | Description | Todo File |
+|----|----------|----------|-------------|-----------|
+| 21 | 🟡 P2 | naming / public-api | `httpOnlyUrl` violates both established conventions (verb-prefix on functions, `Schema` suffix on schemas); rename before more consumers land in PR-2..PR-9 | `docs/todos/021-pending-p2-httponlyurl-naming-convention-drift.md` |
+| 22 | 🟡 P2 | public-api / security | Internal `sanitizeAndDetect` composer at `detection-logger.ts:50` not re-exported; external authors must hand-wire ordering, with silent-degradation risk if order is wrong | `docs/todos/022-pending-p2-expose-sanitize-and-detect-composer.md` |
+| 23 | 🔵 P3 | conventions / imports | Four consumers of `httpOnlyUrl` deep-import `../utils/url.js` while every other utility consumer goes through `../utils/index.js`; one file (`api-test.ts`) uses both styles in adjacent lines | `docs/todos/023-pending-p3-import-path-inconsistency-utils-barrel.md` |
+
+### Calibration Edits to Pass-1 Todos
+
+- **`007-pending-p2-share-scheme-allowlist-config.md`** — extended scope: scheme allowlist is duplicated across **four** sites (added `curl-args-builder.ts:74` and `:110` to acceptance criteria, alongside `url.ts` and the two `ssrf.ts` references).
+- **`004-pending-p2-vbscript-and-whatwg-quirk-regression-tests.md`** — added `dependencies: [010]` to YAML frontmatter (the test parameterization in #010 should land first; #004's new cases ride that structure).
+- **Noted but not changed (process churn vs value tradeoff):**
+  - #009 bundles three sub-issues at varying severities; could be split P2 (JSDoc warning) + P3 (optional description + `validator.ts:91` cleanup), but the bundle is small enough that a single fix-PR keeps things simple.
+  - #017 (restored Zod error message) is borderline P2; left at P3 since the user-visible MCP error wording is recoverable and not a security concern.
+  - #008 (doc heading taxonomy) and #010 (duplicate test deduplication) could move from P2 to P3 — pure code-hygiene, no security/correctness signal. Left at P2 for caller-discretion.
+
+### Pass 2 Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/021-pending-p2-httponlyurl-naming-convention-drift.md` | P2 | Rename `httpOnlyUrl` to follow verb-prefix or `Schema`-suffix convention | code-review (pass 2) |
+| `docs/todos/022-pending-p2-expose-sanitize-and-detect-composer.md` | P2 | Re-export `sanitizeAndDetect` (or document ordering invariant) | code-review (pass 2) |
+| `docs/todos/023-pending-p3-import-path-inconsistency-utils-barrel.md` | P3 | Switch `httpOnlyUrl` consumers to `../utils/index.js` barrel | code-review (pass 2) |
+
+### Pass 2 Blockers
+
+**None.** No P1 findings in pass 2 either. The pass-1 verdict ("clear to merge after P2 fixes") still stands. The pass-2 P2 items (#021, #022) are best addressed before the public exports propagate further; specifically, #021 (rename) should land before any minor release that ships `httpOnlyUrl` to npm consumers, and #022 (sanitizeAndDetect re-export) is best resolved alongside #003 (`detectInjectionPattern` misuse-prevention JSDoc) in a single defensive-API PR.
