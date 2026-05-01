@@ -113,6 +113,68 @@ server.registerCustomTool(
 );
 ```
 
+### Validating URL parameters
+
+Custom tools that accept URL parameters should use the same `httpOnlyUrl()` helper
+the built-in tools and YAML-driven schemas use internally. It restricts the URL to
+`http`/`https` schemes via the WHATWG URL parser, rejecting `javascript:`, `data:`,
+`file:`, `ftp:`, and other dangerous schemes that `z.url()` accepts by default.
+
+```typescript
+import { McpCurlServer, httpOnlyUrl } from "mcp-curl";
+import { z } from "zod";
+
+server.registerCustomTool(
+    "fetch_logo",
+    {
+        title: "Fetch a remote logo",
+        description: "Downloads an image from a public URL.",
+        inputSchema: z.object({
+            target: httpOnlyUrl("Target URL (must use http or https)"),
+        }),
+    },
+    handler
+);
+```
+
+### Replicating the response-side defence
+
+When a custom tool returns content sourced from an external system (HTTP body,
+file content, third-party API response), it crosses the same trust boundary the
+built-in `curl_execute` tool defends. The library exports three response-side
+helpers so custom tools can replicate the same defence without deep-importing or
+reimplementing it:
+
+- `sanitizeResponse(text)` — strip Unicode invisibles + collapse whitespace-padding
+  attacks.
+- `detectInjectionPattern(text)` — return `true` if the text matches a known
+  injection-defense pattern; intended for stderr logging only (does not modify
+  content).
+- `applySpotlighting(text, sentinel)` — wrap the text with UUID-keyed sentinels so
+  the LLM treats the content as data, not instructions. Use a fresh UUID per
+  request — sessions are user-scoped; sentinels need per-prompt isolation.
+
+```typescript
+import {
+    applySpotlighting,
+    detectInjectionPattern,
+    sanitizeResponse,
+} from "mcp-curl";
+import { randomUUID } from "node:crypto";
+
+const sanitized = sanitizeResponse(externalContent);
+if (detectInjectionPattern(sanitized)) {
+    // Observability only — sanitization already neutralised the content.
+    console.error(`[injection-defense] [${hostname}] InjectionDetected`);
+}
+const wrapped = config.enableSpotlighting
+    ? applySpotlighting(sanitized, randomUUID())
+    : sanitized;
+```
+
+The library uses these same helpers internally on `curl_execute` and YAML-tool
+output. Calling them from a custom tool keeps the trust boundary symmetric.
+
 ## Using Instance Utilities
 
 Access config-aware utilities for making HTTP requests within custom tools:

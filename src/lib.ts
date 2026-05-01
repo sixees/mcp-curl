@@ -73,3 +73,14 @@ export type {
 // Sanitization helpers (callers need these to defend against prompt injection
 // in externally-sourced tool metadata — see docs/custom-tools.md).
 export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/utils/index.js";
+
+// Response-side defence helpers — callers emitting external content (HTTP body,
+// file content, third-party API response) should sanitise + spotlight to honour
+// the same trust boundary the server enforces on built-in tools. Key the
+// spotlight by `randomUUID()` per request. See docs/custom-tools.md.
+export { applySpotlighting, sanitizeResponse, detectInjectionPattern } from "./lib/utils/index.js";
+
+// URL validation helper for custom tool authors that take URL parameters.
+// Built-in tools and YAML schemas use this same helper internally; exporting it
+// keeps custom tools at parity without deep-importing.
+export { httpOnlyUrl } from "./lib/utils/index.js";
