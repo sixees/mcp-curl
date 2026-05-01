@@ -720,7 +720,6 @@ function registerAllCapabilities(server) {
 
 // src/lib/extensible/mcp-curl-server.ts
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z as z3 } from "zod";
 
 // src/lib/extensible/tool-wrapper.ts
 import { randomUUID } from "crypto";
@@ -855,66 +854,59 @@ function registerJqToolWithHooks(server, options) {
   server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
 
-// src/lib/extensible/mcp-curl-server.ts
-var SANITIZED_SCHEMA_CACHE = /* @__PURE__ */ new WeakMap();
+// src/lib/extensible/schema-sanitizer.ts
+import { z as z3 } from "zod";
+var MAX_RECURSION_DEPTH = 100;
 function sanitizeFieldDescriptionsDeep(schema) {
-  const cached = SANITIZED_SCHEMA_CACHE.get(schema);
-  if (cached) return cached;
-  const oldShape = schema.shape;
-  const newShape = {};
-  for (const key of Object.keys(oldShape)) {
-    newShape[key] = sanitizeFieldDeep(oldShape[key]);
-  }
-  let result = z3.object(newShape);
-  const desc = schema.description;
-  if (typeof desc === "string" && desc.length > 0) {
-    result = result.describe(sanitizeDescription(desc));
-  }
-  SANITIZED_SCHEMA_CACHE.set(schema, result);
-  SANITIZED_SCHEMA_CACHE.set(result, result);
-  return result;
+  sanitizeNode(schema, 0, /* @__PURE__ */ new WeakSet());
+  return schema;
 }
-function sanitizeFieldDeep(field) {
+function sanitizeNode(field, depth, visited) {
+  if (depth > MAX_RECURSION_DEPTH) return;
+  if (visited.has(field)) return;
+  visited.add(field);
+  sanitizeOwnDescription(field);
   if (field instanceof z3.ZodObject) {
-    return sanitizeFieldDescriptionsDeep(field);
-  }
-  if (field instanceof z3.ZodOptional) {
-    const inner = sanitizeFieldDeep(field.unwrap());
-    return reapplyDescription(inner.optional(), field);
-  }
-  if (field instanceof z3.ZodNullable) {
-    const inner = sanitizeFieldDeep(field.unwrap());
-    return reapplyDescription(inner.nullable(), field);
-  }
-  if (field instanceof z3.ZodDefault) {
-    const inner = sanitizeFieldDeep(field.unwrap());
-    const defaultValue = field._def.defaultValue;
-    return reapplyDescription(inner.default(defaultValue), field);
+    for (const key of Object.keys(field.shape)) {
+      sanitizeNode(field.shape[key], depth + 1, visited);
+    }
+    return;
   }
   if (field instanceof z3.ZodArray) {
-    const elem = sanitizeFieldDeep(field.element);
-    return reapplyDescription(z3.array(elem), field);
+    sanitizeNode(field.element, depth + 1, visited);
+    return;
   }
   if (field instanceof z3.ZodUnion) {
-    const opts = field.options.map(
-      (opt) => sanitizeFieldDeep(opt)
-    );
-    const rebuilt = z3.union(opts);
-    return reapplyDescription(rebuilt, field);
+    for (const opt of field.options) {
+      sanitizeNode(opt, depth + 1, visited);
+    }
+    return;
   }
-  const desc = field.description;
-  if (typeof desc === "string" && desc.length > 0) {
-    return field.describe(sanitizeDescription(desc));
+  if (field instanceof z3.ZodOptional || field instanceof z3.ZodNullable || field instanceof z3.ZodDefault) {
+    const inner = field.unwrap();
+    sanitizeNode(inner, depth + 1, visited);
+    return;
   }
-  return field;
 }
-function reapplyDescription(rebuilt, original) {
-  const desc = original.description;
-  if (typeof desc === "string" && desc.length > 0) {
-    return rebuilt.describe(sanitizeDescription(desc));
+function sanitizeOwnDescription(field) {
+  const existing = z3.globalRegistry.get(field);
+  const desc = existing?.description;
+  if (typeof desc !== "string" || desc.length === 0) return;
+  const sanitised = sanitizeDescription(desc);
+  if (sanitised === desc) return;
+  if (sanitised.length === 0) {
+    const { description: _omit, ...rest } = existing;
+    if (Object.keys(rest).length === 0) {
+      z3.globalRegistry.remove(field);
+    } else {
+      z3.globalRegistry.add(field, rest);
+    }
+    return;
   }
-  return rebuilt;
+  z3.globalRegistry.add(field, { ...existing, description: sanitised });
 }
+
+// src/lib/extensible/mcp-curl-server.ts
 var KNOWN_CONFIG_KEYS_ARRAY = [
   "baseUrl",
   "defaultHeaders",
@@ -1054,11 +1046,20 @@ var McpCurlServer = class {
    * @param meta - Tool metadata (title, description, inputSchema). title and description
    *   are sanitized automatically. **inputSchema field descriptions are also
    *   sanitised at every depth** at registration time — top-level fields,
-   *   nested `ZodObject`, `ZodArray`, `ZodUnion` options, and through
-   *   `ZodOptional`/`ZodDefault`/`ZodNullable` wrappers — via the
-   *   `sanitizeFieldDescriptionsDeep` helper. Callers no longer need to
-   *   defensively sanitise field descriptions sourced from external input,
-   *   though doing so remains harmless (the rebuild is idempotent).
+   *   nested `ZodObject`, `ZodArray`, `ZodUnion` (including
+   *   `ZodDiscriminatedUnion`) options, and through
+   *   `ZodOptional` / `ZodDefault` / `ZodNullable` wrappers — via the
+   *   `sanitizeFieldDescriptionsDeep` helper.
+   *
+   *   **Side effect:** the helper mutates `z.globalRegistry` entries on the
+   *   passed-in schema *in place* (description metadata only — no parsing
+   *   semantics change). Runtime invariants are preserved, including
+   *   `.refine()` / `.check()` chains, `.strict()` / `.passthrough()`
+   *   modes, `z.array().min()` / `.max()` / `.length()` / `.nonempty()`
+   *   constraints, factory defaults on `ZodDefault`, and
+   *   `ZodDiscriminatedUnion` discriminators. Callers no longer need to
+   *   defensively sanitise field descriptions sourced from external input;
+   *   doing so remains harmless (the walk is idempotent).
    * @param handler - Tool handler function
    * @returns this for chaining
    * @throws Error if called after start()

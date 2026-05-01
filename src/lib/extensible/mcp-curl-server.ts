@@ -16,6 +16,7 @@ import type {
 import type { Hooks } from "./types.js";
 import { createInstanceUtilities, type InstanceUtilities } from "./instance-utilities.js";
 import { registerCurlToolWithHooks, registerJqToolWithHooks } from "./tool-wrapper.js";
+import { sanitizeFieldDescriptionsDeep } from "./schema-sanitizer.js";
 
 import { createServer } from "../server/server-factory.js";
 import { registerAllResources } from "../resources/index.js";
@@ -79,138 +80,6 @@ interface CustomToolDef {
  *   .start("stdio");
  * ```
  */
-
-/**
- * Memoisation cache for `sanitizeFieldDescriptionsDeep`. Keyed on schema
- * identity — repeated registrations of the same `inputSchema` reference
- * (e.g. `createApiServer` reload patterns) return the cached rebuild without
- * re-walking the tree. The rebuilt schema is also cached against itself so a
- * second pass over an already-sanitised result short-circuits at the entry
- * check. The `WeakMap` lets GC reclaim entries when schemas go out of scope —
- * no manual eviction needed.
- */
-const SANITIZED_SCHEMA_CACHE = new WeakMap<
-    z.ZodObject<z.ZodRawShape>,
-    z.ZodObject<z.ZodRawShape>
->();
-
-/**
- * Rebuild a Zod object schema with every field's `description` (at every
- * depth) passed through `sanitizeDescription()`.
- *
- * **Why a rebuild and not in-place mutation.** Zod v4 stores `description` in
- * `z.globalRegistry` (a WeakMap keyed by schema instance), not on `_def`. The
- * `.describe()` method is `clone()` + `globalRegistry.add(clone, …)`; mutating
- * `_def.description` is a runtime no-op (the registry getter at
- * `node_modules/zod/v4/classic/schemas.js:80-83` ignores `_def` entirely).
- * To make the registered tool see a sanitised description we must replace the
- * field reference in the parent shape and rebuild the `ZodObject`.
- *
- * **Recursion contract.** The walker descends into:
- *   - `ZodObject` — recurse into each field of `.shape`.
- *   - `ZodArray` — recurse into the element schema.
- *   - `ZodUnion` — recurse into each option.
- *   - `ZodOptional`/`ZodNullable`/`ZodDefault` — recurse into `.unwrap()`,
- *     re-wrap with the appropriate constructor, then re-apply the wrapper's
- *     own (sanitised) description if it had one. `ZodDefault`'s default value
- *     is read from `_def.defaultValue` (may be a function) so it survives the
- *     rebuild.
- *
- * Leaf fields with no `.description()` and no recursable structure are
- * returned by reference — `oldShape.x === newShape.x` for those fields.
- */
-function sanitizeFieldDescriptionsDeep(
-    schema: z.ZodObject<z.ZodRawShape>
-): z.ZodObject<z.ZodRawShape> {
-    const cached = SANITIZED_SCHEMA_CACHE.get(schema);
-    if (cached) return cached;
-
-    const oldShape = schema.shape;
-    // `ZodRawShape` is `Readonly<{ [k: string]: $ZodType }>`; build into a
-    // plain mutable record and cast back when handing it to `z.object`.
-    const newShape: Record<string, z.ZodTypeAny> = {};
-    for (const key of Object.keys(oldShape)) {
-        // `shape` is typed against the core `$ZodType` base; cast up to the
-        // classic `ZodTypeAny` because the helper only operates on classic
-        // factories (`.optional()`, `.nullable()`, `z.array()`, …).
-        newShape[key] = sanitizeFieldDeep(oldShape[key] as z.ZodTypeAny);
-    }
-    let result = z.object(newShape as z.ZodRawShape) as z.ZodObject<z.ZodRawShape>;
-
-    // Preserve the parent ZodObject's own description (e.g. when a nested
-    // object literally carries `.describe(...)`), sanitised. Top-level input
-    // schemas rarely carry one but the recursion path can hit them.
-    const desc = schema.description;
-    if (typeof desc === "string" && desc.length > 0) {
-        result = result.describe(sanitizeDescription(desc)) as z.ZodObject<z.ZodRawShape>;
-    }
-
-    SANITIZED_SCHEMA_CACHE.set(schema, result);
-    // Cache identity-mapping so a second pass over the rebuilt schema is a
-    // single WeakMap.get hit (true for the registerCustomTool reload pattern).
-    SANITIZED_SCHEMA_CACHE.set(result, result);
-    return result;
-}
-
-/**
- * Recursive sibling of `sanitizeFieldDescriptionsDeep` that handles non-object
- * branches (wrappers, arrays, unions, leaves). Splitting the two functions
- * keeps the WeakMap cache scoped to `ZodObject` keys — the only branch where
- * memoisation pays off — without forcing the caller to upcast leaf types.
- */
-function sanitizeFieldDeep(field: z.ZodTypeAny): z.ZodTypeAny {
-    if (field instanceof z.ZodObject) {
-        return sanitizeFieldDescriptionsDeep(field as z.ZodObject<z.ZodRawShape>);
-    }
-    if (field instanceof z.ZodOptional) {
-        const inner = sanitizeFieldDeep(field.unwrap() as z.ZodTypeAny);
-        return reapplyDescription(inner.optional(), field);
-    }
-    if (field instanceof z.ZodNullable) {
-        const inner = sanitizeFieldDeep(field.unwrap() as z.ZodTypeAny);
-        return reapplyDescription(inner.nullable(), field);
-    }
-    if (field instanceof z.ZodDefault) {
-        const inner = sanitizeFieldDeep(field.unwrap() as z.ZodTypeAny);
-        // `_def.defaultValue` is the original value or factory function; the
-        // public `.default()` API accepts either, so passing it through
-        // verbatim preserves both shapes (e.g. `z.string().default(() => uuid())`).
-        const defaultValue = field._def.defaultValue as Parameters<typeof inner.default>[0];
-        return reapplyDescription(inner.default(defaultValue), field);
-    }
-    if (field instanceof z.ZodArray) {
-        const elem = sanitizeFieldDeep(field.element as z.ZodTypeAny);
-        return reapplyDescription(z.array(elem), field);
-    }
-    if (field instanceof z.ZodUnion) {
-        const opts = (field.options as readonly z.ZodTypeAny[]).map((opt) =>
-            sanitizeFieldDeep(opt)
-        );
-        // ZodUnion.options is always >=2 by construction; the cast is safe.
-        const rebuilt = z.union(opts as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
-        return reapplyDescription(rebuilt, field);
-    }
-    // Leaf type — sanitise its own description in-place via `.describe()`
-    // (which clones + registers, not mutates).
-    const desc = field.description;
-    if (typeof desc === "string" && desc.length > 0) {
-        return field.describe(sanitizeDescription(desc));
-    }
-    return field;
-}
-
-/**
- * If `original` carried a registered description, copy the *sanitised* form
- * onto `rebuilt` via `.describe()`. Helper exists so wrapper / array / union
- * branches don't repeat the read-sanitise-clone dance four times.
- */
-function reapplyDescription<T extends z.ZodTypeAny>(rebuilt: T, original: z.ZodTypeAny): T {
-    const desc = original.description;
-    if (typeof desc === "string" && desc.length > 0) {
-        return rebuilt.describe(sanitizeDescription(desc)) as T;
-    }
-    return rebuilt;
-}
 
 const KNOWN_CONFIG_KEYS_ARRAY = [
     "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
@@ -355,11 +224,20 @@ export class McpCurlServer {
      * @param meta - Tool metadata (title, description, inputSchema). title and description
      *   are sanitized automatically. **inputSchema field descriptions are also
      *   sanitised at every depth** at registration time — top-level fields,
-     *   nested `ZodObject`, `ZodArray`, `ZodUnion` options, and through
-     *   `ZodOptional`/`ZodDefault`/`ZodNullable` wrappers — via the
-     *   `sanitizeFieldDescriptionsDeep` helper. Callers no longer need to
-     *   defensively sanitise field descriptions sourced from external input,
-     *   though doing so remains harmless (the rebuild is idempotent).
+     *   nested `ZodObject`, `ZodArray`, `ZodUnion` (including
+     *   `ZodDiscriminatedUnion`) options, and through
+     *   `ZodOptional` / `ZodDefault` / `ZodNullable` wrappers — via the
+     *   `sanitizeFieldDescriptionsDeep` helper.
+     *
+     *   **Side effect:** the helper mutates `z.globalRegistry` entries on the
+     *   passed-in schema *in place* (description metadata only — no parsing
+     *   semantics change). Runtime invariants are preserved, including
+     *   `.refine()` / `.check()` chains, `.strict()` / `.passthrough()`
+     *   modes, `z.array().min()` / `.max()` / `.length()` / `.nonempty()`
+     *   constraints, factory defaults on `ZodDefault`, and
+     *   `ZodDiscriminatedUnion` discriminators. Callers no longer need to
+     *   defensively sanitise field descriptions sourced from external input;
+     *   doing so remains harmless (the walk is idempotent).
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()
@@ -410,9 +288,9 @@ export class McpCurlServer {
 
         // Store a sanitized defensive copy — never trust caller's object directly.
         // title, description, and every inputSchema field description (at every
-        // depth — see `sanitizeFieldDescriptionsDeep` above) are sanitised here
-        // so externally-sourced strings cannot leak Unicode-attack chars
-        // (bidi, zero-width, variation selectors, …) into tool advertisement.
+        // depth — see `./schema-sanitizer.ts`) are sanitised so externally-sourced
+        // strings cannot leak Unicode-attack chars (bidi, zero-width, variation
+        // selectors, …) into tool advertisement.
         const sanitizedTitle = sanitizeDescription(meta.title);
         const sanitizedDesc = sanitizeDescription(meta.description);
         const truncatedDesc = sanitizedDesc.slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH);

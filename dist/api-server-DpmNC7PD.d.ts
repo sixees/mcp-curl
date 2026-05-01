@@ -250,11 +250,20 @@ declare class McpCurlServer {
      * @param meta - Tool metadata (title, description, inputSchema). title and description
      *   are sanitized automatically. **inputSchema field descriptions are also
      *   sanitised at every depth** at registration time — top-level fields,
-     *   nested `ZodObject`, `ZodArray`, `ZodUnion` options, and through
-     *   `ZodOptional`/`ZodDefault`/`ZodNullable` wrappers — via the
-     *   `sanitizeFieldDescriptionsDeep` helper. Callers no longer need to
-     *   defensively sanitise field descriptions sourced from external input,
-     *   though doing so remains harmless (the rebuild is idempotent).
+     *   nested `ZodObject`, `ZodArray`, `ZodUnion` (including
+     *   `ZodDiscriminatedUnion`) options, and through
+     *   `ZodOptional` / `ZodDefault` / `ZodNullable` wrappers — via the
+     *   `sanitizeFieldDescriptionsDeep` helper.
+     *
+     *   **Side effect:** the helper mutates `z.globalRegistry` entries on the
+     *   passed-in schema *in place* (description metadata only — no parsing
+     *   semantics change). Runtime invariants are preserved, including
+     *   `.refine()` / `.check()` chains, `.strict()` / `.passthrough()`
+     *   modes, `z.array().min()` / `.max()` / `.length()` / `.nonempty()`
+     *   constraints, factory defaults on `ZodDefault`, and
+     *   `ZodDiscriminatedUnion` discriminators. Callers no longer need to
+     *   defensively sanitise field descriptions sourced from external input;
+     *   doing so remains harmless (the walk is idempotent).
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()

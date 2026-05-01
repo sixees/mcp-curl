@@ -396,12 +396,27 @@ describe("McpCurlServer.registerCustomTool()", () => {
 // `z.toJSONSchema(...)` — never `_def.description` — because Zod v4 stores
 // descriptions in `z.globalRegistry`, and a regression to in-place `_def`
 // mutation would silently pass under a `_def`-shaped check.
+//
+// Implementation lives in `./schema-sanitizer.ts`. The walker mutates
+// `z.globalRegistry` entries on the *caller's* schema in place — this
+// preserves runtime invariants that `z.object(newShape)` / `z.array(elem)` /
+// `z.union(opts)` rebuilds would silently strip (`.refine()`, `.check()`,
+// `.strict()`, array length checks, factory defaults, discriminated-union
+// discriminator). The block below covers both the sanitisation contract and
+// the invariant-preservation contract.
 // ---------------------------------------------------------------------------
 describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)", () => {
-    let server: McpCurlServer;
-    const handler = vi.fn().mockResolvedValue({ content: [] });
-    const ATTACK = "‮"; // RIGHT-TO-LEFT OVERRIDE — sanitised to ""
+    // U+202E RIGHT-TO-LEFT OVERRIDE. Written as an escape (not a literal
+    // bidi codepoint) so the source file is safe to view in editors that
+    // honour the override. Sanitised to "" by `sanitizeDescription`.
+    const ATTACK = "\u202E";
     const PWN = `${ATTACK}pwn`;
+
+    let server: McpCurlServer;
+    // Stateless mock — re-using across tests is safe (the suite asserts on
+    // schema mutation, not on handler call counts). Mirrors the pattern used
+    // by the rest of this file.
+    const handler = vi.fn().mockResolvedValue({ content: [] });
 
     beforeEach(() => {
         server = new McpCurlServer();
@@ -431,6 +446,8 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         };
     }
 
+    // -------- core sanitisation contract (depth + wrapper coverage) --------
+
     it("strips a bidi override on a top-level field description", () => {
         const inputSchema = z.object({ field: z.string().describe(PWN) });
         server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
@@ -447,6 +464,15 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         // Wrapper still optional — `.parse(undefined)` is the canonical check
         // (per Zod v4's deprecated `isOptional()` JSDoc).
         expect(field.safeParse(undefined).success).toBe(true);
+    });
+
+    it("strips a bidi override on a nullable-wrapped field", () => {
+        const inputSchema = z.object({ q: z.string().nullable().describe(PWN) });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const field = sanitised.shape.q as z.ZodNullable<z.ZodString>;
+        expect(field.description).toBe("pwn");
+        expect(field.safeParse(null).success).toBe(true);
     });
 
     it("strips a bidi override on a default-wrapped field, preserving the default", () => {
@@ -509,43 +535,121 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         expect(optionalInner.unwrap().shape.x.description).toBe("pwn");
     });
 
-    it("preserves field reference identity when no description is set", () => {
-        const stringField = z.string();
-        const inputSchema = z.object({ x: stringField });
+    it("strips a bidi override on a wrapper that itself carries the description", () => {
+        const inputSchema = z.object({
+            // Outer `.describe()` clones the optional wrapper and registers PWN
+            // *on the wrapper itself*, not the inner string. The walker must
+            // sanitise the wrapper's own entry — not just the inner schema.
+            field: z.string().optional().describe(PWN),
+        });
         server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
         const sanitised = lastTool(server).meta.inputSchema;
-        // No `.describe()` was called, so the helper has nothing to rebuild
-        // for this leaf — the original instance should pass through verbatim.
-        expect(sanitised.shape.x).toBe(stringField);
+        expect((sanitised.shape.field as z.ZodOptional<z.ZodString>).description).toBe("pwn");
     });
 
-    it("memoises rebuild output: re-registering the same input schema returns the cached output (C3)", () => {
-        const sharedSchema = z.object({ field: z.string().describe(PWN) });
-
-        const a = new McpCurlServer();
-        const b = new McpCurlServer();
-        a.registerCustomTool("t", { title: "T", description: "D", inputSchema: sharedSchema }, handler);
-        b.registerCustomTool("t", { title: "T", description: "D", inputSchema: sharedSchema }, handler);
-
-        // Identity equality proves the WeakMap cache hit — the rebuild ran
-        // exactly once across both registrations.
-        expect(lastTool(a).meta.inputSchema).toBe(lastTool(b).meta.inputSchema);
+    it("returns the same schema instance — mutates registry in place", () => {
+        const inputSchema = z.object({ field: z.string().describe(PWN) });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        // The walker's contract is: same object identity, mutated registry
+        // entries. Callers that re-use the schema reference downstream see
+        // the sanitised description (security-improving mutation).
+        expect(lastTool(server).meta.inputSchema).toBe(inputSchema);
     });
 
-    it("memoisation is idempotent: feeding the rebuilt schema back in returns it unchanged", () => {
+    it("is idempotent — re-registering the same (already-clean) schema is a no-op", () => {
         const inputSchema = z.object({ field: z.string().describe(PWN) });
         server.registerCustomTool("t1", { title: "T", description: "D", inputSchema }, handler);
-        const firstRebuild = lastTool(server).meta.inputSchema;
-
-        // Feed the *output* back in — the cache short-circuits on the rebuilt
-        // schema's identity (it's mapped to itself), so no new clone happens.
-        server.registerCustomTool(
-            "t2",
-            { title: "T", description: "D", inputSchema: firstRebuild },
-            handler
-        );
-        expect(lastTool(server).meta.inputSchema).toBe(firstRebuild);
+        // After the first walk, every description is clean. A second walk
+        // should leave each description identical (no change-on-equal write).
+        server.registerCustomTool("t2", { title: "T", description: "D", inputSchema }, handler);
+        expect((inputSchema.shape.field as z.ZodString).description).toBe("pwn");
     });
+
+    // -------- runtime-invariant preservation (P1 regressions caught) --------
+
+    it("preserves `.refine()` checks on a ZodObject after sanitisation", () => {
+        const refined = z
+            .object({ a: z.number(), b: z.number().describe(PWN) })
+            .refine((v) => v.a < v.b, "a must be < b");
+        // ZodObject<...>.refine() returns ZodObject in v4 — but the public
+        // typings widen to `ZodType`. We cast through unknown to keep the
+        // test focused on the runtime parse contract.
+        const inputSchema = refined as unknown as z.ZodObject<z.ZodRawShape>;
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        // Refinement still fires after sanitisation — proves we did not
+        // rebuild via `z.object(newShape)` (which would have stripped it).
+        const result = (lastTool(server).meta.inputSchema as unknown as typeof refined).safeParse({
+            a: 5,
+            b: 3,
+        });
+        expect(result.success).toBe(false);
+    });
+
+    it("preserves `.strict()` mode on a ZodObject after sanitisation", () => {
+        const strict = z
+            .object({ a: z.string().describe(PWN) })
+            .strict();
+        const inputSchema = strict as unknown as z.ZodObject<z.ZodRawShape>;
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        // Unknown key must still be rejected — proves catchall("strict") was
+        // preserved (a rebuild would downgrade to "strip" mode).
+        const result = (lastTool(server).meta.inputSchema as unknown as typeof strict).safeParse({
+            a: "ok",
+            extra: "bad",
+        });
+        expect(result.success).toBe(false);
+    });
+
+    it("preserves `z.array().min()` length checks after sanitisation", () => {
+        const inputSchema = z.object({
+            tags: z.array(z.string().describe(PWN)).min(2),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        // Array of length 1 must still be rejected.
+        const result = lastTool(server).meta.inputSchema.safeParse({ tags: ["one"] });
+        expect(result.success).toBe(false);
+    });
+
+    it("preserves a factory `default(() => ...)` (does not freeze the closure)", () => {
+        let counter = 0;
+        const inputSchema = z.object({
+            id: z
+                .string()
+                .default(() => `id-${++counter}`)
+                .describe(PWN),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        // Two parses must yield two different ids — proves the factory
+        // closure survived. A rebuild via `.default(field._def.defaultValue)`
+        // would have evaluated the getter once and frozen the result.
+        const a = sanitised.parse({}) as { id: string };
+        const b = sanitised.parse({}) as { id: string };
+        expect(a.id).not.toBe(b.id);
+    });
+
+    it("preserves a ZodDiscriminatedUnion's discriminator after sanitisation", () => {
+        const du = z.discriminatedUnion("kind", [
+            z.object({ kind: z.literal("a"), a: z.string().describe(PWN) }),
+            z.object({ kind: z.literal("b"), b: z.string().describe(`${ATTACK}b`) }),
+        ]);
+        const inputSchema = z.object({ payload: du });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        // Parse a value matching the "a" arm — discriminator routing must
+        // still work. A rebuild via `z.union(opts)` would have downgraded the
+        // discriminated union to a plain ZodUnion (still parses, but error
+        // messages and runtime behaviour differ).
+        const sanitised = lastTool(server).meta.inputSchema;
+        expect(sanitised.safeParse({ payload: { kind: "a", a: "ok" } }).success).toBe(true);
+        // Descriptions still sanitised at every arm.
+        const arms = (sanitised.shape.payload as typeof du).options as readonly z.ZodObject<
+            z.ZodRawShape
+        >[];
+        expect((arms[0].shape.a as z.ZodString).description).toBe("pwn");
+        expect((arms[1].shape.b as z.ZodString).description).toBe("b");
+    });
+
+    // -------- regression for `z.toJSONSchema()` (Standard-Schema integration) --------
 
     it("z.toJSONSchema() round-trip carries the sanitised description at every depth (Standard-Schema regression / A7)", () => {
         const inputSchema = z.object({

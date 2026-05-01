@@ -1,10 +1,12 @@
 # Work Handoff: PR-5 — Auto-sanitise Zod field descriptions on `registerCustomTool()` (B4)
 
-**Date:** 2026-05-01 | **Branch:** `feat/hardening-pr-5-custom-tool-zod-rebuild` | **Plan:** [`docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md`](../plans/2026-04-30-chore-pre-bigwork-hardening-plan.md) (PR-5 / B4) | **Status:** complete
+**Date:** 2026-05-01 | **Branch:** `feat/hardening-pr-5-custom-tool-zod-rebuild` | **Plan:** [`docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md`](../plans/2026-04-30-chore-pre-bigwork-hardening-plan.md) (PR-5 / B4) | **Status:** complete (post-review pivot)
+
+> **⚠️ Design pivot during review.** The original "rebuild via `z.object(newShape)` / `z.array(elem)` / `z.union(opts)`" approach (described in the sections below) was replaced after multi-agent review surfaced P1 correctness regressions: rebuilds silently strip `.refine()` / `.check()` / `.strict()` / `.passthrough()` / array length checks and freeze factory defaults. The shipped implementation **mutates `z.globalRegistry` entries in place** on the caller's schema instance — same security guarantee, zero runtime-invariant loss. See the **"Code Review — 2026-05-01"** section at the bottom for the full pivot record. Sections above this banner describe the **earlier, pre-pivot** implementation and are retained for historical context only.
 
 ## Summary
 
-Closes plan item **B4**. `McpCurlServer.registerCustomTool()` now auto-sanitises every `.describe()` string inside `inputSchema` at registration time — top-level fields, nested `ZodObject`, `ZodArray`, `ZodUnion`, and through `ZodOptional` / `ZodDefault` / `ZodNullable` wrappers. The walk uses Zod v4's public `field.description` getter and re-applies sanitised descriptions via `field.describe()` (clone-and-register against `z.globalRegistry`), avoiding the runtime no-op trap of mutating `_def.description`. A WeakMap memoisation cache keys on both input and output identity so repeated registrations or re-feeds short-circuit. Standard-Schema regression check uses `z.toJSONSchema()` to verify sanitised values are visible at every depth.
+Closes plan item **B4**. `McpCurlServer.registerCustomTool()` now auto-sanitises every `.describe()` string inside `inputSchema` at registration time — top-level fields, nested `ZodObject`, `ZodArray`, `ZodUnion` (including `ZodDiscriminatedUnion`), and through `ZodOptional` / `ZodDefault` / `ZodNullable` wrappers. The walker mutates the caller's schema's `z.globalRegistry` entries **in place** — preserving every runtime invariant (`.refine()`, `.check()`, `.strict()`, array `.min()` / `.max()` / `.length()`, factory defaults, discriminator routing) while neutralising Unicode-attack chars in advertised metadata. Standard-Schema regression check uses `z.toJSONSchema()` to verify sanitised values are visible at every depth.
 
 ## What was implemented
 
@@ -159,3 +161,70 @@ git log --oneline main..HEAD
 | File (removed) | Title | Summary | Resolved by | Date |
 |----------------|-------|---------|-------------|------|
 | _(none — no `docs/todos/` input was passed to this session)_ | | | | |
+
+## Code Review — 2026-05-01
+
+### Review Summary
+
+- **Reviewer:** automated multi-agent review (security-sentinel, typescript-reviewer, code-simplicity-reviewer, pattern-recognition-specialist) + context7 lookup of `@modelcontextprotocol/sdk` Zod input-schema patterns.
+- **Findings:** 🔴 P1: 5 (correctness regressions in the original rebuild approach) | 🟡 P2: 6 (extraction, docs, scope clarity) | 🔵 P3: ~5 (style, readability).
+- **Outcome:** all P1/P2 fixed in the same PR via a design pivot. P3 items addressed where they coincided with the pivot (escape vs. literal bidi char, hoisted handler, etc.); the rest are out-of-scope follow-ups.
+
+### Handoff Assessment
+
+The original handoff (sections above the banner) was honest about *what was built* but missed the consequence of the chosen approach: rebuilding Zod schemas via `z.object(...)`, `z.array(...)`, and `z.union(...)` silently strips runtime invariants. That is, the description-sanitisation goal was met, but at the cost of correctness regressions for any caller using `.refine()`, `.check()`, `.strict()`, `.passthrough()`, array length checks, or factory defaults — and downgrading `ZodDiscriminatedUnion` to plain `ZodUnion` (the handoff incorrectly claimed `ZodDiscriminatedUnion` "falls through to the leaf branch"; it actually `instanceof ZodUnion` and was being rebuilt as a plain union, losing the discriminator). The "Known issues" section did not surface any of these regressions. This is the kind of gap the review process is designed to catch.
+
+### Key Findings (and resolution)
+
+| ID | Severity | Category | Description | Status |
+|----|----------|----------|-------------|--------|
+| 1 | 🔴 P1 | correctness | Rebuilding via `z.object(newShape)` strips `.refine()` / `.check()` chains | Fixed via in-place mutation |
+| 2 | 🔴 P1 | correctness | Rebuilding via `z.object(newShape)` downgrades `.strict()` / `.passthrough()` to default catchall mode | Fixed via in-place mutation |
+| 3 | 🔴 P1 | correctness | Rebuilding via `z.array(elem)` strips `.min()` / `.max()` / `.length()` / `.nonempty()` constraints | Fixed via in-place mutation |
+| 4 | 🔴 P1 | correctness | `_def.defaultValue` is a *getter* that evaluates factory defaults; passing it to `.default()` freezes the factory closure into a single value | Fixed via in-place mutation (no `.default()` rebuild needed) |
+| 5 | 🔴 P1 | typescript | Use of deprecated `_def` accessor (Zod v4 marks `_def` as `@deprecated`; `.def` is the supported public alias) | Moot — no `_def` access needed in the in-place walker |
+| 6 | 🟡 P2 | correctness | `ZodDiscriminatedUnion instanceof ZodUnion` was true, so the original code was silently rebuilding it as a plain `ZodUnion` and losing the discriminator | Fixed via in-place mutation; new test asserts discriminator-routing parses |
+| 7 | 🟡 P2 | architecture | Helpers and WeakMap cache lived inline in `mcp-curl-server.ts`, mixed with the class | Extracted to `src/lib/extensible/schema-sanitizer.ts` |
+| 8 | 🟡 P2 | safety | No depth bound — pathological deeply-nested schemas could blow the call stack | `MAX_RECURSION_DEPTH = 100` added (matches sibling defensive walkers) |
+| 9 | 🟡 P2 | simplicity | WeakMap memoisation cache was premature — the in-place walker is naturally idempotent (`sanitised === desc` short-circuit) | Cache removed; cycle guard kept via `WeakSet` (correctness, not perf) |
+| 10 | 🟡 P2 | docs | Handoff and JSDoc claimed "rebuild" semantics; docs needed rewrite to reflect in-place contract | JSDoc on `registerCustomTool` rewritten; this banner + review section added |
+| 11 | 🟡 P2 | scope | YAML-schema path — `api-server.ts` calls `registerCustomTool` for every endpoint, so schema sanitisation also covers YAML-driven tools (not separately documented) | Documented in updated JSDoc and below |
+| 12 | 🔵 P3 | style | Tests used a literal U+202E bidi character in source — viewable in editors that honour the override | Replaced with `"‮"` escape |
+| 13 | 🔵 P3 | style | Stale memoisation tests (C3) referenced the discarded WeakMap cache | Removed; replaced with invariant-preservation tests |
+| 14 | 🔵 P3 | tests | No coverage for `.refine()` / `.strict()` / array `.min()` / factory defaults / discriminator routing | Five new tests added in the B4 block |
+
+### Verified Claims
+
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| "Tests pass" | yes (post-pivot) | 651 tests pass / 7 skipped — 17 in the B4 block (was 11) |
+| "Type-check clean apart from pre-existing `src/lib.test.ts(78,5)`" | yes | Pre-existing error confirmed unchanged on `main` |
+| "WeakMap memoisation cache" | n/a | Cache removed during pivot — in-place is idempotent without one |
+| "`ZodDiscriminatedUnion` falls through to leaf branch" | **incorrect (caught in review)** | DU `instanceof ZodUnion` was true; original code rebuilt it as plain union. Pivot fixes this automatically. |
+| "Standard Schema regression covered via `z.toJSONSchema()`" | yes | Test still passes against the in-place walker |
+| "No follow-up PRs blocked by PR-5" | yes | Confirmed against PRs 6a–9 in plan |
+
+### Design Pivot — In-Place Registry Mutation
+
+**Why the original approach was wrong:** Zod v4's `z.object(newShape)`, `z.array(elem)`, and `z.union(opts)` constructors produce a *fresh* schema with no checks, no catchall mode, no length constraints. The `.refine()` / `.check()` / `.strict()` / `.array().min()` invariants live on the parent node, not in the shape — so walking the tree and rebuilding from leaves silently drops them. Worse, `ZodDefault._def.defaultValue` is implemented as a getter that *evaluates* the factory once per access (`node_modules/zod/v4/classic/schemas.js:933-935`), so rebuilding via `inner.default(field._def.defaultValue)` freezes the factory closure into a single concrete value.
+
+**Why in-place mutation is correct:** Zod v4 stores `description` in `z.globalRegistry` (a WeakMap keyed by schema instance). The `.describe()` method is `clone() + globalRegistry.add(clone, …)` — a fresh entry on a fresh instance. We can achieve the same end-state by calling `globalRegistry.add(originalInstance, { ...existing, description: sanitised })` — same registry mutation Zod itself does, but on the *original* instance rather than a clone. Every other invariant (`.refine` chains, catchall mode, array length checks, factory closures, discriminator metadata) lives on the original and is preserved by definition.
+
+**Side-effect contract:** `sanitizeFieldDescriptionsDeep` mutates the caller's schema. The mutation is scoped to the `description` key of the registry entry — no parsing semantics change. This is a security-improving mutation: any subsequent read of `field.description` (whether by Zod, JSON Schema export, or downstream consumer) returns the sanitised text. Callers that need to retain the unsanitised text should clone before handing the schema in (e.g. `z.object({...}).describe(originalText)` keeps the new clone separate from any outer registration).
+
+### Files Changed in the Pivot
+
+- **New:** `src/lib/extensible/schema-sanitizer.ts` — pure module with `sanitizeFieldDescriptionsDeep`, `sanitizeNode`, `sanitizeOwnDescription`. Depth bound, cycle guard, no cache.
+- **Modified:** `src/lib/extensible/mcp-curl-server.ts` — removed inline helpers and `SANITIZED_SCHEMA_CACHE` (133 lines deleted); imports the helper from the sibling file. JSDoc on `registerCustomTool` rewritten to describe in-place semantics and invariant preservation.
+- **Modified:** `src/lib/extensible/mcp-curl-server.test.ts` — replaced 2 memoisation tests with 5 new invariant-preservation tests (`refine`, `strict`, array `.min()`, factory default, discriminated-union discriminator); added `nullable`, "wrapper-with-description", "same-instance returned", and "idempotent" coverage; switched literal bidi char to `‮` escape; reset suite-scoped server in `beforeEach`. Final count: 17 tests in the B4 block (was 11).
+- **Modified:** this handoff (banner + this review section).
+
+### Outstanding Todos
+<!-- Todos created during this review — see docs/todos/ for full content. -->
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _(none — all P1/P2 findings fixed in this PR; no deferred items)_ | | | |
+
+### Blockers
+
+None — clear to merge. All P1 correctness regressions are fixed, all tests pass, type-check is clean, build is clean, and the implementation now matches the contract advertised in the JSDoc.
