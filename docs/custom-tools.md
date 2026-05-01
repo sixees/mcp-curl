@@ -101,11 +101,20 @@ schema registration, prompts, or downstream HTTP requests.
 
 `registerCustomTool()` auto-sanitizes `meta.title`, `meta.description`, **and** every `.describe()`
 string inside `inputSchema` — at every depth. The deep walk recurses through nested `z.object()`,
-`z.array()`, `z.union()`, and through `z.optional()` / `z.default()` / `z.nullable()` wrappers.
-Sanitisation is keyed by schema identity in a `WeakMap`, so registering the same schema reference
-twice short-circuits to the cached output (no rebuild). The original schema instance you passed in
-is **not** mutated — `.describe()` on Zod v4 clones the schema and registers the new description in
-`z.globalRegistry`.
+`z.array()`, `z.union()` (including `z.discriminatedUnion()`), and through `z.optional()` /
+`z.default()` / `z.nullable()` wrappers.
+
+The walker mutates `z.globalRegistry` entries on the schema you passed in — **the schema instance
+itself is shared**, only the registered descriptions on each node are rewritten to their sanitised
+form. Runtime parsing semantics are not touched, so every Zod check survives the walk: `.refine()`
+and `.check()` chains, `.strict()` / `.passthrough()` modes, `z.array().min()` / `.max()` / `.length()`
+constraints, factory `default(() => ...)` closures, and `ZodDiscriminatedUnion` discriminator
+routing all continue to work exactly as before. The walk is idempotent (a clean description is
+never rewritten to itself) and depth-bounded against pathological recursion.
+
+If you need to retain the *unsanitised* description text for some downstream use, clone the schema
+with `.describe(originalText)` before handing it in — the clone keeps the un-mutated registry
+entry on a fresh node.
 
 Other content inside `inputSchema` reaches the LLM verbatim — `z.enum([...])` literals,
 `.default(...)` values, field key names. Field-key names and enum literals are part of the public
