@@ -335,9 +335,9 @@ const wrapped = config.enableSpotlighting
 
 **Acceptance criteria.**
 
-- [ ] `src/lib/tools/jq-query.test.ts` exists with ≥ 10 test cases.
-- [ ] Coverage of `executeJqQuery()` in `npm test -- --coverage` rises measurably (no formal threshold, but every error branch should have at least one test).
-- [ ] No file outside the test fixture directory is created.
+- [x] `src/lib/tools/jq-query.test.ts` exists with ≥ 10 test cases.
+- [x] Coverage of `executeJqQuery()` in `npm test -- --coverage` rises measurably (no formal threshold, but every error branch should have at least one test).
+- [x] No file outside the test fixture directory is created.
 
 ---
 
