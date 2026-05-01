@@ -105,7 +105,7 @@ git log --oneline main..HEAD
 
 | Comment | Reviewer | Category | Action Taken |
 |---------|----------|----------|--------------|
-| `McpCurlServer` imported but `server` not declared inline (line 158) | @agent-optibot (4/10 conf) | Fix needed (clarity) | Removed unused `McpCurlServer` import; added inline comment `// `server` is the McpCurlServer instance from the example above.` so readers see the chain back to the prior section instead of expecting a fresh instantiation. |
+| `McpCurlServer` imported but `server` not declared inline (line 158) | @agent-optibot (4/10 conf) | Fix needed (clarity) | Removed unused `McpCurlServer` import; added inline comment `// server is the McpCurlServer instance from the example above.` so readers see the chain back to the prior section instead of expecting a fresh instantiation. |
 | UK→US spelling: "Sanitising" / "sanitises" (lines 150, 152) | @gemini-code-assist | Fix needed (consistency) | Switched heading + body to "Sanitizing" / "sanitizes" to match the API symbols (`sanitizeDescription`), the in-block code comments ("sanitized internally"), and the predominant US spelling in `docs/custom-tools.md` (19 US vs 2 UK). |
 | `server` and `handler` used without local declaration (line 174) | @gemini-code-assist | Fix needed (clarity) | Replaced bare `handler` reference with inline `async (params) => { /* handler logic */ }`. Did **not** add `const server = new McpCurlServer()` — that would imply a *new* server distinct from the example above; the inline comment now anchors the reference correctly. |
 | UK→US spelling + remove backticks from link text (line 178) | @gemini-code-assist | Fix needed (consistency) | "sanitisation" → "sanitization"; `` [`docs/custom-tools.md`] `` → `[docs/custom-tools.md]` to match the link-formatting style used at lines 147, 242. |
@@ -137,27 +137,43 @@ git log --oneline main..HEAD
 
 | File | Priority | Description | Source |
 |------|----------|-------------|--------|
-| _(none)_ | — | — | — | — |
+| _(none)_ | — | — | — |
 
 ### Files Modified
 
 - `README.md` — applied four AI-reviewer suggestions consolidated into one edit (spelling, link-text style, snippet self-containment).
 
-### Outstanding Todos
+## Review Comments Addressed — 2026-05-01 (round 2)
 
-<!-- No new docs/todos/ files created this session. -->
+CodeRabbit posted three markdown-lint findings against the `Review Comments Addressed` block written in round 1. All were valid and applied verbatim.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Nested backticks inside the changes-made table cell (MD038, line 108) | @coderabbitai | Fix needed (markdown-lint) | Replaced ``// `server` is the McpCurlServer…`` with `// server is the McpCurlServer…` so the comment renders as a single code span. |
+| Outstanding-Todos table column-count mismatch (MD056, line 140) | @coderabbitai | Fix needed (markdown-lint) | Dropped the trailing extra cell so the row has 4 cells matching the 4-column header. |
+| Duplicated `### Outstanding Todos` and `### Resolved Todos` headings (MD024, lines 146/160) | @coderabbitai | Fix needed (structure) | Removed the stale duplicate pair from the original handoff template tail. The first pair (under `Review Comments Addressed`) is the latest authoritative state and remains. |
+
+### Decisions Revised
+
+_(none)_ — fixes were purely markdown-hygiene; no documented decisions revisited.
+
+### Resolved Todos
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _(none)_ | — | — | — | — |
+
+### Outstanding Todos
 
 | File | Priority | Description | Source |
 |------|----------|-------------|--------|
 | _(none)_ | — | — | — |
 
-### Resolved Todos
+### Files Modified
 
-<!-- No docs/todos/ files were resolved or deleted this session — B2 originated from the plan, not a docs/todos/ file. -->
-
-| File (removed) | Title | Summary | Resolved by | Date |
-|----------------|-------|---------|-------------|------|
-| _(none)_ | — | — | — | — |
+- `docs/work/handoff-chore-pr-3-readme-input-schema-sanitization.md` — markdown-lint fixes only (no source code touched in round 2).
 
 ## Post-Deploy Monitoring & Validation
 
