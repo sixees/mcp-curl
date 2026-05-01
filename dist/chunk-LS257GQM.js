@@ -1302,28 +1302,30 @@ function validateAuthToken(token) {
   if (token === void 0 || token === "") return;
   if (token.length > LIMITS.MAX_AUTH_TOKEN_LENGTH) {
     throw createConfigError(
-      "MCP_AUTH_TOKEN",
+      ENV.AUTH_TOKEN,
       `[length=${token.length}]`,
       `exceeds maximum ${LIMITS.MAX_AUTH_TOKEN_LENGTH} characters`
     );
   }
   if (!PRINTABLE_ASCII.test(token)) {
     throw createConfigError(
-      "MCP_AUTH_TOKEN",
+      ENV.AUTH_TOKEN,
       "[redacted]",
       "must contain only printable ASCII characters (0x20\u20130x7E)"
     );
   }
 }
 function createAuthMiddleware(authToken) {
+  if (!authToken) {
+    return (_req, _res, next) => next();
+  }
+  const expectedHeader = `Bearer ${authToken}`;
+  const expectedLength = expectedHeader.length;
   return (req, res, next) => {
-    if (!authToken) {
-      next();
-      return;
-    }
-    const authHeader = req.headers.authorization;
-    const expectedHeader = `Bearer ${authToken}`;
-    if (!authHeader || !safeStringCompare(authHeader, expectedHeader)) {
+    const rawAuth = req.headers.authorization;
+    const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
+    const lengthOk = authHeader !== void 0 && authHeader.length === expectedLength;
+    if (!lengthOk || !safeStringCompare(authHeader, expectedHeader)) {
       res.status(401).json({
         jsonrpc: "2.0",
         error: {
