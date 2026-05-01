@@ -85,7 +85,19 @@ server.registerCustomTool(
 await server.start("stdio");
 ```
 
-## Sanitizing External Tool Metadata
+## Validating External Inputs
+
+Anything you accept *into* a custom tool — tool metadata, schema descriptions,
+URL parameters, free-text fields — crosses a trust boundary if it originates
+outside your application. Validate and sanitise before the value can influence
+schema registration, prompts, or downstream HTTP requests.
+
+| Helper | Use when... | Source |
+|--------|-------------|--------|
+| `sanitizeDescription(text)` | The string will be shown to the LLM as tool metadata or a schema description. | externally-sourced metadata, user-edited tool catalogues |
+| `createHttpOnlyUrlSchema(options?)` | The tool accepts a URL parameter. | any tool that fetches a caller-supplied URL |
+
+### Tool metadata and schema descriptions
 
 `registerCustomTool()` auto-sanitizes only `meta.title` and `meta.description`. Anything passed
 through `inputSchema` — `.describe()` strings, `z.enum([...])` literals, `.default(...)` values,
@@ -112,6 +124,91 @@ server.registerCustomTool(
     handler
 );
 ```
+
+### URL parameters
+
+Custom tools that accept URL parameters should use the same `createHttpOnlyUrlSchema()`
+helper the built-in tools and YAML-driven schemas use internally. It restricts the URL
+to `http`/`https` schemes via the WHATWG URL parser, rejecting `javascript:`, `data:`,
+`file:`, `ftp:`, and other dangerous schemes that `z.url()` accepts by default.
+
+```typescript
+import { McpCurlServer, createHttpOnlyUrlSchema } from "mcp-curl";
+import { z } from "zod";
+
+server.registerCustomTool(
+    "fetch_logo",
+    {
+        title: "Fetch a remote logo",
+        description: "Downloads an image from a public URL.",
+        inputSchema: z.object({
+            target: createHttpOnlyUrlSchema({ description: "Target URL (must use http or https)" }),
+        }),
+    },
+    handler
+);
+```
+
+The schema-layer scheme check is one of three independent defences (schema →
+DNS/SSRF → cURL `--proto`); each is sufficient on its own to reject a
+non-http(s) request. Don't relax the helper to add custom schemes — if a
+different allowlist is genuinely needed, add a separate factory rather than
+widening the strict default.
+
+## Sanitizing External Outputs
+
+Anything you return *from* a custom tool that originates outside your
+application (HTTP response bodies, file content, third-party API responses)
+crosses the same trust boundary the built-in `curl_execute` tool defends. The
+library exports response-side helpers so custom tools can replicate the
+defence without deep-importing or reimplementing it.
+
+| Helper | Use when... | Notes |
+|--------|-------------|-------|
+| `sanitizeAndDetect(text, label)` | You want the same defence the built-in tools apply. | Recommended. Locks the sanitize → detect → log ordering. |
+| `applySpotlighting(text, requestId)` | You're emitting external content and want the LLM to treat it as data, not instructions. | Idempotent — pre-wrapped content is returned unchanged. Pass `randomUUID()`. |
+| `sanitizeResponse(text)` | You need only the Unicode/whitespace strip without the detection signal. | Lower-level — `sanitizeAndDetect` is preferred. |
+| `detectInjectionPattern(text)` | You're building a custom logging or telemetry sink. | **Observability only.** See the warning below — never use as a refusal gate. |
+| `logInjectionDetected(label)` | You're replacing `sanitizeAndDetect` with your own composer and want consistent stderr log format. | Throttled to once per label per 60s. |
+
+**Recommended:** use `sanitizeAndDetect(text, label)` plus `applySpotlighting`:
+
+```typescript
+import { sanitizeAndDetect, applySpotlighting } from "mcp-curl";
+import { randomUUID } from "node:crypto";
+
+const sanitized = sanitizeAndDetect(externalContent, hostname);
+const wrapped = config.enableSpotlighting
+    ? applySpotlighting(sanitized, randomUUID())
+    : sanitized;
+```
+
+`applySpotlighting` is idempotent — if the framework re-wraps content that
+your custom tool already wrapped, the outer call is a no-op.
+
+> **⚠️ Do not use `detectInjectionPattern` to refuse, redact, or alter
+> responses.** Pattern detection is unreliable as an enforcement boundary:
+> it has false positives, is trivially bypassed (paraphrase, encoding, novel
+> jailbreak phrasing), and gating on it leaks the rule-set to whoever can
+> probe the behaviour. The defence layer is `sanitizeResponse` (which always
+> runs) plus `applySpotlighting` (the trust-boundary sentinel). Detection is
+> a logging signal, never a gate. If you find yourself reaching for the
+> primitive to make a refusal decision, prefer `sanitizeAndDetect` instead
+> — it is the safe alternative because it cannot be misused this way (it
+> always returns the sanitized text).
+
+The library uses these same helpers internally on `curl_execute` and
+YAML-tool output. Calling them from a custom tool keeps the trust boundary
+symmetric.
+
+## Composing the Full Defence
+
+The two sections above describe the input and output halves of the trust
+boundary. Most custom tools that fetch external content will want both
+applied in the same place. A higher-level `wrapWithDefence(handler)`
+composer that bundles input validation, output sanitisation, detection,
+and spotlighting is planned for a follow-up release; until then, compose
+the primitives directly per the recommended snippets above.
 
 ## Using Instance Utilities
 

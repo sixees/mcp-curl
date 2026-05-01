@@ -2,6 +2,7 @@
 // Security regression tests for CurlExecuteSchema URL validation (Zod v4)
 
 import { describe, it, expect } from "vitest";
+import { z } from "zod";
 import { CurlExecuteSchema } from "./schemas.js";
 
 describe("CurlExecuteSchema — URL scheme allowlist", () => {
@@ -120,5 +121,23 @@ describe("CurlExecuteSchema — headers and form field validation", () => {
             form: { count: 3 },
         });
         expect(result.success).toBe(false);
+    });
+});
+
+describe("CurlExecuteSchema — JSON Schema fidelity", () => {
+    // The MCP SDK 1.x emits tool input schemas via toJsonSchemaCompat() at
+    // registration time, and the LLM client renders the resulting JSON
+    // Schema (description, format, title, …) verbatim in tool input docs. A
+    // Zod minor or MCP SDK upgrade that changes the converter (e.g. SDK 2.0
+    // adopts a Standard Schema converter that *does* honour `.refine()` →
+    // `pattern`) would shift the LLM-visible surface silently.
+    //
+    // This snapshot pins the emitted shape so any such drift surfaces in CI
+    // rather than in production. When the snapshot legitimately changes
+    // (e.g. an intentional .describe() update), update it deliberately
+    // with `vitest -u` and review the diff.
+    it("emits a stable JSON Schema for the url field", () => {
+        const schema = z.toJSONSchema(CurlExecuteSchema.shape.url);
+        expect(schema).toMatchSnapshot();
     });
 });

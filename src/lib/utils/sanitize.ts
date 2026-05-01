@@ -98,6 +98,14 @@ export function sanitizeDescription(input: string | null | undefined): string {
  * is no longer hidden behind a wall of whitespace), and detectInjectionPattern
  * still fires on the collapsed content for observability.
  *
+ * **Stability contract:** the security *invariant* is stable across versions —
+ * output never contains Unicode-attack chars from the documented class, never
+ * contains a run of 50+ consecutive spaces. The exact *byte-level form* of the
+ * transformation is implementation detail and may tighten over time (broader
+ * Unicode coverage, lower whitespace threshold, additional collapses). Do not
+ * rely on `sanitizeResponse(x) === x` as a "is clean" oracle — re-run the
+ * sanitiser instead, or compose with `sanitizeAndDetect`.
+ *
  * @param input - Response content to sanitize (null/undefined returns "")
  * @returns Sanitized content
  */
@@ -113,16 +121,116 @@ export function sanitizeResponse(input: string | null | undefined): string {
 
 /**
  * Scan content for prompt injection patterns.
- * Observability-only: never suppresses or modifies the content.
  *
- * Call this on sanitized content so that invisible-char-split phrases
- * (e.g., "Ig​nore" → "Ignore" after sanitizeResponse) are detectable.
+ * **Observability only — never use this as an enforcement gate.** Pattern
+ * matching is a signal, not a boundary: it has known false positives, is
+ * trivially bypassed by a motivated attacker (paraphrase, encoding, novel
+ * jailbreak phrasing), and gating on it leaks the rule-set to whoever can
+ * probe the behaviour. The defence layer is `sanitizeResponse` (Unicode
+ * normalisation) plus `applySpotlighting` (trust-boundary sentinel) — both
+ * always run regardless of detection state. Examples of misuse:
  *
- * @param input - Content to scan (already sanitized)
+ *     // ❌ Never do this — converts a signal into a refusal gate.
+ *     if (detectInjectionPattern(externalContent)) {
+ *         return { isError: true, content: [{ type: "text", text: "Refused" }] };
+ *     }
+ *
+ *     // ❌ Never do this — silently drops content the LLM should have seen.
+ *     return detectInjectionPattern(text) ? "[content removed]" : text;
+ *
+ *     // ✅ Correct — log only; sanitised text is still returned.
+ *     if (detectInjectionPattern(sanitized)) console.error(...);
+ *     return sanitized;
+ *
+ * Prefer the `sanitizeAndDetect(text, label)` composer (re-exported from the
+ * public barrel) over hand-wiring the primitives — it locks the
+ * sanitize → detect → log ordering invariant. Calling this matcher on raw
+ * (un-sanitized) text means invisible-char-split phrases like "Ig​nore" will
+ * not match, silently degrading detection coverage.
+ *
+ * **Stability contract:** the *intent* — return `true` when the (already
+ * sanitised) content matches a known prompt-injection signal — is stable. The
+ * specific pattern set is **not** part of the public contract and will expand
+ * over time as new attack phrasings emerge. Tests that assert on which strings
+ * do or do not match should target known categories (e.g. instruction-override
+ * phrases) rather than exact wording, and callers must continue to honour the
+ * "observability only" rule regardless of which patterns are in play.
+ *
+ * @param input - Content to scan (must already be passed through `sanitizeResponse`)
  * @returns true if any injection pattern matched
  */
 export function detectInjectionPattern(input: string): boolean {
     return INJECTION_PATTERNS.test(input);
+}
+
+/**
+ * Sentinel prefix shared by `applySpotlighting` and the idempotence guard
+ * in `extensible/tool-wrapper.ts`. Centralised here so the wrap-detection
+ * regex stays in lock-step with the wrap-emission template.
+ */
+export const SPOTLIGHT_SENTINEL_PREFIX = "---EXTERNAL-CONTENT-BEGIN-";
+
+/**
+ * Strict UUID shapes accepted as a spotlight request ID:
+ *   - **Compact 32-hex** (no dashes) — `randomUUID().replace(/-/g, "")`
+ *   - **RFC 4122 8-4-4-4-12 layout** (with dashes) — direct `randomUUID()` output
+ *
+ * The earlier looser pattern `/^[0-9a-f-]{32,36}$/i` accepted strings made
+ * entirely (or mostly) of dashes — e.g. 36 dashes — which produces a
+ * predictable, low-entropy sentinel that an attacker can spoof in payload
+ * content. The wrapper layer always passes `randomUUID()` so this only
+ * affects custom-tool authors, but the explicit purpose of the validator is
+ * to reject obvious low-entropy mistakes; a string of dashes is exactly that.
+ */
+const SPOTLIGHT_REQUEST_ID_PATTERN =
+    /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/**
+ * Header-only matcher used by `isSpotlightEnvelope` to extract the embedded
+ * UUID from a putative envelope without scanning the entire content. The
+ * complete-envelope check (begin + matching end) is composed in
+ * `isSpotlightEnvelope` rather than expressed as a single backreferenced
+ * regex against `[\s\S]*` so we avoid catastrophic-backtracking shapes on
+ * 10 MB inputs.
+ */
+const SPOTLIGHT_HEADER_PATTERN = /^---EXTERNAL-CONTENT-BEGIN-([0-9a-f-]{32,36})---\n/i;
+
+/**
+ * Returns `true` only if `text` is a *complete* spotlight envelope: it starts
+ * with `---EXTERNAL-CONTENT-BEGIN-{uuid}---\n` AND ends with the matching
+ * `\n---EXTERNAL-CONTENT-END-{same-uuid}---` sentinel, where `{uuid}` is a
+ * strict UUID shape (per `SPOTLIGHT_REQUEST_ID_PATTERN`).
+ *
+ * **Why this is stricter than `startsWith(SPOTLIGHT_SENTINEL_PREFIX)`.** The
+ * idempotence guard's purpose is "is this output of a previous
+ * `applySpotlighting` call?" A prefix-only check answered "no" to that
+ * question whenever the begin sentinel was prepended — including by an
+ * attacker who controls the HTTP response body. By requiring the matching
+ * end sentinel with the same UUID, the only way to produce a false-positive
+ * is to forge a complete, well-formed envelope (raising bypass cost from
+ * ~26 prepended bytes to ~120 bytes plus consistent UUID at both ends).
+ *
+ * Content-based idempotence is fundamentally vulnerable to attacker forgery
+ * because the attacker controls the bytes; metadata-based tagging on the
+ * `CallToolResult` object (Symbol-keyed property) is the proper fix and is
+ * tracked in PR-6b of the hardening plan. This stricter check is the
+ * defence-in-depth interim.
+ *
+ * Implementation is two `String.prototype` methods plus one bounded regex
+ * scan against the header — no `[\s\S]*` backreferences over 10 MB inputs.
+ *
+ * @param text - Candidate text to test
+ * @returns `true` iff `text` is a complete, well-formed spotlight envelope
+ */
+export function isSpotlightEnvelope(text: string): boolean {
+    if (typeof text !== "string" || text.length < SPOTLIGHT_SENTINEL_PREFIX.length) return false;
+    if (!text.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) return false;
+    const headerMatch = SPOTLIGHT_HEADER_PATTERN.exec(text);
+    if (!headerMatch) return false;
+    const uuid = headerMatch[1];
+    if (!SPOTLIGHT_REQUEST_ID_PATTERN.test(uuid)) return false;
+    const expectedEnd = `\n---EXTERNAL-CONTENT-END-${uuid}---`;
+    return text.endsWith(expectedEnd);
 }
 
 /**
@@ -136,11 +244,43 @@ export function detectInjectionPattern(input: string): boolean {
  * Uses the caller-provided requestId (a fresh UUID per request, never a module-level constant)
  * to make cross-turn sentinel reuse attacks impractical.
  *
+ * **Idempotence:** if `content` is already a *complete* spotlight envelope
+ * (`isSpotlightEnvelope(content)` returns `true`), the function returns it
+ * unchanged. The check requires both the begin sentinel AND a matching end
+ * sentinel with the same UUID — an attacker prepending only the public begin
+ * prefix cannot bypass spotlighting. The `extensible/tool-wrapper` also
+ * short-circuits when the inner result is already wrapped — both layers
+ * defend against double-wrapping (which would otherwise nest two different
+ * UUID sentinels and confuse the LLM about where the trust boundary lies).
+ *
+ * **Stability contract:** the *security property* — output marks the content
+ * with a per-request, unguessable, unspoofable trust boundary — is stable. The
+ * exact sentinel string format (current: `---EXTERNAL-CONTENT-BEGIN-{uuid}---`)
+ * is implementation detail and may change in a future minor release (e.g. to
+ * a JSON envelope or a randomised byte prefix) without breaking the contract.
+ * Downstream prompt templates **must not** match on the literal sentinel
+ * string — treat the wrapped content as opaque and pass it through to the LLM
+ * unchanged.
+ *
  * @param content - Response content to wrap
- * @param requestId - Unique identifier for this response (caller should pass randomUUID())
- * @returns Content wrapped in opaque sentinel delimiters
+ * @param requestId - Unique identifier for this response (caller should pass randomUUID());
+ *                   must match `/^[0-9a-f-]{32,36}$/i` so a degraded sentinel cannot ship
+ * @returns Content wrapped in opaque sentinel delimiters, or `content` unchanged if it is already wrapped
  */
 export function applySpotlighting(content: string, requestId: string): string {
+    // Idempotence: if the content is already wrapped (by an inner call to applySpotlighting,
+    // or by a caller that pre-wrapped before the framework re-wraps), return unchanged.
+    // Without this guard, enabling spotlighting on a tool that already spotlights would
+    // produce nested sentinels with two different UUIDs.
+    //
+    // The check requires a *complete* envelope (begin + matching end + same UUID), not
+    // just the begin prefix — a prefix-only check let an attacker who controls the HTTP
+    // response body prepend the public sentinel prefix and bypass spotlighting entirely.
+    // Idempotence runs first because the requestId is unused on this path — validating
+    // it would only block legitimate double-wrap attempts that we already short-circuit.
+    if (isSpotlightEnvelope(content)) {
+        return content;
+    }
     // Empty requestId would produce sentinels like "---EXTERNAL-CONTENT-BEGIN-----..."
     // that an attacker could spoof in payload content. The sentinel's security depends
     // on the requestId being unguessable per request — fail loudly rather than silently
@@ -148,7 +288,14 @@ export function applySpotlighting(content: string, requestId: string): string {
     if (!requestId) {
         throw new Error("applySpotlighting: requestId must be a non-empty string");
     }
-    const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
+    // Reject obvious low-entropy mistakes (e.g. "req", "session-1", Date.now()) at build/dev time.
+    // The wrapper layer always passes randomUUID() so this only catches custom-tool author errors.
+    if (!SPOTLIGHT_REQUEST_ID_PATTERN.test(requestId)) {
+        throw new Error(
+            "applySpotlighting: requestId must be a UUID-shaped string (32–36 hex chars; pass randomUUID())"
+        );
+    }
+    const begin = `${SPOTLIGHT_SENTINEL_PREFIX}${requestId}---`;
     const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
     return `${begin}\n${content}\n${end}`;
 }

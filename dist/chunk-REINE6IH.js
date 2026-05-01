@@ -1,3 +1,41 @@
+// src/lib/utils/url.ts
+import { z } from "zod";
+
+// src/lib/config/security/url-schemes.ts
+var ALLOWED_URL_SCHEMES = Object.freeze(["http:", "https:"]);
+var ALLOWED_URL_SCHEMES_CURL_FLAG = `=${ALLOWED_URL_SCHEMES.map((s) => s.replace(":", "")).join(",")}`;
+function isAllowedUrlScheme(protocol) {
+  return ALLOWED_URL_SCHEMES.includes(protocol);
+}
+
+// src/lib/utils/url.ts
+function resolveBaseUrl(baseUrl, path) {
+  const base = baseUrl.replace(/\/$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
+}
+function createHttpOnlyUrlSchema(options = {}) {
+  const { description = "URL (http or https)", message = "URL must use http or https scheme" } = options;
+  return z.url("Must be a valid URL").refine(
+    (url) => {
+      try {
+        return isAllowedUrlScheme(new URL(url).protocol);
+      } catch {
+        return false;
+      }
+    },
+    { message }
+  ).describe(description);
+}
+function safeHostname(url, fallback = "unknown") {
+  if (!url) return fallback;
+  try {
+    return new URL(url).hostname || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 // src/lib/utils/sanitize.ts
 var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
 var UNICODE_ATTACK_RANGES = "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\u00AD\\u200B-\\u200F\\u2028\\u2029\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF\\uFE00-\\uFE0F\\u{E0000}-\\u{E007F}";
@@ -51,11 +89,33 @@ function sanitizeResponse(input) {
 function detectInjectionPattern(input) {
   return INJECTION_PATTERNS.test(input);
 }
+var SPOTLIGHT_SENTINEL_PREFIX = "---EXTERNAL-CONTENT-BEGIN-";
+var SPOTLIGHT_REQUEST_ID_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+var SPOTLIGHT_HEADER_PATTERN = /^---EXTERNAL-CONTENT-BEGIN-([0-9a-f-]{32,36})---\n/i;
+function isSpotlightEnvelope(text) {
+  if (typeof text !== "string" || text.length < SPOTLIGHT_SENTINEL_PREFIX.length) return false;
+  if (!text.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) return false;
+  const headerMatch = SPOTLIGHT_HEADER_PATTERN.exec(text);
+  if (!headerMatch) return false;
+  const uuid = headerMatch[1];
+  if (!SPOTLIGHT_REQUEST_ID_PATTERN.test(uuid)) return false;
+  const expectedEnd = `
+---EXTERNAL-CONTENT-END-${uuid}---`;
+  return text.endsWith(expectedEnd);
+}
 function applySpotlighting(content, requestId) {
+  if (isSpotlightEnvelope(content)) {
+    return content;
+  }
   if (!requestId) {
     throw new Error("applySpotlighting: requestId must be a non-empty string");
   }
-  const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
+  if (!SPOTLIGHT_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error(
+      "applySpotlighting: requestId must be a UUID-shaped string (32\u201336 hex chars; pass randomUUID())"
+    );
+  }
+  const begin = `${SPOTLIGHT_SENTINEL_PREFIX}${requestId}---`;
   const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
   return `${begin}
 ${content}
@@ -84,28 +144,6 @@ function createFileError(filepath, reason) {
 }
 function createConfigError(configName, value, reason) {
   return new Error(`Invalid ${configName} value "${value}": ${reason}.`);
-}
-
-// src/lib/utils/url.ts
-import { z } from "zod";
-function resolveBaseUrl(baseUrl, path) {
-  const base = baseUrl.replace(/\/$/, "");
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${normalizedPath}`;
-}
-function httpOnlyUrl(description) {
-  return z.url().refine(
-    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
-    { message: "URL must use http or https scheme" }
-  ).describe(description);
-}
-function safeHostname(url, fallback = "unknown") {
-  if (!url) return fallback;
-  try {
-    return new URL(url).hostname || fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 // src/lib/utils/content-type.ts
@@ -163,16 +201,50 @@ function supportsMarkupComments(contentType) {
   return MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
 }
 
+// src/lib/security/detection-logger.ts
+var THROTTLE_WINDOW_MS = 6e4;
+var lastDetectedMap = /* @__PURE__ */ new Map();
+function normalizeDetectionLabel(label) {
+  return label.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").slice(0, 128);
+}
+function logInjectionDetected(hostname) {
+  const safeLabel = normalizeDetectionLabel(hostname);
+  const now = Date.now();
+  const lastSeen = lastDetectedMap.get(safeLabel);
+  if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS) {
+    return;
+  }
+  lastDetectedMap.set(safeLabel, now);
+  console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
+}
+function sanitizeAndDetect(text, label) {
+  const sanitized = sanitizeResponse(text);
+  if (detectInjectionPattern(sanitized)) {
+    logInjectionDetected(label);
+  }
+  return sanitized;
+}
+function startInjectionCleanup() {
+  const interval = setInterval(cleanupInjectionDetectionMap, THROTTLE_WINDOW_MS);
+  interval.unref();
+  return interval;
+}
+function stopInjectionCleanup(interval) {
+  clearInterval(interval);
+}
+function cleanupInjectionDetectionMap() {
+  const now = Date.now();
+  for (const [key, timestamp] of lastDetectedMap) {
+    if (now - timestamp >= THROTTLE_WINDOW_MS) {
+      lastDetectedMap.delete(key);
+    }
+  }
+}
+
 // src/lib/server/schemas.ts
 import { z as z2 } from "zod";
 var CurlExecuteSchema = z2.object({
-  url: z2.url("Must be a valid URL").refine(
-    (url) => {
-      const scheme = url.split(":")[0].toLowerCase();
-      return ["http", "https"].includes(scheme);
-    },
-    { message: "URL must use http or https scheme" }
-  ).describe("The URL to request"),
+  url: createHttpOnlyUrlSchema({ description: "The URL to request (http or https)" }),
   method: z2.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (defaults to GET, or POST if data is provided)"),
   headers: z2.record(z2.string(), z2.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
   data: z2.string().optional().describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
@@ -342,6 +414,15 @@ function applyDefaultHeaders(headers, userAgent, config) {
 }
 
 // src/lib/config/security/ssrf.ts
+var IPV4_MAPPED_IPV6_HEX_RE = /^\[?::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]?$/i;
+function normalizeIpv4MappedIpv6(host) {
+  const match = host.match(IPV4_MAPPED_IPV6_HEX_RE);
+  if (!match) return host;
+  const high = parseInt(match[1], 16);
+  const low = parseInt(match[2], 16);
+  if (high > 65535 || low > 65535) return host;
+  return `${high >> 8 & 255}.${high & 255}.${low >> 8 & 255}.${low & 255}`;
+}
 var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
   // IPv4 loopback and mapped IPv6
   /^127\.\d+\.\d+\.\d+$/,
@@ -394,7 +475,8 @@ var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
   /^\\\\[^\\]{1,255}/
 ]);
 function isBlockedHostname(hostname) {
-  return BLOCKED_HOSTNAME_PATTERNS_INTERNAL.some((pattern) => pattern.test(hostname));
+  const normalized = normalizeIpv4MappedIpv6(hostname);
+  return BLOCKED_HOSTNAME_PATTERNS_INTERNAL.some((pattern) => pattern.test(normalized));
 }
 var LOCALHOST_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
   /^localhost$/i
@@ -421,7 +503,8 @@ var BLOCKED_IP_PATTERNS_INTERNAL = Object.freeze([
   /^::ffff:0\.0\.0\.0$/i
 ]);
 function isBlockedIp(ip) {
-  return BLOCKED_IP_PATTERNS_INTERNAL.some((pattern) => pattern.test(ip));
+  const normalized = normalizeIpv4MappedIpv6(ip);
+  return BLOCKED_IP_PATTERNS_INTERNAL.some((pattern) => pattern.test(normalized));
 }
 var LOCALHOST_IP_PATTERNS_INTERNAL = Object.freeze([
   /^127\.\d+\.\d+\.\d+$/,
@@ -429,7 +512,8 @@ var LOCALHOST_IP_PATTERNS_INTERNAL = Object.freeze([
   /^::ffff:127\./i
 ]);
 function isLocalhostIp(ip) {
-  return LOCALHOST_IP_PATTERNS_INTERNAL.some((pattern) => pattern.test(ip));
+  const normalized = normalizeIpv4MappedIpv6(ip);
+  return LOCALHOST_IP_PATTERNS_INTERNAL.some((pattern) => pattern.test(normalized));
 }
 var ALLOWED_LOCALHOST_PORTS_INTERNAL = Object.freeze(
   /* @__PURE__ */ new Set([80, 443])
@@ -757,7 +841,7 @@ async function validateUrlAndResolveDns(url, options) {
   }
   const hostname = parsed.hostname.toLowerCase();
   const port = parsed.port ? parseInt(parsed.port, 10) : parsed.protocol === "https:" ? 443 : 80;
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+  if (!isAllowedUrlScheme(parsed.protocol)) {
     throw new Error(`Protocol "${parsed.protocol}" is not allowed - only http:// and https:// are supported`);
   }
   if (isBlockedHostname(hostname)) {
@@ -987,46 +1071,6 @@ async function validateFilePath(filepath) {
   return realFilePath;
 }
 
-// src/lib/security/detection-logger.ts
-var THROTTLE_WINDOW_MS = 6e4;
-var lastDetectedMap = /* @__PURE__ */ new Map();
-function normalizeDetectionLabel(label) {
-  return label.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").slice(0, 128);
-}
-function logInjectionDetected(hostname) {
-  const safeLabel = normalizeDetectionLabel(hostname);
-  const now = Date.now();
-  const lastSeen = lastDetectedMap.get(safeLabel);
-  if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS) {
-    return;
-  }
-  lastDetectedMap.set(safeLabel, now);
-  console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
-}
-function sanitizeAndDetect(text, label) {
-  const sanitized = sanitizeResponse(text);
-  if (detectInjectionPattern(sanitized)) {
-    logInjectionDetected(label);
-  }
-  return sanitized;
-}
-function startInjectionCleanup() {
-  const interval = setInterval(cleanupInjectionDetectionMap, THROTTLE_WINDOW_MS);
-  interval.unref();
-  return interval;
-}
-function stopInjectionCleanup(interval) {
-  clearInterval(interval);
-}
-function cleanupInjectionDetectionMap() {
-  const now = Date.now();
-  for (const [key, timestamp] of lastDetectedMap) {
-    if (now - timestamp >= THROTTLE_WINDOW_MS) {
-      lastDetectedMap.delete(key);
-    }
-  }
-}
-
 // src/lib/execution/command-executor.ts
 import { spawn } from "child_process";
 
@@ -1170,7 +1214,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
 // src/lib/execution/curl-args-builder.ts
 function buildCurlArgs(params) {
   const args = [];
-  args.push("--proto", "=http,https");
+  args.push("--proto", ALLOWED_URL_SCHEMES_CURL_FLAG);
   if (params.method) {
     args.push("-X", params.method.toUpperCase());
   }
@@ -1194,7 +1238,7 @@ function buildCurlArgs(params) {
   if (params.follow_redirects !== false) {
     args.push("-L");
     args.push("--max-redirs", String(params.max_redirects ?? LIMITS.MAX_REDIRECTS));
-    args.push("--proto-redir", "=http,https");
+    args.push("--proto-redir", ALLOWED_URL_SCHEMES_CURL_FLAG);
   }
   if (params.insecure) {
     args.push("-k");
@@ -1928,9 +1972,13 @@ export {
   ENV,
   getErrorMessage,
   resolveBaseUrl,
-  httpOnlyUrl,
+  createHttpOnlyUrlSchema,
+  safeHostname,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   sanitizeDescription,
+  sanitizeResponse,
+  detectInjectionPattern,
+  isSpotlightEnvelope,
   applySpotlighting,
   SESSION,
   startRateLimitCleanup,
@@ -1945,6 +1993,7 @@ export {
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   validateFilePath,
+  logInjectionDetected,
   sanitizeAndDetect,
   startInjectionCleanup,
   stopInjectionCleanup,

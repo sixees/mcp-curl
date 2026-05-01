@@ -1,0 +1,10 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CurlExecuteSchema — JSON Schema fidelity > emits a stable JSON Schema for the url field 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The URL to request (http or https)",
+  "format": "uri",
+  "type": "string",
+}
+`;

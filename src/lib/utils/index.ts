@@ -9,7 +9,8 @@ export {
     createConfigError,
 } from "./error.js";
 
-export { resolveBaseUrl, httpOnlyUrl, safeHostname } from "./url.js";
+export { resolveBaseUrl, createHttpOnlyUrlSchema, safeHostname } from "./url.js";
+export type { CreateHttpOnlyUrlSchemaOptions } from "./url.js";
 
 export { isBinaryContentType, parseMimeType, supportsMarkupComments } from "./content-type.js";
 
@@ -18,5 +19,7 @@ export {
     sanitizeResponse,
     detectInjectionPattern,
     applySpotlighting,
+    isSpotlightEnvelope,
+    SPOTLIGHT_SENTINEL_PREFIX,
     MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
 } from "./sanitize.js";

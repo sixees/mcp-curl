@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * Validates all parameters for the curl_execute tool.
  */
 declare const CurlExecuteSchema: z.ZodObject<{
-    url: z.ZodURL;
+    url: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     method: z.ZodOptional<z.ZodEnum<{
         GET: "GET";
         POST: "POST";
@@ -303,4 +303,4 @@ declare function generateToolDefinitions(schema: ApiSchema, config?: GeneratorCo
     handler: (params: Record<string, unknown>, extra?: CurlExecuteExtra) => Promise<CurlExecuteResult>;
 }>;
 
-export { type ApiDefaults as A, type CurlExecuteInput as C, type EndpointDefinition as E, type GeneratorConfig as G, type HttpMethod as H, type JqQueryInput as J, type ParameterLocation as P, type ResponseConfig as R, type ApiInfo as a, type ApiSchema as b, type ApiSchemaVersion as c, type AuthConfig as d, AuthenticationError as e, type EndpointParameter as f, type ParameterType as g, buildUrl as h, generateInputSchema as i, generateToolDefinitions as j, getAuthConfig as k, CurlExecuteSchema as l, JqQuerySchema as m, executeCurlRequest as n, type CurlExecuteResult as o, getMethodAnnotations as p, registerEndpointTools as r };
+export { type ApiDefaults as A, type CurlExecuteInput as C, type EndpointDefinition as E, type GeneratorConfig as G, type HttpMethod as H, type JqQueryInput as J, type ParameterLocation as P, type ResponseConfig as R, type ApiInfo as a, type ApiSchema as b, type ApiSchemaVersion as c, type AuthConfig as d, AuthenticationError as e, type EndpointParameter as f, type ParameterType as g, buildUrl as h, generateInputSchema as i, generateToolDefinitions as j, getAuthConfig as k, getMethodAnnotations as l, CurlExecuteSchema as m, JqQuerySchema as n, executeCurlRequest as o, type CurlExecuteResult as p, registerEndpointTools as r };

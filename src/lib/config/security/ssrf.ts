@@ -55,6 +55,44 @@
  */
 
 // ============================================================================
+// IPv4-Mapped IPv6 Normalization
+// ============================================================================
+
+// Compressed-hex form of an IPv4-mapped IPv6 address: `::ffff:HHHH:HHHH`,
+// optionally bracketed. WHATWG URL canonicalises `http://[::ffff:127.0.0.1]/`
+// to `parsed.hostname === "::ffff:7f00:1"` — the dotted-quad representation
+// disappears, so blocklist patterns that only know dotted-quad would silently
+// miss the canonicalised form. Capture groups expose the two 16-bit hex pairs
+// so we can reconstruct the dotted quad.
+const IPV4_MAPPED_IPV6_HEX_RE = /^\[?::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]?$/i;
+
+/**
+ * If `host` is an IPv4-mapped IPv6 address in compressed-hex form
+ * (`::ffff:HHHH:HHHH`, optionally bracketed), return the equivalent
+ * dotted-quad string (`a.b.c.d`). Otherwise return `host` unchanged.
+ *
+ * This exists because WHATWG URL canonicalisation rewrites the dotted-quad
+ * form of mapped addresses into compressed hex — `[::ffff:127.0.0.1]`
+ * becomes `[::ffff:7f00:1]` — which would otherwise sneak past the
+ * dotted-quad blocklist regexes. Normalising once at the entry of the
+ * predicate lets the existing dotted-quad patterns continue to do all the
+ * work without a parallel set of hex patterns drifting out of sync.
+ *
+ * Exported so the corresponding stateful predicate (`isBlockedHostname`/
+ * `isBlockedIp`) can apply it; tests also exercise it directly.
+ */
+export function normalizeIpv4MappedIpv6(host: string): string {
+    const match = host.match(IPV4_MAPPED_IPV6_HEX_RE);
+    if (!match) return host;
+    const high = parseInt(match[1], 16);
+    const low = parseInt(match[2], 16);
+    // Defensive — the regex bounds each group to 4 hex digits (max 0xffff),
+    // but a future regex relaxation should not turn the mask into a footgun.
+    if (high > 0xffff || low > 0xffff) return host;
+    return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+}
+
+// ============================================================================
 // Blocked Hostname Patterns
 // ============================================================================
 
@@ -111,7 +149,8 @@ const BLOCKED_HOSTNAME_PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([
 
 /** Check if a hostname matches any blocked pattern (internal networks, reserved TLDs, etc.) */
 export function isBlockedHostname(hostname: string): boolean {
-    return BLOCKED_HOSTNAME_PATTERNS_INTERNAL.some(pattern => pattern.test(hostname));
+    const normalized = normalizeIpv4MappedIpv6(hostname);
+    return BLOCKED_HOSTNAME_PATTERNS_INTERNAL.some(pattern => pattern.test(normalized));
 }
 
 // ============================================================================
@@ -154,7 +193,8 @@ const BLOCKED_IP_PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([
 
 /** Check if an IP address matches any blocked pattern (private networks, link-local, etc.) */
 export function isBlockedIp(ip: string): boolean {
-    return BLOCKED_IP_PATTERNS_INTERNAL.some(pattern => pattern.test(ip));
+    const normalized = normalizeIpv4MappedIpv6(ip);
+    return BLOCKED_IP_PATTERNS_INTERNAL.some(pattern => pattern.test(normalized));
 }
 
 // ============================================================================
@@ -170,7 +210,8 @@ const LOCALHOST_IP_PATTERNS_INTERNAL: readonly RegExp[] = Object.freeze([
 
 /** Check if an IP address is a localhost address */
 export function isLocalhostIp(ip: string): boolean {
-    return LOCALHOST_IP_PATTERNS_INTERNAL.some(pattern => pattern.test(ip));
+    const normalized = normalizeIpv4MappedIpv6(ip);
+    return LOCALHOST_IP_PATTERNS_INTERNAL.some(pattern => pattern.test(normalized));
 }
 
 // ============================================================================
