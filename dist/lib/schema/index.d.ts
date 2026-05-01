@@ -1,5 +1,5 @@
-import { b as ApiSchema } from '../../generator-BE50DdFe.js';
-export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, p as getMethodAnnotations, r as registerEndpointTools } from '../../generator-BE50DdFe.js';
+import { b as ApiSchema } from '../../generator-C4tc86Qe.js';
+export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, l as getMethodAnnotations, r as registerEndpointTools } from '../../generator-C4tc86Qe.js';
 import { ZodIssue, z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 

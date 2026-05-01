@@ -29,6 +29,7 @@ import {
     getAuthConfig,
     registerEndpointTools,
     generateToolDefinitions,
+    getMethodAnnotations,
 } from "./lib/schema/index.js";
 import {
     sanitizeDescription,
@@ -98,6 +99,9 @@ describe("public barrel (src/lib.ts)", () => {
         it("generateToolDefinitions", () => {
             expect(publicApi.generateToolDefinitions).toBe(generateToolDefinitions);
         });
+        it("getMethodAnnotations", () => {
+            expect(publicApi.getMethodAnnotations).toBe(getMethodAnnotations);
+        });
 
         // Section 6 — metadata sanitization helpers
         it("sanitizeDescription", () => {
@@ -156,6 +160,7 @@ describe("public barrel (src/lib.ts)", () => {
             "getAuthConfig",
             "registerEndpointTools",
             "generateToolDefinitions",
+            "getMethodAnnotations",
             "sanitizeDescription",
             "MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH",
             "applySpotlighting",

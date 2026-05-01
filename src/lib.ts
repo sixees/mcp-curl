@@ -70,6 +70,11 @@ export {
     getAuthConfig,
     registerEndpointTools,
     generateToolDefinitions,
+    // Tool annotations — exposes the method → readOnlyHint/destructiveHint/
+    // idempotentHint mapping that built-in YAML tools use, so custom-tool
+    // authors registering endpoints via `server.registerTool()` can replicate
+    // the same MCP annotation semantics without deep-importing `schema/`.
+    getMethodAnnotations,
 } from "./lib/schema/index.js";
 
 // 5. Public API types
