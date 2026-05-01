@@ -14,6 +14,76 @@
 import { describe, it, expect } from "vitest";
 import * as publicApi from "./lib.js";
 
+// Compile-time guard for type-only re-exports.
+//
+// `Object.keys(publicApi)` only sees value exports — type-only `export type { … }`
+// declarations are erased by TypeScript and leave no runtime trace. A future PR
+// dropping one of these `export type` lines from `lib.ts` would silently pass
+// the runtime frozen-surface check below. This `import type` pins each one: if
+// the symbol stops being re-exported from `./lib.js`, this file fails to
+// compile, and the test suite refuses to start.
+//
+// Keep this list in lockstep with the `export type { … }` blocks in `src/lib.ts`.
+import type {
+    CustomToolMeta,
+    InstanceUtilities,
+    ExecuteRequestParams,
+    CreateApiServerOptions,
+    ApiSchemaVersion,
+    AuthConfig,
+    ParameterLocation,
+    ParameterType,
+    EndpointParameter,
+    ResponseConfig,
+    HttpMethod,
+    EndpointDefinition,
+    ApiInfo,
+    ApiDefaults,
+    ApiSchema,
+    GeneratorConfig,
+    McpCurlConfig,
+    TransportMode,
+    HookContext,
+    BeforeRequestResult,
+    BeforeRequestHook,
+    AfterResponseHook,
+    OnErrorHook,
+    CurlExecuteInput,
+    JqQueryInput,
+    CreateHttpOnlyUrlSchemaOptions,
+} from "./lib.js";
+
+// Reference each type once so unused-import linters don't strip them. The
+// values are never read; only the type position matters for the guard.
+type _PinnedPublicTypes = [
+    CustomToolMeta,
+    InstanceUtilities,
+    ExecuteRequestParams,
+    CreateApiServerOptions,
+    ApiSchemaVersion,
+    AuthConfig,
+    ParameterLocation,
+    ParameterType,
+    EndpointParameter,
+    ResponseConfig,
+    HttpMethod,
+    EndpointDefinition,
+    ApiInfo,
+    ApiDefaults,
+    ApiSchema,
+    GeneratorConfig,
+    McpCurlConfig,
+    TransportMode,
+    HookContext,
+    BeforeRequestResult,
+    BeforeRequestHook,
+    AfterResponseHook,
+    OnErrorHook,
+    CurlExecuteInput,
+    JqQueryInput,
+    CreateHttpOnlyUrlSchemaOptions,
+];
+
 import { McpCurlServer, createInstanceUtilities } from "./lib/extensible/index.js";
 import { createApiServer, createApiServerSync } from "./lib/api-server.js";
 import {

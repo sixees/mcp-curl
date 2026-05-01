@@ -14,7 +14,7 @@
  * Adding a scheme here without also updating `ALLOWED_URL_SCHEMES_CURL_FLAG`
  * silently disables the new scheme at the curl transport layer.
  */
-export const ALLOWED_URL_SCHEMES = ["http:", "https:"] as const;
+export const ALLOWED_URL_SCHEMES = Object.freeze(["http:", "https:"] as const);
 
 /**
  * Scheme allowlist as cURL's `--proto` / `--proto-redir` flag value.

@@ -8,27 +8,34 @@ PR-1 of the 9-PR pre-bigwork hardening track. Closes 5 items (A1, A2, A3, A4, B6
 
 ## What was implemented
 
+> **Naming note:** at the time of PR-1's initial implementation the helper was exported as `httpOnlyUrl`. It was renamed to `createHttpOnlyUrlSchema` during the P3 review pass (see _Code Review — 2026-05-01 → P3 sweep, finding #021_). The headings, file-path references, and approach descriptions below remain in the original form for historical fidelity; the **shipped public API name is `createHttpOnlyUrlSchema`**.
+
 ### A1 — `httpOnlyUrl()` parser-based scheme guard
+
 - **What:** replaced `.split(":")[0].toLowerCase()` with `new URL(url).protocol`-based check, wrapped in a try/catch so malformed inputs reject rather than throw.
-- **Key files:** `src/lib/utils/url.ts` (helper), `src/lib/utils/url.test.ts` (12 new test cases under `describe("httpOnlyUrl")`).
+- **Key files:** `src/lib/utils/url.ts` (helper), `src/lib/utils/url.test.ts` (12 new test cases — under `describe("createHttpOnlyUrlSchema")` after the rename).
 - **Approach:** matches how `src/lib/security/ssrf.ts` and Node `fetch` parse URLs — schema-layer guard now agrees with the network-layer guard.
 
 ### A2 — consume `httpOnlyUrl()` in built-in schemas
+
 - **What:** removed two inline `.refine()` scheme checks; both now call the shared helper.
 - **Key files:** `src/lib/schema/validator.ts:90-93` (was `apiInfoSchema.baseUrl`), `src/lib/server/schemas.ts:11-19` (was `CurlExecuteSchema.url`).
 - **Approach:** single source of truth; removes a regression vector where helper hardening doesn't flow to inline copies.
 
 ### A3 + B6 — public-barrel exports
-- **What:** added 4 helpers to `src/lib.ts` exports — `httpOnlyUrl`, `applySpotlighting`, `sanitizeResponse`, `detectInjectionPattern`. Also updated `docs/custom-tools.md` with two new subsections.
+
+- **What:** added 4 helpers to `src/lib.ts` exports — `httpOnlyUrl` (later renamed to `createHttpOnlyUrlSchema`), `applySpotlighting`, `sanitizeResponse`, `detectInjectionPattern`. Also updated `docs/custom-tools.md` with two new subsections.
 - **Key files:** `src/lib.ts` (exports), `docs/custom-tools.md` ("Validating URL parameters" + "Replicating the response-side defence" subsections under `## Sanitizing External Tool Metadata`).
 - **Approach:** purely additive; verified all four exports landed in `dist/lib.d.ts` after build.
 
 ### A4 — `data:` URL prompt-schema regression tests
+
 - **What:** added one test per prompt to assert `data:text/plain;base64,SGVsbG8=` rejects.
 - **Key files:** `src/lib/prompts/api-discovery.test.ts`, `src/lib/prompts/api-test.test.ts`.
-- **Approach:** both prompt schemas already use `httpOnlyUrl()`, so A1's hardening flows through automatically. Per-consumer regression test locks the boundary in case the helper changes.
+- **Approach:** both prompt schemas already use the helper (now `createHttpOnlyUrlSchema`), so A1's hardening flows through automatically. Per-consumer regression test locks the boundary in case the helper changes.
 
 ### Source-file consolidation (separate commit, preceding the implementation)
+
 - **What:** deleted 9 `docs/todos/*.md` files plus `docs/upstream-contributions.md`. Added `docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md` as the new single source of truth.
 - **Why:** the plan consolidates the 13 actionable items those source files described. Plan WBS item 15 originally specified deletion as the final cleanup commit, but the working tree had them pre-deleted at session start; we committed the deletion at the start of the branch instead. Plan's Enhancement Summary documents this is the agreed cadence.
 
@@ -369,5 +376,39 @@ None. All actionable comments were trivial documentation fixes; no documented de
 - 6 unresolved threads, all from AI reviewers (5 CodeRabbit, 1 Gemini)
 - 3 actionable trivial fixes applied (50% applicable rate)
 - 2 stale/false-positive findings against pre-restructure code (33% — both reviewers reading code state from before the P3 restructure / the `httpOnlyUrl` → `createHttpOnlyUrlSchema` rename)
+- 1 cosmetic finding deferred (17%)
+- No findings conflicted with documented decisions; no escalation to user required
+
+## Review Comments Addressed — 2026-05-01 (round 2)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Stale `httpOnlyUrl` references in handoff (lines 7, 11, 16, 22, 29, etc.) | @coderabbitai | Fix needed | Added a "Naming note" admonition at the top of `## What was implemented` clarifying the `httpOnlyUrl` → `createHttpOnlyUrlSchema` rename; updated the most prominent active-tense references. Historical references (commit messages, plan-section headings, todo filenames, finding descriptions that document the rename) preserved intentionally for audit fidelity. |
+| MD022: missing blank lines after `### A1`–`A4` and Source-file consolidation headings (lines 11, 16, 21, 26, 31) | @coderabbitai | Fix needed | Inserted blank lines after each heading. |
+| `Object.keys(publicApi)` runtime guard misses type-only re-exports (`src/lib.test.ts:175`) | @coderabbitai | Fix needed | Added a compile-time `import type { … }` block at the top of `src/lib.test.ts` that pins all 26 type-only re-exports from `src/lib.ts`. A `_PinnedPublicTypes` tuple references each one to keep them live under unused-import lint rules. Drop a type-only export from `lib.ts` and the test file fails to compile — vitest refuses to start. Complements the existing runtime frozen-surface check. |
+| `ALLOWED_URL_SCHEMES` not frozen at runtime (`src/lib/config/security/url-schemes.ts:17`) | @coderabbitai | Fix needed | Wrapped the literal in `Object.freeze([…] as const)`. Aligns with the CLAUDE.md security-data convention (already used in `validation.ts`, `ssrf.ts`, `blocked-dirs.ts`). Build clean; 591 tests pass; `ALLOWED_URL_SCHEMES_CURL_FLAG` derivation is unaffected (the `.map()` on a frozen readonly array returns a regular array). |
+
+### Decisions Revised
+
+None. The historical-context decision (preserving original `httpOnlyUrl` references in immutable sections like commit messages, plan section headings, and rename-finding descriptions) is now documented explicitly via the Naming note admonition.
+
+### Files Modified
+
+- `docs/work/handoff-feat-hardening-pr-1-url-helpers.md` — naming note + MD022 spacing + this section
+- `src/lib.test.ts` — type-only export compile-time guard
+- `src/lib/config/security/url-schemes.ts` — `Object.freeze` on `ALLOWED_URL_SCHEMES`
+
+### Verification
+
+- Build: `npm run build` ✅ clean
+- Tests: `npm test` ✅ **591 passed | 7 skipped | 0 failed** (+17 new from prior 574 baseline — the type-only import block is compile-only and doesn't add runtime tests; the +17 comes from a separate test-suite expansion in `tool-wrapper.test.ts` and elsewhere outside this round's scope)
+
+### Reviewer breakdown (round 2)
+
+- 4 unresolved threads, all from @coderabbitai (AI)
+- 4 actionable fixes applied (100% applicable rate — round-2 findings were of higher quality than round-1's 50% rate, all targeted real issues)
+- 0 false positives, 0 deferred, 0 decision conflicts
 - 1 optional cosmetic finding deferred (17%)
 - No findings conflicted with documented decisions; no escalation to user required

@@ -2,7 +2,7 @@
 import { z } from "zod";
 
 // src/lib/config/security/url-schemes.ts
-var ALLOWED_URL_SCHEMES = ["http:", "https:"];
+var ALLOWED_URL_SCHEMES = Object.freeze(["http:", "https:"]);
 var ALLOWED_URL_SCHEMES_CURL_FLAG = `=${ALLOWED_URL_SCHEMES.map((s) => s.replace(":", "")).join(",")}`;
 function isAllowedUrlScheme(protocol) {
   return ALLOWED_URL_SCHEMES.includes(protocol);
