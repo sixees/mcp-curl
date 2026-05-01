@@ -5,6 +5,7 @@ import express, { Request, Response, NextFunction } from "express";
 import type { Express } from "express";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "crypto";
 import { cleanupOrphanedTempDirs } from "../files/index.js";
 import {
@@ -191,8 +192,9 @@ export function createAuthMiddleware(
         // Length-bound the timing-safe compare. The compare itself is constant-
         // time over equal-length buffers, so a length-derived early reject does
         // not weaken the security property (it never reveals byte-equality).
-        const lengthOk = authHeader !== undefined && authHeader.length === expectedLength;
-        if (!lengthOk || !safeStringCompare(authHeader as string, expectedHeader)) {
+        // The type-predicate `hasExpectedLength` narrows `authHeader` to
+        // `string` for `safeStringCompare`, removing an unsafe cast.
+        if (!hasExpectedLength(authHeader, expectedLength) || !safeStringCompare(authHeader, expectedHeader)) {
             res.status(401).json({
                 jsonrpc: "2.0",
                 error: {
@@ -205,6 +207,15 @@ export function createAuthMiddleware(
 
         next();
     };
+}
+
+/**
+ * Type predicate: narrow `string | undefined` to `string` when the value's
+ * length equals `expected`. Used by `createAuthMiddleware` to bound
+ * `safeStringCompare` allocations and avoid `as string` casts.
+ */
+function hasExpectedLength(value: string | undefined, expected: number): value is string {
+    return value !== undefined && value.length === expected;
 }
 
 /**
@@ -224,18 +235,27 @@ export function createHttpApp(options: HttpAppOptions): Express {
     const { createMcpServer, sessionManager, authToken, allowedOrigins } = options;
 
     const app = express();
-    // Limit request body size to prevent DoS
-    app.use(express.json({ limit: "1mb" }));
 
-    // Origin header validation (MCP spec MUST requirement)
+    // Origin and auth run BEFORE the body parser so unauthenticated clients
+    // cannot force the server to allocate / parse 1 MB of JSON per request.
+    // Both middlewares only read headers, never the body.
     const originMiddleware = createOriginMiddleware(allowedOrigins);
-    app.use("/mcp", originMiddleware);
-
-    // Apply authentication middleware when token is configured
     const authMiddleware = createAuthMiddleware(authToken);
-    app.use("/mcp", authMiddleware);
+    app.use("/mcp", originMiddleware, authMiddleware, express.json({ limit: "1mb" }));
 
-    // POST /mcp - Handle MCP requests
+    // POST /mcp - Handle MCP requests.
+    //
+    // Session lifecycle follows the MCP SDK reference pattern:
+    //  - existing session-id → route to that transport
+    //  - missing session-id + initialize body → create a new session
+    //  - any other shape → 400/404
+    //
+    // The session is registered via the SDK's `onsessioninitialized` callback
+    // (fires synchronously inside `transport.handleRequest` when an initialize
+    // request is processed). Reading `transport.sessionId` *before*
+    // `handleRequest` returns `undefined` because the SDK only assigns the id
+    // when it sees the `initialize` JSON-RPC payload — so a post-`connect`
+    // registration block would be dead code.
     app.post("/mcp", async (req: Request, res: Response) => {
         try {
             const rawSessionId = req.headers["mcp-session-id"];
@@ -250,7 +270,7 @@ export function createHttpApp(options: HttpAppOptions): Express {
                 return;
             }
 
-            // Check for existing session
+            // Existing session — route to its transport.
             if (sessionId && sessionManager.has(sessionId)) {
                 const session = sessionManager.get(sessionId)!;
                 session.lastActivity = Date.now();
@@ -258,7 +278,29 @@ export function createHttpApp(options: HttpAppOptions): Express {
                 return;
             }
 
-            // Check session limit before creating new session
+            // Session-id supplied but not found — never silently create a
+            // replacement (would let stale clients spawn fresh sessions).
+            if (sessionId) {
+                res.status(404).json({
+                    jsonrpc: "2.0",
+                    error: { code: -32001, message: "Session not found" },
+                });
+                return;
+            }
+
+            // No session-id — only an initialize request may create a session.
+            if (!isInitializeRequest(req.body)) {
+                res.status(400).json({
+                    jsonrpc: "2.0",
+                    error: {
+                        code: -32600,
+                        message: "Bad Request: Mcp-Session-Id header is required for non-initialize requests",
+                    },
+                });
+                return;
+            }
+
+            // Capacity check before allocating a server + transport pair.
             if (sessionManager.size >= SESSION.MAX_SESSIONS) {
                 res.status(503).json({
                     jsonrpc: "2.0",
@@ -267,15 +309,23 @@ export function createHttpApp(options: HttpAppOptions): Express {
                 return;
             }
 
-            // Create new session
+            // Create a fresh per-session server + transport. Registration
+            // happens inside `onsessioninitialized` — the SDK fires this
+            // synchronously inside `handleRequest` once the initialize body
+            // is parsed and a sessionId is generated.
             const server = createMcpServer();
-
-            const transport = new StreamableHTTPServerTransport({
+            const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: () => randomUUID(),
                 enableJsonResponse: true,
+                onsessioninitialized: (sid: string) => {
+                    sessionManager.set(sid, {
+                        server,
+                        transport,
+                        lastActivity: Date.now(),
+                    });
+                },
             });
 
-            // Track session when initialized
             transport.onclose = () => {
                 const sid = transport.sessionId;
                 if (sid && sessionManager.has(sid)) {
@@ -284,19 +334,12 @@ export function createHttpApp(options: HttpAppOptions): Express {
             };
 
             await server.connect(transport);
-
-            // Store session after connection
-            if (transport.sessionId) {
-                sessionManager.set(transport.sessionId, {
-                    server,
-                    transport,
-                    lastActivity: Date.now(),
-                });
-            }
-
             await transport.handleRequest(req, res, req.body);
         } catch (error) {
-            console.error("MCP request error:", error);
+            // Minimal error logging: shape only, never message contents — matches
+            // the project-wide stderr convention (see CLAUDE.md "Error logging").
+            const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+            console.error(`http_post error: [${errorClass}]`);
             if (!res.headersSent) {
                 res.status(500).json({
                     jsonrpc: "2.0",
@@ -377,6 +420,20 @@ export function createHttpApp(options: HttpAppOptions): Express {
 }
 
 /**
+ * Build the operator-facing one-line summary of HTTP auth status.
+ *
+ * Logged at HTTP startup so an operator can confirm whether bearer-token
+ * auth is active. A typoed env var name (e.g. `MCP_AUTH_TOKE=…`) would
+ * otherwise boot a fully open server with no signal beyond silence.
+ */
+export function formatAuthStatus(authToken: string | undefined): string {
+    if (authToken === undefined || authToken === "") {
+        return "HTTP transport: bearer auth DISABLED (set MCP_AUTH_TOKEN to require auth)";
+    }
+    return "HTTP transport: bearer auth enabled";
+}
+
+/**
  * Format a host for use in a URL. Wraps IPv6 addresses in brackets per RFC 3986.
  */
 export function formatHostForUrl(host: string): string {
@@ -433,6 +490,7 @@ export async function runHTTP(): Promise<void> {
 
     httpServer.on("listening", () => {
         console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
+        console.error(formatAuthStatus(authToken));
     });
 
     httpServer.on("error", (err: NodeJS.ErrnoException) => {

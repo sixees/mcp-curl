@@ -29,6 +29,7 @@ import {
     createHttpApp,
     resolveHost,
     formatHostForUrl,
+    formatAuthStatus,
     validateAuthToken,
 } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
@@ -582,6 +583,7 @@ export class McpCurlServer {
 
             this._httpServer.on("listening", () => {
                 console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
+                console.error(formatAuthStatus(authToken));
                 resolve();
             });
 

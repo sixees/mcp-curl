@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import {
     createOriginMiddleware,
     createAuthMiddleware,
+    formatAuthStatus,
     formatHostForUrl,
     resolveHost,
     validateAuthToken,
@@ -143,6 +144,26 @@ describe("createAuthMiddleware", () => {
         const next = mockNext();
         mw(mockReq({ authorization: ["Bearer secret-token", "Bearer evil"] }), mockRes(), next);
         expect(next).toHaveBeenCalled();
+    });
+});
+
+// ─── formatAuthStatus ───
+
+describe("formatAuthStatus", () => {
+    it("reports DISABLED when no token is configured", () => {
+        // Operators frequently typo MCP_AUTH_TOKEN — a "DISABLED" stderr
+        // line at boot is the only way to tell an open server from a
+        // protected one without making a request.
+        expect(formatAuthStatus(undefined)).toMatch(/DISABLED/);
+        expect(formatAuthStatus(undefined)).toContain("MCP_AUTH_TOKEN");
+        expect(formatAuthStatus("")).toMatch(/DISABLED/);
+    });
+
+    it("reports enabled when a token is configured, without echoing the token", () => {
+        const status = formatAuthStatus("super-secret-token-hunter2");
+        expect(status).toMatch(/enabled/);
+        expect(status).not.toContain("hunter2");
+        expect(status).not.toContain("super-secret");
     });
 });
 

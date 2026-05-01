@@ -112,21 +112,28 @@ export class SessionManager {
 
     /**
      * Close all active sessions gracefully.
-     * Used during server shutdown.
+     *
+     * The MCP SDK's `StreamableHTTPServerTransport.close()` is asynchronous
+     * (it drains in-flight SSE streams via `_onsessionclosed`); awaiting it
+     * is required for a clean shutdown. Sessions close in parallel via
+     * `Promise.allSettled` so one hung session can't block the rest.
      */
     async closeAll(): Promise<void> {
-        for (const [sessionId, session] of this.sessions) {
-            try {
-                session.transport.close();
-            } catch (error) {
-                console.error(`Warning: Error closing session ${sessionId} transport:`, error);
-            }
-            try {
-                await session.server.close();
-            } catch (error) {
-                console.error(`Warning: Error closing session ${sessionId} server:`, error);
-            }
-            this.sessions.delete(sessionId);
-        }
+        const entries = Array.from(this.sessions.entries());
+        this.sessions.clear();
+        await Promise.allSettled(
+            entries.map(async ([sessionId, session]) => {
+                try {
+                    await session.transport.close();
+                } catch (error) {
+                    console.error(`Warning: Error closing session ${sessionId} transport:`, error);
+                }
+                try {
+                    await session.server.close();
+                } catch (error) {
+                    console.error(`Warning: Error closing session ${sessionId} server:`, error);
+                }
+            }),
+        );
     }
 }
