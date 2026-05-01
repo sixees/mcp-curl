@@ -6,6 +6,7 @@ import {
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   SERVER,
   SESSION,
+  SPOTLIGHT_SENTINEL_PREFIX,
   applyDefaultHeaders,
   applyJqFilter,
   applySpotlighting,
@@ -30,7 +31,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-C5JC2R7I.js";
+} from "./chunk-7JE5YYSA.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -716,6 +717,9 @@ function maybeApplySpotlighting(result, config) {
       content: [{ type: "text", text: "Error: invalid tool response shape" }],
       isError: true
     };
+  }
+  if (first.text.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) {
+    return result;
   }
   return {
     ...result,

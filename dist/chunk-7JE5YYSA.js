@@ -16,7 +16,7 @@ function resolveBaseUrl(baseUrl, path) {
 }
 function createHttpOnlyUrlSchema(options = {}) {
   const { description = "URL (http or https)", message = "URL must use http or https scheme" } = options;
-  return z.url().refine(
+  return z.url("Must be a valid URL").refine(
     (url) => {
       try {
         return isAllowedUrlScheme(new URL(url).protocol);
@@ -89,11 +89,21 @@ function sanitizeResponse(input) {
 function detectInjectionPattern(input) {
   return INJECTION_PATTERNS.test(input);
 }
+var SPOTLIGHT_SENTINEL_PREFIX = "---EXTERNAL-CONTENT-BEGIN-";
+var SPOTLIGHT_REQUEST_ID_PATTERN = /^[0-9a-f-]{32,36}$/i;
 function applySpotlighting(content, requestId) {
+  if (content.startsWith(SPOTLIGHT_SENTINEL_PREFIX)) {
+    return content;
+  }
   if (!requestId) {
     throw new Error("applySpotlighting: requestId must be a non-empty string");
   }
-  const begin = `---EXTERNAL-CONTENT-BEGIN-${requestId}---`;
+  if (!SPOTLIGHT_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error(
+      "applySpotlighting: requestId must be a UUID-shaped string (32\u201336 hex chars; pass randomUUID())"
+    );
+  }
+  const begin = `${SPOTLIGHT_SENTINEL_PREFIX}${requestId}---`;
   const end = `---EXTERNAL-CONTENT-END-${requestId}---`;
   return `${begin}
 ${content}
@@ -177,6 +187,46 @@ function supportsMarkupComments(contentType) {
   if (!mime) return false;
   if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return true;
   return MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
+}
+
+// src/lib/security/detection-logger.ts
+var THROTTLE_WINDOW_MS = 6e4;
+var lastDetectedMap = /* @__PURE__ */ new Map();
+function normalizeDetectionLabel(label) {
+  return label.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").slice(0, 128);
+}
+function logInjectionDetected(hostname) {
+  const safeLabel = normalizeDetectionLabel(hostname);
+  const now = Date.now();
+  const lastSeen = lastDetectedMap.get(safeLabel);
+  if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS) {
+    return;
+  }
+  lastDetectedMap.set(safeLabel, now);
+  console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
+}
+function sanitizeAndDetect(text, label) {
+  const sanitized = sanitizeResponse(text);
+  if (detectInjectionPattern(sanitized)) {
+    logInjectionDetected(label);
+  }
+  return sanitized;
+}
+function startInjectionCleanup() {
+  const interval = setInterval(cleanupInjectionDetectionMap, THROTTLE_WINDOW_MS);
+  interval.unref();
+  return interval;
+}
+function stopInjectionCleanup(interval) {
+  clearInterval(interval);
+}
+function cleanupInjectionDetectionMap() {
+  const now = Date.now();
+  for (const [key, timestamp] of lastDetectedMap) {
+    if (now - timestamp >= THROTTLE_WINDOW_MS) {
+      lastDetectedMap.delete(key);
+    }
+  }
 }
 
 // src/lib/server/schemas.ts
@@ -352,6 +402,15 @@ function applyDefaultHeaders(headers, userAgent, config) {
 }
 
 // src/lib/config/security/ssrf.ts
+var IPV4_MAPPED_IPV6_HEX_RE = /^\[?::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]?$/i;
+function normalizeIpv4MappedIpv6(host) {
+  const match = host.match(IPV4_MAPPED_IPV6_HEX_RE);
+  if (!match) return host;
+  const high = parseInt(match[1], 16);
+  const low = parseInt(match[2], 16);
+  if (high > 65535 || low > 65535) return host;
+  return `${high >> 8 & 255}.${high & 255}.${low >> 8 & 255}.${low & 255}`;
+}
 var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
   // IPv4 loopback and mapped IPv6
   /^127\.\d+\.\d+\.\d+$/,
@@ -404,7 +463,8 @@ var BLOCKED_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
   /^\\\\[^\\]{1,255}/
 ]);
 function isBlockedHostname(hostname) {
-  return BLOCKED_HOSTNAME_PATTERNS_INTERNAL.some((pattern) => pattern.test(hostname));
+  const normalized = normalizeIpv4MappedIpv6(hostname);
+  return BLOCKED_HOSTNAME_PATTERNS_INTERNAL.some((pattern) => pattern.test(normalized));
 }
 var LOCALHOST_HOSTNAME_PATTERNS_INTERNAL = Object.freeze([
   /^localhost$/i
@@ -431,7 +491,8 @@ var BLOCKED_IP_PATTERNS_INTERNAL = Object.freeze([
   /^::ffff:0\.0\.0\.0$/i
 ]);
 function isBlockedIp(ip) {
-  return BLOCKED_IP_PATTERNS_INTERNAL.some((pattern) => pattern.test(ip));
+  const normalized = normalizeIpv4MappedIpv6(ip);
+  return BLOCKED_IP_PATTERNS_INTERNAL.some((pattern) => pattern.test(normalized));
 }
 var LOCALHOST_IP_PATTERNS_INTERNAL = Object.freeze([
   /^127\.\d+\.\d+\.\d+$/,
@@ -439,7 +500,8 @@ var LOCALHOST_IP_PATTERNS_INTERNAL = Object.freeze([
   /^::ffff:127\./i
 ]);
 function isLocalhostIp(ip) {
-  return LOCALHOST_IP_PATTERNS_INTERNAL.some((pattern) => pattern.test(ip));
+  const normalized = normalizeIpv4MappedIpv6(ip);
+  return LOCALHOST_IP_PATTERNS_INTERNAL.some((pattern) => pattern.test(normalized));
 }
 var ALLOWED_LOCALHOST_PORTS_INTERNAL = Object.freeze(
   /* @__PURE__ */ new Set([80, 443])
@@ -995,46 +1057,6 @@ async function validateFilePath(filepath) {
     );
   }
   return realFilePath;
-}
-
-// src/lib/security/detection-logger.ts
-var THROTTLE_WINDOW_MS = 6e4;
-var lastDetectedMap = /* @__PURE__ */ new Map();
-function normalizeDetectionLabel(label) {
-  return label.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").slice(0, 128);
-}
-function logInjectionDetected(hostname) {
-  const safeLabel = normalizeDetectionLabel(hostname);
-  const now = Date.now();
-  const lastSeen = lastDetectedMap.get(safeLabel);
-  if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS) {
-    return;
-  }
-  lastDetectedMap.set(safeLabel, now);
-  console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
-}
-function sanitizeAndDetect(text, label) {
-  const sanitized = sanitizeResponse(text);
-  if (detectInjectionPattern(sanitized)) {
-    logInjectionDetected(label);
-  }
-  return sanitized;
-}
-function startInjectionCleanup() {
-  const interval = setInterval(cleanupInjectionDetectionMap, THROTTLE_WINDOW_MS);
-  interval.unref();
-  return interval;
-}
-function stopInjectionCleanup(interval) {
-  clearInterval(interval);
-}
-function cleanupInjectionDetectionMap() {
-  const now = Date.now();
-  for (const [key, timestamp] of lastDetectedMap) {
-    if (now - timestamp >= THROTTLE_WINDOW_MS) {
-      lastDetectedMap.delete(key);
-    }
-  }
 }
 
 // src/lib/execution/command-executor.ts
@@ -1939,10 +1961,12 @@ export {
   getErrorMessage,
   resolveBaseUrl,
   createHttpOnlyUrlSchema,
+  safeHostname,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   sanitizeDescription,
   sanitizeResponse,
   detectInjectionPattern,
+  SPOTLIGHT_SENTINEL_PREFIX,
   applySpotlighting,
   SESSION,
   startRateLimitCleanup,
@@ -1957,6 +1981,7 @@ export {
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   validateFilePath,
+  logInjectionDetected,
   sanitizeAndDetect,
   startInjectionCleanup,
   stopInjectionCleanup,

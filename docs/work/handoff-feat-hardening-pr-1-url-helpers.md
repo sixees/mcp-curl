@@ -302,3 +302,43 @@ All 13 P2 todos resolved on the PR-1 branch (no separate follow-up PR), bundled 
 ### Todo file lifecycle
 
 The 13 P2 todo files were renamed `*-pending-p2-*.md` → `*-complete-p2-*.md` and the YAML `status` field flipped from `pending` to `complete`. Files retained for traceability per the project's todo convention (only deleted via the defined completion lifecycle). P3 todos remain pending — out of scope for this P2 sweep.
+
+## P3 Resolution (2026-05-01)
+
+The remaining 10 P3 nice-to-haves were closed out in three batches following the P2 sweep. Each batch landed as one commit; the plan-doc consolidation landed last because it depended on all earlier P3 work being settled.
+
+### Commits → todo mapping
+
+| Commit | Subject | Todos closed |
+|--------|---------|--------------|
+| 33df1b4 | refactor: P3 helper polish + barrel-import consistency | #012, #015, #023 |
+| c296899 | test: P3 test polish — comments, structure, JSON Schema snapshot | #014, #016, #017, #019 |
+| (rolled into 33df1b4 / c296899 as JSDoc + comment edits) | unstable JSDoc on defence helpers | #013 |
+| a698a12 | docs(plan): fold technical-review corrections into body sections + add YAML pipeline integration test for PR-6a | #018, #020 |
+
+### Resolution highlights
+
+- **#012 (`safeHostname` on public barrel):** added `safeHostname` to `src/lib/utils/index.ts` re-exports and to `src/lib.ts` Section 8 alongside `createHttpOnlyUrlSchema`. Identity guard added to `src/lib.test.ts`. The frozen-surface check now expects `safeHostname` in the public set.
+- **#013 (unstable JSDoc on defence helpers):** rewrote the JSDoc on `applySpotlighting`, `sanitizeResponse`, `detectInjectionPattern`, and `sanitizeAndDetect` to be implementation-agnostic — described the defence contract, not the regex internals. Time-bombed phrases ("currently uses regex X") removed.
+- **#014 (reword time-bombed test comments):** swept `*.test.ts` for comments tied to specific Zod minor versions / SDK versions. Replaced with contract-shaped comments referencing the locked behaviour rather than the implementation that produces it.
+- **#015 (`createHttpOnlyUrlSchema` JSDoc `@param` / `@returns`):** added `@param` block for the `options` bag (`description`, `message`) and `@returns` block stating `z.ZodType<string>` and the parse-failure surface.
+- **#016 (JSON Schema snapshot test):** added `src/lib/server/schemas.test.ts` snapshot pinning the JSON Schema emitted by `z.toJSONSchema(CurlExecuteSchema.shape.url)`. Catches MCP SDK 1.x → 2.0 converter drift; intentional changes update with `vitest -u` and review the diff.
+- **#017 (restore Zod URL error message):** restored "Must be a valid URL" as the URL-format error message after the helper consolidation. MCP clients render this verbatim — locked via `src/lib/utils/url.test.ts` assertion.
+- **#018 (fold tech-review corrections):** the standalone "Technical Review Corrections" H2 (originally lines 35-105 of the plan) was folded back into B3 (PR-6b), B4 (PR-5), and B9 (PR-6a) so implementers can read a single body section and have full context. Each affected section carries a "Revised 2026-05-01 per technical-review pass" stamp. The full 36-finding catalogue + dispositions is preserved in a "Review history" appendix at the end of the plan for traceability.
+- **#019 (URL test structure consistency):** `src/lib/utils/url.test.ts` reorganised so each `describe` block contains its own `describe` subgroups for related behaviour (matching the pattern used in `schemas.test.ts`) — `slash normalisation` / `edge cases` / `valid URL extraction` / `fallback handling` / `robustness` / `accepts valid http(s) URLs` / `rejects non-http(s) schemes` / `rejects malformed inputs` / `options bag` / `public type stability`.
+- **#020 (YAML pipeline `data:`-URL integration test):** added a YAML pipeline integration test reference to PR-6a's acceptance criteria. The test asserts `loadApiSchemaFromString(yamlWithDataUrlBaseUrl)`, `validateApiSchema({ ...rawObj, api: { baseUrl: "data:..." } })`, and `ApiSchemaValidator.parse(rawObj)` all reject — closes the bypass class S1 surfaced.
+- **#023 (import-path inconsistency through utils barrel):** swept consumers that deep-imported `./utils/url.js` / `./utils/sanitize.js` / `./utils/spotlighting.js` and routed them through the `./utils/index.js` barrel where the symbol is already re-exported. Identity is unchanged (the barrel re-exports references); the import ergonomics are now uniform.
+
+### Test counts
+
+- Before P3 work: 571 tests passing (after P2 sweep).
+- After P3 work: **574 tests passing** (+3 net new tests; 7 pre-existing skipped). The delta is small because most P3 work was structural — JSDoc rewrites, comment rewording, barrel-import polish, and `describe`-block reorganisation in `url.test.ts` (which redistributed existing assertions rather than adding new ones). New tests came from the JSON Schema snapshot (#016, +1), the `safeHostname` identity guard on `src/lib.test.ts` (#012, +1), and the `"Must be a valid URL"` error-message lock on `url.test.ts` (#017, +1).
+- Build clean. No regressions.
+
+### Todo file lifecycle (P3)
+
+All 10 P3 todo files renamed `*-pending-p3-*.md` → `*-complete-p3-*.md`, YAML `status` flipped `pending` → `complete`. Files retained for traceability per the project's todo convention. With this closeout, **`docs/todos/` contains 0 pending items** — both P2 and P3 sweeps complete on PR-1.
+
+### Plan-doc state
+
+The hardening plan at `docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md` is the authoritative source for any folded finding. Where the Review history appendix and a body section appear to conflict, the body section wins; the appendix is the audit trail.
