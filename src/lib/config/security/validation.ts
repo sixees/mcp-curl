@@ -31,3 +31,17 @@ export const WINDOWS_RESERVED_BASENAMES: ReadonlyArray<string> = Object.freeze(
 export function isWindowsReservedBasename(name: string): boolean {
     return WINDOWS_RESERVED_BASENAMES_SET.has(name.toUpperCase());
 }
+
+// ============================================================================
+// Printable ASCII (operator-supplied auth tokens)
+// ============================================================================
+
+/**
+ * Matches strings composed solely of printable ASCII (0x20–0x7E).
+ *
+ * Excludes C0 controls (NUL, CR, LF, TAB), DEL (0x7F), and high-bit bytes —
+ * the byte classes that have surprised header parsers and operator paste
+ * flows in the past. Used by the HTTP transport to validate
+ * `MCP_AUTH_TOKEN` / `McpCurlConfig.authToken` at startup.
+ */
+export const PRINTABLE_ASCII = /^[\x20-\x7E]+$/;

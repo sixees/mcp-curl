@@ -4,6 +4,7 @@ import {
   JqQuerySchema,
   LIMITS,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+  PRINTABLE_ASCII,
   SERVER,
   SESSION,
   applyDefaultHeaders,
@@ -11,6 +12,7 @@ import {
   applySpotlighting,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
+  createConfigError,
   createHttpOnlyUrlSchema,
   createSafeFilenameBase,
   executeCurlRequest,
@@ -31,7 +33,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-REINE6IH.js";
+} from "./chunk-4CBQKI7Q.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -52,9 +54,9 @@ Received ${signal}, shutting down gracefully...`);
   let hasError = false;
   if (httpServer) {
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise((resolve, reject2) => {
         httpServer.close((err) => {
-          if (err) reject(err);
+          if (err) reject2(err);
           else resolve();
         });
       });
@@ -523,6 +525,7 @@ function createInstanceUtilities(config) {
 // src/lib/transports/http.ts
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID as randomUUID2 } from "crypto";
 
 // src/lib/session/session-manager.ts
@@ -563,7 +566,12 @@ var SessionManager = class {
     this.sessions.set(id, session);
   }
   /**
-   * Delete a session.
+   * Delete a session entry from the map without closing its transport
+   * or MCP server. Used by `transport.onclose` after the SDK has already
+   * torn down the transport — we only need to drop the bookkeeping.
+   *
+   * For the explicit DELETE /mcp path, callers should use
+   * {@link closeSession} which awaits the SDK close handlers.
    */
   delete(id) {
     this.sessions.delete(id);
@@ -582,7 +590,14 @@ var SessionManager = class {
   }
   /**
    * Start periodic cleanup of idle sessions.
-   * Sessions that exceed SESSION.IDLE_TIMEOUT_MS without activity are closed.
+   *
+   * Sessions that exceed `SESSION.IDLE_TIMEOUT_MS` without activity are
+   * removed from the map synchronously (so a slow close cannot let a
+   * subsequent tick re-process the same session) and torn down through
+   * {@link closeWithTimeout} — symmetric with `closeAll` and `closeSession`.
+   * The actual close runs in the background via `void this.closeSessions(...)`
+   * because the interval callback cannot be `await`-ed; `closeWithTimeout`
+   * logs its own errors so nothing is dropped.
    */
   startCleanup() {
     if (this.cleanupInterval) {
@@ -590,18 +605,15 @@ var SessionManager = class {
     }
     this.cleanupInterval = setInterval(() => {
       const now = Date.now();
+      const idle = [];
       for (const [id, session] of this.sessions) {
         if (now - session.lastActivity > SESSION.IDLE_TIMEOUT_MS) {
-          try {
-            session.transport.close();
-          } catch (error) {
-            console.error(`Warning: Error closing idle session ${id} transport:`, error);
-          }
-          void session.server.close().catch((error) => {
-            console.error(`Warning: Error closing idle session ${id} server:`, error);
-          });
+          idle.push([id, session]);
           this.sessions.delete(id);
         }
+      }
+      if (idle.length > 0) {
+        void this.closeSessions(idle);
       }
     }, SESSION.CLEANUP_INTERVAL_MS);
     this.cleanupInterval.unref();
@@ -616,25 +628,82 @@ var SessionManager = class {
     }
   }
   /**
+   * Close a single session by id and remove it from the map.
+   *
+   * Used by the DELETE /mcp route, which must `await` the SDK transport
+   * close so in-flight SSE frames are drained before the response returns.
+   * No-op when the id isn't tracked.
+   */
+  async closeSession(id) {
+    const session = this.sessions.get(id);
+    if (!session) {
+      return;
+    }
+    this.sessions.delete(id);
+    await this.closeSessions([[id, session]]);
+  }
+  /**
    * Close all active sessions gracefully.
-   * Used during server shutdown.
+   *
+   * The MCP SDK's `StreamableHTTPServerTransport.close()` is asynchronous
+   * (it drains in-flight SSE streams via `_onsessionclosed`); awaiting it
+   * is required for a clean shutdown. Sessions close in parallel via
+   * `Promise.allSettled`, and each individual close is bounded by
+   * {@link CLOSE_TIMEOUT_MS} so a transport that never drains can't keep
+   * the shutdown wait open indefinitely.
    */
   async closeAll() {
-    for (const [sessionId, session] of this.sessions) {
-      try {
-        session.transport.close();
-      } catch (error) {
-        console.error(`Warning: Error closing session ${sessionId} transport:`, error);
-      }
-      try {
-        await session.server.close();
-      } catch (error) {
-        console.error(`Warning: Error closing session ${sessionId} server:`, error);
-      }
-      this.sessions.delete(sessionId);
-    }
+    const entries = Array.from(this.sessions.entries());
+    this.sessions.clear();
+    await this.closeSessions(entries);
+  }
+  /**
+   * Tear down a batch of session entries through the same timeout-bounded
+   * helper used by `closeAll` and `closeSession`. Centralises the order
+   * (transport before MCP server) and the parallelisation policy
+   * (`Promise.allSettled` so one hung session can't block the rest of the
+   * batch — bounded individually by {@link CLOSE_TIMEOUT_MS}).
+   */
+  async closeSessions(entries) {
+    await Promise.allSettled(
+      entries.map(async ([sessionId, session]) => {
+        await closeWithTimeout(
+          () => session.transport.close(),
+          "session_close_transport",
+          sessionId
+        );
+        await closeWithTimeout(
+          () => session.server.close(),
+          "session_close_server",
+          sessionId
+        );
+      })
+    );
   }
 };
+var CLOSE_TIMEOUT_MS = 5e3;
+async function closeWithTimeout(op, label, sessionId) {
+  let timer;
+  try {
+    await Promise.race([
+      op(),
+      new Promise((_, reject2) => {
+        timer = setTimeout(
+          () => reject2(new Error(`${label}_timeout`)),
+          CLOSE_TIMEOUT_MS
+        );
+        timer.unref?.();
+      })
+    ]);
+  } catch (error) {
+    const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+    console.error(`${label} error: [${sessionId}] ${errorClass}`);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 // src/lib/tools/index.ts
 function registerAllTools(server) {
@@ -1035,23 +1104,27 @@ var McpCurlServer = class {
     this._started = true;
     this._frozenConfig = this.freezeConfig();
     try {
+      const httpAuthToken = transport === "http" ? this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN] : void 0;
+      if (transport === "http") {
+        validateAuthToken(httpAuthToken);
+      }
       await cleanupOrphanedTempDirs();
       this._rateLimitInterval = startRateLimitCleanup();
       this._injectionCleanupInterval = startInjectionCleanup();
       this._server = this.createConfiguredServer();
       if (transport === "http") {
-        await this.startHttp();
+        await this.startHttp(httpAuthToken);
       } else {
         await this.startStdio();
       }
     } catch (error) {
       if (this._httpServer) {
         try {
-          await new Promise((resolve, reject) => {
+          await new Promise((resolve, reject2) => {
             const timeout = setTimeout(() => resolve(), 5e3);
             this._httpServer.close((err) => {
               clearTimeout(timeout);
-              if (err) reject(err);
+              if (err) reject2(err);
               else resolve();
             });
           });
@@ -1093,21 +1166,21 @@ var McpCurlServer = class {
       let timeoutId;
       try {
         await Promise.race([
-          new Promise((resolve, reject) => {
+          new Promise((resolve, reject2) => {
             this._httpServer.close((err) => {
-              if (err) reject(err);
+              if (err) reject2(err);
               else resolve();
             });
           }),
-          new Promise((_, reject) => {
+          new Promise((_, reject2) => {
             timeoutId = setTimeout(
-              () => reject(new Error("HTTP server shutdown timeout")),
+              () => reject2(new Error("HTTP server shutdown timeout")),
               SHUTDOWN_TIMEOUT
             );
           })
         ]);
       } catch (error) {
-        console.error("Warning: Error closing HTTP server:", error);
+        logShutdownError("shutdown_http_server", error);
       } finally {
         if (timeoutId !== void 0) {
           clearTimeout(timeoutId);
@@ -1120,14 +1193,14 @@ var McpCurlServer = class {
       try {
         await this._sessionManager.closeAll();
       } catch (error) {
-        console.error("Warning: Error closing sessions:", error);
+        logShutdownError("shutdown_sessions", error);
       }
     }
     if (this._server) {
       try {
         await this._server.close();
       } catch (error) {
-        console.error("Warning: Error closing MCP server:", error);
+        logShutdownError("shutdown_mcp_server", error);
       } finally {
         this._server = null;
       }
@@ -1141,7 +1214,7 @@ var McpCurlServer = class {
     try {
       await cleanupTempDir();
     } catch (error) {
-      console.error("Warning: Error cleaning up temp directory:", error);
+      logShutdownError("shutdown_temp_dir", error);
     } finally {
       this._started = false;
       this._frozenConfig = null;
@@ -1199,29 +1272,35 @@ var McpCurlServer = class {
   /**
    * Start HTTP transport with session management.
    * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
+   *
+   * @param authToken - Pre-resolved bearer token (already passed through
+   *   `validateAuthToken` in `start()`). Passing the snapshot down avoids
+   *   resolving the env var twice and guarantees the value the auth
+   *   middleware closes over is the exact value that was validated.
    */
-  async startHttp() {
+  async startHttp(authToken) {
     this._sessionManager = new SessionManager();
     this._sessionManager.startCleanup();
     const app = createHttpApp({
       createMcpServer: () => this.createConfiguredServer(),
       sessionManager: this._sessionManager,
-      authToken: this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN],
+      authToken,
       allowedOrigins: this._frozenConfig.allowedOrigins
     });
     const port = this._frozenConfig.port ?? parsePort(process.env[ENV.PORT], LIMITS.DEFAULT_HTTP_PORT);
     const host = resolveHost(this._frozenConfig.host);
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, reject2) => {
       this._httpServer = app.listen(port, host);
       this._httpServer.on("listening", () => {
         console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
+        console.error(formatAuthStatus(authToken));
         resolve();
       });
       this._httpServer.on("error", (err) => {
         if (err.code === "EADDRINUSE") {
-          reject(new Error(`Port ${port} is already in use`));
+          reject2(new Error(`Port ${port} is already in use`));
         } else {
-          reject(err);
+          reject2(err);
         }
       });
     });
@@ -1246,6 +1325,10 @@ var McpCurlServer = class {
     }
   }
 };
+function logShutdownError(label, error) {
+  const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+  console.error(`${label} error: ${errorClass}`);
+}
 
 // src/lib/transports/http.ts
 var DEFAULT_ALLOWED_ORIGIN_PATTERNS = [
@@ -1294,35 +1377,65 @@ function parseAllowedOriginsEnv() {
   if (!envValue) return null;
   return envValue.split(",").map((o) => o.trim()).filter(Boolean);
 }
+function validateAuthToken(token) {
+  if (token === void 0 || token === "") return;
+  if (token.length > LIMITS.MAX_AUTH_TOKEN_LENGTH) {
+    throw createConfigError(
+      ENV.AUTH_TOKEN,
+      `[length=${token.length}]`,
+      `exceeds maximum ${LIMITS.MAX_AUTH_TOKEN_LENGTH} characters`
+    );
+  }
+  if (!PRINTABLE_ASCII.test(token)) {
+    throw createConfigError(
+      ENV.AUTH_TOKEN,
+      "[redacted]",
+      "must contain only printable ASCII characters (0x20\u20130x7E)"
+    );
+  }
+}
+var BEARER_SCHEME = "Bearer ";
 function createAuthMiddleware(authToken) {
+  if (!authToken) {
+    return (_req, _res, next) => next();
+  }
+  const expectedToken = authToken;
+  const expectedHeaderLength = BEARER_SCHEME.length + expectedToken.length;
   return (req, res, next) => {
-    if (!authToken) {
-      next();
-      return;
+    const rawAuth = req.headers.authorization;
+    const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
+    if (!hasExpectedLength(authHeader, expectedHeaderLength)) {
+      return reject(res);
     }
-    const authHeader = req.headers.authorization;
-    const expectedHeader = `Bearer ${authToken}`;
-    if (!authHeader || !safeStringCompare(authHeader, expectedHeader)) {
-      res.status(401).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32600,
-          message: "Unauthorized: Invalid or missing authentication token"
-        }
-      });
-      return;
+    const schemeSlice = authHeader.slice(0, BEARER_SCHEME.length);
+    if (schemeSlice.toLowerCase() !== "bearer ") {
+      return reject(res);
+    }
+    const tokenPart = authHeader.slice(BEARER_SCHEME.length);
+    if (!safeStringCompare(tokenPart, expectedToken)) {
+      return reject(res);
     }
     next();
   };
 }
+function reject(res) {
+  res.status(401).json({
+    jsonrpc: "2.0",
+    error: {
+      code: -32600,
+      message: "Unauthorized: Invalid or missing authentication token"
+    }
+  });
+}
+function hasExpectedLength(value, expected) {
+  return value !== void 0 && value.length === expected;
+}
 function createHttpApp(options) {
   const { createMcpServer, sessionManager: sessionManager2, authToken, allowedOrigins } = options;
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
   const originMiddleware = createOriginMiddleware(allowedOrigins);
-  app.use("/mcp", originMiddleware);
   const authMiddleware = createAuthMiddleware(authToken);
-  app.use("/mcp", authMiddleware);
+  app.use("/mcp", originMiddleware, authMiddleware, express.json({ limit: "1mb" }));
   app.post("/mcp", async (req, res) => {
     try {
       const rawSessionId = req.headers["mcp-session-id"];
@@ -1340,6 +1453,23 @@ function createHttpApp(options) {
         await session.transport.handleRequest(req, res, req.body);
         return;
       }
+      if (sessionId) {
+        res.status(404).json({
+          jsonrpc: "2.0",
+          error: { code: -32001, message: "Session not found" }
+        });
+        return;
+      }
+      if (!isInitializeRequest(req.body)) {
+        res.status(400).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32600,
+            message: "Bad Request: Mcp-Session-Id header is required for non-initialize requests"
+          }
+        });
+        return;
+      }
       if (sessionManager2.size >= SESSION.MAX_SESSIONS) {
         res.status(503).json({
           jsonrpc: "2.0",
@@ -1350,7 +1480,25 @@ function createHttpApp(options) {
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID2(),
-        enableJsonResponse: true
+        // `enableJsonResponse: true` makes the SDK return tool
+        // responses as a single JSON body on the POST instead of
+        // opening an SSE stream. The mcp-curl tools (`curl_execute`,
+        // `jq_query`, custom YAML/registerCustomTool handlers) are
+        // request/response shaped — they produce a complete result
+        // per call and emit no incremental progress events — so the
+        // SSE stream would carry exactly one frame and then close.
+        // JSON-direct cuts that overhead and avoids long-lived
+        // connections that complicate session timeout / idle-cleanup.
+        // SSE-dependent clients can still open `GET /mcp` for
+        // server→client streams against an established session.
+        enableJsonResponse: true,
+        onsessioninitialized: (sid) => {
+          sessionManager2.set(sid, {
+            server,
+            transport,
+            lastActivity: Date.now()
+          });
+        }
       });
       transport.onclose = () => {
         const sid = transport.sessionId;
@@ -1359,16 +1507,13 @@ function createHttpApp(options) {
         }
       };
       await server.connect(transport);
-      if (transport.sessionId) {
-        sessionManager2.set(transport.sessionId, {
-          server,
-          transport,
-          lastActivity: Date.now()
-        });
-      }
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
-      console.error("MCP request error:", error);
+      const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+      const rawSid = req.headers["mcp-session-id"];
+      const candidate = Array.isArray(rawSid) ? rawSid[0] : rawSid;
+      const ctx = candidate && isValidSessionId(candidate) ? candidate : "no-session";
+      console.error(`http_post error: [${ctx}] ${errorClass}`);
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: "2.0",
@@ -1402,7 +1547,7 @@ function createHttpApp(options) {
       next(error);
     }
   });
-  app.delete("/mcp", async (req, res, next) => {
+  app.delete("/mcp", async (req, res) => {
     const rawSessionId = req.headers["mcp-session-id"];
     const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
     if (sessionId && !isValidSessionId(sessionId)) {
@@ -1412,22 +1557,15 @@ function createHttpApp(options) {
       });
       return;
     }
-    if (sessionId && sessionManager2.has(sessionId)) {
-      const session = sessionManager2.get(sessionId);
-      try {
-        session.transport.close();
-        await session.server.close();
-      } catch (error) {
-        next(error);
-        return;
-      } finally {
-        sessionManager2.delete(sessionId);
-      }
+    if (sessionId) {
+      await sessionManager2.closeSession(sessionId);
     }
     res.status(200).end();
   });
-  app.use((err, _req, res, _next) => {
-    console.error("Unhandled error:", err);
+  app.use((err, req, res, _next) => {
+    const errorClass = err instanceof Error ? err.constructor.name : "unknown";
+    const route = `${req.method} ${req.path}`;
+    console.error(`http_unhandled error: [${route}] ${errorClass}`);
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: "2.0",
@@ -1436,6 +1574,12 @@ function createHttpApp(options) {
     }
   });
   return app;
+}
+function formatAuthStatus(authToken) {
+  if (authToken === void 0 || authToken === "") {
+    return "HTTP transport: bearer auth DISABLED (set MCP_AUTH_TOKEN to require auth)";
+  }
+  return "HTTP transport: bearer auth enabled";
 }
 function formatHostForUrl(host) {
   if (host.includes(":") && !host.startsWith("[")) {
@@ -1447,6 +1591,8 @@ function resolveHost(configHost) {
   return configHost ?? process.env[ENV.HOST] ?? DEFAULT_HOST;
 }
 async function runHTTP() {
+  const authToken = process.env[ENV.AUTH_TOKEN];
+  validateAuthToken(authToken);
   await cleanupOrphanedTempDirs();
   const sessionManager2 = new SessionManager();
   sessionManager2.startCleanup();
@@ -1460,13 +1606,14 @@ async function runHTTP() {
       return server;
     },
     sessionManager: sessionManager2,
-    authToken: process.env[ENV.AUTH_TOKEN]
+    authToken
   });
   const port = parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);
   const host = resolveHost();
   const httpServer2 = app.listen(port, host);
   httpServer2.on("listening", () => {
     console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
+    console.error(formatAuthStatus(authToken));
   });
   httpServer2.on("error", (err) => {
     if (err.code === "EADDRINUSE") {

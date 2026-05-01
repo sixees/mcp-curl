@@ -467,10 +467,10 @@ The authToken value is operator-controlled. Risks if invalid:
 
 **Acceptance criteria.**
 
-- [ ] `validateAuthToken` is called from both transport entry points before binding.
-- [ ] An invalid token causes `start("http")` to reject with a clear message; the HTTP server is not bound.
-- [ ] Token value is never echoed in error messages or logs (audit by `grep '${token' src/`).
-- [ ] Existing HTTP transport tests still pass.
+- [x] `validateAuthToken` is called from both transport entry points before binding.
+- [x] An invalid token causes `start("http")` to reject with a clear message; the HTTP server is not bound.
+- [x] Token value is never echoed in error messages or logs (audit by `grep '${token' src/`).
+- [x] Existing HTTP transport tests still pass.
 
 **Research Insights (added 2026-05-01).**
 

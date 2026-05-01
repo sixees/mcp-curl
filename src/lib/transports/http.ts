@@ -5,6 +5,7 @@ import express, { Request, Response, NextFunction } from "express";
 import type { Express } from "express";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "crypto";
 import { cleanupOrphanedTempDirs } from "../files/index.js";
 import {
@@ -14,13 +15,14 @@ import {
     safeStringCompare,
 } from "../security/index.js";
 import { SessionManager } from "../session/index.js";
-import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
+import { SESSION, ENV, LIMITS, parsePort, PRINTABLE_ASCII } from "../config/index.js";
 import {
     createServer,
     registerAllCapabilities,
     initializeLifecycle,
     setHttpServer,
 } from "../server/index.js";
+import { createConfigError } from "../utils/index.js";
 
 /** Default localhost origins allowed when no explicit allowlist is configured */
 const DEFAULT_ALLOWED_ORIGIN_PATTERNS: RegExp[] = [
@@ -121,36 +123,130 @@ function parseAllowedOriginsEnv(): string[] | null {
 }
 
 /**
+ * Validate an operator-supplied HTTP transport auth token at startup.
+ *
+ * Rejects tokens that are not printable ASCII (0x20–0x7E) or that exceed
+ * `LIMITS.MAX_AUTH_TOKEN_LENGTH`. The intent is to fail loudly during boot
+ * so a misconfigured operator sees the error before the server starts
+ * accepting connections — never silently letting a CRLF, NUL, or
+ * accidentally-pasted blob flow into the `Bearer ${token}` header check.
+ *
+ * Undefined or empty tokens are accepted (auth is optional — see
+ * `createAuthMiddleware`); callers that require a token should enforce that
+ * separately.
+ *
+ * The token value is **never** echoed in error messages. Length and a
+ * `[redacted]` marker are surfaced to operators instead, so the rejection
+ * is debuggable without leaking entropy into logs.
+ *
+ * @throws Error from `createConfigError("MCP_AUTH_TOKEN", …)` if the token
+ *   is too long or contains a non-printable byte.
+ */
+export function validateAuthToken(token: string | undefined): void {
+    if (token === undefined || token === "") return;
+    if (token.length > LIMITS.MAX_AUTH_TOKEN_LENGTH) {
+        throw createConfigError(
+            ENV.AUTH_TOKEN,
+            `[length=${token.length}]`,
+            `exceeds maximum ${LIMITS.MAX_AUTH_TOKEN_LENGTH} characters`,
+        );
+    }
+    if (!PRINTABLE_ASCII.test(token)) {
+        throw createConfigError(
+            ENV.AUTH_TOKEN,
+            "[redacted]",
+            "must contain only printable ASCII characters (0x20–0x7E)",
+        );
+    }
+}
+
+/** Auth scheme prefix per RFC 6750 §2.1, including the single trailing space. */
+const BEARER_SCHEME = "Bearer ";
+
+/**
  * Authentication middleware for HTTP transport.
  *
  * When an auth token is provided, all HTTP requests must include a matching
- * Bearer token in the Authorization header.
+ * Bearer token in the Authorization header. The scheme name (`Bearer`) is
+ * matched case-insensitively per RFC 6750 §2.1, so `bearer X` and `BEARER X`
+ * are accepted as well as the canonical `Bearer X`.
+ *
+ * The expected token string and total expected header length are captured
+ * once at middleware construction (closure capture) so the per-request hot
+ * path does no string allocation for the comparison values themselves. A
+ * length pre-check rejects oversized headers before any further work,
+ * bounding the per-request allocation regardless of attacker input.
+ *
+ * Timing-safe property: the **token portion** of the header is compared via
+ * `safeStringCompare` (which wraps `crypto.timingSafeEqual` over
+ * length-padded buffers — see `security/input-validation.ts`). The scheme
+ * prefix is non-secret, so its case-insensitive comparison runs in
+ * variable time without leaking entropy.
  */
 export function createAuthMiddleware(
     authToken?: string
 ): (req: Request, res: Response, next: NextFunction) => void {
+    if (!authToken) {
+        // No token configured — pass through (backward compatible).
+        return (_req, _res, next): void => next();
+    }
+    const expectedToken = authToken;
+    const expectedHeaderLength = BEARER_SCHEME.length + expectedToken.length;
+
     return (req: Request, res: Response, next: NextFunction): void => {
-        // If no token configured, allow all requests (backward compatible)
-        if (!authToken) {
-            next();
-            return;
+        // Express types the header as `string | string[] | undefined`. RFC 7230
+        // forbids duplicate Authorization headers, but Node has historically
+        // surfaced arrays in edge cases — collapse defensively.
+        const rawAuth = req.headers.authorization;
+        const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
+
+        // Length-bound *before* slicing or any compare runs. The compare
+        // itself is constant-time over equal-length buffers; a length-derived
+        // early reject does not weaken the security property (it never
+        // reveals byte-equality of the secret). `hasExpectedLength` narrows
+        // `authHeader` to `string` so we don't need an unsafe cast.
+        if (!hasExpectedLength(authHeader, expectedHeaderLength)) {
+            return reject(res);
         }
 
-        const authHeader = req.headers.authorization;
-        const expectedHeader = `Bearer ${authToken}`;
-        if (!authHeader || !safeStringCompare(authHeader, expectedHeader)) {
-            res.status(401).json({
-                jsonrpc: "2.0",
-                error: {
-                    code: -32600,
-                    message: "Unauthorized: Invalid or missing authentication token",
-                },
-            });
-            return;
+        // Scheme is non-secret per RFC 6750 §2.1 — match case-insensitively
+        // in variable time. `slice(0, n)` on a length-validated string is
+        // bounded; `toLowerCase` over 7 ASCII chars is O(1) for our purposes.
+        const schemeSlice = authHeader.slice(0, BEARER_SCHEME.length);
+        if (schemeSlice.toLowerCase() !== "bearer ") {
+            return reject(res);
+        }
+
+        // Token portion is the secret — compare with `safeStringCompare`,
+        // which pads to equal length under the hood and routes through
+        // `crypto.timingSafeEqual`.
+        const tokenPart = authHeader.slice(BEARER_SCHEME.length);
+        if (!safeStringCompare(tokenPart, expectedToken)) {
+            return reject(res);
         }
 
         next();
     };
+}
+
+/** 401 response shared by every reject branch in `createAuthMiddleware`. */
+function reject(res: Response): void {
+    res.status(401).json({
+        jsonrpc: "2.0",
+        error: {
+            code: -32600,
+            message: "Unauthorized: Invalid or missing authentication token",
+        },
+    });
+}
+
+/**
+ * Type predicate: narrow `string | undefined` to `string` when the value's
+ * length equals `expected`. Used by `createAuthMiddleware` to bound
+ * `safeStringCompare` allocations and avoid `as string` casts.
+ */
+function hasExpectedLength(value: string | undefined, expected: number): value is string {
+    return value !== undefined && value.length === expected;
 }
 
 /**
@@ -170,18 +266,27 @@ export function createHttpApp(options: HttpAppOptions): Express {
     const { createMcpServer, sessionManager, authToken, allowedOrigins } = options;
 
     const app = express();
-    // Limit request body size to prevent DoS
-    app.use(express.json({ limit: "1mb" }));
 
-    // Origin header validation (MCP spec MUST requirement)
+    // Origin and auth run BEFORE the body parser so unauthenticated clients
+    // cannot force the server to allocate / parse 1 MB of JSON per request.
+    // Both middlewares only read headers, never the body.
     const originMiddleware = createOriginMiddleware(allowedOrigins);
-    app.use("/mcp", originMiddleware);
-
-    // Apply authentication middleware when token is configured
     const authMiddleware = createAuthMiddleware(authToken);
-    app.use("/mcp", authMiddleware);
+    app.use("/mcp", originMiddleware, authMiddleware, express.json({ limit: "1mb" }));
 
-    // POST /mcp - Handle MCP requests
+    // POST /mcp - Handle MCP requests.
+    //
+    // Session lifecycle follows the MCP SDK reference pattern:
+    //  - existing session-id → route to that transport
+    //  - missing session-id + initialize body → create a new session
+    //  - any other shape → 400/404
+    //
+    // The session is registered via the SDK's `onsessioninitialized` callback
+    // (fires synchronously inside `transport.handleRequest` when an initialize
+    // request is processed). Reading `transport.sessionId` *before*
+    // `handleRequest` returns `undefined` because the SDK only assigns the id
+    // when it sees the `initialize` JSON-RPC payload — so a post-`connect`
+    // registration block would be dead code.
     app.post("/mcp", async (req: Request, res: Response) => {
         try {
             const rawSessionId = req.headers["mcp-session-id"];
@@ -196,7 +301,7 @@ export function createHttpApp(options: HttpAppOptions): Express {
                 return;
             }
 
-            // Check for existing session
+            // Existing session — route to its transport.
             if (sessionId && sessionManager.has(sessionId)) {
                 const session = sessionManager.get(sessionId)!;
                 session.lastActivity = Date.now();
@@ -204,7 +309,29 @@ export function createHttpApp(options: HttpAppOptions): Express {
                 return;
             }
 
-            // Check session limit before creating new session
+            // Session-id supplied but not found — never silently create a
+            // replacement (would let stale clients spawn fresh sessions).
+            if (sessionId) {
+                res.status(404).json({
+                    jsonrpc: "2.0",
+                    error: { code: -32001, message: "Session not found" },
+                });
+                return;
+            }
+
+            // No session-id — only an initialize request may create a session.
+            if (!isInitializeRequest(req.body)) {
+                res.status(400).json({
+                    jsonrpc: "2.0",
+                    error: {
+                        code: -32600,
+                        message: "Bad Request: Mcp-Session-Id header is required for non-initialize requests",
+                    },
+                });
+                return;
+            }
+
+            // Capacity check before allocating a server + transport pair.
             if (sessionManager.size >= SESSION.MAX_SESSIONS) {
                 res.status(503).json({
                     jsonrpc: "2.0",
@@ -213,15 +340,34 @@ export function createHttpApp(options: HttpAppOptions): Express {
                 return;
             }
 
-            // Create new session
+            // Create a fresh per-session server + transport. Registration
+            // happens inside `onsessioninitialized` — the SDK fires this
+            // synchronously inside `handleRequest` once the initialize body
+            // is parsed and a sessionId is generated.
             const server = createMcpServer();
-
-            const transport = new StreamableHTTPServerTransport({
+            const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: () => randomUUID(),
+                // `enableJsonResponse: true` makes the SDK return tool
+                // responses as a single JSON body on the POST instead of
+                // opening an SSE stream. The mcp-curl tools (`curl_execute`,
+                // `jq_query`, custom YAML/registerCustomTool handlers) are
+                // request/response shaped — they produce a complete result
+                // per call and emit no incremental progress events — so the
+                // SSE stream would carry exactly one frame and then close.
+                // JSON-direct cuts that overhead and avoids long-lived
+                // connections that complicate session timeout / idle-cleanup.
+                // SSE-dependent clients can still open `GET /mcp` for
+                // server→client streams against an established session.
                 enableJsonResponse: true,
+                onsessioninitialized: (sid: string) => {
+                    sessionManager.set(sid, {
+                        server,
+                        transport,
+                        lastActivity: Date.now(),
+                    });
+                },
             });
 
-            // Track session when initialized
             transport.onclose = () => {
                 const sid = transport.sessionId;
                 if (sid && sessionManager.has(sid)) {
@@ -230,19 +376,19 @@ export function createHttpApp(options: HttpAppOptions): Express {
             };
 
             await server.connect(transport);
-
-            // Store session after connection
-            if (transport.sessionId) {
-                sessionManager.set(transport.sessionId, {
-                    server,
-                    transport,
-                    lastActivity: Date.now(),
-                });
-            }
-
             await transport.handleRequest(req, res, req.body);
         } catch (error) {
-            console.error("MCP request error:", error);
+            // Minimal error logging: shape only, never message contents — matches
+            // the project-wide stderr convention (see CLAUDE.md "Error logging":
+            // `tool_name error: [<context>] <ErrorClassName>`). The bracketed
+            // context is the session id when one passed validation, otherwise
+            // "no-session". An unvalidated header is treated as absent so a
+            // malicious client cannot inject arbitrary bytes into stderr.
+            const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+            const rawSid = req.headers["mcp-session-id"];
+            const candidate = Array.isArray(rawSid) ? rawSid[0] : rawSid;
+            const ctx = candidate && isValidSessionId(candidate) ? candidate : "no-session";
+            console.error(`http_post error: [${ctx}] ${errorClass}`);
             if (!res.headersSent) {
                 res.status(500).json({
                     jsonrpc: "2.0",
@@ -279,12 +425,18 @@ export function createHttpApp(options: HttpAppOptions): Express {
         }
     });
 
-    // DELETE /mcp - Terminate a session
-    app.delete("/mcp", async (req: Request, res: Response, next: NextFunction) => {
+    // DELETE /mcp - Terminate a session.
+    //
+    // Delegates to `SessionManager.closeSession`, which awaits the SDK
+    // transport close (so in-flight SSE frames drain) and bounds each close
+    // through `closeWithTimeout`. Errors raised inside the close path are
+    // already logged by the helper in the project-wide minimal shape — the
+    // route itself returns 200 once the manager has dropped the entry, so a
+    // misbehaving transport can't surface internal state to the client.
+    app.delete("/mcp", async (req: Request, res: Response) => {
         const rawSessionId = req.headers["mcp-session-id"];
         const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
 
-        // Validate session ID format if provided
         if (sessionId && !isValidSessionId(sessionId)) {
             res.status(400).json({
                 jsonrpc: "2.0",
@@ -293,24 +445,21 @@ export function createHttpApp(options: HttpAppOptions): Express {
             return;
         }
 
-        if (sessionId && sessionManager.has(sessionId)) {
-            const session = sessionManager.get(sessionId)!;
-            try {
-                session.transport.close();
-                await session.server.close();
-            } catch (error) {
-                next(error);
-                return;
-            } finally {
-                sessionManager.delete(sessionId);
-            }
+        if (sessionId) {
+            await sessionManager.closeSession(sessionId);
         }
         res.status(200).end();
     });
 
-    // Global error handler
-    app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-        console.error("Unhandled error:", err);
+    // Global error handler. Reached when a route handler calls `next(error)`.
+    // Logs in the project-wide minimal shape (`http_unhandled error:
+    // [<route>] <ErrorClassName>` — see CLAUDE.md "Error logging") and never
+    // echoes the error message, so a thrown error from upstream code can't
+    // surface request-specific detail (path/headers) into operator stderr.
+    app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+        const errorClass = err instanceof Error ? err.constructor.name : "unknown";
+        const route = `${req.method} ${req.path}`;
+        console.error(`http_unhandled error: [${route}] ${errorClass}`);
         if (!res.headersSent) {
             res.status(500).json({
                 jsonrpc: "2.0",
@@ -320,6 +469,20 @@ export function createHttpApp(options: HttpAppOptions): Express {
     });
 
     return app;
+}
+
+/**
+ * Build the operator-facing one-line summary of HTTP auth status.
+ *
+ * Logged at HTTP startup so an operator can confirm whether bearer-token
+ * auth is active. A typoed env var name (e.g. `MCP_AUTH_TOKE=…`) would
+ * otherwise boot a fully open server with no signal beyond silence.
+ */
+export function formatAuthStatus(authToken: string | undefined): string {
+    if (authToken === undefined || authToken === "") {
+        return "HTTP transport: bearer auth DISABLED (set MCP_AUTH_TOKEN to require auth)";
+    }
+    return "HTTP transport: bearer auth enabled";
 }
 
 /**
@@ -344,6 +507,13 @@ export function resolveHost(configHost?: string): string {
  * Enables web-based clients to connect via HTTP/SSE.
  */
 export async function runHTTP(): Promise<void> {
+    // Snapshot the env var once so validation and the auth middleware see
+    // the same value. Validate first — `runHTTP` has no rollback handler,
+    // so a thrown `validateAuthToken` MUST run before we register any timer,
+    // session manager, or listening socket.
+    const authToken = process.env[ENV.AUTH_TOKEN];
+    validateAuthToken(authToken);
+
     // Clean up orphaned temp directories from previous runs
     await cleanupOrphanedTempDirs();
 
@@ -363,7 +533,7 @@ export async function runHTTP(): Promise<void> {
             return server;
         },
         sessionManager,
-        authToken: process.env[ENV.AUTH_TOKEN],
+        authToken,
     });
 
     const port = parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);
@@ -372,6 +542,7 @@ export async function runHTTP(): Promise<void> {
 
     httpServer.on("listening", () => {
         console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
+        console.error(formatAuthStatus(authToken));
     });
 
     httpServer.on("error", (err: NodeJS.ErrnoException) => {

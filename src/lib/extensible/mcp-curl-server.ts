@@ -25,7 +25,13 @@ import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import { startRateLimitCleanup, stopRateLimitCleanup, startInjectionCleanup, stopInjectionCleanup } from "../security/index.js";
 import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
-import { createHttpApp, resolveHost, formatHostForUrl } from "../transports/http.js";
+import {
+    createHttpApp,
+    resolveHost,
+    formatHostForUrl,
+    formatAuthStatus,
+    validateAuthToken,
+} from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
 import { ENV, LIMITS, parsePort } from "../config/index.js";
 
@@ -354,6 +360,21 @@ export class McpCurlServer {
         this._frozenConfig = this.freezeConfig();
 
         try {
+            // Resolve and validate the HTTP auth token *before* any
+            // side-effecting setup. The rollback handler below would tear
+            // down anything we started, but it's strictly cheaper (and
+            // clearer) to fail-fast on a bad operator-supplied token before
+            // touching the filesystem, timers, or the MCP server. The
+            // snapshot is then handed to `startHttp` so validation and the
+            // auth middleware see the same value.
+            const httpAuthToken =
+                transport === "http"
+                    ? (this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN])
+                    : undefined;
+            if (transport === "http") {
+                validateAuthToken(httpAuthToken);
+            }
+
             // Clean up orphaned temp directories from previous runs
             await cleanupOrphanedTempDirs();
 
@@ -366,7 +387,7 @@ export class McpCurlServer {
 
             // Start appropriate transport
             if (transport === "http") {
-                await this.startHttp();
+                await this.startHttp(httpAuthToken);
             } else {
                 await this.startStdio();
             }
@@ -439,7 +460,7 @@ export class McpCurlServer {
                     }),
                 ]);
             } catch (error) {
-                console.error("Warning: Error closing HTTP server:", error);
+                logShutdownError("shutdown_http_server", error);
             } finally {
                 if (timeoutId !== undefined) {
                     clearTimeout(timeoutId);
@@ -454,7 +475,7 @@ export class McpCurlServer {
             try {
                 await this._sessionManager.closeAll();
             } catch (error) {
-                console.error("Warning: Error closing sessions:", error);
+                logShutdownError("shutdown_sessions", error);
             }
         }
 
@@ -463,7 +484,7 @@ export class McpCurlServer {
             try {
                 await this._server.close();
             } catch (error) {
-                console.error("Warning: Error closing MCP server:", error);
+                logShutdownError("shutdown_mcp_server", error);
             } finally {
                 this._server = null;
             }
@@ -481,7 +502,7 @@ export class McpCurlServer {
         try {
             await cleanupTempDir();
         } catch (error) {
-            console.error("Warning: Error cleaning up temp directory:", error);
+            logShutdownError("shutdown_temp_dir", error);
         } finally {
             // Reset state to allow potential reuse
             this._started = false;
@@ -548,15 +569,20 @@ export class McpCurlServer {
     /**
      * Start HTTP transport with session management.
      * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
+     *
+     * @param authToken - Pre-resolved bearer token (already passed through
+     *   `validateAuthToken` in `start()`). Passing the snapshot down avoids
+     *   resolving the env var twice and guarantees the value the auth
+     *   middleware closes over is the exact value that was validated.
      */
-    private async startHttp(): Promise<void> {
+    private async startHttp(authToken: string | undefined): Promise<void> {
         this._sessionManager = new SessionManager();
         this._sessionManager.startCleanup();
 
         const app = createHttpApp({
             createMcpServer: () => this.createConfiguredServer(),
             sessionManager: this._sessionManager,
-            authToken: this._frozenConfig!.authToken ?? process.env[ENV.AUTH_TOKEN],
+            authToken,
             allowedOrigins: this._frozenConfig!.allowedOrigins,
         });
 
@@ -568,6 +594,7 @@ export class McpCurlServer {
 
             this._httpServer.on("listening", () => {
                 console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
+                console.error(formatAuthStatus(authToken));
                 resolve();
             });
 
@@ -605,4 +632,17 @@ export class McpCurlServer {
             throw new Error(`Cannot call ${method} after server has started`);
         }
     }
+}
+
+/**
+ * Stderr logger for shutdown-path failures, in the project-wide minimal
+ * shape (`<label> error: <ErrorClassName>` — see CLAUDE.md "Error logging").
+ * Shutdown errors have no per-request context, so the bracketed
+ * `[<context>]` slot the per-tool / per-session sites use is omitted; the
+ * label itself identifies which sub-tear-down failed (e.g.
+ * `shutdown_http_server`, `shutdown_sessions`).
+ */
+function logShutdownError(label: string, error: unknown): void {
+    const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+    console.error(`${label} error: ${errorClass}`);
 }

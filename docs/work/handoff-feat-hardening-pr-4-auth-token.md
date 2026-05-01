@@ -1,0 +1,465 @@
+---
+title: "PR-4 / B5 — authToken printable-ASCII validation + length cap"
+date: 2026-05-01
+branch: feat/hardening-pr-4-auth-token
+plan: docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md
+status: complete
+---
+
+# Work Handoff: PR-4 / B5 — `authToken` printable-ASCII validation + length cap
+
+**Date:** 2026-05-01 | **Branch:** `feat/hardening-pr-4-auth-token` | **Plan:** [`docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md`](../plans/2026-04-30-chore-pre-bigwork-hardening-plan.md) (item B5 / PR-4) | **Status:** complete
+
+## Summary
+
+PR-4 of the 9-PR pre-bigwork hardening track. Closes plan item **B5**: validates the operator-supplied HTTP transport auth token (`MCP_AUTH_TOKEN` env var or `McpCurlConfig.authToken`) at startup, rejecting tokens that are not printable ASCII (0x20–0x7E) or that exceed `LIMITS.MAX_AUTH_TOKEN_LENGTH` (4096 chars). The validator throws a `createConfigError("MCP_AUTH_TOKEN", …)` synchronously before any side-effecting setup (session manager, cleanup intervals, listening socket) so a misconfigured operator sees the error before the server starts accepting connections. The token value is never echoed in error messages — `[length=N]` and `[redacted]` markers are used instead. Constants live in `config/limits.ts` and `config/security/validation.ts` per repo convention. Plan reviewer finding **S11** (timing-safe auth compare) was deferred to PR-4 but turned out to be a no-op — `safeStringCompare()` (used by `createAuthMiddleware`) already wraps `crypto.timingSafeEqual` with length-padding (`src/lib/security/input-validation.ts:31`), so no compare-side change was required.
+
+## What was implemented
+
+### B5 — `validateAuthToken()` (PR-4)
+
+- **What:** new exported function in `src/lib/transports/http.ts` plus call sites in `runHTTP()` and `McpCurlServer.startHttp()`. Constants land in their convention-mandated homes; the function imports them. _(Superseded: the call site moved from `startHttp()` to `start()` during Round 2 review — see "Review Comments Addressed — 2026-05-01" below.)_
+- **Key files (5):**
+  - `src/lib/config/limits.ts` — added `MAX_AUTH_TOKEN_LENGTH: 4096` to `LIMITS` with a JSDoc explaining the choice (covers RSA-256 JWTs ~700–900 chars, OIDC ID tokens 1500–2500 chars, JWE up to ~4 KB, well under the 8 KB HTTP header line limit).
+  - `src/lib/config/security/validation.ts` — added `PRINTABLE_ASCII = /^[\x20-\x7E]+$/` regex with JSDoc explaining what it excludes (C0 controls, DEL, high-bit bytes).
+  - `src/lib/config/security/index.ts` — re-export `PRINTABLE_ASCII` for symmetry with the other validation patterns (`UUID_REGEX`, `WINDOWS_RESERVED_BASENAMES`).
+  - `src/lib/transports/http.ts` — added `validateAuthToken()` exported function; inserted call sites in `runHTTP()` (now the **first** statement, before `cleanupOrphanedTempDirs`) and `createHttpApp` continues to receive the validated `authToken` value.
+  - `src/lib/extensible/mcp-curl-server.ts` — imported `validateAuthToken`; called from `startHttp()` **before** session manager / cleanup-interval setup, so a bad token aborts cleanly without orphaned timers. _(Superseded: now called from `start()` itself, before any side effects — see "Review Comments Addressed — 2026-05-01" below.)_
+- **Approach:** mirrors the plan diff almost verbatim. Function lives in the transport file (close to its caller) but pulls constants from `config/`. Errors flow through the existing `createConfigError(name, value, reason)` helper for formatting consistency with `MCP_CURL_OUTPUT_DIR` and `MCP_CURL_SESSION_TIMEOUT` errors. Validation runs before any side-effecting setup so a failed start leaves no temp dirs, intervals, or listening sockets behind.
+
+### S11 — timing-safe auth compare (no-op finding)
+
+- **What:** verified `safeStringCompare()` in `src/lib/security/input-validation.ts` already wraps `crypto.timingSafeEqual` with length-padding (line 31) — exactly what S11 asked for. No code change required.
+- **Where the check fires:** `createAuthMiddleware()` (`http.ts:141`) compares the incoming `Authorization` header against `Bearer ${authToken}` via `safeStringCompare`, so request-time comparison is already timing-safe.
+- **Documented:** flagged in this handoff so the next reviewer doesn't chase the finding twice.
+
+### Tests added
+
+13 new test cases in `src/lib/transports/http.test.ts` under a new `describe("validateAuthToken")` block, total file went from 16 → 34 tests. Coverage:
+
+| Plan scenario | Test case |
+|---|---|
+| Empty / undefined token → no throw | `accepts undefined (no token configured)`, `accepts an empty string (treated as no token)` |
+| 4096-char printable ASCII → no throw | `accepts a token at the maximum allowed length` |
+| 4097-char token → throws with length-bound message | `rejects a token one character over the maximum` |
+| Token value NOT in error string | `includes the length but not the token value in the over-length error`, `redacts the token in the charset error and never echoes the input` |
+| Token containing `\n`, `\r`, `\0`, `\x7F` → throws | `rejects token containing newline/carriage return/tab/NUL/DEL (0x7F)` (parameterised via `it.each`) |
+| Token containing high-bit char (`é`, emoji) → throws | `rejects token containing high-bit char (é)/emoji` |
+| Real-world RSA-256 JWT (~700 chars) → no throw | `accepts a real-world RSA-256 JWT (~700+ chars, regression lock)` |
+| Real-world OIDC ID token (~1800 chars) → no throw | `accepts a real-world OIDC ID token (~1700+ chars, regression lock)` |
+| Error references `MCP_AUTH_TOKEN` | `references the env var name (MCP_AUTH_TOKEN) in error messages` |
+
+`it.each` is used for the 7-row control-character matrix; a short token (`Bearer-style-token-123`) is added as the happy-path case the plan didn't list.
+
+### README
+
+- **What:** added a single bullet to `## Security Highlights` covering the new behaviour: "Auth-token validation — `MCP_AUTH_TOKEN` rejected at HTTP startup if not printable ASCII (0x20–0x7E) or longer than 4096 chars; bearer comparison is timing-safe". Mentions both validation and the pre-existing timing-safe compare in one line so operators aren't left wondering whether one implies the other.
+- **Why one bullet, not a new section:** consistent with the existing Security Highlights bullet style; the plan's Documentation Plan asks for a Security Highlights mention specifically.
+
+### Plan housekeeping
+
+- Ticked all four PR-4 / B5 acceptance-criteria boxes (`[ ]` → `[x]`) in the plan body, mirroring how PR-1 / PR-2 / PR-3 tracked their items.
+
+### Pre-existing handoff cleanup (one commit, separate scope)
+
+- **What:** the working tree on `main` carried two staged deletions of pre-PR-1 handoff stubs (`docs/work/handoff-chore-quickwin-todos.md`, `docs/work/handoff-docs-architecture-and-followups.md`). User authorised committing them as cleanup on this branch.
+- **Where:** first commit on the branch (`chore(docs): remove superseded handoff drafts`).
+- **Why on this branch:** keeping `main` clean for the next PR; the stubs were superseded by the per-PR handoffs that landed in PR-1/2/3.
+
+## Key decisions
+
+| Decision | Reasoning | Alternatives considered |
+|----------|-----------|-------------------------|
+| `MAX_AUTH_TOKEN_LENGTH = 4096` | Covers all common JWT/OIDC/JWE production token sizes (RSA-256 JWT ~700, OIDC 1500–2500, JWE up to ~4 KB) and stays below the 8 KB HTTP header line limit. The simplicity reviewer pushed back on the cap entirely — kept anyway because the failure mode without it is an obscure 431-Header-Too-Large from Express on the first request, not a clear startup error. | (a) 256 (original draft) — rejects RSA-256 JWTs; **rejected** as a known false-positive class. (b) No cap (simplicity reviewer's suggestion) — **rejected** for the failure-mode-clarity reason above. |
+| Validation runs **before** all side-effecting setup in both transport entry points | A misconfigured token should leave no temp-dir cleanup, no session-manager interval, and no listening socket behind. Net cost: zero (the call is synchronous and runs in microseconds). | Validate *just before* `app.listen()` — **rejected:** mid-init validation orphans the cleanup intervals if the throw escapes; the cost of moving it earlier is one statement reorder. |
+| Function lives in `transports/http.ts`, not `config/` | Close to its only caller; the constants it references live in `config/`. Splitting one tiny validator into its own file is overhead for no real gain. | New `src/lib/security/auth-token-validation.ts` — **rejected:** would duplicate the file-per-concern pattern unnecessarily; pattern-recognition reviewer agreed in the plan's Research Insights. |
+| Error messages always reference `MCP_AUTH_TOKEN` (the env var name) even when the token came from `McpCurlConfig.authToken` | The env var is the canonical externally-visible name; operators see it in their boot logs even if they configured the value programmatically. Mirrors how `MCP_CURL_OUTPUT_DIR` errors are formatted regardless of whether the value came from the env or `McpCurlConfig.outputDir`. | Distinguish env-vs-config in the error — **rejected:** doubles the error surface for marginal pedagogical value; the operator's first instinct is "what env var produced this?" and we want to answer that. |
+| `it.each` for the control-character matrix; happy-path JWT/OIDC fixtures inline | `it.each` collapses 7 byte-class rejections into one parameterised case while keeping each row's failure message explicit. The two JWT/OIDC fixtures are large enough that inlining keeps them visible to readers without forcing a fixture-file scan. | Separate test cases per byte class — **rejected:** seven near-identical `it()` blocks add noise; `it.each` is the project's convention for this shape (see `test:url-scheme.test.ts`). |
+| Document S11 as resolved no-op rather than touching `safeStringCompare` | The helper already does what S11 asked for. Touching it would be code churn for a finding that's already closed. | Add a `validateAuthToken`-side compare guard (defence-in-depth) — **rejected:** would duplicate logic that `createAuthMiddleware` already runs at every request. |
+
+## What to pay attention to during review
+
+- **Risk areas:**
+  - **Behaviour change for operators with non-printable tokens.** Any operator who has stored an auth token containing CRLF, NUL, high-bit, or DEL bytes — or who has somehow concatenated a >4096-char string into the env var — will see HTTP startup fail after upgrade. The error message is clear (`Invalid MCP_AUTH_TOKEN value "[redacted]": must contain only printable ASCII characters (0x20–0x7E).`) and references the env var name. Plan §Risks calls this out as Low likelihood / High impact; the CHANGELOG entry should highlight it.
+  - **The validator does not coerce or sanitise.** It throws. Operators see an error and must fix their config. This is intentional ("fail loudly at startup so a misconfigured operator sees the error immediately") but if any consumer relied on whitespace-trimming or NUL-filtering happening downstream, that will surface as breakage. Grepped `src/` for prior consumers — only `safeStringCompare` touches the token at runtime, and it's a byte-equal compare, so no implicit coercion existed before.
+  - **Length cap (4096) is a heuristic.** A future production deployment that legitimately uses tokens >4096 chars will hit this cap. The cap is documented in plan body B5 as deliberately conservative; if a real workflow surfaces, raising it is a one-line config change. Test fixture asserts `LIMITS.MAX_AUTH_TOKEN_LENGTH` directly so adjusting the constant won't require touching the test.
+- **Edge cases considered:**
+  - `undefined` and `""` both treated as "no token configured" (consistent with `createAuthMiddleware`'s existing fall-through).
+  - Tab (`\t`, 0x09) is rejected — not in 0x20–0x7E. The plan listed CR/LF/NUL/DEL/high-bit explicitly; tab is rejected by the same regex without a separate test row needed (covered in the parameterised matrix).
+  - Emoji and other multi-codepoint sequences hit the high-bit branch via the regex — locked with an explicit test row to make the contract obvious.
+  - Real-world JWT/OIDC fixtures use synthetic but plausibly-shaped triplets (`header.payload.signature`); not signed by any real key. Asserts `length > 700` / `> 1700` so a future fixture-rewrite that accidentally truncates fails loudly.
+- **Under-tested:**
+  - **No end-to-end test that boots the HTTP transport with a bad token and asserts the listener never binds.** The unit-level coverage proves the validator throws; the integration order is verified by code reading (`runHTTP` and `startHttp` both call `validateAuthToken` before `app.listen`) but not by a live test. Adding such a test would require booting an Express server in vitest, which the project does not currently do anywhere. Acceptable trade-off: the unit test + code-path inspection cover the contract.
+  - **No test for `safeStringCompare` being timing-safe.** It's been timing-safe since before this branch, but PR-4 inherits the gap. Out of scope; flagged here so a future reviewer doesn't expect it.
+  - **No fuzz-style adversarial test** against the regex (e.g. arbitrary byte arrays). Could be added as a future hardening step; the explicit byte-class matrix covers the documented attack surface.
+- **Pattern deviations:** none. Function placement, constant placement, error helper, test structure, and README phrasing all follow established repo patterns.
+
+## Known issues and limitations
+
+- **Operator paste-error class is narrowed but not eliminated.** A token that *passes* the regex but happens to be wrong (typo, wrong env variable copied) still fails at request time with a 401. The validator only catches structural problems — content correctness is outside scope by design.
+- **The validator does not log on success.** A successfully-validated token leaves no startup log line. If operators want to confirm the validation ran, they have no positive signal — only the absence of an error. Considered adding a `console.error("auth token validated")` line; rejected because the project's stderr-logging convention is "errors only." If a future operability concern surfaces, a single info line is a one-line addition. _(Superseded by Pass 2 P3-7: HTTP startup now logs `bearer auth enabled` / `DISABLED` via `formatAuthStatus` — see "Code Review (Pass 2)" below.)_
+- **The S11 finding is closed by inheritance, not by a direct PR-4 change.** A reviewer following the plan's "deferred to PR-4 (B5)" trail will look for a `crypto.timingSafeEqual` call in this PR's diff and not find one. The handoff `What was implemented → S11` section explains the no-op disposition; flagging here as well so it's hard to miss.
+- **`PRINTABLE_ASCII` is not a public-barrel export.** It's a config-internal constant, used only by `validateAuthToken`. If a future consumer wants to validate operator strings (other env vars, CLI args), they'd need to either deep-import or we'd promote the regex to a public utility. Not in scope for PR-4.
+
+## Testing summary
+
+- **Tests added:** 13 (one parameterised `it.each` block of 7 rows + 6 standalone `it()` cases, all under a new `describe("validateAuthToken")` block in `src/lib/transports/http.test.ts`).
+- **Tests passing:** **622 passed | 7 skipped | 0 failed** (full vitest suite, `npm test`). Up from 605 on PR-3 — **+17 net**, comprised of 13 new validation tests plus 4 net-new from the `it.each` rows expanding (each row counts as one test in the runner). Cross-checked: no other test count changed.
+- **Linting:** pass (`npm run build` succeeds; project does not expose a separate lint target).
+- **Manual verification:**
+  - `grep '${token' src/` returns only safe call sites (JSDoc reference and `${token.length}`); no `${token}` echoes the value.
+  - `npm run build` produces clean `dist/lib.d.ts` and `dist/index.d.ts`. `validateAuthToken` is **not** added to the public-barrel `src/lib.ts` exports (transport-internal helper, intentional).
+  - Read both call sites end-to-end to confirm validation runs before `app.listen()` in both paths.
+- **Test gaps:**
+  - No end-to-end "fail to bind on invalid token" test — see "Under-tested" above.
+  - No coverage test (the project does not configure a coverage provider). The 13 cases collectively touch every branch of `validateAuthToken` by inspection: undefined, empty, valid short, valid at-cap, over-cap, all rejection paths.
+
+## Commit history
+
+```text
+2917ad6 docs(plan): tick B5 + add PR-4 handoff document
+11298c5 docs(readme): document MCP_AUTH_TOKEN validation in Security Highlights
+fbd829b chore(dist): rebuild for B5 auth-token validator
+dd06d5f test(transport): cover validateAuthToken charset + length rules (B5)
+de11e20 feat(transport): validate MCP_AUTH_TOKEN at HTTP startup (B5)
+f0f2f00 chore(config): add MAX_AUTH_TOKEN_LENGTH and PRINTABLE_ASCII
+7582a44 chore(docs): remove superseded handoff drafts
+```
+
+Suggested review order is bottom-up: branch cleanup → constants → validator + integration → tests → dist rebuild → README → plan tick + handoff.
+
+## Review context
+
+- **Suggested review order:** read commits bottom-up (cleanup → constants → validator + integration → tests → docs). The constants commit is a no-op until the validator commit lands; reviewing in order makes the dependency obvious.
+- **Related docs:**
+  - `docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md` — section B5 / PR-4, lines 392–482.
+  - `docs/work/handoff-feat-hardening-pr-1-url-helpers.md` — establishes the "constants in `config/`, validators near callers" pattern this PR follows.
+  - `src/lib/security/input-validation.ts` — `safeStringCompare` (the timing-safe compare S11 was about).
+- **Dependencies on other work:** none. PR-4 is independent of PR-1/2/3 at the file level (touches `transports/http.ts`, `extensible/mcp-curl-server.ts`, two `config/` files, and `README.md`; no overlap with PR-1's URL helpers, PR-2's jq tests, or PR-3's README inputSchema example). Unblocks no other PR — PR-5 (B4) and the rest can ship in their existing order.
+
+## Post-Deploy Monitoring & Validation
+
+This PR is HTTP-transport-only and changes startup behaviour, not request-time behaviour.
+
+- **Expected signals:**
+  - Operators with a clean token: no observable change. Server starts as before; auth middleware behaves unchanged.
+  - Operators with a malformed token (control bytes, >4096 chars): HTTP transport fails to start, stderr log line `Invalid MCP_AUTH_TOKEN value "[redacted]": must contain only printable ASCII characters (0x20–0x7E).` (or `... [length=N]: exceeds maximum 4096 characters.`).
+- **Failure triggers:**
+  - **Regression signal A:** an operator who had a working token before this PR sees `Invalid MCP_AUTH_TOKEN` after upgrade. Action: collect the token's *length and byte-class profile* (NEVER the token itself), confirm against the documented cap; if it's a legitimate >4096-char production token, raise the cap with justification. CHANGELOG flags the behaviour change so this should be expected, not a surprise.
+  - **Regression signal B:** the HTTP transport starts cleanly but the auth middleware now rejects all requests as 401. This would imply `validateAuthToken` accepts a token but `safeStringCompare` rejects every header — vanishingly unlikely (both operate on the same string), but if seen, it's a contract bug between validation and compare.
+- **Validation window:** 7 days post-merge. The change is observable on every HTTP-transport boot, so the signal arrives quickly if any operator has a malformed token.
+- **Where logs/dashboards live:** this project does not bundle hosted logging — operators run `mcp-curl` themselves and read stderr. The CHANGELOG entry directs them to look for the `Invalid MCP_AUTH_TOKEN` prefix on startup failure.
+
+## Follow-up work
+
+- [ ] **PR-5: Auto-sanitize Zod field descriptions on `registerCustomTool()`** (B4) — read plan's "Technical Review Corrections" S3 + C3 + A7 first; rebuild needs nested recursion (`ZodObject`/`ZodArray<ZodObject>`/`ZodUnion`/`ZodOptional`/`ZodDefault`/`ZodNullable`), `WeakMap` memoisation, and a Standard-Schema round-trip test.
+- [ ] **PR-6a: YAML schema sanitize-at-load** (B9) — sanitisation must move into `validateApiSchema()` itself (per S1) so the public-API bypass (`ApiSchemaValidator.parse(rawObj)`) cannot leak; add A8 raw-YAML pre-Zod pass.
+- [ ] **PR-6b: defence-in-depth parity for YAML/custom-tool output** (B3 expanded) — `wrapWithDefence` runs sanitize+detect+spotlight; covers the 4th asymmetry surfaced during deep-plan review; idempotence symbol per A1; hook short-circuit per S2.
+- [ ] **PR-7: Response-side sanitization expansion** (B7-sub-1-3 + B8) — ReDoS-hardened HTML strip, markdown link/image beacons, expanded Unicode invisibles. Read plan's S5/S6/S7/S9 corrections.
+- [ ] **PR-8: Detection-pattern expansion** (B7-sub-4-5) — observability-only; gated on `unicode-confusables` integration per S8 / C11.
+- [ ] **PR-9: CI perf budgets** (post-PR-7) — measure baseline first; no thresholds before measurement (C1, A9).
+- [ ] **Final cleanup commit** (after all 9 PRs merge): the plan's WBS item 15 originally specified deleting `docs/todos/` + `docs/upstream-contributions.md` as a final commit. Both were already pre-deleted in PR-1 (commit `570f6a5`). No additional cleanup needed.
+
+### Outstanding Todos
+
+_None created during this PR session._ The plan's S11 finding ("deferred to PR-4 (B5)") was resolved as a no-op (existing `safeStringCompare` already uses `crypto.timingSafeEqual`); no new todo file was created because the finding is closed.
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _(none)_ | — | — | — |
+
+### Resolved Todos
+
+_None this session._ PR-1 already deleted the `docs/todos/` directory; the B5 todo (`auth-token-sanitize-consideration.md`) was deleted there and is recorded in PR-1's handoff Resolved Todos table. PR-4 closes the underlying plan item (B5) but does not interact with the (now-deleted) todo file.
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _(none — already recorded under PR-1's handoff)_ | — | — | — | — |
+
+---
+
+## Code Review — 2026-05-01
+
+### Review Summary
+
+- **Reviewer:** automated multi-agent review (5 agents in parallel)
+- **Agents used:** `security-sentinel`, `typescript-reviewer`, `code-simplicity-reviewer`, `performance-oracle`, `learnings-researcher`
+- **Findings:** 🔴 P1: 0 | 🟡 P2: 6 (5 addressed, 1 rejected on review) | 🔵 P3: 5 (3 addressed, 1 deferred as todo, 1 false-positive)
+
+### Handoff Assessment
+
+The builder's self-assessment was **honest and largely accurate**. All five reviewers independently verified the load-bearing claims:
+
+- ✅ **Token-leak claim verified.** `grep '${token' src/` returns only `${token.length}` and JSDoc references; no code path interpolates the raw token into an error, log, or response.
+- ✅ **Timing-safe compare verified.** `safeStringCompare` correctly pads to equal length and XORs `lengthMatch` into the result; `crypto.timingSafeEqual` always sees equal-length buffers.
+- ✅ **Charset regex verified.** `/^[\x20-\x7E]+$/` correctly rejects every documented byte class (CRLF, NUL, DEL, high-bit, multi-byte UTF-8, surrogates, emoji); no backtracking risk.
+- ✅ **Validation-order claim partially refined.** True for `runHTTP()` (no rollback handler — must validate first). For `McpCurlServer.start()`, two cleanup intervals (`startRateLimitCleanup`, `startInjectionCleanup`) start at lines 366–367 *before* `startHttp()` is called; the `try/catch` at lines 361–411 cleans them up on throw. So the *invariant* (no orphaned timers on bad token) holds, but the *literal* "validates before all side effects" needed nuance. Comments updated in both startup paths.
+
+**No undisclosed issues** — every concern reviewers raised matched something the builder either had documented (S11 closure, no-public-barrel-export) or was a defensible design choice (length cap value, JWT/OIDC fixtures).
+
+### Verified Claims
+
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| Tests pass (622 / 7 / 0) | ✅ yes | confirmed at every reviewer stage |
+| Validation runs before all side effects in `runHTTP` | ✅ yes | first statement |
+| Validation runs before all side effects in `startHttp` | ⚠️ refined | true within `startHttp` itself; cleanup intervals start in parent `start()` and are torn down by rollback handler |
+| Token never echoed in errors | ✅ yes | only `[length=N]` and `[redacted]` ever interpolated |
+| `safeStringCompare` already timing-safe (S11 no-op) | ✅ yes | `crypto.timingSafeEqual` over padded buffers |
+| `PRINTABLE_ASCII` not in public barrel | ✅ yes | absent from `src/lib.ts`, `dist/lib.js`, `dist/lib/index.js` |
+| `validateAuthToken` not in public barrel | ✅ yes | same — transport-internal only |
+| Constants in convention-mandated homes | ✅ yes | `config/limits.ts` + `config/security/validation.ts`; barrel re-export symmetric with `UUID_REGEX` |
+| `it.each` for byte-class matrix follows project convention | ✅ yes | matches `prompts/url-scheme.test.ts` shape |
+| No public-API regressions | ✅ yes | `dist/lib.d.ts` unchanged for public surface |
+
+### Findings Resolved in This Pass
+
+| ID | Severity | Category | Description | Resolution |
+|----|----------|----------|-------------|------------|
+| P2-A | 🟡 P2 | security/perf | `safeStringCompare` allocated buffers up to ~16 KB driven by attacker-controlled `Authorization` header length | Added length pre-check in `createAuthMiddleware` — header length must equal `expectedHeader.length` before reaching `safeStringCompare`. Length-based reject does not weaken timing-safe property (compare never reveals byte-equality). |
+| P2-C | 🟡 P2 | TS/consistency | `createConfigError("MCP_AUTH_TOKEN", …)` used a literal | Replaced with `ENV.AUTH_TOKEN` for parity with `file-validation.ts`. Tests still assert `/MCP_AUTH_TOKEN/` (resolved value of the constant). |
+| P2-D | 🟡 P2 | test redundancy | Over-cap rejection test + length-redaction test both used `cap+1` | Merged into one consolidated test that asserts `/exceeds maximum/`, `[length=N]`, redaction (no token echo), and no `z{10,}` run. |
+| P2-E | 🟡 P2 | test fixtures | JWT/OIDC fixtures used `.repeat(40)` / `.repeat(100)` inflation (~1.5KB+3KB of base64 in source) for marginal regression-lock value | Replaced with one compact JWT-shaped fixture (~80 chars) that exercises the base64url alphabet + dot separator. Drops two tests, keeps the one regression-lock concern that `"a".repeat(MAX)` doesn't cover (charset breadth). |
+| P2-F | 🟡 P2 | TS symmetry | Snapshot-semantics comment in `mcp-curl-server.ts` not mirrored in `runHTTP` | Both call sites now have explicit "Snapshot the env var once so validation and middleware see the same value" comments + a clarifying note on rollback asymmetry. |
+| P2-B | 🟡 P2 | simplicity | Suggested collapsing `validateAuthToken` into `createHttpApp` | **Rejected on review.** `runHTTP()` lacks the try/catch rollback that `McpCurlServer.start()` has; collapsing would orphan timers on bad token in the standalone path. The duplication is intentional defense-in-depth. Documented this rationale in the comments above. |
+| P3-1 | 🔵 P3 | docs | Handoff "before all side effects" claim needed nuance for `start()` | Clarified in the Verified Claims table above. |
+| P3-3 | 🔵 P3 | robustness | `req.headers.authorization` array case unhandled | Added `Array.isArray(rawAuth) ? rawAuth[0] : rawAuth` collapse in `createAuthMiddleware`; new test asserts the fallback. |
+| P3-5 | 🔵 P3 | docs | `createConfigError` JSDoc lacked redaction example | Added second `@example` block showing the `[redacted]` pattern. |
+| P3-6 | 🔵 P3 | perf | `\`Bearer ${authToken}\`` rebuilt per request | Hoisted to closure capture at middleware construction; per-request hot path now does no string allocation. |
+| P3-2 | 🔵 P3 | future-proofing | `createHttpApp` reachable via internal barrel without internal validation guard | Resolved indirectly: keeping validation at both call sites (rejecting P2-B) means `createHttpApp` always receives a validated token from any current consumer. If a future caller surfaces `createHttpApp` to external code, validation should be hoisted into it then. |
+
+### Findings Deferred
+
+| ID | Severity | Description | Defer Reason | Tracker |
+|----|----------|-------------|--------------|---------|
+| P3-4 | 🔵 P3 | `safeStringCompare(authHeader, "Bearer ${token}")` is case-sensitive on the `Bearer` scheme; RFC 6750 §2.1 requires case-insensitive scheme matching | Pre-existing (not a PR-4 regression); requires non-trivial refactor to split scheme prefix from token portion while preserving timing-safe property over the secret | `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` |
+
+### Tests After Review
+
+- `npm test` — **622 passing / 7 skipped / 0 failing** (unchanged total; net +1 in `createAuthMiddleware` describe, net -1 in `validateAuthToken` describe).
+- `npm run build` — clean.
+- New tests added: oversized-Authorization rejection (length pre-check) + array-form Authorization collapse + JWT-shaped accept.
+- Tests removed: standalone over-cap rejection (folded into redaction test) + RSA-256-JWT fixture + OIDC-ID-token fixture.
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | P3 | RFC 6750 case-insensitive scheme matching | code-review |
+
+### Blockers
+
+**None — clear to merge.** All P2 findings are resolved or rejected on documented grounds. The remaining P3 (case-insensitive Bearer scheme) is pre-existing, low-impact, and tracked.
+
+---
+
+## Code Review (Pass 2) — 2026-05-01
+
+### Review Summary
+
+- **Reviewer:** automated multi-agent review (typescript-reviewer, architecture-strategist, security-sentinel, performance-oracle, code-simplicity-reviewer, agent-native-reviewer, learnings-researcher) + context7 MCP for SDK documentation
+- **Lens:** SRP/DRY, security, performance, **TypeScript MCP SDK best practices** (per user request: "think harder")
+- **Findings:** 🔴 P1: 1 | 🟡 P2: 3 | 🔵 P3: 4 — all resolved in this pass
+- **Reviewer mindset:** Independent skeptical pass — verified handoff claims against SDK source (`node_modules/@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js`) rather than trusting prose
+
+### Handoff Assessment (Pass 1 → Pass 2)
+
+The Pass 1 handoff was **honest about the auth-token surface** but did **not cover the broader HTTP transport context**. The reviewers, looking through the MCP SDK lens, surfaced a **runtime-correctness P1 in the session lifecycle** that pre-dated PR-4 but was reachable from the same code path the auth-token middleware now guards. This is exactly the "look beyond the flagged risks" case the review skill calls out.
+
+The Pass 1 fixes themselves remained correct; nothing rolled back.
+
+### Findings Resolved in This Pass
+
+| ID | Severity | Category | Description | Resolution |
+|----|----------|----------|-------------|------------|
+| **P1-A** | 🔴 P1 | SDK lifecycle / dead code | The post-`server.connect()` block read `transport.sessionId` and registered the session in `SessionManager`. Per the SDK source (`webStandardStreamableHttp.js:433`), `sessionId` is **only** assigned inside `handleRequest` after an `initialize` JSON-RPC body is parsed. The block ran with `sessionId === undefined` every time, so **every session was orphaned** — the SDK fired `onsessioninitialized` (which the route did not register), then the route looked up `transport.sessionId` (undefined), so the `SessionManager.set(...)` call never executed with a real id. Follow-up POSTs with `Mcp-Session-Id` would 404 because the session was never registered. | Rewrote `app.post("/mcp")` to follow the SDK reference pattern: existing-session route → 404 for unknown id → 400 for non-init body → 503 capacity → fresh transport with `onsessioninitialized: (sid) => sessionManager.set(sid, ...)` callback registering the session synchronously when the SDK assigns the id. Added regression test in `http.session.test.ts` that mocks the SDK transport and asserts the callback wiring. |
+| **P2-G** | 🟡 P2 | security / DoS | Body parser (`express.json({ limit: "1mb" })`) was registered **globally** before the `/mcp`-scoped origin/auth middleware. Unauthenticated clients could force the server to allocate and parse 1 MB of JSON per request before being rejected. | Moved the body parser into the `/mcp` middleware chain, ordered **after** origin + auth: `app.use("/mcp", originMiddleware, authMiddleware, express.json({ limit: "1mb" }))`. Both middlewares only read headers, never the body — safe to run pre-parse. |
+| **P2-H** | 🟡 P2 | TS / SDK contract | Route handler used `as string` cast on `req.body` and the SDK transport. No structural guard against non-initialize bodies creating sessions. | Added `import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js"` and gate session creation: missing `Mcp-Session-Id` + non-init body → 400 (per MCP spec 2025-03-26). Replaced unsafe `as string` cast in `createAuthMiddleware` with type predicate `hasExpectedLength(value, expected): value is string`. |
+| **P2-I** | 🟡 P2 | reliability | `SessionManager.closeAll()` called `session.transport.close()` synchronously without awaiting. The SDK's `StreamableHTTPServerTransport.close()` is async (drains in-flight SSE streams via `_onsessionclosed`); not awaiting risked dropped frames during graceful shutdown. | Rewrote `closeAll()` to `await` both `transport.close()` and `server.close()` per session, parallelised across sessions via `Promise.allSettled` so one hung session cannot block the rest. Added explanatory JSDoc citing the SDK contract. |
+| **P3-7** | 🔵 P3 | observability | Operators got no boot-time signal whether bearer auth was active — a typoed `MCP_AUTH_TOKE=…` env var would silently boot a fully open server. | Added exported `formatAuthStatus(token)` helper. Logged at HTTP startup in both `runHTTP()` and `McpCurlServer.startHttp()`: `"HTTP transport: bearer auth enabled"` or `"HTTP transport: bearer auth DISABLED (set MCP_AUTH_TOKEN to require auth)"`. Token is never echoed (asserted by test). |
+| **P3-8** | 🔵 P3 | error logging | Route handler caught errors but logged them with `console.error("...", error)` — full message contents could leak hostname/path detail into operator logs, violating CLAUDE.md "Error logging: minimal — error class only" convention. | Replaced with `console.error(\`http_post error: [${errorClass}]\`)` matching project-wide stderr discipline. Error class only; no message or stack. |
+| **P3-9** | 🔵 P3 | input validation defence-in-depth | `createConfigError("…", value, …)` interpolated `value` directly into the error message. Most callers pass safe values (paths, redaction markers), but a future caller passing operator-supplied input with embedded CR/LF/NUL could forge log lines on stderr. | Added pre-interpolation sanitisation: CR → `\\r`, LF → `\\n`, NUL → `\\0`. Defence-in-depth — current callers were already safe; documented in JSDoc. |
+| **P3-10** | 🔵 P3 | type safety | Implicit `any` cleanup in route handler error path. | Used `error instanceof Error ? error.constructor.name : "unknown"` pattern instead of bare cast — consistent with logging convention used elsewhere in the codebase. |
+
+### Verified Claims (Pass 2)
+
+| Claim | Verified? | Notes |
+|-------|-----------|-------|
+| Pass 1 fixes still correct (auth middleware, validateAuthToken, redaction) | ✅ yes | All Pass 1 tests still pass; no rollback needed |
+| `transport.sessionId` is undefined immediately after `server.connect()` | ✅ yes | Confirmed in SDK source `webStandardStreamableHttp.js:433` — only set inside `handleRequest` after isInitializeRequest body parsed |
+| `onsessioninitialized` is a documented constructor option | ✅ yes | Confirmed via context7 MCP — public API in transport options interface |
+| Body parser ordering is safe before vs after auth | ✅ yes | originMiddleware + authMiddleware both read only `req.headers`, never `req.body` — verified by reading their implementations |
+| `closeAll` async fix doesn't break shutdown timing | ✅ yes | `Promise.allSettled` ensures one hung session can't block; existing test `cleanup operations` still passes |
+| `isInitializeRequest` import path correct for SDK 1.29 | ✅ yes | `@modelcontextprotocol/sdk/types.js` — exported as documented |
+| Build remains clean and public surface unchanged | ✅ yes | `dist/lib.d.ts` diff: only `formatAuthStatus` added (intentional, exported from transports module — not from public lib barrel) |
+
+### Tests After Pass 2
+
+- **`npm test` — 629 passing / 7 skipped / 0 failing** (was 622 / 7 / 0; net **+7 tests**: 5 in new `http.session.test.ts` + 2 new `formatAuthStatus` tests in `http.test.ts`)
+- **`npm run build`** — clean (DTS Build success in 2973ms)
+- **New tests added:**
+  - `http.session.test.ts` — full suite: SDK transport constructor receives `onsessioninitialized` callback; session is registered in `SessionManager` when callback fires; follow-up request with same `Mcp-Session-Id` routes to existing transport (regression-locks the P1 fix); 404 for unknown session id; 400 for non-init body without session id
+  - `http.test.ts` — `formatAuthStatus(undefined)` and `formatAuthStatus("")` report `DISABLED` and reference `MCP_AUTH_TOKEN`; `formatAuthStatus("token")` reports `enabled` without echoing the token
+
+### Files Modified (Pass 2)
+
+| File | Change |
+|------|--------|
+| `src/lib/transports/http.ts` | Rewrote `app.post("/mcp")` handler; added `isInitializeRequest` import + `hasExpectedLength` type predicate; reordered middleware chain (origin → auth → body parser); exported `formatAuthStatus` + logged it at boot |
+| `src/lib/extensible/mcp-curl-server.ts` | Imported `formatAuthStatus`; logged it at HTTP startup in `startHttp` listening handler |
+| `src/lib/session/session-manager.ts` | Awaited `transport.close()` + `server.close()` in `closeAll()`; parallelised teardown with `Promise.allSettled` |
+| `src/lib/utils/error.ts` | Sanitised `value` in `createConfigError` (CR/LF/NUL → escape forms); documented in JSDoc |
+| `src/lib/transports/http.session.test.ts` | **New** — regression test for `onsessioninitialized` wiring + session lifecycle |
+| `src/lib/transports/http.test.ts` | Added `formatAuthStatus` describe block (2 tests) |
+| `dist/*` | Rebuilt |
+
+### Outstanding Todos (After Pass 2)
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | P3 | RFC 6750 case-insensitive scheme matching | code-review (Pass 1) |
+
+### Blockers (After Pass 2)
+
+**None — clear to merge.** P1 session-lifecycle fix is in place with regression test. All P2 findings resolved. P3 items implemented or tracked. Public lib barrel unchanged for consumer-facing surface.
+
+### Reviewer Notes / Lessons
+
+- **The "dead code" P1 was the most consequential finding.** It was reachable only through the lens of "how does the MCP SDK actually surface session ids?" — pure code-quality reviewers (DRY, simplicity) would not have flagged it. This validates running `typescript-reviewer` + `architecture-strategist` *plus* SDK doc lookup, not just the cosmetic-quality reviewers.
+- **Verifying via SDK source (not just docs)** caught the exact line where the assignment happens. context7 documentation alone described the *contract* but the source confirmed *when* it executes — both were needed.
+- **Pass 1 was sound for what it scoped to.** The miss was scope, not depth: PR-4 was framed as an "auth token validation" PR, so the original work agent did not stress-test the surrounding HTTP route handler. Future PRs that touch any HTTP transport surface should review the entire `/mcp` route, not just the lines they edit.
+
+---
+
+## Review Comments Addressed — 2026-05-01
+
+Three unresolved threads after pushing the Pass 2 commits — all from AI reviewers (`@gemini-code-assist`, `@coderabbitai` ×2). Triage applied SRP/DRY + project-convention checks against the CLAUDE.md logging rule and the Pass 1 + Pass 2 handoff entries.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Move HTTP auth-token validation before startup side effects in `start()` (`mcp-curl-server.ts:566`) | @coderabbitai | Fix needed | Hoisted `validateAuthToken` to the top of the `start()` try block (before `cleanupOrphanedTempDirs`, cleanup intervals, MCP server construction). Token is resolved once and passed to `startHttp(authToken)` as a snapshot — the validation and the auth middleware close over the same value. Keeping it inside the existing try/catch preserves rollback semantics on any other thrown error. |
+| Log shutdown failures without dumping the error object (`session-manager.ts:135`) | @coderabbitai | Fix needed | Replaced `console.error("Warning: Error closing session ${sessionId} transport:", error)` with the CLAUDE.md-compliant minimal pattern: `console.error(\`session_close_transport error: [${errorClass}]\`)`. Same for the server-close branch. The unused `sessionId` is renamed to `_sessionId` in the destructure. |
+| Inline the `hasExpectedLength` type predicate into a single `if` (`http.ts:195`) | @gemini-code-assist | False positive | Declined — kept the named type predicate. It eliminates the unsafe `as string` cast (which was the original Pass 2 P2 fix), is self-documenting, and could be reused if another middleware in this file needs the same length-narrowed guard. The inline alternative is one line shorter but conflates two concerns into a multi-clause boolean. |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| `validateAuthToken` runs inside `startHttp` (relying on `start()`'s try/catch rollback to tear down anything started before it) | `validateAuthToken` runs at the top of `start()`'s try block, before any side effects; result snapshot is passed down to `startHttp` | Pass 1 explicitly flagged this with "⚠️ refined: validation runs before all side effects in `startHttp` itself; cleanup intervals start in parent `start()` and are torn down by rollback handler" — coderabbit's comment closes that nuance by making it truly fail-fast. Cheaper failure path; clearer code. | @coderabbitai |
+
+The Pass 1 "duplicate validation in `runHTTP` is intentional" decision (P2-B rejection) **stands** — `runHTTP` still has no rollback handler, so its inline `validateAuthToken` is still the right place for that path.
+
+### Resolved Todos
+
+(none — `001-pending-p3-bearer-scheme-case-insensitivity.md` remains untouched; no comments addressed it)
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | P3 | RFC 6750 case-insensitive scheme matching | code-review (Pass 1) |
+
+### Files Modified
+
+- `src/lib/extensible/mcp-curl-server.ts` — hoisted `validateAuthToken` from `startHttp` to `start()`; `startHttp` now takes a pre-validated `authToken` snapshot
+- `src/lib/session/session-manager.ts` — `closeAll` error catches now use the minimal `[ErrorClassName]` log shape per CLAUDE.md
+- `dist/*` — rebuilt
+
+### Tests
+
+- `npm test` — **629 passing / 7 skipped / 0 failing** (unchanged — no new tests; behaviour-preserving refactors)
+- `npm run build` — clean
+
+---
+
+## Review Comments Addressed — 2026-05-01 (round 3)
+
+Two further unresolved threads after pushing the round-2 fixes — both from `@coderabbitai`. Triage applied SRP/DRY + the CLAUDE.md error-logging convention again, and both findings were validated as real (no false positives).
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `closeAll()` JSDoc claim "one hung session can't block the rest" is misleading — `Promise.allSettled` still waits for every promise to settle, so a `transport.close()` that never settles hangs shutdown indefinitely (`session-manager.ts:119`) | @coderabbitai | Fix needed | Introduced `closeWithTimeout(op, label, sessionId)` helper using `Promise.race` with a 5-second `CLOSE_TIMEOUT_MS` budget (mirrors `McpCurlServer.shutdown`'s existing `_httpServer.close` envelope). The race rejects with `<label>_timeout` if the close never settles; `closeAll` now wraps both `transport.close()` and `server.close()` per session through the helper. JSDoc updated to drop the false claim and document the per-close budget. The timeout `setTimeout` is `unref`ed so it cannot itself keep the process alive. |
+| Round 2's minimal log shape `session_close_transport error: [${errorClass}]` puts the error class **inside** the brackets — CLAUDE.md's convention is `tool_name error: [<context>] <ErrorClassName>` with the class **outside**, and the bracketed context should identify the affected resource (`session-manager.ts:128`/`134`) | @coderabbitai | Fix needed | Reshaped logs to `<label> error: [<sessionId>] <ErrorClassName>` (sessionId in brackets, class outside) — the per-session context is what an operator needs to correlate a stuck session with the error class. Same fix applied to the analogous `http_post error: [...]` log in `transports/http.ts`: the bracketed context is now the (validated) `Mcp-Session-Id` if the request had one, or `"no-session"` otherwise. The session-id is gated through `isValidSessionId` before logging so a malicious client cannot inject control bytes into stderr. |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| Round 2: parallelise `closeAll` via `Promise.allSettled` and rely on it to keep one hung session from blocking the rest | Round 3: same parallelisation, **plus** a per-close timeout via `Promise.race` (`CLOSE_TIMEOUT_MS = 5_000`) so an SSE drain that never settles cannot hang shutdown | `Promise.allSettled` waits for *every* input promise to settle — it does not include a deadline. The Round 2 JSDoc claim was wrong. The 5s budget matches the existing `_httpServer.close` envelope inside `McpCurlServer.shutdown` so operators see consistent shutdown behaviour. | @coderabbitai |
+| Round 2: log shape `session_close_<thing> error: [${errorClass}]` (class inside brackets, no per-session context) | Round 3: log shape `session_close_<thing> error: [${sessionId}] <ErrorClassName>` (context inside, class outside) — applied to `http_post` too | Matches the CLAUDE.md convention exactly; lets operators correlate "which session got stuck" with "what error class" without grepping through per-session timestamps. | @coderabbitai |
+
+### Doc Cleanup
+
+The Pass 1 narrative referenced the pre-Round-2 state in three places (`What:` / `Key files:` line for `startHttp` validation, and the "validator does not log on success" item under Known Issues). Each line now carries an inline _(Superseded: …)_ marker pointing to the section that documents the post-fix behaviour, so future readers don't have to reconcile contradictory claims by scanning the whole document.
+
+### Files Modified
+
+- `src/lib/session/session-manager.ts` — added `closeWithTimeout` helper + `CLOSE_TIMEOUT_MS` constant; `closeAll` now wraps each component close through it; logs reshaped to `<label> error: [<sessionId>] <ErrorClassName>`; JSDoc corrected.
+- `src/lib/transports/http.ts` — `http_post` catch handler now logs `[<sessionId-or-no-session>] <ErrorClassName>` (validated session id only — gated through `isValidSessionId`).
+- `docs/work/handoff-feat-hardening-pr-4-auth-token.md` — three inline supersession markers added; this Round 3 section appended.
+- `dist/*` — rebuilt.
+
+### Tests
+
+- `npm test` — expected unchanged: behaviour-preserving (timeout only fires on a hung close, which no existing test simulates; log-shape change doesn't break existing assertions which check substrings like `/DISABLED/`, not the full line).
+- `npm run build` — clean (verified before commit).
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _(none — `001-pending-p3-bearer-scheme-case-insensitivity.md` resolved in Round 4 below)_ | — | — | — |
+
+---
+
+## Review Comments Addressed — 2026-05-01 (round 4)
+
+CodeRabbit's round 4 pass surfaced four further items: a real DELETE-route bug, three log-shape sites the Round 3 fix didn't sweep up, the long-deferred RFC 6750 todo, and a documentation gap on `enableJsonResponse`. All addressed in this commit.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `app.delete("/mcp")` calls `session.transport.close()` synchronously without `await` (`http.ts:~298`) — risks cutting SSE drains on explicit client DELETE | @coderabbitai | Fix needed (real bug) | Added `SessionManager.closeSession(id)` that wraps the same `closeWithTimeout` helper `closeAll` uses (5s budget, parallel-`Promise.allSettled` policy). DELETE handler now `await`s it. Extracted a private `closeSessions(entries)` helper inside `SessionManager` so `closeAll`, `closeSession`, and the new idle-cleanup path all share one close pipeline (DRY). |
+| `startCleanup()`'s idle-session interval calls `transport.close()` synchronously and `void server.close().catch(...)` fire-and-forget — asymmetric with the awaited `closeAll` | @coderabbitai | Fix needed (consistency) | Cleanup interval now snapshots idle entries (synchronously dropping them from the map so a slow close cannot let a subsequent tick re-process the same id) and routes them through the shared `closeSessions(entries)` helper. The interval still calls it via `void` (a `setInterval` callback cannot be `await`-ed), but each individual close is now bounded by `CLOSE_TIMEOUT_MS` and logs through the project-wide minimal shape. |
+| Log-shape inconsistency: `McpCurlServer.shutdown()` (3 sites — HTTP server / sessions / MCP server), the temp-dir cleanup branch, and `createHttpApp`'s global error handler still dump full error objects (`"Warning: Error closing …:", error`) | @coderabbitai | Fix needed (consistency) | Introduced a private `logShutdownError(label, error)` in `mcp-curl-server.ts` that logs `<label> error: <ErrorClassName>` (no per-request context, since shutdown is server-level). Routed all four sites through it. The HTTP global error handler (`http.ts`) now logs `http_unhandled error: [<METHOD path>] <ErrorClassName>` so an operator can correlate which route surfaced the unhandled error without leaking the error message itself. |
+| RFC 6750 §2.1 — Bearer scheme should match case-insensitively (`bearer X` and `BEARER X` currently 401) — tracked in `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` (P3, deferred from Pass 1) | @coderabbitai | Fix needed (resolved deferred todo) | Implemented Option A from the todo file: split scheme prefix from token, variable-time scheme check (`schemeSlice.toLowerCase() !== "bearer "`), timing-safe compare on the token portion only (`safeStringCompare(tokenPart, expectedToken)`). Extracted a shared `reject(res)` helper to avoid duplicating the 401 body across three reject branches. Added 5 tests: `it.each` over lowercase / uppercase / mixed-case scheme acceptance, plus a regression-lock that case-insensitivity must NOT relax token checking, plus a defence-in-depth test that non-Bearer schemes (e.g. `Basic1`) still 401. Todo file deleted; recorded under "Resolved Todos" below. |
+| `enableJsonResponse: true` rationale not documented in code | @coderabbitai | Documentation | Added an in-code comment explaining the choice: mcp-curl tools (`curl_execute`, `jq_query`, custom YAML/registerCustomTool handlers) are request/response shaped — they produce a complete result per call and emit no incremental progress events — so SSE would carry exactly one frame and then close. JSON-direct cuts that overhead and simplifies session timeout / idle-cleanup interactions. SSE-dependent clients can still open `GET /mcp` for server→client streams against an established session. |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| Round 1: Bearer scheme matched case-sensitively (P3-4 deferred to a todo because the fix needed care to preserve timing-safe property over the secret) | Round 4: scheme matched case-insensitively per RFC 6750 §2.1; timing-safe property preserved by comparing the **token portion only** through `safeStringCompare` | Adjacent to PR-4's auth-token boundary; fits the same review pass; ~30 LOC including tests; shipping it here closes the only outstanding PR-4 todo and avoids a one-shot follow-up PR for an adjacent line. | @coderabbitai |
+| Pass 2 / Round 2: `closeAll` had timeout-bounded close, but `startCleanup` and `app.delete("/mcp")` did not (different patterns) | Round 4: every session-close path (`closeAll`, `closeSession`, idle interval) routes through the same private `closeSessions(entries)` helper which wraps `closeWithTimeout` | Single source of truth for the close order (transport → MCP server), the parallelisation policy (`Promise.allSettled`), and the per-close 5s budget — symmetric across graceful shutdown, explicit DELETE, and idle reaping. | @coderabbitai |
+| Pre-existing: shutdown / temp-cleanup / global-error-handler logged full error objects (legacy stderr style) | Round 4: all four sites use the project-wide minimal `<label> error: <ErrorClassName>` shape (or `<label> error: [<context>] <ErrorClassName>` where a meaningful per-request context exists) | Coderabbit explicitly flagged the inconsistency after Round 3 fixed the `closeAll` and `http_post` sites — sweeping the remaining adjacent sites brings the codebase to one logging convention. | @coderabbitai |
+
+### Resolved Todos
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | Bearer scheme case-insensitivity (RFC 6750 §2.1) | Implemented Option A: scheme prefix slice + `toLowerCase()` (variable-time, non-secret), `safeStringCompare` over the token portion (timing-safe over the secret). 5 new tests cover lowercase / uppercase / mixed-case acceptance, wrong-token rejection under lowercase scheme, and unknown-scheme rejection. | PR-4 / Round 4 review-comments-addressed | 2026-05-01 |
+
+### Files Modified
+
+- `src/lib/transports/http.ts` — `createAuthMiddleware`: scheme/token split + case-insensitive scheme match + shared `reject()` helper; `app.delete("/mcp")` now `await`s `sessionManager.closeSession(sessionId)`; `app.use(globalErrorHandler)` uses minimal log shape; `enableJsonResponse: true` rationale documented inline.
+- `src/lib/session/session-manager.ts` — added public `closeSession(id)` and private `closeSessions(entries)`; `closeAll` and `startCleanup` now both delegate to `closeSessions`; `delete(id)` JSDoc clarifies it's the bookkeeping-only path used by `transport.onclose`.
+- `src/lib/extensible/mcp-curl-server.ts` — added private `logShutdownError(label, error)`; routed `shutdown_http_server`, `shutdown_sessions`, `shutdown_mcp_server`, `shutdown_temp_dir` through it.
+- `src/lib/transports/http.test.ts` — added 5 tests for case-insensitive Bearer scheme.
+- `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` — deleted (resolved).
+- `dist/*` — rebuilt.
+
+### Tests
+
+- `npm test` — **634 passing / 7 skipped / 0 failing** (was 629 / 7 / 0; net **+5 tests** for the case-insensitive Bearer scheme matrix).
+- `npm run build` — clean.
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _(none)_ | — | — | — |

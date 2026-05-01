@@ -251,6 +251,7 @@ Alternatively, install `mcp-curl` as an npm dependency in a separate project —
 - **File access control** — `jq_query` restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd; symlinks resolved
 - **Resource limits** — 10MB response cap, 100MB global memory, 100ms jq parse timeout, 30s default request timeout
 - **Secure file permissions** — temp dirs 0o700, files 0o600 (owner-only)
+- **Auth-token validation** — `MCP_AUTH_TOKEN` rejected at HTTP startup if not printable ASCII (0x20–0x7E) or longer than 4096 chars; bearer comparison is timing-safe
 
 ## Environment Variables
 

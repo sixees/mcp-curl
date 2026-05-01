@@ -3,9 +3,12 @@ import type { Request, Response, NextFunction } from "express";
 import {
     createOriginMiddleware,
     createAuthMiddleware,
+    formatAuthStatus,
     formatHostForUrl,
     resolveHost,
+    validateAuthToken,
 } from "./http.js";
+import { LIMITS } from "../config/index.js";
 
 // Helper to create mock Express req/res/next
 function mockReq(headers: Record<string, string | string[] | undefined> = {}): Request {
@@ -116,6 +119,89 @@ describe("createAuthMiddleware", () => {
         expect(next).not.toHaveBeenCalled();
         expect(res.status).toHaveBeenCalledWith(401);
     });
+
+    it("rejects oversized Authorization headers without invoking the timing-safe compare", () => {
+        // Defence-in-depth: a malicious client should not be able to force
+        // `safeStringCompare` to allocate Buffers proportional to a
+        // ~16 KB Authorization header. The middleware short-circuits on
+        // length mismatch, which is safe — `safeStringCompare` already
+        // returns false for length-mismatched inputs.
+        const mw = createAuthMiddleware("secret-token");
+        const res = mockRes();
+        const next = mockNext();
+        const oversized = `Bearer ${"x".repeat(LIMITS.MAX_AUTH_TOKEN_LENGTH * 2)}`;
+        mw(mockReq({ authorization: oversized }), res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it("collapses array-form Authorization header to its first value", () => {
+        // Express types `req.headers.authorization` as `string | string[] |
+        // undefined`. RFC 7230 forbids duplicate Authorization headers, but
+        // the runtime can still surface arrays in edge cases; the middleware
+        // must not throw when this happens.
+        const mw = createAuthMiddleware("secret-token");
+        const next = mockNext();
+        mw(mockReq({ authorization: ["Bearer secret-token", "Bearer evil"] }), mockRes(), next);
+        expect(next).toHaveBeenCalled();
+    });
+
+    // RFC 6750 §2.1 — the auth scheme name MUST be matched case-insensitively.
+    // The token portion remains case-sensitive (it is the shared secret).
+    it.each([
+        ["lowercase scheme", "bearer secret-token"],
+        ["uppercase scheme", "BEARER secret-token"],
+        ["mixed-case scheme", "BeArEr secret-token"],
+    ])("accepts %s with the correct token (RFC 6750 §2.1)", (_label, header) => {
+        const mw = createAuthMiddleware("secret-token");
+        const next = mockNext();
+        mw(mockReq({ authorization: header }), mockRes(), next);
+        expect(next).toHaveBeenCalled();
+    });
+
+    it("still rejects case-insensitive scheme when the token is wrong", () => {
+        // Regression-lock: scheme case insensitivity must not relax token
+        // checking. A malformed token under a lowercase `bearer` scheme has
+        // to fail with 401, not pass.
+        const mw = createAuthMiddleware("secret-token");
+        const res = mockRes();
+        const next = mockNext();
+        mw(mockReq({ authorization: "bearer wrong-token" }), res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it("rejects unknown auth schemes (Basic, Token, …)", () => {
+        // Defence-in-depth: non-Bearer schemes must not slip through just
+        // because the prefix length and trailing token length happen to
+        // match. The scheme slice has to lowercase to "bearer ".
+        const mw = createAuthMiddleware("secret-token");
+        const res = mockRes();
+        const next = mockNext();
+        mw(mockReq({ authorization: "Basic1 secret-token" }), res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(401);
+    });
+});
+
+// ─── formatAuthStatus ───
+
+describe("formatAuthStatus", () => {
+    it("reports DISABLED when no token is configured", () => {
+        // Operators frequently typo MCP_AUTH_TOKEN — a "DISABLED" stderr
+        // line at boot is the only way to tell an open server from a
+        // protected one without making a request.
+        expect(formatAuthStatus(undefined)).toMatch(/DISABLED/);
+        expect(formatAuthStatus(undefined)).toContain("MCP_AUTH_TOKEN");
+        expect(formatAuthStatus("")).toMatch(/DISABLED/);
+    });
+
+    it("reports enabled when a token is configured, without echoing the token", () => {
+        const status = formatAuthStatus("super-secret-token-hunter2");
+        expect(status).toMatch(/enabled/);
+        expect(status).not.toContain("hunter2");
+        expect(status).not.toContain("super-secret");
+    });
 });
 
 // ─── formatHostForUrl ───
@@ -162,5 +248,84 @@ describe("resolveHost", () => {
 
     it("defaults to 127.0.0.1", () => {
         expect(resolveHost()).toBe("127.0.0.1");
+    });
+});
+
+// ─── validateAuthToken ───
+
+describe("validateAuthToken", () => {
+    // JWT-shaped fixture — exercises the base64url charset (a-zA-Z0-9-_) plus
+    // the `.` separator, which `"a".repeat(N)` does not. Regression-locks the
+    // contract that PRINTABLE_ASCII accepts the full JWT alphabet.
+    const JWT_SHAPED = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc-_DEF123";
+
+    it("accepts undefined (no token configured)", () => {
+        expect(() => validateAuthToken(undefined)).not.toThrow();
+    });
+
+    it("accepts an empty string (treated as no token)", () => {
+        expect(() => validateAuthToken("")).not.toThrow();
+    });
+
+    it("accepts a short printable-ASCII token", () => {
+        expect(() => validateAuthToken("Bearer-style-token-123")).not.toThrow();
+    });
+
+    it("accepts a JWT-shaped token (base64url alphabet + dots)", () => {
+        expect(() => validateAuthToken(JWT_SHAPED)).not.toThrow();
+    });
+
+    it("accepts a token at the maximum allowed length", () => {
+        const token = "a".repeat(LIMITS.MAX_AUTH_TOKEN_LENGTH);
+        expect(() => validateAuthToken(token)).not.toThrow();
+    });
+
+    it("rejects a token over the maximum without echoing it", () => {
+        const token = "z".repeat(LIMITS.MAX_AUTH_TOKEN_LENGTH + 1);
+        try {
+            validateAuthToken(token);
+            throw new Error("expected validateAuthToken to throw");
+        } catch (err) {
+            const message = (err as Error).message;
+            expect(message).toMatch(/exceeds maximum/);
+            expect(message).toContain(`[length=${LIMITS.MAX_AUTH_TOKEN_LENGTH + 1}]`);
+            // Token body must never appear in error output (entropy leak).
+            expect(message).not.toContain(token);
+            expect(message).not.toMatch(/z{10,}/);
+        }
+    });
+
+    it.each([
+        ["newline", "abc\ndef"],
+        ["carriage return", "abc\rdef"],
+        ["tab", "abc\tdef"],
+        ["NUL", "abc\0def"],
+        ["DEL (0x7F)", "abc\x7Fdef"],
+        ["high-bit char (é)", "abcédef"],
+        ["emoji", "abc🔐def"],
+    ])("rejects token containing %s", (_label, token) => {
+        expect(() => validateAuthToken(token)).toThrow(/printable ASCII/);
+    });
+
+    it("redacts the token in the charset error and never echoes the input", () => {
+        const token = "abc\ndef-secret-hunter2";
+        try {
+            validateAuthToken(token);
+            throw new Error("expected validateAuthToken to throw");
+        } catch (err) {
+            const message = (err as Error).message;
+            expect(message).toContain("[redacted]");
+            expect(message).not.toContain("hunter2");
+            expect(message).not.toContain("def-secret");
+        }
+    });
+
+    it("references the env var name (MCP_AUTH_TOKEN) in error messages", () => {
+        // Operators see the env var name in their boot logs, even if they
+        // configured the token via McpCurlConfig.authToken — the env var
+        // is the canonical externally-visible name.
+        expect(() => validateAuthToken("a".repeat(LIMITS.MAX_AUTH_TOKEN_LENGTH + 1)))
+            .toThrow(/MCP_AUTH_TOKEN/);
+        expect(() => validateAuthToken("bad\ntoken")).toThrow(/MCP_AUTH_TOKEN/);
     });
 });

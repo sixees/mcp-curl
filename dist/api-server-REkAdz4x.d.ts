@@ -336,6 +336,11 @@ declare class McpCurlServer {
     /**
      * Start HTTP transport with session management.
      * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
+     *
+     * @param authToken - Pre-resolved bearer token (already passed through
+     *   `validateAuthToken` in `start()`). Passing the snapshot down avoids
+     *   resolving the env var twice and guarantees the value the auth
+     *   middleware closes over is the exact value that was validated.
      */
     private startHttp;
     /**
