@@ -388,3 +388,183 @@ describe("McpCurlServer.registerCustomTool()", () => {
         }).not.toThrow();
     });
 });
+
+// ---------------------------------------------------------------------------
+// PR-5 / B4 — deep sanitisation of `inputSchema` field descriptions.
+//
+// Every assertion reads via the public `.description` getter or
+// `z.toJSONSchema(...)` — never `_def.description` — because Zod v4 stores
+// descriptions in `z.globalRegistry`, and a regression to in-place `_def`
+// mutation would silently pass under a `_def`-shaped check.
+// ---------------------------------------------------------------------------
+describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)", () => {
+    let server: McpCurlServer;
+    const handler = vi.fn().mockResolvedValue({ content: [] });
+    const ATTACK = "‮"; // RIGHT-TO-LEFT OVERRIDE — sanitised to ""
+    const PWN = `${ATTACK}pwn`;
+
+    beforeEach(() => {
+        server = new McpCurlServer();
+    });
+
+    /**
+     * Cast helper: tests poke at the private `_customTools` array to assert
+     * that what survives registration matches the public-getter contract.
+     * No production callers should imitate this — the array is private.
+     */
+    function lastTool(s: McpCurlServer): {
+        name: string;
+        meta: {
+            inputSchema: z.ZodObject<z.ZodRawShape>;
+            title: string;
+            description: string;
+        };
+    } {
+        const tools = (s as unknown as { _customTools: unknown[] })._customTools;
+        return tools[tools.length - 1] as {
+            name: string;
+            meta: {
+                inputSchema: z.ZodObject<z.ZodRawShape>;
+                title: string;
+                description: string;
+            };
+        };
+    }
+
+    it("strips a bidi override on a top-level field description", () => {
+        const inputSchema = z.object({ field: z.string().describe(PWN) });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        expect((sanitised.shape.field as z.ZodString).description).toBe("pwn");
+    });
+
+    it("strips a bidi override on an optional field's description", () => {
+        const inputSchema = z.object({ q: z.string().optional().describe(PWN) });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const field = sanitised.shape.q as z.ZodOptional<z.ZodString>;
+        expect(field.description).toBe("pwn");
+        // Wrapper still optional — `.parse(undefined)` is the canonical check
+        // (per Zod v4's deprecated `isOptional()` JSDoc).
+        expect(field.safeParse(undefined).success).toBe(true);
+    });
+
+    it("strips a bidi override on a default-wrapped field, preserving the default", () => {
+        const inputSchema = z.object({
+            page: z.string().default("first").describe(PWN),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const field = sanitised.shape.page as z.ZodDefault<z.ZodString>;
+        expect(field.description).toBe("pwn");
+        expect(field.parse(undefined)).toBe("first");
+    });
+
+    it("strips a bidi override inside a nested ZodObject (S3)", () => {
+        const inputSchema = z.object({
+            user: z.object({ name: z.string().describe(PWN) }),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const userObj = sanitised.shape.user as z.ZodObject<{ name: z.ZodString }>;
+        expect(userObj.shape.name.description).toBe("pwn");
+    });
+
+    it("strips a bidi override inside a ZodArray<ZodObject> element (S3)", () => {
+        const inputSchema = z.object({
+            tags: z.array(z.object({ label: z.string().describe(PWN) })),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const tags = sanitised.shape.tags as z.ZodArray<z.ZodObject<{ label: z.ZodString }>>;
+        expect(tags.element.shape.label.description).toBe("pwn");
+    });
+
+    it("strips a bidi override inside every option of a ZodUnion-of-object (S3)", () => {
+        const inputSchema = z.object({
+            payload: z.union([
+                z.object({ a: z.string().describe(PWN) }),
+                z.object({ b: z.string().describe(`${ATTACK}b`) }),
+            ]),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const union = sanitised.shape.payload as z.ZodUnion<
+            [z.ZodObject<{ a: z.ZodString }>, z.ZodObject<{ b: z.ZodString }>]
+        >;
+        const [optA, optB] = union.options;
+        expect(optA.shape.a.description).toBe("pwn");
+        expect(optB.shape.b.description).toBe("b");
+    });
+
+    it("strips a bidi override on a deeply-nested object reached through ZodOptional (S3)", () => {
+        const inputSchema = z.object({
+            inner: z.object({ x: z.string().describe(PWN) }).optional(),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const optionalInner = sanitised.shape.inner as z.ZodOptional<
+            z.ZodObject<{ x: z.ZodString }>
+        >;
+        expect(optionalInner.unwrap().shape.x.description).toBe("pwn");
+    });
+
+    it("preserves field reference identity when no description is set", () => {
+        const stringField = z.string();
+        const inputSchema = z.object({ x: stringField });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        // No `.describe()` was called, so the helper has nothing to rebuild
+        // for this leaf — the original instance should pass through verbatim.
+        expect(sanitised.shape.x).toBe(stringField);
+    });
+
+    it("memoises rebuild output: re-registering the same input schema returns the cached output (C3)", () => {
+        const sharedSchema = z.object({ field: z.string().describe(PWN) });
+
+        const a = new McpCurlServer();
+        const b = new McpCurlServer();
+        a.registerCustomTool("t", { title: "T", description: "D", inputSchema: sharedSchema }, handler);
+        b.registerCustomTool("t", { title: "T", description: "D", inputSchema: sharedSchema }, handler);
+
+        // Identity equality proves the WeakMap cache hit — the rebuild ran
+        // exactly once across both registrations.
+        expect(lastTool(a).meta.inputSchema).toBe(lastTool(b).meta.inputSchema);
+    });
+
+    it("memoisation is idempotent: feeding the rebuilt schema back in returns it unchanged", () => {
+        const inputSchema = z.object({ field: z.string().describe(PWN) });
+        server.registerCustomTool("t1", { title: "T", description: "D", inputSchema }, handler);
+        const firstRebuild = lastTool(server).meta.inputSchema;
+
+        // Feed the *output* back in — the cache short-circuits on the rebuilt
+        // schema's identity (it's mapped to itself), so no new clone happens.
+        server.registerCustomTool(
+            "t2",
+            { title: "T", description: "D", inputSchema: firstRebuild },
+            handler
+        );
+        expect(lastTool(server).meta.inputSchema).toBe(firstRebuild);
+    });
+
+    it("z.toJSONSchema() round-trip carries the sanitised description at every depth (Standard-Schema regression / A7)", () => {
+        const inputSchema = z.object({
+            top: z.string().describe(PWN),
+            nested: z.object({ inner: z.string().describe(`${ATTACK}inner`) }),
+            arr: z.array(z.object({ label: z.string().describe(`${ATTACK}label`) })),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const json = z.toJSONSchema(lastTool(server).meta.inputSchema) as unknown as {
+            properties: {
+                top: { description: string };
+                nested: { properties: { inner: { description: string } } };
+                arr: { items: { properties: { label: { description: string } } } };
+            };
+        };
+        expect(json.properties.top.description).toBe("pwn");
+        expect(json.properties.nested.properties.inner.description).toBe("inner");
+        expect(json.properties.arr.items.properties.label.description).toBe("label");
+        // None of the sanitised descriptions retain the bidi-override codepoint.
+        expect(JSON.stringify(json)).not.toContain(ATTACK);
+    });
+});

@@ -99,10 +99,22 @@ schema registration, prompts, or downstream HTTP requests.
 
 ### Tool metadata and schema descriptions
 
-`registerCustomTool()` auto-sanitizes only `meta.title` and `meta.description`. Anything passed
-through `inputSchema` — `.describe()` strings, `z.enum([...])` literals, `.default(...)` values,
-field key names — reaches the LLM verbatim. When any of these originate from an external source
-(database, user input, remote API, third-party YAML), sanitize them explicitly before registration:
+`registerCustomTool()` auto-sanitizes `meta.title`, `meta.description`, **and** every `.describe()`
+string inside `inputSchema` — at every depth. The deep walk recurses through nested `z.object()`,
+`z.array()`, `z.union()`, and through `z.optional()` / `z.default()` / `z.nullable()` wrappers.
+Sanitisation is keyed by schema identity in a `WeakMap`, so registering the same schema reference
+twice short-circuits to the cached output (no rebuild). The original schema instance you passed in
+is **not** mutated — `.describe()` on Zod v4 clones the schema and registers the new description in
+`z.globalRegistry`.
+
+Other content inside `inputSchema` reaches the LLM verbatim — `z.enum([...])` literals,
+`.default(...)` values, field key names. Field-key names and enum literals are part of the public
+shape contract, so the helper does not mutate them. Sanitize these explicitly when they originate
+from an external source.
+
+`.describe()` strings sourced externally are covered automatically, but a defensive
+`sanitizeDescription()` at the call site is harmless and a useful belt-and-braces signal for
+reviewers:
 
 ```typescript
 import { McpCurlServer, sanitizeDescription } from "mcp-curl";
@@ -115,9 +127,10 @@ const server = new McpCurlServer();
 server.registerCustomTool(
     "search_records",
     {
-        title: sanitizeDescription(toolMeta.title),
-        description: sanitizeDescription(toolMeta.description),
+        title: sanitizeDescription(toolMeta.title),         // optional — also sanitised internally
+        description: sanitizeDescription(toolMeta.description), // optional — also sanitised internally
         inputSchema: z.object({
+            // Defensive — registerCustomTool() also walks inputSchema and sanitises every .describe() string at every depth.
             query: z.string().describe(sanitizeDescription(toolMeta.queryDescription)),
         }),
     },

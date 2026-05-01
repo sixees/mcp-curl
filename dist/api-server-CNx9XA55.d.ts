@@ -248,9 +248,13 @@ declare class McpCurlServer {
      *
      * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
      * @param meta - Tool metadata (title, description, inputSchema). title and description
-     *   are sanitized automatically. inputSchema field descriptions (.describe() strings)
-     *   are NOT sanitized — callers must sanitize any field descriptions sourced from
-     *   external input using sanitizeDescription() before registering.
+     *   are sanitized automatically. **inputSchema field descriptions are also
+     *   sanitised at every depth** at registration time — top-level fields,
+     *   nested `ZodObject`, `ZodArray`, `ZodUnion` options, and through
+     *   `ZodOptional`/`ZodDefault`/`ZodNullable` wrappers — via the
+     *   `sanitizeFieldDescriptionsDeep` helper. Callers no longer need to
+     *   defensively sanitise field descriptions sourced from external input,
+     *   though doing so remains harmless (the rebuild is idempotent).
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()

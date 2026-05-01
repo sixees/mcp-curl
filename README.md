@@ -149,9 +149,14 @@ instance utilities, and lifecycle management.
 
 ### Sanitizing externally-sourced field descriptions
 
-`registerCustomTool()` sanitizes `title` and `description` automatically. It does **not** reach
-into `inputSchema` — apply `sanitizeDescription()` to any `.describe()` string sourced from
-outside your own code (database, remote API, user-authored YAML).
+`registerCustomTool()` sanitizes `title`, `description`, **and** every `.describe()` string
+inside `inputSchema` automatically — recursing through nested `z.object()`, `z.array()`,
+`z.union()`, and `z.optional()` / `z.default()` / `z.nullable()` wrappers. You don't need to
+call `sanitizeDescription()` manually.
+
+The example below applies `sanitizeDescription()` defensively at the call site as well — it's
+**optional**: registration-time sanitisation already covers every depth. Use it as belt-and-suspenders
+when wiring untrusted strings (database rows, remote APIs, user-authored YAML) into Zod descriptions.
 
 ```typescript
 import { z } from "zod";
@@ -166,6 +171,8 @@ server.registerCustomTool(
         title: "Search records",            // sanitized internally
         description: "Search the catalog.", // sanitized internally
         inputSchema: z.object({
+            // sanitizeDescription() here is defensive — registerCustomTool() also
+            // sanitises every .describe() string at every depth at registration time.
             q: z.string().describe(sanitizeDescription(fieldMeta.q)),
             limit: z.number().int().min(1).max(100)
                 .describe(sanitizeDescription(fieldMeta.limit)),
