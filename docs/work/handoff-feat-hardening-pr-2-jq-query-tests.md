@@ -119,20 +119,24 @@ None resolved by this PR. PR-1's handoff confirmed `docs/todos/` was empty going
 ## Review Comments Addressed — 2026-05-01
 
 ### Changes Made
+
 | Comment | Reviewer | Category | Action Taken |
 |---------|----------|----------|--------------|
 | Reorder imports to built-ins → external → internal → relative per `.gemini/styleguide.md` (line 12) | @gemini-code-assist | False positive | No change. Existing tests in this repo (e.g. `src/lib/schema/schema.test.ts`) place `vitest` first, then built-ins, then relative — matching this file. Applying the styleguide ordering would make `jq-query.test.ts` the only test file in the repo that diverges from the established convention. Replied with explanation. |
 | Defensive nil-check before `rm` in `afterEach` to handle a failed `mkdtemp` in `beforeEach` (line 49) | @gemini-code-assist | Fix needed | Added `if (allowedDir)` / `if (outsideCwdDir)` guards plus a one-line comment explaining the intent. Cheap defence; prevents `rm(undefined, …)` from masking the real test error if a future fixture-setup change introduces a partial-init path. |
 
 ### Decisions Revised
+
 None. The import-order styleguide deviation was already an implicit project decision visible in `schema.test.ts`; this PR did not introduce or reverse it.
 
 ### Files Modified
+
 - `src/lib/tools/jq-query.test.ts` — afterEach nil-check + 1-line comment.
 
 ## Review Comments Addressed — 2026-05-01 (round 2)
 
 ### Changes Made
+
 | Comment | Reviewer | Category | Action Taken |
 |---------|----------|----------|--------------|
 | MD038 markdownlint: trailing space inside inline code span on handoff line 62 | @coderabbitai | Fix needed | Replaced trailing space with `\s` escape inside the code span. |
@@ -140,8 +144,28 @@ None. The import-order styleguide deviation was already an implicit project deci
 | Replace literal U+200B character with named `"\u200B"` escape constant for auditability | @coderabbitai | Fix needed | Introduced `const ZWSP = "\u200B"` and switched both the JSON payload and the negative-assertion to use it. |
 
 ### Decisions Revised
+
 None.
 
 ### Files Modified
+
 - `src/lib/tools/jq-query.test.ts` — `stat` import, `SAVED_TO_PREFIX` + `extractSavedPath` helper, three new file-existence assertions, `ZWSP` constant.
 - `docs/work/handoff-feat-hardening-pr-2-jq-query-tests.md` — MD038 fix on line 62; this section.
+
+## Review Comments Addressed — 2026-05-01 (round 3 — coderabbit CLI sweep)
+
+`coderabbit review --agent --base main` returned **0 inline findings** on the code diff. One residual inline thread filed before the round-2 commits (markdownlint MD022 + MD058 on this handoff's earlier review sections) was closed in this pass.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| MD022 / MD058 — `###` headings and adjacent tables / lists need surrounding blank lines (handoff line 122 + 127–128, 130–131) | @coderabbitai | Fix needed | Inserted blank lines after each `### Changes Made`, `### Decisions Revised`, `### Files Modified` heading in the round-1 + round-2 sections. |
+
+### Decisions Revised
+
+None.
+
+### Files Modified
+
+- `docs/work/handoff-feat-hardening-pr-2-jq-query-tests.md` — markdownlint blank-line spacing in the round-1 and round-2 review sections; this section.
