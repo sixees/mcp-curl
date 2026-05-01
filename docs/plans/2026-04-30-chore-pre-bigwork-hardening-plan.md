@@ -384,8 +384,8 @@ For trusted internal strings, no sanitisation is required. See [`docs/custom-too
 
 **Acceptance criteria.**
 
-- [ ] README has a sanitisation example for `inputSchema` field descriptions.
-- [ ] Cross-link to `docs/custom-tools.md` exists.
+- [x] README has a sanitisation example for `inputSchema` field descriptions.
+- [x] Cross-link to `docs/custom-tools.md` exists.
 
 ---
 

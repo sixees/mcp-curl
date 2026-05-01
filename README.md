@@ -147,6 +147,37 @@ await server.start("stdio");
 See the [library documentation](./docs/README.md) for the full API reference, including hooks, custom tools,
 instance utilities, and lifecycle management.
 
+### Sanitizing externally-sourced field descriptions
+
+`registerCustomTool()` sanitizes `title` and `description` automatically. It does **not** reach
+into `inputSchema` — apply `sanitizeDescription()` to any `.describe()` string sourced from
+outside your own code (database, remote API, user-authored YAML).
+
+```typescript
+import { z } from "zod";
+import { sanitizeDescription } from "mcp-curl";
+
+// `server` is the McpCurlServer instance from the example above.
+const fieldMeta = await fetchFieldDescriptionsFromDb();
+
+server.registerCustomTool(
+    "search_records",
+    {
+        title: "Search records",            // sanitized internally
+        description: "Search the catalog.", // sanitized internally
+        inputSchema: z.object({
+            q: z.string().describe(sanitizeDescription(fieldMeta.q)),
+            limit: z.number().int().min(1).max(100)
+                .describe(sanitizeDescription(fieldMeta.limit)),
+        }),
+    },
+    async (params) => { /* handler logic */ }
+);
+```
+
+For trusted internal strings, no sanitization is required. See [docs/custom-tools.md](./docs/custom-tools.md#validating-external-inputs)
+for the full discussion.
+
 ## YAML Schema
 
 Define API endpoints declaratively and generate MCP tools:
