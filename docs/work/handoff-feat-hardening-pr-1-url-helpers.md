@@ -103,9 +103,7 @@ a7ee43e fix(security): harden httpOnlyUrl() with WHATWG URL parser
 
 ### Outstanding Todos
 
-| File | Priority | Description | Source |
-|------|----------|-------------|--------|
-| _none created this session_ | | | |
+See **Code Review — 2026-05-01 → Outstanding Todos** below for the 20 todo files created during the post-implementation review.
 
 ### Resolved Todos
 
@@ -124,3 +122,100 @@ This session deleted the entire `docs/todos/` directory because its content has 
 | `docs/todos/spotlighting-yaml-driven-tools.md` | (still pending — scoped to PR-6b) | Defence-in-depth parity for YAML/custom-tool output | PR-6b (not yet implemented) | _pending_ |
 
 The deletion is intentional: from this point forward the plan is the single source of truth for the remaining items. If any of the future PRs is reassessed and wants to revive a todo, the content can be reconstructed from the plan's matching section.
+
+## Code Review — 2026-05-01
+
+### Review Summary
+
+- **Reviewer:** automated multi-agent review (focus: SRP/DRY, security, TypeScript MCP best practices)
+- **Agents used:** code-simplicity-reviewer, architecture-strategist, security-sentinel, typescript-reviewer, plus learnings-researcher and agent-native-reviewer cross-checks
+- **Findings:** 🔴 P1: 0 | 🟡 P2: 11 | 🔵 P3: 9
+- **Verdict:** clear to merge after P2 fixes — no merge-blocker issues; PR-1 substantively delivers A1+A2+A3+A4+B6 as planned.
+
+### Handoff Assessment
+
+The builder's self-assessment is **honest and substantively complete**. The handoff proactively flagged:
+
+- The IPv6 `https://[::1]/` behaviour change (correctly identified as a genuine semantic shift, not just a fix).
+- The `try/catch` swallowing parser errors (called out as intentional but a friction point for callers wanting to distinguish "malformed" from "wrong scheme").
+- The integration-test gap for the YAML pipeline (acknowledged in "Test gaps").
+- The plan's "Technical Review Corrections" section as a forward hazard for PR-5 / PR-6a / PR-6b.
+
+**Significant undisclosed items found by review** — none of them merge-blockers, all P2 or P3:
+
+- The implicit return type of `httpOnlyUrl()` exposes Zod-internal generics across the public barrel, which is fragile under Zod version bumps (T1+A7+T8 → todo #001).
+- `applySpotlighting()` is not idempotent and accepts any non-empty string as `requestId`, including human-typed values that won't be unique-per-request (T6+S4 → todo #002).
+- `detectInjectionPattern` returns `true` for benign content under normal usage and is named `detect…` in a way that invites misuse as a gating predicate (S3 → todo #003).
+- An IPv4-mapped IPv6 SSRF gap exists in `config/security/ssrf.ts`: compressed-hex variants of `::ffff:127.x` / `::ffff:10.x` / `::ffff:192.168.x` are not in the blocklist (S1 → todo #005). The defence-in-depth in `ssrf.ts` still rejects these via DNS resolution, but the blocklist regex is the documented gate.
+- The schema-level `description` for `CurlExecuteSchema.url` does not mention the `http`/`https` constraint (validator.ts does), so the LLM gets inconsistent guidance across consumer schemas (T5 → todo #006).
+
+The builder's instinct to flag the integration-test gap proactively is exactly the behaviour we want — tracked as todo #020 for PR-6a's gate.
+
+### Key Findings
+
+| ID | Severity | Category | Description | Todo File |
+|----|----------|----------|-------------|-----------|
+| 1 | 🟡 P2 | typescript / api-stability | Pin `httpOnlyUrl()` return type to `z.ZodType<string>` to stop Zod-internal generics leaking across the public barrel | `docs/todos/001-pending-p2-pin-httponlyurl-return-type.md` |
+| 2 | 🟡 P2 | security / correctness | `applySpotlighting()` is not idempotent and does not validate UUID-shape `requestId` — double-wrap and predictable-sentinel risk | `docs/todos/002-pending-p2-applyspotlighting-idempotence-and-requestid.md` |
+| 3 | 🟡 P2 | security / api-design | `detectInjectionPattern` invites misuse as a gating predicate; tighten JSDoc + add usage warning | `docs/todos/003-pending-p2-detectinjectionpattern-misuse-prevention.md` |
+| 4 | 🟡 P2 | security / tests | Add explicit regression tests for `vbscript:`, leading-whitespace, and case-permutation scheme bypasses through `httpOnlyUrl()` | `docs/todos/004-pending-p2-vbscript-and-whatwg-quirk-regression-tests.md` |
+| 5 | 🟡 P2 | security | IPv4-mapped IPv6 compressed-hex variants missing from `config/security/ssrf.ts` blocklist regexes | `docs/todos/005-pending-p2-ipv4-mapped-ipv6-ssrf-blocklist-gap.md` |
+| 6 | 🟡 P2 | mcp / llm-visible | `CurlExecuteSchema.url` description doesn't mention http/https constraint — inconsistent with validator.ts | `docs/todos/006-pending-p2-llm-visible-scheme-constraint.md` |
+| 7 | 🟡 P2 | dry / architecture | Share scheme allowlist via `config/security/url-schemes.ts` constant (currently duplicated across `httpOnlyUrl`, `ssrf.ts`, curl `--proto` flag) | `docs/todos/007-pending-p2-share-scheme-allowlist-config.md` |
+| 8 | 🟡 P2 | docs / architecture | `docs/custom-tools.md` — three new H3s under one H2 break heading taxonomy; restructure before PR-5/PR-7 lands more sections | `docs/todos/008-pending-p2-restructure-custom-tools-doc-headings.md` |
+| 9 | 🟡 P2 | dx / api-design | `httpOnlyUrl()` should accept optional `description` + ship JSDoc explaining the http/https scheme lock | `docs/todos/009-pending-p2-httponlyurl-description-default-and-jsdoc.md` |
+| 10 | 🟡 P2 | dry / tests | Two prompt regression tests are textual duplicates — collapse with `it.each` | `docs/todos/010-pending-p2-collapse-duplicate-prompt-regression-tests.md` |
+| 11 | 🟡 P2 | architecture | Decide before PR-6b: barrel categorization + whether to ship a `wrapWithDefence(handler)` convenience wrapper | `docs/todos/011-pending-p2-public-barrel-categorization-and-wrapwithdefence-decision.md` |
+| 12 | 🔵 P3 | api-symmetry | `safeHostname` is in `utils/index.ts` but not in the public barrel; ship for parity | `docs/todos/012-pending-p3-safehostname-public-barrel.md` |
+| 13 | 🔵 P3 | docs | JSDoc on defence helpers should distinguish invariant guarantees from format stability | `docs/todos/013-pending-p3-unstable-jsdoc-on-defence-helpers.md` |
+| 14 | 🔵 P3 | tests / docs | Reword `url.test.ts` comments referencing `.split(":")[0]` so they don't time-bomb when context fades | `docs/todos/014-pending-p3-reword-time-bombed-test-comments.md` |
+| 15 | 🔵 P3 | docs | Add JSDoc `@param` / `@returns` to `httpOnlyUrl()` | `docs/todos/015-pending-p3-httponlyurl-jsdoc-param-returns.md` |
+| 16 | 🔵 P3 | tests / forward-compat | JSON Schema snapshot test for `CurlExecuteSchema.url` to flag MCP-SDK 2.0 converter changes | `docs/todos/016-pending-p3-json-schema-snapshot-test.md` |
+| 17 | 🔵 P3 | ux / error-messages | Restore `z.url("Must be a valid URL")` base message lost in helper consolidation | `docs/todos/017-pending-p3-restore-zod-url-error-message.md` |
+| 18 | 🔵 P3 | process / plan-hygiene | Fold "Technical Review Corrections" back into plan body before PR-6b begins | `docs/todos/018-pending-p3-fold-tech-review-corrections-into-plan-body.md` |
+| 19 | 🔵 P3 | tests / consistency | Apply nested-describe convention consistently across `url.test.ts` | `docs/todos/019-pending-p3-url-test-structure-consistency.md` |
+| 20 | 🔵 P3 | tests / integration | Integration test: `data:` / `javascript:` URL rejected through full YAML pipeline (PR-6a gate) | `docs/todos/020-pending-p3-yaml-pipeline-data-url-integration-test.md` |
+
+### Verified Claims
+
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| Tests pass (499 / 7 skipped / 0 failed) | yes | Re-ran `npm test` — same counts. |
+| Build clean, no TS errors | yes | `npm run build` succeeds. |
+| All 4 helpers exported from `dist/lib.d.ts` | yes | Verified via `import('./dist/lib.js')` — `httpOnlyUrl`, `applySpotlighting`, `sanitizeResponse`, `detectInjectionPattern` all present. |
+| `httpOnlyUrl` is now the single source of truth | yes | `Grep` confirms only one production `z.url()` site after migration; both former inline copies now call the helper. |
+| IPv6 `https://[::1]/` behaviour change | yes | Old form silently passed; new form correctly returns `https:`. Test locks the new behaviour. |
+| `try/catch` swallows parser errors | yes | Intentional. Documented in handoff — flagged as P2 follow-up via todo #009 (JSDoc) so future callers know. |
+| Defence-in-depth holds if helper bypassed | yes (with one caveat) | `ssrf.ts:86-88` has its own scheme allowlist and `--proto =http,https` is the third gate. **Caveat:** the IPv4-mapped IPv6 compressed-hex blocklist gap (todo #005) is the one place where the layers genuinely disagree. |
+| Public-barrel re-exports work | yes | Verified `import { httpOnlyUrl } from "mcp-curl"` resolves to the same function as `from "mcp-curl/utils"`. |
+| No known issues beyond listed | partial | Builder surfaced the right risks at the right level. The 5 undisclosed P2 items above (T1, T6+S4, S3, S1, T5) are real gaps the builder didn't surface — all flagged in todos. |
+| Comments in `url.test.ts` reference `.split(":")[0]` | yes | Confirmed; reworded under todo #014 (P3) to avoid time-bomb. |
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/001-pending-p2-pin-httponlyurl-return-type.md` | P2 | Pin `httpOnlyUrl()` return type | code-review |
+| `docs/todos/002-pending-p2-applyspotlighting-idempotence-and-requestid.md` | P2 | `applySpotlighting` idempotence + UUID-shape `requestId` | code-review |
+| `docs/todos/003-pending-p2-detectinjectionpattern-misuse-prevention.md` | P2 | Misuse-prevention JSDoc on `detectInjectionPattern` | code-review |
+| `docs/todos/004-pending-p2-vbscript-and-whatwg-quirk-regression-tests.md` | P2 | `vbscript:` / whitespace / case regression tests | code-review |
+| `docs/todos/005-pending-p2-ipv4-mapped-ipv6-ssrf-blocklist-gap.md` | P2 | SSRF blocklist: IPv4-mapped IPv6 compressed-hex gap | code-review |
+| `docs/todos/006-pending-p2-llm-visible-scheme-constraint.md` | P2 | LLM-visible scheme constraint in `CurlExecuteSchema.url` | code-review |
+| `docs/todos/007-pending-p2-share-scheme-allowlist-config.md` | P2 | Share scheme allowlist via `config/security/url-schemes.ts` | code-review |
+| `docs/todos/008-pending-p2-restructure-custom-tools-doc-headings.md` | P2 | Restructure `docs/custom-tools.md` heading taxonomy | code-review |
+| `docs/todos/009-pending-p2-httponlyurl-description-default-and-jsdoc.md` | P2 | `httpOnlyUrl()` optional description + scheme-lock JSDoc | code-review |
+| `docs/todos/010-pending-p2-collapse-duplicate-prompt-regression-tests.md` | P2 | Collapse duplicate prompt regression tests | code-review |
+| `docs/todos/011-pending-p2-public-barrel-categorization-and-wrapwithdefence-decision.md` | P2 | Barrel categorization + `wrapWithDefence` decision | code-review |
+| `docs/todos/012-pending-p3-safehostname-public-barrel.md` | P3 | Add `safeHostname` to public barrel | code-review |
+| `docs/todos/013-pending-p3-unstable-jsdoc-on-defence-helpers.md` | P3 | JSDoc: distinguish invariant from format stability | code-review |
+| `docs/todos/014-pending-p3-reword-time-bombed-test-comments.md` | P3 | Reword time-bombed `url.test.ts` comments | code-review |
+| `docs/todos/015-pending-p3-httponlyurl-jsdoc-param-returns.md` | P3 | JSDoc `@param`/`@returns` on `httpOnlyUrl` | code-review |
+| `docs/todos/016-pending-p3-json-schema-snapshot-test.md` | P3 | JSON Schema snapshot for `CurlExecuteSchema.url` | code-review |
+| `docs/todos/017-pending-p3-restore-zod-url-error-message.md` | P3 | Restore `z.url("Must be a valid URL")` base message | code-review |
+| `docs/todos/018-pending-p3-fold-tech-review-corrections-into-plan-body.md` | P3 | Fold tech-review corrections into plan body before PR-6b | code-review |
+| `docs/todos/019-pending-p3-url-test-structure-consistency.md` | P3 | Apply nested-describe convention consistently in `url.test.ts` | code-review |
+| `docs/todos/020-pending-p3-yaml-pipeline-data-url-integration-test.md` | P3 | Integration test for YAML pipeline `data:` URL rejection | code-review |
+
+### Blockers
+
+**None.** No P1 findings; clear to merge after P2 fixes (which can be addressed across PR-2…PR-6 as they touch adjacent code, rather than blocking PR-1's merge). The 5 undisclosed P2 items the builder didn't surface (T1, T6+S4, S3, S1, T5) are genuine gaps but none represent a regression introduced by PR-1 — they are pre-existing-or-now-visible issues in helpers PR-1 promoted to public API. Address them in upcoming PRs that touch the same modules.
