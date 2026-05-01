@@ -8,7 +8,7 @@
  * Allowed URL schemes (with trailing colons, matching `URL.protocol`).
  *
  * Used by:
- * - `httpOnlyUrl` schema validator (rejects URLs whose `.protocol` is not in this set)
+ * - `createHttpOnlyUrlSchema` schema validator (rejects URLs whose `.protocol` is not in this set)
  * - `validateUrlAndResolveDns` (mirrors the rejection at DNS-resolution time)
  *
  * Adding a scheme here without also updating `ALLOWED_URL_SCHEMES_CURL_FLAG`

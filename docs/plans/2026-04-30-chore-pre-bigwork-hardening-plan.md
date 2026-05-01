@@ -443,7 +443,7 @@ server.registerCustomTool(
 );
 ```
 
-For trusted internal strings, no sanitisation is required. See [`docs/custom-tools.md`](./docs/custom-tools.md#sanitizing-external-tool-metadata) for the full discussion.
+For trusted internal strings, no sanitisation is required. See [`docs/custom-tools.md`](./docs/custom-tools.md#validating-external-inputs) for the full discussion.
 ````
 
 **Note.** This README block becomes redundant once **B4** lands (auto-sanitisation of Zod field descriptions in `registerCustomTool()`). Keep B2 anyway — sanitising at the call site remains the recommended pattern for **callers building Zod schemas dynamically before registration** (e.g. constructing the schema in another module). Update the wording in B4's PR to reflect that the call-site pattern is "defensive belt-and-braces" rather than "required".
