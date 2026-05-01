@@ -116,19 +116,17 @@ PR-4 of the 9-PR pre-bigwork hardening track. Closes plan item **B5**: validates
 
 ## Commit history
 
-```bash
-git log --oneline main..HEAD
-# (commits land in this order:)
-# chore(docs): remove superseded handoff drafts
-# feat(transports): add MAX_AUTH_TOKEN_LENGTH + PRINTABLE_ASCII constants
-# feat(transports): validateAuthToken at HTTP startup (PR-4 / B5)
-# test(transports): unit-test validateAuthToken
-# docs(readme): note printable-ASCII auth-token validation in Security Highlights
-# docs(plan): tick PR-4 / B5 acceptance criteria
-# docs(work): handoff for PR-4
+```text
+2917ad6 docs(plan): tick B5 + add PR-4 handoff document
+11298c5 docs(readme): document MCP_AUTH_TOKEN validation in Security Highlights
+fbd829b chore(dist): rebuild for B5 auth-token validator
+dd06d5f test(transport): cover validateAuthToken charset + length rules (B5)
+de11e20 feat(transport): validate MCP_AUTH_TOKEN at HTTP startup (B5)
+f0f2f00 chore(config): add MAX_AUTH_TOKEN_LENGTH and PRINTABLE_ASCII
+7582a44 chore(docs): remove superseded handoff drafts
 ```
 
-(Final commit hashes will be inserted into this section after the commits land — see `## Phase 5` of the work skill.)
+Suggested review order is bottom-up: branch cleanup → constants → validator + integration → tests → dist rebuild → README → plan tick + handoff.
 
 ## Review context
 
