@@ -1,3 +1,31 @@
+// src/lib/utils/url.ts
+import { z } from "zod";
+function resolveBaseUrl(baseUrl, path) {
+  const base = baseUrl.replace(/\/$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
+}
+function httpOnlyUrl(description) {
+  return z.url().refine(
+    (url) => {
+      try {
+        return ["http:", "https:"].includes(new URL(url).protocol);
+      } catch {
+        return false;
+      }
+    },
+    { message: "URL must use http or https scheme" }
+  ).describe(description);
+}
+function safeHostname(url, fallback = "unknown") {
+  if (!url) return fallback;
+  try {
+    return new URL(url).hostname || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 // src/lib/utils/sanitize.ts
 var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
 var UNICODE_ATTACK_RANGES = "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\u00AD\\u200B-\\u200F\\u2028\\u2029\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF\\uFE00-\\uFE0F\\u{E0000}-\\u{E007F}";
@@ -86,28 +114,6 @@ function createConfigError(configName, value, reason) {
   return new Error(`Invalid ${configName} value "${value}": ${reason}.`);
 }
 
-// src/lib/utils/url.ts
-import { z } from "zod";
-function resolveBaseUrl(baseUrl, path) {
-  const base = baseUrl.replace(/\/$/, "");
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${normalizedPath}`;
-}
-function httpOnlyUrl(description) {
-  return z.url().refine(
-    (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
-    { message: "URL must use http or https scheme" }
-  ).describe(description);
-}
-function safeHostname(url, fallback = "unknown") {
-  if (!url) return fallback;
-  try {
-    return new URL(url).hostname || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 // src/lib/utils/content-type.ts
 function parseMimeType(contentType) {
   if (!contentType) return "";
@@ -166,13 +172,7 @@ function supportsMarkupComments(contentType) {
 // src/lib/server/schemas.ts
 import { z as z2 } from "zod";
 var CurlExecuteSchema = z2.object({
-  url: z2.url("Must be a valid URL").refine(
-    (url) => {
-      const scheme = url.split(":")[0].toLowerCase();
-      return ["http", "https"].includes(scheme);
-    },
-    { message: "URL must use http or https scheme" }
-  ).describe("The URL to request"),
+  url: httpOnlyUrl("The URL to request"),
   method: z2.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional().describe("HTTP method (defaults to GET, or POST if data is provided)"),
   headers: z2.record(z2.string(), z2.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
   data: z2.string().optional().describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
@@ -1931,6 +1931,8 @@ export {
   httpOnlyUrl,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   sanitizeDescription,
+  sanitizeResponse,
+  detectInjectionPattern,
   applySpotlighting,
   SESSION,
   startRateLimitCleanup,
