@@ -54,9 +54,9 @@ Received ${signal}, shutting down gracefully...`);
   let hasError = false;
   if (httpServer) {
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise((resolve, reject2) => {
         httpServer.close((err) => {
-          if (err) reject(err);
+          if (err) reject2(err);
           else resolve();
         });
       });
@@ -566,7 +566,12 @@ var SessionManager = class {
     this.sessions.set(id, session);
   }
   /**
-   * Delete a session.
+   * Delete a session entry from the map without closing its transport
+   * or MCP server. Used by `transport.onclose` after the SDK has already
+   * torn down the transport — we only need to drop the bookkeeping.
+   *
+   * For the explicit DELETE /mcp path, callers should use
+   * {@link closeSession} which awaits the SDK close handlers.
    */
   delete(id) {
     this.sessions.delete(id);
@@ -585,7 +590,14 @@ var SessionManager = class {
   }
   /**
    * Start periodic cleanup of idle sessions.
-   * Sessions that exceed SESSION.IDLE_TIMEOUT_MS without activity are closed.
+   *
+   * Sessions that exceed `SESSION.IDLE_TIMEOUT_MS` without activity are
+   * removed from the map synchronously (so a slow close cannot let a
+   * subsequent tick re-process the same session) and torn down through
+   * {@link closeWithTimeout} — symmetric with `closeAll` and `closeSession`.
+   * The actual close runs in the background via `void this.closeSessions(...)`
+   * because the interval callback cannot be `await`-ed; `closeWithTimeout`
+   * logs its own errors so nothing is dropped.
    */
   startCleanup() {
     if (this.cleanupInterval) {
@@ -593,18 +605,15 @@ var SessionManager = class {
     }
     this.cleanupInterval = setInterval(() => {
       const now = Date.now();
+      const idle = [];
       for (const [id, session] of this.sessions) {
         if (now - session.lastActivity > SESSION.IDLE_TIMEOUT_MS) {
-          try {
-            session.transport.close();
-          } catch (error) {
-            console.error(`Warning: Error closing idle session ${id} transport:`, error);
-          }
-          void session.server.close().catch((error) => {
-            console.error(`Warning: Error closing idle session ${id} server:`, error);
-          });
+          idle.push([id, session]);
           this.sessions.delete(id);
         }
+      }
+      if (idle.length > 0) {
+        void this.closeSessions(idle);
       }
     }, SESSION.CLEANUP_INTERVAL_MS);
     this.cleanupInterval.unref();
@@ -619,6 +628,21 @@ var SessionManager = class {
     }
   }
   /**
+   * Close a single session by id and remove it from the map.
+   *
+   * Used by the DELETE /mcp route, which must `await` the SDK transport
+   * close so in-flight SSE frames are drained before the response returns.
+   * No-op when the id isn't tracked.
+   */
+  async closeSession(id) {
+    const session = this.sessions.get(id);
+    if (!session) {
+      return;
+    }
+    this.sessions.delete(id);
+    await this.closeSessions([[id, session]]);
+  }
+  /**
    * Close all active sessions gracefully.
    *
    * The MCP SDK's `StreamableHTTPServerTransport.close()` is asynchronous
@@ -631,6 +655,16 @@ var SessionManager = class {
   async closeAll() {
     const entries = Array.from(this.sessions.entries());
     this.sessions.clear();
+    await this.closeSessions(entries);
+  }
+  /**
+   * Tear down a batch of session entries through the same timeout-bounded
+   * helper used by `closeAll` and `closeSession`. Centralises the order
+   * (transport before MCP server) and the parallelisation policy
+   * (`Promise.allSettled` so one hung session can't block the rest of the
+   * batch — bounded individually by {@link CLOSE_TIMEOUT_MS}).
+   */
+  async closeSessions(entries) {
     await Promise.allSettled(
       entries.map(async ([sessionId, session]) => {
         await closeWithTimeout(
@@ -653,9 +687,9 @@ async function closeWithTimeout(op, label, sessionId) {
   try {
     await Promise.race([
       op(),
-      new Promise((_, reject) => {
+      new Promise((_, reject2) => {
         timer = setTimeout(
-          () => reject(new Error(`${label}_timeout`)),
+          () => reject2(new Error(`${label}_timeout`)),
           CLOSE_TIMEOUT_MS
         );
         timer.unref?.();
@@ -1086,11 +1120,11 @@ var McpCurlServer = class {
     } catch (error) {
       if (this._httpServer) {
         try {
-          await new Promise((resolve, reject) => {
+          await new Promise((resolve, reject2) => {
             const timeout = setTimeout(() => resolve(), 5e3);
             this._httpServer.close((err) => {
               clearTimeout(timeout);
-              if (err) reject(err);
+              if (err) reject2(err);
               else resolve();
             });
           });
@@ -1132,21 +1166,21 @@ var McpCurlServer = class {
       let timeoutId;
       try {
         await Promise.race([
-          new Promise((resolve, reject) => {
+          new Promise((resolve, reject2) => {
             this._httpServer.close((err) => {
-              if (err) reject(err);
+              if (err) reject2(err);
               else resolve();
             });
           }),
-          new Promise((_, reject) => {
+          new Promise((_, reject2) => {
             timeoutId = setTimeout(
-              () => reject(new Error("HTTP server shutdown timeout")),
+              () => reject2(new Error("HTTP server shutdown timeout")),
               SHUTDOWN_TIMEOUT
             );
           })
         ]);
       } catch (error) {
-        console.error("Warning: Error closing HTTP server:", error);
+        logShutdownError("shutdown_http_server", error);
       } finally {
         if (timeoutId !== void 0) {
           clearTimeout(timeoutId);
@@ -1159,14 +1193,14 @@ var McpCurlServer = class {
       try {
         await this._sessionManager.closeAll();
       } catch (error) {
-        console.error("Warning: Error closing sessions:", error);
+        logShutdownError("shutdown_sessions", error);
       }
     }
     if (this._server) {
       try {
         await this._server.close();
       } catch (error) {
-        console.error("Warning: Error closing MCP server:", error);
+        logShutdownError("shutdown_mcp_server", error);
       } finally {
         this._server = null;
       }
@@ -1180,7 +1214,7 @@ var McpCurlServer = class {
     try {
       await cleanupTempDir();
     } catch (error) {
-      console.error("Warning: Error cleaning up temp directory:", error);
+      logShutdownError("shutdown_temp_dir", error);
     } finally {
       this._started = false;
       this._frozenConfig = null;
@@ -1255,7 +1289,7 @@ var McpCurlServer = class {
     });
     const port = this._frozenConfig.port ?? parsePort(process.env[ENV.PORT], LIMITS.DEFAULT_HTTP_PORT);
     const host = resolveHost(this._frozenConfig.host);
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, reject2) => {
       this._httpServer = app.listen(port, host);
       this._httpServer.on("listening", () => {
         console.error(`cURL MCP server running on http://${formatHostForUrl(host)}:${port}/mcp`);
@@ -1264,9 +1298,9 @@ var McpCurlServer = class {
       });
       this._httpServer.on("error", (err) => {
         if (err.code === "EADDRINUSE") {
-          reject(new Error(`Port ${port} is already in use`));
+          reject2(new Error(`Port ${port} is already in use`));
         } else {
-          reject(err);
+          reject2(err);
         }
       });
     });
@@ -1291,6 +1325,10 @@ var McpCurlServer = class {
     }
   }
 };
+function logShutdownError(label, error) {
+  const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+  console.error(`${label} error: ${errorClass}`);
+}
 
 // src/lib/transports/http.ts
 var DEFAULT_ALLOWED_ORIGIN_PATTERNS = [
@@ -1356,27 +1394,38 @@ function validateAuthToken(token) {
     );
   }
 }
+var BEARER_SCHEME = "Bearer ";
 function createAuthMiddleware(authToken) {
   if (!authToken) {
     return (_req, _res, next) => next();
   }
-  const expectedHeader = `Bearer ${authToken}`;
-  const expectedLength = expectedHeader.length;
+  const expectedToken = authToken;
+  const expectedHeaderLength = BEARER_SCHEME.length + expectedToken.length;
   return (req, res, next) => {
     const rawAuth = req.headers.authorization;
     const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
-    if (!hasExpectedLength(authHeader, expectedLength) || !safeStringCompare(authHeader, expectedHeader)) {
-      res.status(401).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32600,
-          message: "Unauthorized: Invalid or missing authentication token"
-        }
-      });
-      return;
+    if (!hasExpectedLength(authHeader, expectedHeaderLength)) {
+      return reject(res);
+    }
+    const schemeSlice = authHeader.slice(0, BEARER_SCHEME.length);
+    if (schemeSlice.toLowerCase() !== "bearer ") {
+      return reject(res);
+    }
+    const tokenPart = authHeader.slice(BEARER_SCHEME.length);
+    if (!safeStringCompare(tokenPart, expectedToken)) {
+      return reject(res);
     }
     next();
   };
+}
+function reject(res) {
+  res.status(401).json({
+    jsonrpc: "2.0",
+    error: {
+      code: -32600,
+      message: "Unauthorized: Invalid or missing authentication token"
+    }
+  });
 }
 function hasExpectedLength(value, expected) {
   return value !== void 0 && value.length === expected;
@@ -1431,6 +1480,17 @@ function createHttpApp(options) {
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID2(),
+        // `enableJsonResponse: true` makes the SDK return tool
+        // responses as a single JSON body on the POST instead of
+        // opening an SSE stream. The mcp-curl tools (`curl_execute`,
+        // `jq_query`, custom YAML/registerCustomTool handlers) are
+        // request/response shaped — they produce a complete result
+        // per call and emit no incremental progress events — so the
+        // SSE stream would carry exactly one frame and then close.
+        // JSON-direct cuts that overhead and avoids long-lived
+        // connections that complicate session timeout / idle-cleanup.
+        // SSE-dependent clients can still open `GET /mcp` for
+        // server→client streams against an established session.
         enableJsonResponse: true,
         onsessioninitialized: (sid) => {
           sessionManager2.set(sid, {
@@ -1487,7 +1547,7 @@ function createHttpApp(options) {
       next(error);
     }
   });
-  app.delete("/mcp", async (req, res, next) => {
+  app.delete("/mcp", async (req, res) => {
     const rawSessionId = req.headers["mcp-session-id"];
     const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
     if (sessionId && !isValidSessionId(sessionId)) {
@@ -1497,22 +1557,15 @@ function createHttpApp(options) {
       });
       return;
     }
-    if (sessionId && sessionManager2.has(sessionId)) {
-      const session = sessionManager2.get(sessionId);
-      try {
-        session.transport.close();
-        await session.server.close();
-      } catch (error) {
-        next(error);
-        return;
-      } finally {
-        sessionManager2.delete(sessionId);
-      }
+    if (sessionId) {
+      await sessionManager2.closeSession(sessionId);
     }
     res.status(200).end();
   });
-  app.use((err, _req, res, _next) => {
-    console.error("Unhandled error:", err);
+  app.use((err, req, res, _next) => {
+    const errorClass = err instanceof Error ? err.constructor.name : "unknown";
+    const route = `${req.method} ${req.path}`;
+    console.error(`http_unhandled error: [${route}] ${errorClass}`);
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: "2.0",

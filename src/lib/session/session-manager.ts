@@ -50,7 +50,12 @@ export class SessionManager {
     }
 
     /**
-     * Delete a session.
+     * Delete a session entry from the map without closing its transport
+     * or MCP server. Used by `transport.onclose` after the SDK has already
+     * torn down the transport — we only need to drop the bookkeeping.
+     *
+     * For the explicit DELETE /mcp path, callers should use
+     * {@link closeSession} which awaits the SDK close handlers.
      */
     delete(id: string): void {
         this.sessions.delete(id);
@@ -72,7 +77,14 @@ export class SessionManager {
 
     /**
      * Start periodic cleanup of idle sessions.
-     * Sessions that exceed SESSION.IDLE_TIMEOUT_MS without activity are closed.
+     *
+     * Sessions that exceed `SESSION.IDLE_TIMEOUT_MS` without activity are
+     * removed from the map synchronously (so a slow close cannot let a
+     * subsequent tick re-process the same session) and torn down through
+     * {@link closeWithTimeout} — symmetric with `closeAll` and `closeSession`.
+     * The actual close runs in the background via `void this.closeSessions(...)`
+     * because the interval callback cannot be `await`-ed; `closeWithTimeout`
+     * logs its own errors so nothing is dropped.
      */
     startCleanup(): void {
         if (this.cleanupInterval) {
@@ -81,18 +93,15 @@ export class SessionManager {
 
         this.cleanupInterval = setInterval(() => {
             const now = Date.now();
+            const idle: Array<[string, Session]> = [];
             for (const [id, session] of this.sessions) {
                 if (now - session.lastActivity > SESSION.IDLE_TIMEOUT_MS) {
-                    try {
-                        session.transport.close();
-                    } catch (error) {
-                        console.error(`Warning: Error closing idle session ${id} transport:`, error);
-                    }
-                    void session.server.close().catch((error) => {
-                        console.error(`Warning: Error closing idle session ${id} server:`, error);
-                    });
+                    idle.push([id, session]);
                     this.sessions.delete(id);
                 }
+            }
+            if (idle.length > 0) {
+                void this.closeSessions(idle);
             }
         }, SESSION.CLEANUP_INTERVAL_MS);
 
@@ -111,6 +120,22 @@ export class SessionManager {
     }
 
     /**
+     * Close a single session by id and remove it from the map.
+     *
+     * Used by the DELETE /mcp route, which must `await` the SDK transport
+     * close so in-flight SSE frames are drained before the response returns.
+     * No-op when the id isn't tracked.
+     */
+    async closeSession(id: string): Promise<void> {
+        const session = this.sessions.get(id);
+        if (!session) {
+            return;
+        }
+        this.sessions.delete(id);
+        await this.closeSessions([[id, session]]);
+    }
+
+    /**
      * Close all active sessions gracefully.
      *
      * The MCP SDK's `StreamableHTTPServerTransport.close()` is asynchronous
@@ -123,6 +148,19 @@ export class SessionManager {
     async closeAll(): Promise<void> {
         const entries = Array.from(this.sessions.entries());
         this.sessions.clear();
+        await this.closeSessions(entries);
+    }
+
+    /**
+     * Tear down a batch of session entries through the same timeout-bounded
+     * helper used by `closeAll` and `closeSession`. Centralises the order
+     * (transport before MCP server) and the parallelisation policy
+     * (`Promise.allSettled` so one hung session can't block the rest of the
+     * batch — bounded individually by {@link CLOSE_TIMEOUT_MS}).
+     */
+    private async closeSessions(
+        entries: ReadonlyArray<readonly [string, Session]>,
+    ): Promise<void> {
         await Promise.allSettled(
             entries.map(async ([sessionId, session]) => {
                 await closeWithTimeout(
@@ -142,7 +180,7 @@ export class SessionManager {
 
 /**
  * Maximum time we wait for a single session-component close. Mirrors the
- * 5-second budget {@link McpCurlServer.shutdown} uses for `_httpServer.close`,
+ * 5-second budget `McpCurlServer.shutdown` uses for `_httpServer.close`,
  * so a single-transport hang during shutdown still completes within the same
  * envelope the operator already expects.
  */

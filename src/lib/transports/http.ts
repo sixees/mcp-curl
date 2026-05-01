@@ -160,17 +160,28 @@ export function validateAuthToken(token: string | undefined): void {
     }
 }
 
+/** Auth scheme prefix per RFC 6750 §2.1, including the single trailing space. */
+const BEARER_SCHEME = "Bearer ";
+
 /**
  * Authentication middleware for HTTP transport.
  *
  * When an auth token is provided, all HTTP requests must include a matching
- * Bearer token in the Authorization header.
+ * Bearer token in the Authorization header. The scheme name (`Bearer`) is
+ * matched case-insensitively per RFC 6750 §2.1, so `bearer X` and `BEARER X`
+ * are accepted as well as the canonical `Bearer X`.
  *
- * The expected `Bearer <token>` string is built once at middleware
- * construction (closure capture) so the per-request hot path does no
- * string allocation. A length pre-check rejects oversized headers before
- * `safeStringCompare` allocates padded buffers, bounding the per-request
- * allocation to `expectedHeader.length` regardless of attacker input.
+ * The expected token string and total expected header length are captured
+ * once at middleware construction (closure capture) so the per-request hot
+ * path does no string allocation for the comparison values themselves. A
+ * length pre-check rejects oversized headers before any further work,
+ * bounding the per-request allocation regardless of attacker input.
+ *
+ * Timing-safe property: the **token portion** of the header is compared via
+ * `safeStringCompare` (which wraps `crypto.timingSafeEqual` over
+ * length-padded buffers — see `security/input-validation.ts`). The scheme
+ * prefix is non-secret, so its case-insensitive comparison runs in
+ * variable time without leaking entropy.
  */
 export function createAuthMiddleware(
     authToken?: string
@@ -179,8 +190,8 @@ export function createAuthMiddleware(
         // No token configured — pass through (backward compatible).
         return (_req, _res, next): void => next();
     }
-    const expectedHeader = `Bearer ${authToken}`;
-    const expectedLength = expectedHeader.length;
+    const expectedToken = authToken;
+    const expectedHeaderLength = BEARER_SCHEME.length + expectedToken.length;
 
     return (req: Request, res: Response, next: NextFunction): void => {
         // Express types the header as `string | string[] | undefined`. RFC 7230
@@ -189,24 +200,44 @@ export function createAuthMiddleware(
         const rawAuth = req.headers.authorization;
         const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
 
-        // Length-bound the timing-safe compare. The compare itself is constant-
-        // time over equal-length buffers, so a length-derived early reject does
-        // not weaken the security property (it never reveals byte-equality).
-        // The type-predicate `hasExpectedLength` narrows `authHeader` to
-        // `string` for `safeStringCompare`, removing an unsafe cast.
-        if (!hasExpectedLength(authHeader, expectedLength) || !safeStringCompare(authHeader, expectedHeader)) {
-            res.status(401).json({
-                jsonrpc: "2.0",
-                error: {
-                    code: -32600,
-                    message: "Unauthorized: Invalid or missing authentication token",
-                },
-            });
-            return;
+        // Length-bound *before* slicing or any compare runs. The compare
+        // itself is constant-time over equal-length buffers; a length-derived
+        // early reject does not weaken the security property (it never
+        // reveals byte-equality of the secret). `hasExpectedLength` narrows
+        // `authHeader` to `string` so we don't need an unsafe cast.
+        if (!hasExpectedLength(authHeader, expectedHeaderLength)) {
+            return reject(res);
+        }
+
+        // Scheme is non-secret per RFC 6750 §2.1 — match case-insensitively
+        // in variable time. `slice(0, n)` on a length-validated string is
+        // bounded; `toLowerCase` over 7 ASCII chars is O(1) for our purposes.
+        const schemeSlice = authHeader.slice(0, BEARER_SCHEME.length);
+        if (schemeSlice.toLowerCase() !== "bearer ") {
+            return reject(res);
+        }
+
+        // Token portion is the secret — compare with `safeStringCompare`,
+        // which pads to equal length under the hood and routes through
+        // `crypto.timingSafeEqual`.
+        const tokenPart = authHeader.slice(BEARER_SCHEME.length);
+        if (!safeStringCompare(tokenPart, expectedToken)) {
+            return reject(res);
         }
 
         next();
     };
+}
+
+/** 401 response shared by every reject branch in `createAuthMiddleware`. */
+function reject(res: Response): void {
+    res.status(401).json({
+        jsonrpc: "2.0",
+        error: {
+            code: -32600,
+            message: "Unauthorized: Invalid or missing authentication token",
+        },
+    });
 }
 
 /**
@@ -316,6 +347,17 @@ export function createHttpApp(options: HttpAppOptions): Express {
             const server = createMcpServer();
             const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: () => randomUUID(),
+                // `enableJsonResponse: true` makes the SDK return tool
+                // responses as a single JSON body on the POST instead of
+                // opening an SSE stream. The mcp-curl tools (`curl_execute`,
+                // `jq_query`, custom YAML/registerCustomTool handlers) are
+                // request/response shaped — they produce a complete result
+                // per call and emit no incremental progress events — so the
+                // SSE stream would carry exactly one frame and then close.
+                // JSON-direct cuts that overhead and avoids long-lived
+                // connections that complicate session timeout / idle-cleanup.
+                // SSE-dependent clients can still open `GET /mcp` for
+                // server→client streams against an established session.
                 enableJsonResponse: true,
                 onsessioninitialized: (sid: string) => {
                     sessionManager.set(sid, {
@@ -383,12 +425,18 @@ export function createHttpApp(options: HttpAppOptions): Express {
         }
     });
 
-    // DELETE /mcp - Terminate a session
-    app.delete("/mcp", async (req: Request, res: Response, next: NextFunction) => {
+    // DELETE /mcp - Terminate a session.
+    //
+    // Delegates to `SessionManager.closeSession`, which awaits the SDK
+    // transport close (so in-flight SSE frames drain) and bounds each close
+    // through `closeWithTimeout`. Errors raised inside the close path are
+    // already logged by the helper in the project-wide minimal shape — the
+    // route itself returns 200 once the manager has dropped the entry, so a
+    // misbehaving transport can't surface internal state to the client.
+    app.delete("/mcp", async (req: Request, res: Response) => {
         const rawSessionId = req.headers["mcp-session-id"];
         const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
 
-        // Validate session ID format if provided
         if (sessionId && !isValidSessionId(sessionId)) {
             res.status(400).json({
                 jsonrpc: "2.0",
@@ -397,24 +445,21 @@ export function createHttpApp(options: HttpAppOptions): Express {
             return;
         }
 
-        if (sessionId && sessionManager.has(sessionId)) {
-            const session = sessionManager.get(sessionId)!;
-            try {
-                session.transport.close();
-                await session.server.close();
-            } catch (error) {
-                next(error);
-                return;
-            } finally {
-                sessionManager.delete(sessionId);
-            }
+        if (sessionId) {
+            await sessionManager.closeSession(sessionId);
         }
         res.status(200).end();
     });
 
-    // Global error handler
-    app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-        console.error("Unhandled error:", err);
+    // Global error handler. Reached when a route handler calls `next(error)`.
+    // Logs in the project-wide minimal shape (`http_unhandled error:
+    // [<route>] <ErrorClassName>` — see CLAUDE.md "Error logging") and never
+    // echoes the error message, so a thrown error from upstream code can't
+    // surface request-specific detail (path/headers) into operator stderr.
+    app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+        const errorClass = err instanceof Error ? err.constructor.name : "unknown";
+        const route = `${req.method} ${req.path}`;
+        console.error(`http_unhandled error: [${route}] ${errorClass}`);
         if (!res.headersSent) {
             res.status(500).json({
                 jsonrpc: "2.0",

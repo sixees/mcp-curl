@@ -412,4 +412,54 @@ The Pass 1 narrative referenced the pre-Round-2 state in three places (`What:` /
 
 | File | Priority | Description | Source |
 |------|----------|-------------|--------|
-| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | P3 | RFC 6750 case-insensitive scheme matching | code-review (Pass 1) |
+| _(none — `001-pending-p3-bearer-scheme-case-insensitivity.md` resolved in Round 4 below)_ | — | — | — |
+
+---
+
+## Review Comments Addressed — 2026-05-01 (round 4)
+
+CodeRabbit's round 4 pass surfaced four further items: a real DELETE-route bug, three log-shape sites the Round 3 fix didn't sweep up, the long-deferred RFC 6750 todo, and a documentation gap on `enableJsonResponse`. All addressed in this commit.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `app.delete("/mcp")` calls `session.transport.close()` synchronously without `await` (`http.ts:~298`) — risks cutting SSE drains on explicit client DELETE | @coderabbitai | Fix needed (real bug) | Added `SessionManager.closeSession(id)` that wraps the same `closeWithTimeout` helper `closeAll` uses (5s budget, parallel-`Promise.allSettled` policy). DELETE handler now `await`s it. Extracted a private `closeSessions(entries)` helper inside `SessionManager` so `closeAll`, `closeSession`, and the new idle-cleanup path all share one close pipeline (DRY). |
+| `startCleanup()`'s idle-session interval calls `transport.close()` synchronously and `void server.close().catch(...)` fire-and-forget — asymmetric with the awaited `closeAll` | @coderabbitai | Fix needed (consistency) | Cleanup interval now snapshots idle entries (synchronously dropping them from the map so a slow close cannot let a subsequent tick re-process the same id) and routes them through the shared `closeSessions(entries)` helper. The interval still calls it via `void` (a `setInterval` callback cannot be `await`-ed), but each individual close is now bounded by `CLOSE_TIMEOUT_MS` and logs through the project-wide minimal shape. |
+| Log-shape inconsistency: `McpCurlServer.shutdown()` (3 sites — HTTP server / sessions / MCP server), the temp-dir cleanup branch, and `createHttpApp`'s global error handler still dump full error objects (`"Warning: Error closing …:", error`) | @coderabbitai | Fix needed (consistency) | Introduced a private `logShutdownError(label, error)` in `mcp-curl-server.ts` that logs `<label> error: <ErrorClassName>` (no per-request context, since shutdown is server-level). Routed all four sites through it. The HTTP global error handler (`http.ts`) now logs `http_unhandled error: [<METHOD path>] <ErrorClassName>` so an operator can correlate which route surfaced the unhandled error without leaking the error message itself. |
+| RFC 6750 §2.1 — Bearer scheme should match case-insensitively (`bearer X` and `BEARER X` currently 401) — tracked in `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` (P3, deferred from Pass 1) | @coderabbitai | Fix needed (resolved deferred todo) | Implemented Option A from the todo file: split scheme prefix from token, variable-time scheme check (`schemeSlice.toLowerCase() !== "bearer "`), timing-safe compare on the token portion only (`safeStringCompare(tokenPart, expectedToken)`). Extracted a shared `reject(res)` helper to avoid duplicating the 401 body across three reject branches. Added 5 tests: `it.each` over lowercase / uppercase / mixed-case scheme acceptance, plus a regression-lock that case-insensitivity must NOT relax token checking, plus a defence-in-depth test that non-Bearer schemes (e.g. `Basic1`) still 401. Todo file deleted; recorded under "Resolved Todos" below. |
+| `enableJsonResponse: true` rationale not documented in code | @coderabbitai | Documentation | Added an in-code comment explaining the choice: mcp-curl tools (`curl_execute`, `jq_query`, custom YAML/registerCustomTool handlers) are request/response shaped — they produce a complete result per call and emit no incremental progress events — so SSE would carry exactly one frame and then close. JSON-direct cuts that overhead and simplifies session timeout / idle-cleanup interactions. SSE-dependent clients can still open `GET /mcp` for server→client streams against an established session. |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| Round 1: Bearer scheme matched case-sensitively (P3-4 deferred to a todo because the fix needed care to preserve timing-safe property over the secret) | Round 4: scheme matched case-insensitively per RFC 6750 §2.1; timing-safe property preserved by comparing the **token portion only** through `safeStringCompare` | Adjacent to PR-4's auth-token boundary; fits the same review pass; ~30 LOC including tests; shipping it here closes the only outstanding PR-4 todo and avoids a one-shot follow-up PR for an adjacent line. | @coderabbitai |
+| Pass 2 / Round 2: `closeAll` had timeout-bounded close, but `startCleanup` and `app.delete("/mcp")` did not (different patterns) | Round 4: every session-close path (`closeAll`, `closeSession`, idle interval) routes through the same private `closeSessions(entries)` helper which wraps `closeWithTimeout` | Single source of truth for the close order (transport → MCP server), the parallelisation policy (`Promise.allSettled`), and the per-close 5s budget — symmetric across graceful shutdown, explicit DELETE, and idle reaping. | @coderabbitai |
+| Pre-existing: shutdown / temp-cleanup / global-error-handler logged full error objects (legacy stderr style) | Round 4: all four sites use the project-wide minimal `<label> error: <ErrorClassName>` shape (or `<label> error: [<context>] <ErrorClassName>` where a meaningful per-request context exists) | Coderabbit explicitly flagged the inconsistency after Round 3 fixed the `closeAll` and `http_post` sites — sweeping the remaining adjacent sites brings the codebase to one logging convention. | @coderabbitai |
+
+### Resolved Todos
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | Bearer scheme case-insensitivity (RFC 6750 §2.1) | Implemented Option A: scheme prefix slice + `toLowerCase()` (variable-time, non-secret), `safeStringCompare` over the token portion (timing-safe over the secret). 5 new tests cover lowercase / uppercase / mixed-case acceptance, wrong-token rejection under lowercase scheme, and unknown-scheme rejection. | PR-4 / Round 4 review-comments-addressed | 2026-05-01 |
+
+### Files Modified
+
+- `src/lib/transports/http.ts` — `createAuthMiddleware`: scheme/token split + case-insensitive scheme match + shared `reject()` helper; `app.delete("/mcp")` now `await`s `sessionManager.closeSession(sessionId)`; `app.use(globalErrorHandler)` uses minimal log shape; `enableJsonResponse: true` rationale documented inline.
+- `src/lib/session/session-manager.ts` — added public `closeSession(id)` and private `closeSessions(entries)`; `closeAll` and `startCleanup` now both delegate to `closeSessions`; `delete(id)` JSDoc clarifies it's the bookkeeping-only path used by `transport.onclose`.
+- `src/lib/extensible/mcp-curl-server.ts` — added private `logShutdownError(label, error)`; routed `shutdown_http_server`, `shutdown_sessions`, `shutdown_mcp_server`, `shutdown_temp_dir` through it.
+- `src/lib/transports/http.test.ts` — added 5 tests for case-insensitive Bearer scheme.
+- `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` — deleted (resolved).
+- `dist/*` — rebuilt.
+
+### Tests
+
+- `npm test` — **634 passing / 7 skipped / 0 failing** (was 629 / 7 / 0; net **+5 tests** for the case-insensitive Bearer scheme matrix).
+- `npm run build` — clean.
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _(none)_ | — | — | — |

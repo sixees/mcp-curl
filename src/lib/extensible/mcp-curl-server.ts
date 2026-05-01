@@ -460,7 +460,7 @@ export class McpCurlServer {
                     }),
                 ]);
             } catch (error) {
-                console.error("Warning: Error closing HTTP server:", error);
+                logShutdownError("shutdown_http_server", error);
             } finally {
                 if (timeoutId !== undefined) {
                     clearTimeout(timeoutId);
@@ -475,7 +475,7 @@ export class McpCurlServer {
             try {
                 await this._sessionManager.closeAll();
             } catch (error) {
-                console.error("Warning: Error closing sessions:", error);
+                logShutdownError("shutdown_sessions", error);
             }
         }
 
@@ -484,7 +484,7 @@ export class McpCurlServer {
             try {
                 await this._server.close();
             } catch (error) {
-                console.error("Warning: Error closing MCP server:", error);
+                logShutdownError("shutdown_mcp_server", error);
             } finally {
                 this._server = null;
             }
@@ -502,7 +502,7 @@ export class McpCurlServer {
         try {
             await cleanupTempDir();
         } catch (error) {
-            console.error("Warning: Error cleaning up temp directory:", error);
+            logShutdownError("shutdown_temp_dir", error);
         } finally {
             // Reset state to allow potential reuse
             this._started = false;
@@ -632,4 +632,17 @@ export class McpCurlServer {
             throw new Error(`Cannot call ${method} after server has started`);
         }
     }
+}
+
+/**
+ * Stderr logger for shutdown-path failures, in the project-wide minimal
+ * shape (`<label> error: <ErrorClassName>` — see CLAUDE.md "Error logging").
+ * Shutdown errors have no per-request context, so the bracketed
+ * `[<context>]` slot the per-tool / per-session sites use is omitted; the
+ * label itself identifies which sub-tear-down failed (e.g.
+ * `shutdown_http_server`, `shutdown_sessions`).
+ */
+function logShutdownError(label: string, error: unknown): void {
+    const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+    console.error(`${label} error: ${errorClass}`);
 }

@@ -145,6 +145,43 @@ describe("createAuthMiddleware", () => {
         mw(mockReq({ authorization: ["Bearer secret-token", "Bearer evil"] }), mockRes(), next);
         expect(next).toHaveBeenCalled();
     });
+
+    // RFC 6750 §2.1 — the auth scheme name MUST be matched case-insensitively.
+    // The token portion remains case-sensitive (it is the shared secret).
+    it.each([
+        ["lowercase scheme", "bearer secret-token"],
+        ["uppercase scheme", "BEARER secret-token"],
+        ["mixed-case scheme", "BeArEr secret-token"],
+    ])("accepts %s with the correct token (RFC 6750 §2.1)", (_label, header) => {
+        const mw = createAuthMiddleware("secret-token");
+        const next = mockNext();
+        mw(mockReq({ authorization: header }), mockRes(), next);
+        expect(next).toHaveBeenCalled();
+    });
+
+    it("still rejects case-insensitive scheme when the token is wrong", () => {
+        // Regression-lock: scheme case insensitivity must not relax token
+        // checking. A malformed token under a lowercase `bearer` scheme has
+        // to fail with 401, not pass.
+        const mw = createAuthMiddleware("secret-token");
+        const res = mockRes();
+        const next = mockNext();
+        mw(mockReq({ authorization: "bearer wrong-token" }), res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it("rejects unknown auth schemes (Basic, Token, …)", () => {
+        // Defence-in-depth: non-Bearer schemes must not slip through just
+        // because the prefix length and trailing token length happen to
+        // match. The scheme slice has to lowercase to "bearer ".
+        const mw = createAuthMiddleware("secret-token");
+        const res = mockRes();
+        const next = mockNext();
+        mw(mockReq({ authorization: "Basic1 secret-token" }), res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(401);
+    });
 });
 
 // ─── formatAuthStatus ───
