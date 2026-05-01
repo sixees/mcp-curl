@@ -145,14 +145,14 @@ export function validateAuthToken(token: string | undefined): void {
     if (token === undefined || token === "") return;
     if (token.length > LIMITS.MAX_AUTH_TOKEN_LENGTH) {
         throw createConfigError(
-            "MCP_AUTH_TOKEN",
+            ENV.AUTH_TOKEN,
             `[length=${token.length}]`,
             `exceeds maximum ${LIMITS.MAX_AUTH_TOKEN_LENGTH} characters`,
         );
     }
     if (!PRINTABLE_ASCII.test(token)) {
         throw createConfigError(
-            "MCP_AUTH_TOKEN",
+            ENV.AUTH_TOKEN,
             "[redacted]",
             "must contain only printable ASCII characters (0x20–0x7E)",
         );
@@ -164,20 +164,35 @@ export function validateAuthToken(token: string | undefined): void {
  *
  * When an auth token is provided, all HTTP requests must include a matching
  * Bearer token in the Authorization header.
+ *
+ * The expected `Bearer <token>` string is built once at middleware
+ * construction (closure capture) so the per-request hot path does no
+ * string allocation. A length pre-check rejects oversized headers before
+ * `safeStringCompare` allocates padded buffers, bounding the per-request
+ * allocation to `expectedHeader.length` regardless of attacker input.
  */
 export function createAuthMiddleware(
     authToken?: string
 ): (req: Request, res: Response, next: NextFunction) => void {
-    return (req: Request, res: Response, next: NextFunction): void => {
-        // If no token configured, allow all requests (backward compatible)
-        if (!authToken) {
-            next();
-            return;
-        }
+    if (!authToken) {
+        // No token configured — pass through (backward compatible).
+        return (_req, _res, next): void => next();
+    }
+    const expectedHeader = `Bearer ${authToken}`;
+    const expectedLength = expectedHeader.length;
 
-        const authHeader = req.headers.authorization;
-        const expectedHeader = `Bearer ${authToken}`;
-        if (!authHeader || !safeStringCompare(authHeader, expectedHeader)) {
+    return (req: Request, res: Response, next: NextFunction): void => {
+        // Express types the header as `string | string[] | undefined`. RFC 7230
+        // forbids duplicate Authorization headers, but Node has historically
+        // surfaced arrays in edge cases — collapse defensively.
+        const rawAuth = req.headers.authorization;
+        const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
+
+        // Length-bound the timing-safe compare. The compare itself is constant-
+        // time over equal-length buffers, so a length-derived early reject does
+        // not weaken the security property (it never reveals byte-equality).
+        const lengthOk = authHeader !== undefined && authHeader.length === expectedLength;
+        if (!lengthOk || !safeStringCompare(authHeader as string, expectedHeader)) {
             res.status(401).json({
                 jsonrpc: "2.0",
                 error: {
@@ -383,9 +398,10 @@ export function resolveHost(configHost?: string): string {
  * Enables web-based clients to connect via HTTP/SSE.
  */
 export async function runHTTP(): Promise<void> {
-    // Validate first so a misconfigured MCP_AUTH_TOKEN aborts before any
-    // side-effecting setup (temp-dir cleanup, session manager, intervals,
-    // listening socket) runs.
+    // Snapshot the env var once so validation and the auth middleware see
+    // the same value. Validate first — `runHTTP` has no rollback handler,
+    // so a thrown `validateAuthToken` MUST run before we register any timer,
+    // session manager, or listening socket.
     const authToken = process.env[ENV.AUTH_TOKEN];
     validateAuthToken(authToken);
 

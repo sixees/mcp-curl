@@ -118,6 +118,32 @@ describe("createAuthMiddleware", () => {
         expect(next).not.toHaveBeenCalled();
         expect(res.status).toHaveBeenCalledWith(401);
     });
+
+    it("rejects oversized Authorization headers without invoking the timing-safe compare", () => {
+        // Defence-in-depth: a malicious client should not be able to force
+        // `safeStringCompare` to allocate Buffers proportional to a
+        // ~16 KB Authorization header. The middleware short-circuits on
+        // length mismatch, which is safe — `safeStringCompare` already
+        // returns false for length-mismatched inputs.
+        const mw = createAuthMiddleware("secret-token");
+        const res = mockRes();
+        const next = mockNext();
+        const oversized = `Bearer ${"x".repeat(LIMITS.MAX_AUTH_TOKEN_LENGTH * 2)}`;
+        mw(mockReq({ authorization: oversized }), res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it("collapses array-form Authorization header to its first value", () => {
+        // Express types `req.headers.authorization` as `string | string[] |
+        // undefined`. RFC 7230 forbids duplicate Authorization headers, but
+        // the runtime can still surface arrays in edge cases; the middleware
+        // must not throw when this happens.
+        const mw = createAuthMiddleware("secret-token");
+        const next = mockNext();
+        mw(mockReq({ authorization: ["Bearer secret-token", "Bearer evil"] }), mockRes(), next);
+        expect(next).toHaveBeenCalled();
+    });
 });
 
 // ─── formatHostForUrl ───
@@ -170,12 +196,10 @@ describe("resolveHost", () => {
 // ─── validateAuthToken ───
 
 describe("validateAuthToken", () => {
-    // Real-world JWT fixtures — header.payload.signature triplets large enough
-    // to regression-lock the per-format size assumptions documented in the
-    // PR-4 plan body. The `signature` segments are random base64url; they are
-    // not signed by any real key and have no semantic meaning.
-    const RSA_256_JWT = `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjVjMmI3NjYxIn0.eyJzdWIiOiJ1c2VyLTEyMyIsImF1ZCI6ImFwaS5leGFtcGxlLmNvbSIsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImlhdCI6MTcxNDQwMDAwMCwiZXhwIjoxNzE0NDAzNjAwLCJzY29wZSI6InJlYWQ6cHJvZmlsZSB3cml0ZTpwcm9maWxlIn0.${"a1B2c3D4e5F6g7H8".repeat(40)}`;
-    const OIDC_ID_TOKEN = `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjVjMmI3NjYxIn0.eyJzdWIiOiJ1c2VyLTEyMyIsImF1ZCI6ImNsaWVudC1pZC1leGFtcGxlIiwiaXNzIjoiaHR0cHM6Ly9hY2NvdW50cy5leGFtcGxlLmNvbSIsImlhdCI6MTcxNDQwMDAwMCwiZXhwIjoxNzE0NDAzNjAwLCJub25jZSI6ImFiYzEyMyIsImVtYWlsIjoidXNlckBleGFtcGxlLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJuYW1lIjoiSmFuZSBEb2UiLCJwaWN0dXJlIjoiaHR0cHM6Ly9leGFtcGxlLmNvbS9hdmF0YXIvamFuZS5wbmcifQ.${"X9y8Z7w6V5u4T3s2".repeat(100)}`;
+    // JWT-shaped fixture — exercises the base64url charset (a-zA-Z0-9-_) plus
+    // the `.` separator, which `"a".repeat(N)` does not. Regression-locks the
+    // contract that PRINTABLE_ASCII accepts the full JWT alphabet.
+    const JWT_SHAPED = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc-_DEF123";
 
     it("accepts undefined (no token configured)", () => {
         expect(() => validateAuthToken(undefined)).not.toThrow();
@@ -189,23 +213,23 @@ describe("validateAuthToken", () => {
         expect(() => validateAuthToken("Bearer-style-token-123")).not.toThrow();
     });
 
+    it("accepts a JWT-shaped token (base64url alphabet + dots)", () => {
+        expect(() => validateAuthToken(JWT_SHAPED)).not.toThrow();
+    });
+
     it("accepts a token at the maximum allowed length", () => {
         const token = "a".repeat(LIMITS.MAX_AUTH_TOKEN_LENGTH);
         expect(() => validateAuthToken(token)).not.toThrow();
     });
 
-    it("rejects a token one character over the maximum", () => {
-        const token = "a".repeat(LIMITS.MAX_AUTH_TOKEN_LENGTH + 1);
-        expect(() => validateAuthToken(token)).toThrow(/exceeds maximum/);
-    });
-
-    it("includes the length but not the token value in the over-length error", () => {
+    it("rejects a token over the maximum without echoing it", () => {
         const token = "z".repeat(LIMITS.MAX_AUTH_TOKEN_LENGTH + 1);
         try {
             validateAuthToken(token);
             throw new Error("expected validateAuthToken to throw");
         } catch (err) {
             const message = (err as Error).message;
+            expect(message).toMatch(/exceeds maximum/);
             expect(message).toContain(`[length=${LIMITS.MAX_AUTH_TOKEN_LENGTH + 1}]`);
             // Token body must never appear in error output (entropy leak).
             expect(message).not.toContain(token);
@@ -236,18 +260,6 @@ describe("validateAuthToken", () => {
             expect(message).not.toContain("hunter2");
             expect(message).not.toContain("def-secret");
         }
-    });
-
-    it("accepts a real-world RSA-256 JWT (~700+ chars, regression lock)", () => {
-        // The 256-char cap proposed in an earlier draft of B5 would have
-        // rejected this. The 4096 cap accepts it.
-        expect(RSA_256_JWT.length).toBeGreaterThan(700);
-        expect(() => validateAuthToken(RSA_256_JWT)).not.toThrow();
-    });
-
-    it("accepts a real-world OIDC ID token (~1700+ chars, regression lock)", () => {
-        expect(OIDC_ID_TOKEN.length).toBeGreaterThan(1700);
-        expect(() => validateAuthToken(OIDC_ID_TOKEN)).not.toThrow();
     });
 
     it("references the env var name (MCP_AUTH_TOKEN) in error messages", () => {
