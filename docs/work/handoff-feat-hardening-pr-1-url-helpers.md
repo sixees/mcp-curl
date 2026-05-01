@@ -51,7 +51,7 @@ PR-1 of the 9-PR pre-bigwork hardening track. Closes 5 items (A1, A2, A3, A4, B6
   - `https::` (double-colon) — old form passed (split gave `"https"`); new form rejects via parser. Behaviour change locked with test.
   - `""` (empty string) — `z.url()` rejects before `.refine()` runs; behaviour unchanged.
 - **Under-tested:**
-  - No integration test confirming a `data:` or `javascript:` URL passed to a YAML schema endpoint actually hits the validator and rejects (only unit-level coverage). Plan A2 mentions this should exist; deferring to a future PR since the unit tests cover the helper invariant and consumer schemas use it.
+  - No integration test confirming a `data:` or `javascript:` URL passed to a YAML schema endpoint actually hits the validator and rejects (only unit-level coverage). The plan's section A2 mentions this should exist; deferring to a future PR since the unit tests cover the helper invariant and consumer schemas use it.
   - No test of what happens if `URL` global is shadowed in a consuming codebase. Realistic? Probably not; flagging anyway.
 - **Pattern deviations:** none. The PR follows existing helper-consolidation patterns in the codebase (compare `src/lib/utils/error.ts:createConfigError` reuse).
 
@@ -69,11 +69,11 @@ PR-1 of the 9-PR pre-bigwork hardening track. Closes 5 items (A1, A2, A3, A4, B6
 - Manual testing: verified `dist/lib.d.ts` after `npm run build` lists all 4 new exports (`httpOnlyUrl`, `applySpotlighting`, `sanitizeResponse`, `detectInjectionPattern`).
 - Test gaps:
   - No end-to-end test of a YAML schema endpoint rejecting a `data:` URL through the full HTTP transport. Unit coverage is sufficient given consumer schemas all delegate to `httpOnlyUrl`.
-  - No timing benchmark of the parser-based check vs the split-based check. The check runs once per `.parse()`; impact is negligible. Plan PR-9 will baseline overall pipeline perf — this helper's overhead is below that noise floor.
+  - No timing benchmark of the parser-based check vs the split-based check. The check runs once per `.parse()`; impact is negligible. PR-9 will baseline overall pipeline perf — this helper's overhead is below that noise floor.
 
 ## Commit history
 
-```
+```bash
 git log --oneline main..HEAD
 697be5d test(prompts): add data: URL rejection regression tests
 af06996 feat(api): re-export httpOnlyUrl + spotlighting helpers from public barrel
@@ -342,3 +342,32 @@ All 10 P3 todo files renamed `*-pending-p3-*.md` → `*-complete-p3-*.md`, YAML 
 ### Plan-doc state
 
 The hardening plan at `docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md` is the authoritative source for any folded finding. Where the Review history appendix and a body section appear to conflict, the body section wins; the appendix is the audit trail.
+
+## Review Comments Addressed — 2026-05-01
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Ambiguous "Plan A2" reference (handoff:54) | @coderabbitai | Fix needed | Reworded to "the plan's section A2" |
+| Awkward "Plan PR-9 will baseline" phrasing (handoff:72) | @coderabbitai | Fix needed | Reworded to "PR-9 will baseline" |
+| Code fence missing language identifier (handoff:76, MD040) | @coderabbitai | Fix needed | Added `bash` language tag |
+| `sanitizeResponse` doc snippet "neutralizes payload" (custom-tools.md:172) | @coderabbitai | False positive (stale review) | Reply: doc was restructured per P3 #008; the referenced snippet no longer exists. The current pattern (custom-tools.md:174–184) uses `sanitizeAndDetect` + `applySpotlighting`, which is the recommended composition. |
+| `httpOnlyUrl` return type `z.ZodURL` doesn't exist (dist/lib.d.ts:17) | @gemini-code-assist | False positive (stale review) | Reply: the function was renamed to `createHttpOnlyUrlSchema` and its return type pinned to `z.ZodType<string>`. The reviewer is reading a pre-rebuild `dist/lib.d.ts`; the current build artifact reflects the new signature. |
+| "Resolved Todos" header rename (handoff:108) | @coderabbitai | Optional / deferred | Header retained — it matches the section's actual content (a record of deleted todo files) and aligns with the handoff template's `### Resolved Todos` convention. Renaming would diverge from the workflow's standard schema for marginal clarity gain. |
+
+### Decisions Revised
+
+None. All actionable comments were trivial documentation fixes; no documented decisions were reversed.
+
+### Files Modified
+
+- `docs/work/handoff-feat-hardening-pr-1-url-helpers.md` — three trivial text/markdown fixes (lines 54, 72, 76)
+
+### Reviewer breakdown
+
+- 6 unresolved threads, all from AI reviewers (5 CodeRabbit, 1 Gemini)
+- 3 actionable trivial fixes applied (50% applicable rate)
+- 2 stale/false-positive findings against pre-restructure code (33% — both reviewers reading code state from before the P3 restructure / the `httpOnlyUrl` → `createHttpOnlyUrlSchema` rename)
+- 1 optional cosmetic finding deferred (17%)
+- No findings conflicted with documented decisions; no escalation to user required
