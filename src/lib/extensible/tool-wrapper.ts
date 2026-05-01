@@ -14,8 +14,7 @@ import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders } from "../config/index.js";
-import { resolveBaseUrl, applySpotlighting } from "../utils/index.js";
-import { SPOTLIGHT_SENTINEL_PREFIX } from "../utils/sanitize.js";
+import { resolveBaseUrl, applySpotlighting, SPOTLIGHT_SENTINEL_PREFIX } from "../utils/index.js";
 
 /**
  * Wrap the first text content item with spotlighting sentinels if enabled.

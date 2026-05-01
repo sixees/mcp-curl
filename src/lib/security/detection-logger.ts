@@ -1,7 +1,7 @@
 // src/lib/security/detection-logger.ts
 // Throttled logger for prompt injection pattern detection events
 
-import { sanitizeResponse, detectInjectionPattern } from "../utils/sanitize.js";
+import { sanitizeResponse, detectInjectionPattern } from "../utils/index.js";
 
 const THROTTLE_WINDOW_MS = 60_000; // 1 detection log per hostname per 60 seconds; also used as cleanup interval
 

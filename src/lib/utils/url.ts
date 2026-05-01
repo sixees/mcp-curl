@@ -70,14 +70,29 @@ export interface CreateHttpOnlyUrlSchemaOptions {
  * `.optional()` / `.default()` chainability should compose with `z.optional()`
  * at the call site.
  *
- * @param options - Optional `description` (default: "URL (http or https)") and `message`.
- * @returns A Zod schema validating a string is an http/https URL.
+ * **Intended for module-level use only.** Each invocation registers the
+ * resulting schema with Zod's `globalRegistry` (via `.describe()`); calling
+ * this per-request would accumulate entries that the registry never reclaims.
+ * Build the schema once at module load and reuse the reference.
+ *
+ * @param options - Optional configuration for the schema's caller-visible text.
+ * @param options.description - Forwarded to Zod's `.describe()`. Becomes the
+ *   JSON Schema `"description"` field that LLM clients render in tool input
+ *   docs. Should describe what the URL is *for*; the http(s) constraint is
+ *   enforced by the helper itself and shouldn't leak into every call-site
+ *   description. Defaults to `"URL (http or https)"`.
+ * @param options.message - Validation error message returned when the URL
+ *   parses but uses a disallowed scheme. Defaults to
+ *   `"URL must use http or https scheme"`.
+ * @returns A Zod schema (`z.ZodType<string>`) accepting only http/https URLs.
+ *   URL-format failures emit `"Must be a valid URL"`; scheme-rejection failures
+ *   emit `options.message`.
  */
 export function createHttpOnlyUrlSchema(
     options: CreateHttpOnlyUrlSchemaOptions = {}
 ): z.ZodType<string> {
     const { description = "URL (http or https)", message = "URL must use http or https scheme" } = options;
-    return z.url().refine(
+    return z.url("Must be a valid URL").refine(
         (url) => {
             try {
                 return isAllowedUrlScheme(new URL(url).protocol);

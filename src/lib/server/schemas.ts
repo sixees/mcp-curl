@@ -2,7 +2,7 @@
 // Zod schemas for tool input validation
 
 import { z } from "zod";
-import { createHttpOnlyUrlSchema } from "../utils/url.js";
+import { createHttpOnlyUrlSchema } from "../utils/index.js";
 
 /**
  * Schema for structured cURL execution.

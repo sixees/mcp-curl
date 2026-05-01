@@ -14,7 +14,7 @@
 //   5. Public API types                 — McpCurlConfig, hooks, tool inputs
 //   6. Sanitization helpers (metadata)  — sanitizeDescription
 //   7. Response-side defence helpers    — sanitize / detect / spotlight / composer
-//   8. URL validation helper            — createHttpOnlyUrlSchema
+//   8. URL validation helpers           — createHttpOnlyUrlSchema, safeHostname
 //
 // PR-6b will add `wrapWithDefence(handler)`. Decision recorded for that PR:
 // `wrapWithDefence` becomes the canonical higher-level helper; the underlying
@@ -108,8 +108,13 @@ export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/u
 export { applySpotlighting, sanitizeResponse, detectInjectionPattern } from "./lib/utils/index.js";
 export { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 
-// 8. URL validation helper for custom tool authors that take URL parameters.
-// Built-in tools and YAML schemas use this same helper internally; exporting it
-// keeps custom tools at parity without deep-importing.
-export { createHttpOnlyUrlSchema } from "./lib/utils/index.js";
+// 8. URL validation helpers for custom tool authors that take URL parameters.
+// Built-in tools and YAML schemas use these same helpers internally; exporting
+// them keeps custom tools at parity without deep-importing.
+//
+// `safeHostname` is the malformed-URL-tolerant hostname extractor used in error
+// paths and log labels — PR-6b's `wrapWithDefence(result, hostname, config)`
+// callers will need it to derive a per-request hostname without reimplementing
+// the URL-parse-with-fallback pattern.
+export { createHttpOnlyUrlSchema, safeHostname } from "./lib/utils/index.js";
 export type { CreateHttpOnlyUrlSchemaOptions } from "./lib/utils/index.js";

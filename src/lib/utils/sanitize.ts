@@ -98,6 +98,14 @@ export function sanitizeDescription(input: string | null | undefined): string {
  * is no longer hidden behind a wall of whitespace), and detectInjectionPattern
  * still fires on the collapsed content for observability.
  *
+ * **Stability contract:** the security *invariant* is stable across versions —
+ * output never contains Unicode-attack chars from the documented class, never
+ * contains a run of 50+ consecutive spaces. The exact *byte-level form* of the
+ * transformation is implementation detail and may tighten over time (broader
+ * Unicode coverage, lower whitespace threshold, additional collapses). Do not
+ * rely on `sanitizeResponse(x) === x` as a "is clean" oracle — re-run the
+ * sanitiser instead, or compose with `sanitizeAndDetect`.
+ *
  * @param input - Response content to sanitize (null/undefined returns "")
  * @returns Sanitized content
  */
@@ -140,6 +148,14 @@ export function sanitizeResponse(input: string | null | undefined): string {
  * (un-sanitized) text means invisible-char-split phrases like "Ig​nore" will
  * not match, silently degrading detection coverage.
  *
+ * **Stability contract:** the *intent* — return `true` when the (already
+ * sanitised) content matches a known prompt-injection signal — is stable. The
+ * specific pattern set is **not** part of the public contract and will expand
+ * over time as new attack phrasings emerge. Tests that assert on which strings
+ * do or do not match should target known categories (e.g. instruction-override
+ * phrases) rather than exact wording, and callers must continue to honour the
+ * "observability only" rule regardless of which patterns are in play.
+ *
  * @param input - Content to scan (must already be passed through `sanitizeResponse`)
  * @returns true if any injection pattern matched
  */
@@ -180,6 +196,15 @@ const SPOTLIGHT_REQUEST_ID_PATTERN = /^[0-9a-f-]{32,36}$/i;
  * also short-circuits when the inner result is already wrapped — both layers
  * defend against double-wrapping (which would otherwise nest two different
  * UUID sentinels and confuse the LLM about where the trust boundary lies).
+ *
+ * **Stability contract:** the *security property* — output marks the content
+ * with a per-request, unguessable, unspoofable trust boundary — is stable. The
+ * exact sentinel string format (current: `---EXTERNAL-CONTENT-BEGIN-{uuid}---`)
+ * is implementation detail and may change in a future minor release (e.g. to
+ * a JSON envelope or a randomised byte prefix) without breaking the contract.
+ * Downstream prompt templates **must not** match on the literal sentinel
+ * string — treat the wrapped content as opaque and pass it through to the LLM
+ * unchanged.
  *
  * @param content - Response content to wrap
  * @param requestId - Unique identifier for this response (caller should pass randomUUID());

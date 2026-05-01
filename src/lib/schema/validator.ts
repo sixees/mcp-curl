@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { ZodIssue } from "zod";
 import type { ApiSchema } from "./types.js";
-import { createHttpOnlyUrlSchema } from "../utils/url.js";
+import { createHttpOnlyUrlSchema } from "../utils/index.js";
 
 /**
  * Regex for valid endpoint IDs.

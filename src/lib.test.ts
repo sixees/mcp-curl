@@ -37,6 +37,7 @@ import {
     detectInjectionPattern,
     applySpotlighting,
     createHttpOnlyUrlSchema,
+    safeHostname,
 } from "./lib/utils/index.js";
 import { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 
@@ -125,9 +126,12 @@ describe("public barrel (src/lib.ts)", () => {
             expect(publicApi.logInjectionDetected).toBe(logInjectionDetected);
         });
 
-        // Section 8 — URL validation helper
+        // Section 8 — URL validation helpers
         it("createHttpOnlyUrlSchema", () => {
             expect(publicApi.createHttpOnlyUrlSchema).toBe(createHttpOnlyUrlSchema);
+        });
+        it("safeHostname", () => {
+            expect(publicApi.safeHostname).toBe(safeHostname);
         });
     });
 
@@ -160,6 +164,7 @@ describe("public barrel (src/lib.ts)", () => {
             "sanitizeAndDetect",
             "logInjectionDetected",
             "createHttpOnlyUrlSchema",
+            "safeHostname",
         ]);
         const actual = new Set(Object.keys(publicApi));
         expect(actual).toEqual(expected);
