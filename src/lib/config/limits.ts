@@ -23,6 +23,13 @@ export const LIMITS = {
     DEFAULT_HTTP_PORT: 3000,
     /** Default maximum number of redirects to follow */
     MAX_REDIRECTS: 10,
+    /**
+     * Maximum length of operator-supplied HTTP transport auth tokens.
+     * 4096 covers RSA-256 JWTs (~700–900 chars), OIDC ID tokens (1500–2500 chars),
+     * and JWE tokens (up to ~4 KB) while staying well below the 8 KB HTTP
+     * header line-limit. Above this length is almost certainly a paste error.
+     */
+    MAX_AUTH_TOKEN_LENGTH: 4096,
 } as const;
 
 /**

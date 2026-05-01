@@ -14,6 +14,7 @@ export {
     UUID_REGEX,
     WINDOWS_RESERVED_BASENAMES,
     isWindowsReservedBasename,
+    PRINTABLE_ASCII,
 } from "./validation.js";
 
 export {
