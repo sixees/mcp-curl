@@ -99,6 +99,50 @@ git log --oneline main..HEAD
 - [ ] (Tracked in plan) When PR-5 / B4 lands, soften the README wording added here to reflect that
       `inputSchema` auto-sanitisation now applies — see plan body line 383.
 
+## Review Comments Addressed — 2026-05-01
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `McpCurlServer` imported but `server` not declared inline (line 158) | @agent-optibot (4/10 conf) | Fix needed (clarity) | Removed unused `McpCurlServer` import; added inline comment `// `server` is the McpCurlServer instance from the example above.` so readers see the chain back to the prior section instead of expecting a fresh instantiation. |
+| UK→US spelling: "Sanitising" / "sanitises" (lines 150, 152) | @gemini-code-assist | Fix needed (consistency) | Switched heading + body to "Sanitizing" / "sanitizes" to match the API symbols (`sanitizeDescription`), the in-block code comments ("sanitized internally"), and the predominant US spelling in `docs/custom-tools.md` (19 US vs 2 UK). |
+| `server` and `handler` used without local declaration (line 174) | @gemini-code-assist | Fix needed (clarity) | Replaced bare `handler` reference with inline `async (params) => { /* handler logic */ }`. Did **not** add `const server = new McpCurlServer()` — that would imply a *new* server distinct from the example above; the inline comment now anchors the reference correctly. |
+| UK→US spelling + remove backticks from link text (line 178) | @gemini-code-assist | Fix needed (consistency) | "sanitisation" → "sanitization"; `` [`docs/custom-tools.md`] `` → `[docs/custom-tools.md]` to match the link-formatting style used at lines 147, 242. |
+
+**Reviewer notes.**
+
+- All four threads were AI-reviewer findings; no human reviewers commented. No decision conflicts surfaced — none of the comments overturned a documented plan decision.
+- Gemini's spelling thread cites `.gemini/styleguide.md`, but that styleguide does not actually mandate US English (verified by reading the file). The applied change still stands on intra-document-consistency grounds (API symbols + code comments + the cross-link target are all US).
+- Optibot's "instantiate `server` in the snippet" suggestion was rejected in favour of an in-comment back-reference, because instantiating a second `McpCurlServer` in the same README would imply two separate server instances and confuse the relationship to the section above.
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| UK English ("sanitising", "sanitisation") matching the plan body's prose verbatim | US English ("sanitizing", "sanitization") | Consistency with API symbols, in-block code comments, and the cross-link target's predominant style. The plan body's prose used UK forms but the plan was not authoritative on spelling. | @gemini-code-assist |
+| Reproduce the plan's example verbatim, with `handler` as a bare reference and `server` from prior context | Inline placeholder `async (params) => { /* handler logic */ }`; explanatory comment anchoring `server` to the prior example | Reduces "where did these come from?" friction for copy-paste readers without re-instantiating a second server. | @gemini-code-assist + @agent-optibot |
+
+### Resolved Todos
+
+<!-- No docs/todos/ files were resolved or deleted in this review pass. -->
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _(none)_ | — | — | — | — |
+
+### Outstanding Todos
+
+<!-- No new docs/todos/ files created in this review pass. -->
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _(none)_ | — | — | — | — |
+
+### Files Modified
+
+- `README.md` — applied four AI-reviewer suggestions consolidated into one edit (spelling, link-text style, snippet self-containment).
+
 ### Outstanding Todos
 
 <!-- No new docs/todos/ files created this session. -->

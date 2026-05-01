@@ -147,16 +147,17 @@ await server.start("stdio");
 See the [library documentation](./docs/README.md) for the full API reference, including hooks, custom tools,
 instance utilities, and lifecycle management.
 
-### Sanitising externally-sourced field descriptions
+### Sanitizing externally-sourced field descriptions
 
-`registerCustomTool()` sanitises `title` and `description` automatically. It does **not** reach
+`registerCustomTool()` sanitizes `title` and `description` automatically. It does **not** reach
 into `inputSchema` — apply `sanitizeDescription()` to any `.describe()` string sourced from
 outside your own code (database, remote API, user-authored YAML).
 
 ```typescript
 import { z } from "zod";
-import { McpCurlServer, sanitizeDescription } from "mcp-curl";
+import { sanitizeDescription } from "mcp-curl";
 
+// `server` is the McpCurlServer instance from the example above.
 const fieldMeta = await fetchFieldDescriptionsFromDb();
 
 server.registerCustomTool(
@@ -170,11 +171,11 @@ server.registerCustomTool(
                 .describe(sanitizeDescription(fieldMeta.limit)),
         }),
     },
-    handler
+    async (params) => { /* handler logic */ }
 );
 ```
 
-For trusted internal strings, no sanitisation is required. See [`docs/custom-tools.md`](./docs/custom-tools.md#validating-external-inputs)
+For trusted internal strings, no sanitization is required. See [docs/custom-tools.md](./docs/custom-tools.md#validating-external-inputs)
 for the full discussion.
 
 ## YAML Schema
