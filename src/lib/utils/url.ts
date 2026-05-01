@@ -15,12 +15,23 @@ export function resolveBaseUrl(baseUrl: string, path: string): string {
 
 /**
  * Zod schema for a URL restricted to http/https schemes.
- * z.url() in Zod v4 accepts any WHATWG-valid URL (including javascript:, data:, ftp://).
- * The .refine() is the sole scheme enforcement at the schema layer.
+ *
+ * z.url() in Zod v4 accepts any WHATWG-valid URL (including javascript:, data:, ftp://);
+ * the .refine() is the sole scheme enforcement at the schema layer. Uses the WHATWG URL
+ * parser (matching how src/lib/security/ssrf.ts and Node fetch resolve URLs) so the schema
+ * agrees with what the network layer will actually parse — a URL that string-splits to
+ * "http:" but parses to a different scheme would otherwise pass the schema and surprise
+ * the SSRF check.
  */
 export function httpOnlyUrl(description: string) {
     return z.url().refine(
-        (url) => ["http", "https"].includes(url.split(":")[0].toLowerCase()),
+        (url) => {
+            try {
+                return ["http:", "https:"].includes(new URL(url).protocol);
+            } catch {
+                return false;
+            }
+        },
         { message: "URL must use http or https scheme" }
     ).describe(description);
 }

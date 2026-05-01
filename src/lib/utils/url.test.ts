@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveBaseUrl, safeHostname } from "./url.js";
+import { httpOnlyUrl, resolveBaseUrl, safeHostname } from "./url.js";
 
 describe("resolveBaseUrl", () => {
     it("strips trailing slash from base and joins with path", () => {
@@ -75,5 +75,72 @@ describe("safeHostname", () => {
         // Each call must return the fallback rather than propagate a TypeError.
         expect(() => safeHostname("javascript:alert(1)")).not.toThrow();
         expect(() => safeHostname("://broken")).not.toThrow();
+    });
+});
+
+describe("httpOnlyUrl", () => {
+    const schema = httpOnlyUrl("test url");
+
+    describe("accepts valid http(s) URLs", () => {
+        it("accepts http://example.com", () => {
+            expect(schema.safeParse("http://example.com").success).toBe(true);
+        });
+
+        it("accepts https://example.com", () => {
+            expect(schema.safeParse("https://example.com").success).toBe(true);
+        });
+
+        it("accepts https URLs with path and query", () => {
+            expect(schema.safeParse("https://example.com/path?query=1").success).toBe(true);
+        });
+
+        it("accepts IPv6 hosts (embedded colons must not confuse the parser)", () => {
+            // Regression guard: the previous .split(":")[0] form parsed this as the
+            // scheme "https" and host "[", which still passed by accident. The WHATWG
+            // parser treats the brackets correctly — protocol is "https:".
+            expect(schema.safeParse("https://[::1]/").success).toBe(true);
+        });
+    });
+
+    describe("rejects non-http(s) schemes", () => {
+        it("rejects ftp:", () => {
+            expect(schema.safeParse("ftp://example.com").success).toBe(false);
+        });
+
+        it("rejects file:", () => {
+            expect(schema.safeParse("file:///etc/passwd").success).toBe(false);
+        });
+
+        it("rejects data:", () => {
+            expect(schema.safeParse("data:text/plain;base64,SGVsbG8=").success).toBe(false);
+        });
+
+        it("rejects javascript:", () => {
+            expect(schema.safeParse("javascript:alert(1)").success).toBe(false);
+        });
+
+        it("rejects look-alike scheme httpx:", () => {
+            // The previous .split(":")[0] form would have classified the scheme as
+            // "httpx" and rejected; the parser-based form classifies as "httpx:" and
+            // rejects too. Asserted explicitly to lock the behaviour.
+            expect(schema.safeParse("httpx://example.com").success).toBe(false);
+        });
+    });
+
+    describe("rejects malformed inputs", () => {
+        it("rejects an empty string", () => {
+            expect(schema.safeParse("").success).toBe(false);
+        });
+
+        it("rejects a non-URL string", () => {
+            expect(schema.safeParse("not-a-url").success).toBe(false);
+        });
+
+        it("rejects double-colon parser quirks", () => {
+            // The WHATWG parser will throw or return a strange protocol on this input;
+            // the .split(":")[0] form would silently classify scheme as "https" and
+            // pass. Asserted to lock the parser-based rejection.
+            expect(schema.safeParse("https::").success).toBe(false);
+        });
     });
 });
