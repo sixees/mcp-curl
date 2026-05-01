@@ -175,3 +175,78 @@ _None this session._ PR-1 already deleted the `docs/todos/` directory; the B5 to
 | File (removed) | Title | Summary | Resolved by | Date |
 |----------------|-------|---------|-------------|------|
 | _(none — already recorded under PR-1's handoff)_ | — | — | — | — |
+
+---
+
+## Code Review — 2026-05-01
+
+### Review Summary
+
+- **Reviewer:** automated multi-agent review (5 agents in parallel)
+- **Agents used:** `security-sentinel`, `typescript-reviewer`, `code-simplicity-reviewer`, `performance-oracle`, `learnings-researcher`
+- **Findings:** 🔴 P1: 0 | 🟡 P2: 6 (5 addressed, 1 rejected on review) | 🔵 P3: 5 (3 addressed, 1 deferred as todo, 1 false-positive)
+
+### Handoff Assessment
+
+The builder's self-assessment was **honest and largely accurate**. All five reviewers independently verified the load-bearing claims:
+
+- ✅ **Token-leak claim verified.** `grep '${token' src/` returns only `${token.length}` and JSDoc references; no code path interpolates the raw token into an error, log, or response.
+- ✅ **Timing-safe compare verified.** `safeStringCompare` correctly pads to equal length and XORs `lengthMatch` into the result; `crypto.timingSafeEqual` always sees equal-length buffers.
+- ✅ **Charset regex verified.** `/^[\x20-\x7E]+$/` correctly rejects every documented byte class (CRLF, NUL, DEL, high-bit, multi-byte UTF-8, surrogates, emoji); no backtracking risk.
+- ✅ **Validation-order claim partially refined.** True for `runHTTP()` (no rollback handler — must validate first). For `McpCurlServer.start()`, two cleanup intervals (`startRateLimitCleanup`, `startInjectionCleanup`) start at lines 366–367 *before* `startHttp()` is called; the `try/catch` at lines 361–411 cleans them up on throw. So the *invariant* (no orphaned timers on bad token) holds, but the *literal* "validates before all side effects" needed nuance. Comments updated in both startup paths.
+
+**No undisclosed issues** — every concern reviewers raised matched something the builder either had documented (S11 closure, no-public-barrel-export) or was a defensible design choice (length cap value, JWT/OIDC fixtures).
+
+### Verified Claims
+
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| Tests pass (622 / 7 / 0) | ✅ yes | confirmed at every reviewer stage |
+| Validation runs before all side effects in `runHTTP` | ✅ yes | first statement |
+| Validation runs before all side effects in `startHttp` | ⚠️ refined | true within `startHttp` itself; cleanup intervals start in parent `start()` and are torn down by rollback handler |
+| Token never echoed in errors | ✅ yes | only `[length=N]` and `[redacted]` ever interpolated |
+| `safeStringCompare` already timing-safe (S11 no-op) | ✅ yes | `crypto.timingSafeEqual` over padded buffers |
+| `PRINTABLE_ASCII` not in public barrel | ✅ yes | absent from `src/lib.ts`, `dist/lib.js`, `dist/lib/index.js` |
+| `validateAuthToken` not in public barrel | ✅ yes | same — transport-internal only |
+| Constants in convention-mandated homes | ✅ yes | `config/limits.ts` + `config/security/validation.ts`; barrel re-export symmetric with `UUID_REGEX` |
+| `it.each` for byte-class matrix follows project convention | ✅ yes | matches `prompts/url-scheme.test.ts` shape |
+| No public-API regressions | ✅ yes | `dist/lib.d.ts` unchanged for public surface |
+
+### Findings Resolved in This Pass
+
+| ID | Severity | Category | Description | Resolution |
+|----|----------|----------|-------------|------------|
+| P2-A | 🟡 P2 | security/perf | `safeStringCompare` allocated buffers up to ~16 KB driven by attacker-controlled `Authorization` header length | Added length pre-check in `createAuthMiddleware` — header length must equal `expectedHeader.length` before reaching `safeStringCompare`. Length-based reject does not weaken timing-safe property (compare never reveals byte-equality). |
+| P2-C | 🟡 P2 | TS/consistency | `createConfigError("MCP_AUTH_TOKEN", …)` used a literal | Replaced with `ENV.AUTH_TOKEN` for parity with `file-validation.ts`. Tests still assert `/MCP_AUTH_TOKEN/` (resolved value of the constant). |
+| P2-D | 🟡 P2 | test redundancy | Over-cap rejection test + length-redaction test both used `cap+1` | Merged into one consolidated test that asserts `/exceeds maximum/`, `[length=N]`, redaction (no token echo), and no `z{10,}` run. |
+| P2-E | 🟡 P2 | test fixtures | JWT/OIDC fixtures used `.repeat(40)` / `.repeat(100)` inflation (~1.5KB+3KB of base64 in source) for marginal regression-lock value | Replaced with one compact JWT-shaped fixture (~80 chars) that exercises the base64url alphabet + dot separator. Drops two tests, keeps the one regression-lock concern that `"a".repeat(MAX)` doesn't cover (charset breadth). |
+| P2-F | 🟡 P2 | TS symmetry | Snapshot-semantics comment in `mcp-curl-server.ts` not mirrored in `runHTTP` | Both call sites now have explicit "Snapshot the env var once so validation and middleware see the same value" comments + a clarifying note on rollback asymmetry. |
+| P2-B | 🟡 P2 | simplicity | Suggested collapsing `validateAuthToken` into `createHttpApp` | **Rejected on review.** `runHTTP()` lacks the try/catch rollback that `McpCurlServer.start()` has; collapsing would orphan timers on bad token in the standalone path. The duplication is intentional defense-in-depth. Documented this rationale in the comments above. |
+| P3-1 | 🔵 P3 | docs | Handoff "before all side effects" claim needed nuance for `start()` | Clarified in the Verified Claims table above. |
+| P3-3 | 🔵 P3 | robustness | `req.headers.authorization` array case unhandled | Added `Array.isArray(rawAuth) ? rawAuth[0] : rawAuth` collapse in `createAuthMiddleware`; new test asserts the fallback. |
+| P3-5 | 🔵 P3 | docs | `createConfigError` JSDoc lacked redaction example | Added second `@example` block showing the `[redacted]` pattern. |
+| P3-6 | 🔵 P3 | perf | `\`Bearer ${authToken}\`` rebuilt per request | Hoisted to closure capture at middleware construction; per-request hot path now does no string allocation. |
+| P3-2 | 🔵 P3 | future-proofing | `createHttpApp` reachable via internal barrel without internal validation guard | Resolved indirectly: keeping validation at both call sites (rejecting P2-B) means `createHttpApp` always receives a validated token from any current consumer. If a future caller surfaces `createHttpApp` to external code, validation should be hoisted into it then. |
+
+### Findings Deferred
+
+| ID | Severity | Description | Defer Reason | Tracker |
+|----|----------|-------------|--------------|---------|
+| P3-4 | 🔵 P3 | `safeStringCompare(authHeader, "Bearer ${token}")` is case-sensitive on the `Bearer` scheme; RFC 6750 §2.1 requires case-insensitive scheme matching | Pre-existing (not a PR-4 regression); requires non-trivial refactor to split scheme prefix from token portion while preserving timing-safe property over the secret | `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` |
+
+### Tests After Review
+
+- `npm test` — **622 passing / 7 skipped / 0 failing** (unchanged total; net +1 in `createAuthMiddleware` describe, net -1 in `validateAuthToken` describe).
+- `npm run build` — clean.
+- New tests added: oversized-Authorization rejection (length pre-check) + array-form Authorization collapse + JWT-shaped accept.
+- Tests removed: standalone over-cap rejection (folded into redaction test) + RSA-256-JWT fixture + OIDC-ID-token fixture.
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | P3 | RFC 6750 case-insensitive scheme matching | code-review |
+
+### Blockers
+
+**None — clear to merge.** All P2 findings are resolved or rejected on documented grounds. The remaining P3 (case-insensitive Bearer scheme) is pre-existing, low-impact, and tracked.
