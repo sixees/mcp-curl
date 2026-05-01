@@ -14,13 +14,14 @@ import {
     safeStringCompare,
 } from "../security/index.js";
 import { SessionManager } from "../session/index.js";
-import { SESSION, ENV, LIMITS, parsePort } from "../config/index.js";
+import { SESSION, ENV, LIMITS, parsePort, PRINTABLE_ASCII } from "../config/index.js";
 import {
     createServer,
     registerAllCapabilities,
     initializeLifecycle,
     setHttpServer,
 } from "../server/index.js";
+import { createConfigError } from "../utils/index.js";
 
 /** Default localhost origins allowed when no explicit allowlist is configured */
 const DEFAULT_ALLOWED_ORIGIN_PATTERNS: RegExp[] = [
@@ -118,6 +119,44 @@ function parseAllowedOriginsEnv(): string[] | null {
     const envValue = process.env[ENV.ALLOWED_ORIGINS];
     if (!envValue) return null;
     return envValue.split(",").map((o) => o.trim()).filter(Boolean);
+}
+
+/**
+ * Validate an operator-supplied HTTP transport auth token at startup.
+ *
+ * Rejects tokens that are not printable ASCII (0x20–0x7E) or that exceed
+ * `LIMITS.MAX_AUTH_TOKEN_LENGTH`. The intent is to fail loudly during boot
+ * so a misconfigured operator sees the error before the server starts
+ * accepting connections — never silently letting a CRLF, NUL, or
+ * accidentally-pasted blob flow into the `Bearer ${token}` header check.
+ *
+ * Undefined or empty tokens are accepted (auth is optional — see
+ * `createAuthMiddleware`); callers that require a token should enforce that
+ * separately.
+ *
+ * The token value is **never** echoed in error messages. Length and a
+ * `[redacted]` marker are surfaced to operators instead, so the rejection
+ * is debuggable without leaking entropy into logs.
+ *
+ * @throws Error from `createConfigError("MCP_AUTH_TOKEN", …)` if the token
+ *   is too long or contains a non-printable byte.
+ */
+export function validateAuthToken(token: string | undefined): void {
+    if (token === undefined || token === "") return;
+    if (token.length > LIMITS.MAX_AUTH_TOKEN_LENGTH) {
+        throw createConfigError(
+            "MCP_AUTH_TOKEN",
+            `[length=${token.length}]`,
+            `exceeds maximum ${LIMITS.MAX_AUTH_TOKEN_LENGTH} characters`,
+        );
+    }
+    if (!PRINTABLE_ASCII.test(token)) {
+        throw createConfigError(
+            "MCP_AUTH_TOKEN",
+            "[redacted]",
+            "must contain only printable ASCII characters (0x20–0x7E)",
+        );
+    }
 }
 
 /**
@@ -344,6 +383,12 @@ export function resolveHost(configHost?: string): string {
  * Enables web-based clients to connect via HTTP/SSE.
  */
 export async function runHTTP(): Promise<void> {
+    // Validate first so a misconfigured MCP_AUTH_TOKEN aborts before any
+    // side-effecting setup (temp-dir cleanup, session manager, intervals,
+    // listening socket) runs.
+    const authToken = process.env[ENV.AUTH_TOKEN];
+    validateAuthToken(authToken);
+
     // Clean up orphaned temp directories from previous runs
     await cleanupOrphanedTempDirs();
 
@@ -363,7 +408,7 @@ export async function runHTTP(): Promise<void> {
             return server;
         },
         sessionManager,
-        authToken: process.env[ENV.AUTH_TOKEN],
+        authToken,
     });
 
     const port = parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);

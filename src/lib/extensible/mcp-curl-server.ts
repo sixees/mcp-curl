@@ -25,7 +25,12 @@ import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import { startRateLimitCleanup, stopRateLimitCleanup, startInjectionCleanup, stopInjectionCleanup } from "../security/index.js";
 import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
-import { createHttpApp, resolveHost, formatHostForUrl } from "../transports/http.js";
+import {
+    createHttpApp,
+    resolveHost,
+    formatHostForUrl,
+    validateAuthToken,
+} from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
 import { ENV, LIMITS, parsePort } from "../config/index.js";
 
@@ -550,13 +555,19 @@ export class McpCurlServer {
      * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
      */
     private async startHttp(): Promise<void> {
+        // Validate first so a misconfigured authToken aborts the boot sequence
+        // before any side-effecting state (session manager, cleanup intervals,
+        // listening socket) is created.
+        const authToken = this._frozenConfig!.authToken ?? process.env[ENV.AUTH_TOKEN];
+        validateAuthToken(authToken);
+
         this._sessionManager = new SessionManager();
         this._sessionManager.startCleanup();
 
         const app = createHttpApp({
             createMcpServer: () => this.createConfiguredServer(),
             sessionManager: this._sessionManager,
-            authToken: this._frozenConfig!.authToken ?? process.env[ENV.AUTH_TOKEN],
+            authToken,
             allowedOrigins: this._frozenConfig!.allowedOrigins,
         });
 
