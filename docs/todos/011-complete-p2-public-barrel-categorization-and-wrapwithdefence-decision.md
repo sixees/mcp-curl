@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: 011
 tags: [code-review, architecture, public-api, future-prs]

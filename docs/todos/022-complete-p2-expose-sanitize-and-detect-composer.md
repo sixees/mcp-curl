@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: 022
 tags: [code-review, public-api, security, defense-in-depth, dry]

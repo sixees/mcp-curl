@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: 021
 tags: [code-review, naming, conventions, public-api]

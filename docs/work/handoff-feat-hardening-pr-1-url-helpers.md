@@ -268,3 +268,37 @@ The builder's instinct to flag the integration-test gap proactively is exactly t
 ### Pass 2 Blockers
 
 **None.** No P1 findings in pass 2 either. The pass-1 verdict ("clear to merge after P2 fixes") still stands. The pass-2 P2 items (#021, #022) are best addressed before the public exports propagate further; specifically, #021 (rename) should land before any minor release that ships `httpOnlyUrl` to npm consumers, and #022 (sanitizeAndDetect re-export) is best resolved alongside #003 (`detectInjectionPattern` misuse-prevention JSDoc) in a single defensive-API PR.
+
+## P2 Resolution — 2026-05-01
+
+All 13 P2 todos resolved on the PR-1 branch (no separate follow-up PR), bundled into 7 logical commits per shared scope:
+
+| Commit | Subject | Resolves |
+|--------|---------|----------|
+| 7711563 | refactor(security): extract `ALLOWED_URL_SCHEMES` single source of truth | #007 |
+| 4957e68 | refactor(utils): rename `httpOnlyUrl` to `createHttpOnlyUrlSchema` | #001, #009, #021 |
+| (in #007 + rename) | LLM-visible scheme constraint via default description | #006 |
+| 7728aa3 | test(prompts): consolidate duplicate URL scheme regression tests | #004, #010 |
+| 4e40650 | feat(security): defensive API surface for response-side helpers | #002, #003, #011, #022 |
+| 397e94b | fix(security): block IPv4-mapped IPv6 in compressed-hex form | #005 |
+| 712a06c | docs(custom-tools): split metadata H2 into input/output trust boundaries | #008 |
+
+### Resolution highlights
+
+- **#007 (scheme allowlist single source of truth):** new `src/lib/config/security/url-schemes.ts` module exports `ALLOWED_URL_SCHEMES`, `ALLOWED_URL_SCHEMES_CURL_FLAG`, and `isAllowedUrlScheme()`. Schema layer (`utils/url.ts`), DNS layer (`security/ssrf.ts`), and cURL transport (`execution/curl-args-builder.ts`) all consume this constant. `--proto` flag derived at module init so the three representations cannot drift.
+- **#001 + #009 + #021 (helper rewrite):** function renamed `createHttpOnlyUrlSchema(options?)` (verb-prefix + `Schema` suffix), takes an options bag (`description`, `message`), pins return type to `z.ZodType<string>` to immunize against Zod minor bumps and the upcoming Standard Schema migration in MCP SDK 2.0. Default description "URL (http or https)" makes the scheme constraint LLM-visible.
+- **#006 (LLM-visible scheme constraint):** call-sites pass purpose-shaped descriptions (`"The URL to request (http or https)"`, `"Base URL of the API"`); the helper's default description carries the rule when callers don't override.
+- **#004 + #010 (prompt regression tests):** two byte-identical test files collapsed into a single `prompts/url-scheme.test.ts` parameterised over both prompt schemas (`describe.each`) with a reject/accept matrix (`it.each`) including `vbscript:` and other WHATWG quirks. Old test files deleted.
+- **#002 + #003 + #011 + #022 (defensive API surface):** `applySpotlighting` now idempotent (short-circuits if content already starts with `SPOTLIGHT_SENTINEL_PREFIX`) and validates `requestId` shape; `tool-wrapper` mirrors the idempotence guard so the two layers cannot disagree. `detectInjectionPattern` JSDoc rewritten with a strong "**Observability only**" callout and three example code blocks. `src/lib.ts` restructured into 8 numbered sections; `sanitizeAndDetect` and `logInjectionDetected` re-exported. New `src/lib.test.ts` (25 tests) pins reference identity between every barrel symbol and its deep import + frozen-surface check.
+- **#005 (IPv4-mapped IPv6 blocklist gap):** new `normalizeIpv4MappedIpv6()` helper rewrites `::ffff:HHHH:HHHH` (compressed-hex form, optionally bracketed) to dotted-quad before the existing blocklist regexes run, closing the WHATWG-canonicalisation bypass. JSDoc on `createHttpOnlyUrlSchema` softened to acknowledge defence-in-depth across three layers (representation, not just allowlist, must agree). 32 new SSRF tests cover the compressed-hex variants of every blocked range.
+- **#008 (doc taxonomy):** `docs/custom-tools.md` split from one `## Sanitizing External Tool Metadata` H2 into three: `## Validating External Inputs`, `## Sanitizing External Outputs`, `## Composing the Full Defence`. "When to use which helper" tables added at section tops. Stale `httpOnlyUrl()` references fixed.
+
+### Test counts
+
+- Before P2 work: 470 tests passing.
+- After P2 work: **571 tests passing** (+101 new tests).
+- Build clean. No regressions.
+
+### Todo file lifecycle
+
+The 13 P2 todo files were renamed `*-pending-p2-*.md` → `*-complete-p2-*.md` and the YAML `status` field flipped from `pending` to `complete`. Files retained for traceability per the project's todo convention (only deleted via the defined completion lifecycle). P3 todos remain pending — out of scope for this P2 sweep.
