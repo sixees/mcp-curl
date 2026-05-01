@@ -250,3 +250,81 @@ The builder's self-assessment was **honest and largely accurate**. All five revi
 ### Blockers
 
 **None — clear to merge.** All P2 findings are resolved or rejected on documented grounds. The remaining P3 (case-insensitive Bearer scheme) is pre-existing, low-impact, and tracked.
+
+---
+
+## Code Review (Pass 2) — 2026-05-01
+
+### Review Summary
+
+- **Reviewer:** automated multi-agent review (typescript-reviewer, architecture-strategist, security-sentinel, performance-oracle, code-simplicity-reviewer, agent-native-reviewer, learnings-researcher) + context7 MCP for SDK documentation
+- **Lens:** SRP/DRY, security, performance, **TypeScript MCP SDK best practices** (per user request: "think harder")
+- **Findings:** 🔴 P1: 1 | 🟡 P2: 3 | 🔵 P3: 4 — all resolved in this pass
+- **Reviewer mindset:** Independent skeptical pass — verified handoff claims against SDK source (`node_modules/@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js`) rather than trusting prose
+
+### Handoff Assessment (Pass 1 → Pass 2)
+
+The Pass 1 handoff was **honest about the auth-token surface** but did **not cover the broader HTTP transport context**. The reviewers, looking through the MCP SDK lens, surfaced a **runtime-correctness P1 in the session lifecycle** that pre-dated PR-4 but was reachable from the same code path the auth-token middleware now guards. This is exactly the "look beyond the flagged risks" case the review skill calls out.
+
+The Pass 1 fixes themselves remained correct; nothing rolled back.
+
+### Findings Resolved in This Pass
+
+| ID | Severity | Category | Description | Resolution |
+|----|----------|----------|-------------|------------|
+| **P1-A** | 🔴 P1 | SDK lifecycle / dead code | The post-`server.connect()` block read `transport.sessionId` and registered the session in `SessionManager`. Per the SDK source (`webStandardStreamableHttp.js:433`), `sessionId` is **only** assigned inside `handleRequest` after an `initialize` JSON-RPC body is parsed. The block ran with `sessionId === undefined` every time, so **every session was orphaned** — the SDK fired `onsessioninitialized` (which the route did not register), then the route looked up `transport.sessionId` (undefined), so the `SessionManager.set(...)` call never executed with a real id. Follow-up POSTs with `Mcp-Session-Id` would 404 because the session was never registered. | Rewrote `app.post("/mcp")` to follow the SDK reference pattern: existing-session route → 404 for unknown id → 400 for non-init body → 503 capacity → fresh transport with `onsessioninitialized: (sid) => sessionManager.set(sid, ...)` callback registering the session synchronously when the SDK assigns the id. Added regression test in `http.session.test.ts` that mocks the SDK transport and asserts the callback wiring. |
+| **P2-G** | 🟡 P2 | security / DoS | Body parser (`express.json({ limit: "1mb" })`) was registered **globally** before the `/mcp`-scoped origin/auth middleware. Unauthenticated clients could force the server to allocate and parse 1 MB of JSON per request before being rejected. | Moved the body parser into the `/mcp` middleware chain, ordered **after** origin + auth: `app.use("/mcp", originMiddleware, authMiddleware, express.json({ limit: "1mb" }))`. Both middlewares only read headers, never the body — safe to run pre-parse. |
+| **P2-H** | 🟡 P2 | TS / SDK contract | Route handler used `as string` cast on `req.body` and the SDK transport. No structural guard against non-initialize bodies creating sessions. | Added `import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js"` and gate session creation: missing `Mcp-Session-Id` + non-init body → 400 (per MCP spec 2025-03-26). Replaced unsafe `as string` cast in `createAuthMiddleware` with type predicate `hasExpectedLength(value, expected): value is string`. |
+| **P2-I** | 🟡 P2 | reliability | `SessionManager.closeAll()` called `session.transport.close()` synchronously without awaiting. The SDK's `StreamableHTTPServerTransport.close()` is async (drains in-flight SSE streams via `_onsessionclosed`); not awaiting risked dropped frames during graceful shutdown. | Rewrote `closeAll()` to `await` both `transport.close()` and `server.close()` per session, parallelised across sessions via `Promise.allSettled` so one hung session cannot block the rest. Added explanatory JSDoc citing the SDK contract. |
+| **P3-7** | 🔵 P3 | observability | Operators got no boot-time signal whether bearer auth was active — a typoed `MCP_AUTH_TOKE=…` env var would silently boot a fully open server. | Added exported `formatAuthStatus(token)` helper. Logged at HTTP startup in both `runHTTP()` and `McpCurlServer.startHttp()`: `"HTTP transport: bearer auth enabled"` or `"HTTP transport: bearer auth DISABLED (set MCP_AUTH_TOKEN to require auth)"`. Token is never echoed (asserted by test). |
+| **P3-8** | 🔵 P3 | error logging | Route handler caught errors but logged them with `console.error("...", error)` — full message contents could leak hostname/path detail into operator logs, violating CLAUDE.md "Error logging: minimal — error class only" convention. | Replaced with `console.error(\`http_post error: [${errorClass}]\`)` matching project-wide stderr discipline. Error class only; no message or stack. |
+| **P3-9** | 🔵 P3 | input validation defence-in-depth | `createConfigError("…", value, …)` interpolated `value` directly into the error message. Most callers pass safe values (paths, redaction markers), but a future caller passing operator-supplied input with embedded CR/LF/NUL could forge log lines on stderr. | Added pre-interpolation sanitisation: CR → `\\r`, LF → `\\n`, NUL → `\\0`. Defence-in-depth — current callers were already safe; documented in JSDoc. |
+| **P3-10** | 🔵 P3 | type safety | Implicit `any` cleanup in route handler error path. | Used `error instanceof Error ? error.constructor.name : "unknown"` pattern instead of bare cast — consistent with logging convention used elsewhere in the codebase. |
+
+### Verified Claims (Pass 2)
+
+| Claim | Verified? | Notes |
+|-------|-----------|-------|
+| Pass 1 fixes still correct (auth middleware, validateAuthToken, redaction) | ✅ yes | All Pass 1 tests still pass; no rollback needed |
+| `transport.sessionId` is undefined immediately after `server.connect()` | ✅ yes | Confirmed in SDK source `webStandardStreamableHttp.js:433` — only set inside `handleRequest` after isInitializeRequest body parsed |
+| `onsessioninitialized` is a documented constructor option | ✅ yes | Confirmed via context7 MCP — public API in transport options interface |
+| Body parser ordering is safe before vs after auth | ✅ yes | originMiddleware + authMiddleware both read only `req.headers`, never `req.body` — verified by reading their implementations |
+| `closeAll` async fix doesn't break shutdown timing | ✅ yes | `Promise.allSettled` ensures one hung session can't block; existing test `cleanup operations` still passes |
+| `isInitializeRequest` import path correct for SDK 1.29 | ✅ yes | `@modelcontextprotocol/sdk/types.js` — exported as documented |
+| Build remains clean and public surface unchanged | ✅ yes | `dist/lib.d.ts` diff: only `formatAuthStatus` added (intentional, exported from transports module — not from public lib barrel) |
+
+### Tests After Pass 2
+
+- **`npm test` — 629 passing / 7 skipped / 0 failing** (was 622 / 7 / 0; net **+7 tests**: 5 in new `http.session.test.ts` + 2 new `formatAuthStatus` tests in `http.test.ts`)
+- **`npm run build`** — clean (DTS Build success in 2973ms)
+- **New tests added:**
+  - `http.session.test.ts` — full suite: SDK transport constructor receives `onsessioninitialized` callback; session is registered in `SessionManager` when callback fires; follow-up request with same `Mcp-Session-Id` routes to existing transport (regression-locks the P1 fix); 404 for unknown session id; 400 for non-init body without session id
+  - `http.test.ts` — `formatAuthStatus(undefined)` and `formatAuthStatus("")` report `DISABLED` and reference `MCP_AUTH_TOKEN`; `formatAuthStatus("token")` reports `enabled` without echoing the token
+
+### Files Modified (Pass 2)
+
+| File | Change |
+|------|--------|
+| `src/lib/transports/http.ts` | Rewrote `app.post("/mcp")` handler; added `isInitializeRequest` import + `hasExpectedLength` type predicate; reordered middleware chain (origin → auth → body parser); exported `formatAuthStatus` + logged it at boot |
+| `src/lib/extensible/mcp-curl-server.ts` | Imported `formatAuthStatus`; logged it at HTTP startup in `startHttp` listening handler |
+| `src/lib/session/session-manager.ts` | Awaited `transport.close()` + `server.close()` in `closeAll()`; parallelised teardown with `Promise.allSettled` |
+| `src/lib/utils/error.ts` | Sanitised `value` in `createConfigError` (CR/LF/NUL → escape forms); documented in JSDoc |
+| `src/lib/transports/http.session.test.ts` | **New** — regression test for `onsessioninitialized` wiring + session lifecycle |
+| `src/lib/transports/http.test.ts` | Added `formatAuthStatus` describe block (2 tests) |
+| `dist/*` | Rebuilt |
+
+### Outstanding Todos (After Pass 2)
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | P3 | RFC 6750 case-insensitive scheme matching | code-review (Pass 1) |
+
+### Blockers (After Pass 2)
+
+**None — clear to merge.** P1 session-lifecycle fix is in place with regression test. All P2 findings resolved. P3 items implemented or tracked. Public lib barrel unchanged for consumer-facing surface.
+
+### Reviewer Notes / Lessons
+
+- **The "dead code" P1 was the most consequential finding.** It was reachable only through the lens of "how does the MCP SDK actually surface session ids?" — pure code-quality reviewers (DRY, simplicity) would not have flagged it. This validates running `typescript-reviewer` + `architecture-strategist` *plus* SDK doc lookup, not just the cosmetic-quality reviewers.
+- **Verifying via SDK source (not just docs)** caught the exact line where the assignment happens. context7 documentation alone described the *contract* but the source confirmed *when* it executes — both were needed.
+- **Pass 1 was sound for what it scoped to.** The miss was scope, not depth: PR-4 was framed as an "auth token validation" PR, so the original work agent did not stress-test the surrounding HTTP route handler. Future PRs that touch any HTTP transport surface should review the entire `/mcp` route, not just the lines they edit.
