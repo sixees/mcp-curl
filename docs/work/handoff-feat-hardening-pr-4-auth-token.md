@@ -328,3 +328,46 @@ The Pass 1 fixes themselves remained correct; nothing rolled back.
 - **The "dead code" P1 was the most consequential finding.** It was reachable only through the lens of "how does the MCP SDK actually surface session ids?" — pure code-quality reviewers (DRY, simplicity) would not have flagged it. This validates running `typescript-reviewer` + `architecture-strategist` *plus* SDK doc lookup, not just the cosmetic-quality reviewers.
 - **Verifying via SDK source (not just docs)** caught the exact line where the assignment happens. context7 documentation alone described the *contract* but the source confirmed *when* it executes — both were needed.
 - **Pass 1 was sound for what it scoped to.** The miss was scope, not depth: PR-4 was framed as an "auth token validation" PR, so the original work agent did not stress-test the surrounding HTTP route handler. Future PRs that touch any HTTP transport surface should review the entire `/mcp` route, not just the lines they edit.
+
+---
+
+## Review Comments Addressed — 2026-05-01
+
+Three unresolved threads after pushing the Pass 2 commits — all from AI reviewers (`@gemini-code-assist`, `@coderabbitai` ×2). Triage applied SRP/DRY + project-convention checks against the CLAUDE.md logging rule and the Pass 1 + Pass 2 handoff entries.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Move HTTP auth-token validation before startup side effects in `start()` (`mcp-curl-server.ts:566`) | @coderabbitai | Fix needed | Hoisted `validateAuthToken` to the top of the `start()` try block (before `cleanupOrphanedTempDirs`, cleanup intervals, MCP server construction). Token is resolved once and passed to `startHttp(authToken)` as a snapshot — the validation and the auth middleware close over the same value. Keeping it inside the existing try/catch preserves rollback semantics on any other thrown error. |
+| Log shutdown failures without dumping the error object (`session-manager.ts:135`) | @coderabbitai | Fix needed | Replaced `console.error("Warning: Error closing session ${sessionId} transport:", error)` with the CLAUDE.md-compliant minimal pattern: `console.error(\`session_close_transport error: [${errorClass}]\`)`. Same for the server-close branch. The unused `sessionId` is renamed to `_sessionId` in the destructure. |
+| Inline the `hasExpectedLength` type predicate into a single `if` (`http.ts:195`) | @gemini-code-assist | False positive | Declined — kept the named type predicate. It eliminates the unsafe `as string` cast (which was the original Pass 2 P2 fix), is self-documenting, and could be reused if another middleware in this file needs the same length-narrowed guard. The inline alternative is one line shorter but conflates two concerns into a multi-clause boolean. |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| `validateAuthToken` runs inside `startHttp` (relying on `start()`'s try/catch rollback to tear down anything started before it) | `validateAuthToken` runs at the top of `start()`'s try block, before any side effects; result snapshot is passed down to `startHttp` | Pass 1 explicitly flagged this with "⚠️ refined: validation runs before all side effects in `startHttp` itself; cleanup intervals start in parent `start()` and are torn down by rollback handler" — coderabbit's comment closes that nuance by making it truly fail-fast. Cheaper failure path; clearer code. | @coderabbitai |
+
+The Pass 1 "duplicate validation in `runHTTP` is intentional" decision (P2-B rejection) **stands** — `runHTTP` still has no rollback handler, so its inline `validateAuthToken` is still the right place for that path.
+
+### Resolved Todos
+
+(none — `001-pending-p3-bearer-scheme-case-insensitivity.md` remains untouched; no comments addressed it)
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| `docs/todos/001-pending-p3-bearer-scheme-case-insensitivity.md` | P3 | RFC 6750 case-insensitive scheme matching | code-review (Pass 1) |
+
+### Files Modified
+
+- `src/lib/extensible/mcp-curl-server.ts` — hoisted `validateAuthToken` from `startHttp` to `start()`; `startHttp` now takes a pre-validated `authToken` snapshot
+- `src/lib/session/session-manager.ts` — `closeAll` error catches now use the minimal `[ErrorClassName]` log shape per CLAUDE.md
+- `dist/*` — rebuilt
+
+### Tests
+
+- `npm test` — **629 passing / 7 skipped / 0 failing** (unchanged — no new tests; behaviour-preserving refactors)
+- `npm run build` — clean

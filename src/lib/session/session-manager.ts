@@ -122,16 +122,18 @@ export class SessionManager {
         const entries = Array.from(this.sessions.entries());
         this.sessions.clear();
         await Promise.allSettled(
-            entries.map(async ([sessionId, session]) => {
+            entries.map(async ([_sessionId, session]) => {
                 try {
                     await session.transport.close();
                 } catch (error) {
-                    console.error(`Warning: Error closing session ${sessionId} transport:`, error);
+                    const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+                    console.error(`session_close_transport error: [${errorClass}]`);
                 }
                 try {
                     await session.server.close();
                 } catch (error) {
-                    console.error(`Warning: Error closing session ${sessionId} server:`, error);
+                    const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+                    console.error(`session_close_server error: [${errorClass}]`);
                 }
             }),
         );

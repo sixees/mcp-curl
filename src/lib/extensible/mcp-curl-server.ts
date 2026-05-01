@@ -360,6 +360,21 @@ export class McpCurlServer {
         this._frozenConfig = this.freezeConfig();
 
         try {
+            // Resolve and validate the HTTP auth token *before* any
+            // side-effecting setup. The rollback handler below would tear
+            // down anything we started, but it's strictly cheaper (and
+            // clearer) to fail-fast on a bad operator-supplied token before
+            // touching the filesystem, timers, or the MCP server. The
+            // snapshot is then handed to `startHttp` so validation and the
+            // auth middleware see the same value.
+            const httpAuthToken =
+                transport === "http"
+                    ? (this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN])
+                    : undefined;
+            if (transport === "http") {
+                validateAuthToken(httpAuthToken);
+            }
+
             // Clean up orphaned temp directories from previous runs
             await cleanupOrphanedTempDirs();
 
@@ -372,7 +387,7 @@ export class McpCurlServer {
 
             // Start appropriate transport
             if (transport === "http") {
-                await this.startHttp();
+                await this.startHttp(httpAuthToken);
             } else {
                 await this.startStdio();
             }
@@ -554,17 +569,13 @@ export class McpCurlServer {
     /**
      * Start HTTP transport with session management.
      * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
+     *
+     * @param authToken - Pre-resolved bearer token (already passed through
+     *   `validateAuthToken` in `start()`). Passing the snapshot down avoids
+     *   resolving the env var twice and guarantees the value the auth
+     *   middleware closes over is the exact value that was validated.
      */
-    private async startHttp(): Promise<void> {
-        // Snapshot the resolved token once so validation and the auth
-        // middleware see the same value. `start()` wraps this method in a
-        // try/catch with rollback (intervals, listening socket), so a thrown
-        // `validateAuthToken` here is recoverable; we still validate before
-        // the SessionManager is constructed to keep failure-mode shutdown
-        // cheap.
-        const authToken = this._frozenConfig!.authToken ?? process.env[ENV.AUTH_TOKEN];
-        validateAuthToken(authToken);
-
+    private async startHttp(authToken: string | undefined): Promise<void> {
         this._sessionManager = new SessionManager();
         this._sessionManager.startCleanup();
 

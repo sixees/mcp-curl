@@ -630,16 +630,18 @@ var SessionManager = class {
     const entries = Array.from(this.sessions.entries());
     this.sessions.clear();
     await Promise.allSettled(
-      entries.map(async ([sessionId, session]) => {
+      entries.map(async ([_sessionId, session]) => {
         try {
           await session.transport.close();
         } catch (error) {
-          console.error(`Warning: Error closing session ${sessionId} transport:`, error);
+          const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+          console.error(`session_close_transport error: [${errorClass}]`);
         }
         try {
           await session.server.close();
         } catch (error) {
-          console.error(`Warning: Error closing session ${sessionId} server:`, error);
+          const errorClass = error instanceof Error ? error.constructor.name : "unknown";
+          console.error(`session_close_server error: [${errorClass}]`);
         }
       })
     );
@@ -1045,12 +1047,16 @@ var McpCurlServer = class {
     this._started = true;
     this._frozenConfig = this.freezeConfig();
     try {
+      const httpAuthToken = transport === "http" ? this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN] : void 0;
+      if (transport === "http") {
+        validateAuthToken(httpAuthToken);
+      }
       await cleanupOrphanedTempDirs();
       this._rateLimitInterval = startRateLimitCleanup();
       this._injectionCleanupInterval = startInjectionCleanup();
       this._server = this.createConfiguredServer();
       if (transport === "http") {
-        await this.startHttp();
+        await this.startHttp(httpAuthToken);
       } else {
         await this.startStdio();
       }
@@ -1209,10 +1215,13 @@ var McpCurlServer = class {
   /**
    * Start HTTP transport with session management.
    * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
+   *
+   * @param authToken - Pre-resolved bearer token (already passed through
+   *   `validateAuthToken` in `start()`). Passing the snapshot down avoids
+   *   resolving the env var twice and guarantees the value the auth
+   *   middleware closes over is the exact value that was validated.
    */
-  async startHttp() {
-    const authToken = this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN];
-    validateAuthToken(authToken);
+  async startHttp(authToken) {
     this._sessionManager = new SessionManager();
     this._sessionManager.startCleanup();
     const app = createHttpApp({
