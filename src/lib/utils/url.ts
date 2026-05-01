@@ -50,9 +50,18 @@ export interface CreateHttpOnlyUrlSchemaOptions {
  *   `ftp://`); the `.refine()` is the sole scheme enforcement at the schema
  *   layer.
  * - Uses the WHATWG URL parser (matching `security/ssrf.ts` and Node fetch),
- *   so the schema agrees with what the network layer will actually parse — a
- *   URL that string-splits to "http:" but parses to a different scheme would
- *   otherwise pass the schema and surprise the SSRF check.
+ *   so a URL that string-splits to "http:" but parses to a different scheme
+ *   cannot pass the schema and surprise the SSRF check.
+ *
+ * **Defense-in-depth, not invariant equivalence.** This helper is one of three
+ * independent enforcement points (schema → DNS/SSRF → cURL `--proto`); each
+ * is sufficient on its own to reject a non-http(s) request. The layers share
+ * the `ALLOWED_URL_SCHEMES` allowlist, but they do not share representation —
+ * for example, WHATWG canonicalises IPv4-mapped IPv6 hosts to compressed hex
+ * (`[::ffff:7f00:1]`), so the SSRF blocklist must normalise that form before
+ * pattern-matching against the dotted-quad rules. If a future change moves
+ * one layer to a different parser or representation, the others must continue
+ * to hold the line.
  *
  * Return type is pinned to `z.ZodType<string>` rather than the inferred
  * `ZodEffects<ZodURL>` so a future Zod minor that reshapes `.refine()` (or the
