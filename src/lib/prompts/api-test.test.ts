@@ -17,6 +17,14 @@ describe("api-test prompt — URL scheme allowlist", () => {
         expect(apiTestUrlSchema.safeParse("javascript:alert(1)").success).toBe(false);
     });
 
+    it("rejects data: URLs", () => {
+        // Regression guard — data: URL injection passes z.url() but should be
+        // rejected at every URL-accepting schema. Mirrors the helper-level
+        // coverage in src/lib/utils/url.test.ts; the per-consumer test locks
+        // the rejection at this prompt's boundary in case the helper changes.
+        expect(apiTestUrlSchema.safeParse("data:text/plain;base64,SGVsbG8=").success).toBe(false);
+    });
+
     it("accepts http:// URLs", () => {
         expect(apiTestUrlSchema.safeParse("http://api.example.com").success).toBe(true);
     });
