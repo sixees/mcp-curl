@@ -3,79 +3,89 @@ import { z } from "zod";
 import { createHttpOnlyUrlSchema, resolveBaseUrl, safeHostname } from "./url.js";
 
 describe("resolveBaseUrl", () => {
-    it("strips trailing slash from base and joins with path", () => {
-        expect(resolveBaseUrl("https://api.example.com/", "/users")).toBe(
-            "https://api.example.com/users"
-        );
+    describe("slash normalisation", () => {
+        it("strips trailing slash from base and joins with path", () => {
+            expect(resolveBaseUrl("https://api.example.com/", "/users")).toBe(
+                "https://api.example.com/users"
+            );
+        });
+
+        it("handles base without trailing slash", () => {
+            expect(resolveBaseUrl("https://api.example.com", "/users")).toBe(
+                "https://api.example.com/users"
+            );
+        });
+
+        it("adds leading slash to path if missing", () => {
+            expect(resolveBaseUrl("https://api.example.com", "users")).toBe(
+                "https://api.example.com/users"
+            );
+        });
+
+        it("handles base with trailing slash and path without leading slash", () => {
+            expect(resolveBaseUrl("https://api.example.com/", "users")).toBe(
+                "https://api.example.com/users"
+            );
+        });
     });
 
-    it("handles base without trailing slash", () => {
-        expect(resolveBaseUrl("https://api.example.com", "/users")).toBe(
-            "https://api.example.com/users"
-        );
-    });
+    describe("edge cases", () => {
+        it("preserves path with query params", () => {
+            expect(resolveBaseUrl("https://api.example.com", "/search?q=test")).toBe(
+                "https://api.example.com/search?q=test"
+            );
+        });
 
-    it("adds leading slash to path if missing", () => {
-        expect(resolveBaseUrl("https://api.example.com", "users")).toBe(
-            "https://api.example.com/users"
-        );
-    });
+        it("handles nested base paths", () => {
+            expect(resolveBaseUrl("https://api.example.com/v2/", "/users")).toBe(
+                "https://api.example.com/v2/users"
+            );
+        });
 
-    it("handles base with trailing slash and path without leading slash", () => {
-        expect(resolveBaseUrl("https://api.example.com/", "users")).toBe(
-            "https://api.example.com/users"
-        );
-    });
-
-    it("preserves path with query params", () => {
-        expect(resolveBaseUrl("https://api.example.com", "/search?q=test")).toBe(
-            "https://api.example.com/search?q=test"
-        );
-    });
-
-    it("handles nested base paths", () => {
-        expect(resolveBaseUrl("https://api.example.com/v2/", "/users")).toBe(
-            "https://api.example.com/v2/users"
-        );
-    });
-
-    it("handles empty path", () => {
-        expect(resolveBaseUrl("https://api.example.com", "/")).toBe(
-            "https://api.example.com/"
-        );
+        it("handles empty path", () => {
+            expect(resolveBaseUrl("https://api.example.com", "/")).toBe(
+                "https://api.example.com/"
+            );
+        });
     });
 });
 
 describe("safeHostname", () => {
-    it("returns hostname for a valid URL", () => {
-        expect(safeHostname("https://api.example.com/foo/bar")).toBe("api.example.com");
+    describe("valid URL extraction", () => {
+        it("returns hostname for a valid URL", () => {
+            expect(safeHostname("https://api.example.com/foo/bar")).toBe("api.example.com");
+        });
+
+        it("returns hostname stripped of port", () => {
+            expect(safeHostname("https://api.example.com:8443/foo")).toBe("api.example.com");
+        });
     });
 
-    it("returns hostname stripped of port", () => {
-        expect(safeHostname("https://api.example.com:8443/foo")).toBe("api.example.com");
+    describe("fallback handling", () => {
+        it("returns default fallback for malformed URL", () => {
+            expect(safeHostname("not-a-url")).toBe("unknown");
+        });
+
+        it("returns default fallback for undefined", () => {
+            expect(safeHostname(undefined)).toBe("unknown");
+        });
+
+        it("returns default fallback for empty string", () => {
+            expect(safeHostname("")).toBe("unknown");
+        });
+
+        it("returns custom fallback when provided", () => {
+            expect(safeHostname("not-a-url", "no-host")).toBe("no-host");
+            expect(safeHostname(undefined, "no-host")).toBe("no-host");
+        });
     });
 
-    it("returns default fallback for malformed URL", () => {
-        expect(safeHostname("not-a-url")).toBe("unknown");
-    });
-
-    it("returns default fallback for undefined", () => {
-        expect(safeHostname(undefined)).toBe("unknown");
-    });
-
-    it("returns default fallback for empty string", () => {
-        expect(safeHostname("")).toBe("unknown");
-    });
-
-    it("returns custom fallback when provided", () => {
-        expect(safeHostname("not-a-url", "no-host")).toBe("no-host");
-        expect(safeHostname(undefined, "no-host")).toBe("no-host");
-    });
-
-    it("does not throw for inputs WHATWG URL would reject", () => {
-        // Each call must return the fallback rather than propagate a TypeError.
-        expect(() => safeHostname("javascript:alert(1)")).not.toThrow();
-        expect(() => safeHostname("://broken")).not.toThrow();
+    describe("robustness", () => {
+        it("does not throw for inputs WHATWG URL would reject", () => {
+            // Each call must return the fallback rather than propagate a TypeError.
+            expect(() => safeHostname("javascript:alert(1)")).not.toThrow();
+            expect(() => safeHostname("://broken")).not.toThrow();
+        });
     });
 });
 
@@ -96,9 +106,9 @@ describe("createHttpOnlyUrlSchema", () => {
         });
 
         it("accepts IPv6 hosts (embedded colons must not confuse the parser)", () => {
-            // Regression guard: the previous .split(":")[0] form parsed this as the
-            // scheme "https" and host "[", which still passed by accident. The WHATWG
-            // parser treats the brackets correctly — protocol is "https:".
+            // IPv6 hosts contain colons in the host portion; protocol detection
+            // must isolate the scheme cleanly so the embedded colons don't
+            // promote part of the host into the scheme classification.
             expect(schema.safeParse("https://[::1]/").success).toBe(true);
         });
     });
@@ -126,9 +136,8 @@ describe("createHttpOnlyUrlSchema", () => {
         });
 
         it("rejects look-alike scheme httpx:", () => {
-            // The previous .split(":")[0] form would have classified the scheme as
-            // "httpx" and rejected; the parser-based form classifies as "httpx:" and
-            // rejects too. Asserted explicitly to lock the behaviour.
+            // Anything not exactly "http:" or "https:" must be rejected — the
+            // allowlist is membership-based, not prefix-based.
             expect(schema.safeParse("httpx://example.com").success).toBe(false);
         });
 
@@ -157,9 +166,9 @@ describe("createHttpOnlyUrlSchema", () => {
         });
 
         it("rejects double-colon parser quirks", () => {
-            // The WHATWG parser will throw or return a strange protocol on this input;
-            // the .split(":")[0] form would silently classify scheme as "https" and
-            // pass. Asserted to lock the parser-based rejection.
+            // Confirms the WHATWG-parser path rejects malformed double-colon
+            // input rather than coercing it into a permitted scheme. No
+            // string-split shortcut should classify this as "https".
             expect(schema.safeParse("https::").success).toBe(false);
         });
     });
@@ -181,6 +190,17 @@ describe("createHttpOnlyUrlSchema", () => {
             expect(result.success).toBe(false);
             if (!result.success) {
                 expect(result.error.issues.some((i) => i.message === "must be http(s)")).toBe(true);
+            }
+        });
+
+        it("emits 'Must be a valid URL' on URL-format failure", () => {
+            // Locks the base z.url() error message restored after the helper
+            // consolidation. MCP clients render this string verbatim, so a
+            // change here is user-visible.
+            const result = schema.safeParse("not-a-url");
+            expect(result.success).toBe(false);
+            if (!result.success) {
+                expect(result.error.issues.some((i) => i.message === "Must be a valid URL")).toBe(true);
             }
         });
     });
