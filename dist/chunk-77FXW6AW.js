@@ -4,6 +4,7 @@ import {
   JqQuerySchema,
   LIMITS,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+  PRINTABLE_ASCII,
   SERVER,
   SESSION,
   applyDefaultHeaders,
@@ -11,6 +12,7 @@ import {
   applySpotlighting,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
+  createConfigError,
   createHttpOnlyUrlSchema,
   createSafeFilenameBase,
   executeCurlRequest,
@@ -31,7 +33,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-REINE6IH.js";
+} from "./chunk-CEMT7YCC.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -1201,12 +1203,14 @@ var McpCurlServer = class {
    * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
    */
   async startHttp() {
+    const authToken = this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN];
+    validateAuthToken(authToken);
     this._sessionManager = new SessionManager();
     this._sessionManager.startCleanup();
     const app = createHttpApp({
       createMcpServer: () => this.createConfiguredServer(),
       sessionManager: this._sessionManager,
-      authToken: this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN],
+      authToken,
       allowedOrigins: this._frozenConfig.allowedOrigins
     });
     const port = this._frozenConfig.port ?? parsePort(process.env[ENV.PORT], LIMITS.DEFAULT_HTTP_PORT);
@@ -1293,6 +1297,23 @@ function parseAllowedOriginsEnv() {
   const envValue = process.env[ENV.ALLOWED_ORIGINS];
   if (!envValue) return null;
   return envValue.split(",").map((o) => o.trim()).filter(Boolean);
+}
+function validateAuthToken(token) {
+  if (token === void 0 || token === "") return;
+  if (token.length > LIMITS.MAX_AUTH_TOKEN_LENGTH) {
+    throw createConfigError(
+      "MCP_AUTH_TOKEN",
+      `[length=${token.length}]`,
+      `exceeds maximum ${LIMITS.MAX_AUTH_TOKEN_LENGTH} characters`
+    );
+  }
+  if (!PRINTABLE_ASCII.test(token)) {
+    throw createConfigError(
+      "MCP_AUTH_TOKEN",
+      "[redacted]",
+      "must contain only printable ASCII characters (0x20\u20130x7E)"
+    );
+  }
 }
 function createAuthMiddleware(authToken) {
   return (req, res, next) => {
@@ -1447,6 +1468,8 @@ function resolveHost(configHost) {
   return configHost ?? process.env[ENV.HOST] ?? DEFAULT_HOST;
 }
 async function runHTTP() {
+  const authToken = process.env[ENV.AUTH_TOKEN];
+  validateAuthToken(authToken);
   await cleanupOrphanedTempDirs();
   const sessionManager2 = new SessionManager();
   sessionManager2.startCleanup();
@@ -1460,7 +1483,7 @@ async function runHTTP() {
       return server;
     },
     sessionManager: sessionManager2,
-    authToken: process.env[ENV.AUTH_TOKEN]
+    authToken
   });
   const port = parsePort(process.env.PORT, LIMITS.DEFAULT_HTTP_PORT);
   const host = resolveHost();

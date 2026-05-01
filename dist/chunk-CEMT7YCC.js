@@ -302,7 +302,14 @@ var LIMITS = {
   /** Default HTTP transport port */
   DEFAULT_HTTP_PORT: 3e3,
   /** Default maximum number of redirects to follow */
-  MAX_REDIRECTS: 10
+  MAX_REDIRECTS: 10,
+  /**
+   * Maximum length of operator-supplied HTTP transport auth tokens.
+   * 4096 covers RSA-256 JWTs (~700–900 chars), OIDC ID tokens (1500–2500 chars),
+   * and JWE tokens (up to ~4 KB) while staying well below the 8 KB HTTP
+   * header line-limit. Above this length is almost certainly a paste error.
+   */
+  MAX_AUTH_TOKEN_LENGTH: 4096
 };
 function parsePort(value, defaultPort) {
   const raw = value || String(defaultPort);
@@ -557,6 +564,7 @@ var WINDOWS_RESERVED_BASENAMES = Object.freeze(
 function isWindowsReservedBasename(name) {
   return WINDOWS_RESERVED_BASENAMES_SET.has(name.toUpperCase());
 }
+var PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
 
 // src/lib/config/security/blocked-dirs.ts
 var LINUX_BLOCKED_DIRS = Object.freeze([
@@ -1971,6 +1979,7 @@ function registerCurlExecuteTool(server) {
 export {
   ENV,
   getErrorMessage,
+  createConfigError,
   resolveBaseUrl,
   createHttpOnlyUrlSchema,
   safeHostname,
@@ -1983,6 +1992,7 @@ export {
   SESSION,
   startRateLimitCleanup,
   stopRateLimitCleanup,
+  PRINTABLE_ASCII,
   safeStringCompare,
   isValidSessionId,
   LIMITS,
