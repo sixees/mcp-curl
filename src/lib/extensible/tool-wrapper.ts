@@ -1,7 +1,6 @@
 // src/lib/extensible/tool-wrapper.ts
 // Wraps tool handlers with hooks and config transforms
 
-import { randomUUID } from "crypto";
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
 import type { CurlRegisterToolOptions, JqRegisterToolOptions, ToolResult } from "./types.js";
@@ -13,55 +12,9 @@ import {
 import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
-import { LIMITS, applyDefaultHeaders } from "../config/index.js";
-import { resolveBaseUrl, applySpotlighting, isSpotlightEnvelope } from "../utils/index.js";
-
-/**
- * Wrap the first text content item with spotlighting sentinels if enabled.
- * Error results are never spotlighted.
- *
- * `ToolResult.content` is typed as `[{ type: "text"; text: string }]`, but the
- * surrounding `[key: string]: unknown` index signature means a value reaching
- * this function via cast may not actually have that shape. When spotlighting
- * is enabled, an unexpected shape fails closed: returning the unwrapped result
- * would let external content bypass the injection boundary, so we replace it
- * with an explicit error instead.
- *
- * Note: when the response was saved to a file, content[0] is a file-path
- * acknowledgment message rather than the actual API response data.
- * Spotlighting this message is semantically benign — it wraps an internal
- * system message, not external untrusted data — but is accepted as a known
- * cosmetic limitation rather than a functional concern.
- */
-function maybeApplySpotlighting(result: ToolResult, config: Readonly<McpCurlConfig>): ToolResult {
-    if (!config.enableSpotlighting || result.isError) {
-        return result;
-    }
-    const first = result.content[0];
-    if (!first || first.type !== "text" || typeof first.text !== "string") {
-        // Surface the fail-closed event for ops visibility — type system allows the
-        // tuple to be subverted via the index signature, so a violation here points
-        // at a real bug (a custom tool or future executor returning the wrong shape).
-        console.error("[tool-wrapper] invalid result shape — failing closed");
-        return {
-            content: [{ type: "text" as const, text: "Error: invalid tool response shape" }],
-            isError: true,
-        };
-    }
-    // Idempotence: a custom tool that pre-wrapped its own response (e.g. by calling
-    // applySpotlighting itself) would otherwise be re-wrapped here under a fresh UUID,
-    // producing two nested sentinel pairs. The check requires a *complete* envelope
-    // (begin + matching end + same UUID), not just the begin prefix — an attacker who
-    // controls the HTTP response body cannot bypass the wrap by prepending the public
-    // sentinel prefix.
-    if (isSpotlightEnvelope(first.text)) {
-        return result;
-    }
-    return {
-        ...result,
-        content: [{ type: "text" as const, text: applySpotlighting(first.text, randomUUID()) }],
-    };
-}
+import { LIMITS, applyDefaultHeaders, JQ_QUERY_HOSTNAME_LABEL } from "../config/index.js";
+import { resolveBaseUrl, safeHostname } from "../utils/index.js";
+import { createWrapper } from "../response/post-processor.js";
 
 interface ConfigDefaultableParams {
     output_dir?: string;
@@ -145,6 +98,7 @@ export function registerCurlToolWithHooks(
     options: CurlRegisterToolOptions
 ): void {
     const { executor, enabled, config, hooks } = options;
+    const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
 
     const handler: ToolCallback<typeof CurlExecuteSchema> = async (params, extra) => {
         if (!enabled) {
@@ -154,8 +108,20 @@ export function registerCurlToolWithHooks(
             };
         }
         const transformedParams = applyConfigTransformsCurl(params, config);
-        const result = await executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
-        return maybeApplySpotlighting(result, config);
+        // hostnameOf reads the final params at the wrap boundary inside the
+        // hook-executor — `safeHostname` runs once with the post-hook URL,
+        // never the stale pre-hook URL. The wrap itself is idempotent so a
+        // downstream caller can still re-wrap without double-processing.
+        return await executeWithHooks(
+            "curl_execute",
+            transformedParams,
+            config,
+            hooks,
+            extra.sessionId,
+            executor,
+            wrap,
+            (p) => safeHostname(p.url)
+        );
     };
 
     // Register using the canonical meta object to preserve type inference
@@ -173,6 +139,7 @@ export function registerJqToolWithHooks(
     options: JqRegisterToolOptions
 ): void {
     const { executor, enabled, config, hooks } = options;
+    const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
 
     const handler: ToolCallback<typeof JqQuerySchema> = async (params, extra) => {
         if (!enabled) {
@@ -182,8 +149,16 @@ export function registerJqToolWithHooks(
             };
         }
         const transformedParams = applyConfigTransformsJq(params, config);
-        const result = await executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
-        return maybeApplySpotlighting(result, config);
+        return await executeWithHooks(
+            "jq_query",
+            transformedParams,
+            config,
+            hooks,
+            extra.sessionId,
+            executor,
+            wrap,
+            () => JQ_QUERY_HOSTNAME_LABEL
+        );
     };
 
     // Register using the canonical meta object to preserve type inference

@@ -24,8 +24,9 @@ import type {
     HttpMethod,
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
-import { resolveBaseUrl, sanitizeDescription } from "../utils/index.js";
+import { resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
 import { applyDefaultHeaders } from "../config/index.js";
+import { createWrapper } from "../response/post-processor.js";
 
 /**
  * Error thrown when authentication is required but not available.
@@ -55,6 +56,16 @@ export interface GeneratorConfig {
     defaultUserAgent?: string;
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
+    /**
+     * Wrap YAML-driven tool responses in spotlighting sentinels (PR-6b).
+     *
+     * Sanitise + detect always run on text responses regardless of this flag;
+     * the flag only controls the additional `applySpotlighting` step. Mirrors
+     * `McpCurlConfig.enableSpotlighting` so the YAML path inherits the same
+     * setting from `createApiServer({ config })` callers without a separate
+     * knob.
+     */
+    enableSpotlighting?: boolean;
 }
 
 /**
@@ -343,6 +354,11 @@ function createToolHandler(
     endpoint: EndpointDefinition,
     config?: GeneratorConfig
 ): (params: Record<string, unknown>, extra?: CurlExecuteExtra) => Promise<CurlExecuteResult> {
+    // Build the wrap once per handler — the spotlighting flag is server-scope
+    // and identical across every invocation. The closure is cheap; this just
+    // skips re-allocating it on every tool call.
+    const wrap = createWrapper({ enableSpotlighting: config?.enableSpotlighting });
+
     return async (params: Record<string, unknown>, extra?: CurlExecuteExtra): Promise<CurlExecuteResult> => {
         try {
             // Separate parameters by location
@@ -388,7 +404,7 @@ function createToolHandler(
                 ...extra,
                 allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost,
             };
-            return await executeCurlRequest(
+            const result = await executeCurlRequest(
                 {
                     url,
                     method: endpoint.method,
@@ -406,6 +422,13 @@ function createToolHandler(
                 },
                 execExtra
             );
+            // PR-6b: Run sanitise + detect (and optional spotlight) on the
+            // YAML-tool response. processor.ts already sanitised the curl body
+            // for the per-host throttle; the wrap is idempotent on already-
+            // wrapped results, but the request hostname is the right per-call
+            // label here (rather than "custom" if the result then flows
+            // through the registerToolsOnServer adapter).
+            return wrap(result, safeHostname(url));
         } catch (error) {
             // Handle authentication errors gracefully
             if (error instanceof AuthenticationError) {

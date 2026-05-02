@@ -24,8 +24,16 @@ import { registerAllPrompts } from "../prompts/index.js";
 import { executeCurlRequest } from "../tools/curl-execute.js";
 import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
-import { startRateLimitCleanup, stopRateLimitCleanup, startInjectionCleanup, stopInjectionCleanup } from "../security/index.js";
+import {
+    startRateLimitCleanup,
+    stopRateLimitCleanup,
+    startInjectionCleanup,
+    stopInjectionCleanup,
+    startWrapErrorCleanup,
+    stopWrapErrorCleanup,
+} from "../security/index.js";
 import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
+import { createWrapper } from "../response/post-processor.js";
 import {
     createHttpApp,
     resolveHost,
@@ -34,7 +42,7 @@ import {
     validateAuthToken,
 } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
-import { ENV, LIMITS, parsePort } from "../config/index.js";
+import { ENV, LIMITS, parsePort, CUSTOM_TOOL_HOSTNAME_LABEL } from "../config/index.js";
 
 /**
  * Metadata for a custom tool registration.
@@ -113,6 +121,7 @@ export class McpCurlServer {
     private _sessionManager: SessionManager | null = null;
     private _rateLimitInterval: NodeJS.Timeout | null = null;
     private _injectionCleanupInterval: NodeJS.Timeout | null = null;
+    private _wrapErrorCleanupInterval: NodeJS.Timeout | null = null;
     private _utilities: InstanceUtilities | null = null;
 
     /**
@@ -438,9 +447,11 @@ export class McpCurlServer {
             // Clean up orphaned temp directories from previous runs
             await cleanupOrphanedTempDirs();
 
-            // Start rate limit cleanup and injection detection cleanup
+            // Start rate limit cleanup, injection detection cleanup, and the
+            // PR-6b defence-in-depth wrap-error throttle cleanup.
             this._rateLimitInterval = startRateLimitCleanup();
             this._injectionCleanupInterval = startInjectionCleanup();
+            this._wrapErrorCleanupInterval = startWrapErrorCleanup();
 
             // Create and configure MCP server
             this._server = this.createConfiguredServer();
@@ -479,6 +490,10 @@ export class McpCurlServer {
             if (this._injectionCleanupInterval) {
                 stopInjectionCleanup(this._injectionCleanupInterval);
                 this._injectionCleanupInterval = null;
+            }
+            if (this._wrapErrorCleanupInterval) {
+                stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
+                this._wrapErrorCleanupInterval = null;
             }
             this._server = null;
             this._started = false;
@@ -550,12 +565,16 @@ export class McpCurlServer {
             }
         }
 
-        // Stop rate limit cleanup and injection detection cleanup
+        // Stop rate limit cleanup, injection detection cleanup, and the
+        // wrap-error throttle cleanup (PR-6b).
         if (this._rateLimitInterval) {
             stopRateLimitCleanup(this._rateLimitInterval);
         }
         if (this._injectionCleanupInterval) {
             stopInjectionCleanup(this._injectionCleanupInterval);
+        }
+        if (this._wrapErrorCleanupInterval) {
+            stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
         }
 
         // Clean up temp directory (wrapped in try/finally to always reset state)
@@ -570,6 +589,7 @@ export class McpCurlServer {
             this._utilities = null;
             this._rateLimitInterval = null;
             this._injectionCleanupInterval = null;
+            this._wrapErrorCleanupInterval = null;
             this._sessionManager = null;
         }
     }
@@ -611,9 +631,21 @@ export class McpCurlServer {
             hooks: this._hooks,
         });
 
-        // Register custom tools
+        // Register custom tools — wrap each handler with the defence-in-depth
+        // post-processor (PR-6b). User custom tools and YAML-driven tools both
+        // flow through this loop; YAML tools are double-wrapped (the inner
+        // wrap fires inside `createToolHandler` with the real request hostname
+        // and tags the result) but the Symbol-tag idempotence makes the outer
+        // wrap a no-op for them. Custom tools registered by library consumers
+        // are wrapped here for the first time, with the "custom" hostname
+        // label.
+        const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
         for (const { name, meta, handler } of this._customTools) {
-            server.registerTool(name, meta, handler);
+            const wrappedHandler: typeof handler = async (params, extra) => {
+                const result = await handler(params, extra);
+                return wrap(result, CUSTOM_TOOL_HOSTNAME_LABEL);
+            };
+            server.registerTool(name, meta, wrappedHandler);
         }
     }
 

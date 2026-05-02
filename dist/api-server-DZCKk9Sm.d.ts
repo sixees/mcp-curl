@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-BHg7B5H-.js';
+import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-DPBvQm1K.js';
 
 /**
  * Configuration options for McpCurlServer.
@@ -32,9 +32,34 @@ interface McpCurlConfig {
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
     /**
-     * Wrap responses in per-request sentinel tags to resist prompt injection (spotlighting).
-     * Note: does not apply to tools registered via `generateToolDefinitions()` — those tools
-     * return filtered JSON directly without passing through the spotlighting wrapper.
+     * Wrap responses in per-request sentinel tags to resist prompt injection
+     * (spotlighting). Independent of the always-on sanitise + detect pass —
+     * see the **defence-in-depth wrap** below.
+     *
+     * **Defence-in-depth wrap (PR-6b).** Every tool result returned by this
+     * server — `curl_execute`, `jq_query`, YAML-driven endpoints registered
+     * via `createApiServer()`, custom tools registered via
+     * `registerCustomTool()`, and synthesised results returned by a
+     * `beforeRequest` short-circuit hook — is routed through a single
+     * post-processor wrap (`src/lib/response/post-processor.ts`). The wrap
+     * runs three steps in order on each text content part:
+     *
+     *   1. **Detect** injection patterns against the **original** text and
+     *      emit a throttled `[injection-defense]` log line per hostname.
+     *   2. **Sanitise** the text (strip Unicode attack chars, collapse
+     *      whitespace runs).
+     *   3. **Spotlight** the sanitised text (only when this flag is `true`)
+     *      using a fresh per-message UUID.
+     *
+     * Steps 1 and 2 always run regardless of this flag — only step 3
+     * (spotlighting sentinels) is gated. The wrap is idempotent via a
+     * module-private, non-enumerable `Symbol` tag with an own-property check
+     * (so the tag cannot be forged from outside the wrap module and an
+     * inherited tag on a wrapped prototype cannot bypass processing of
+     * descendant content), and is fail-open: if any internal step throws it
+     * returns the original result unchanged and emits a throttled
+     * `[wrap-error]` log line, so defence-in-depth never becomes a
+     * load-bearing failure mode for the handler boundary.
      */
     enableSpotlighting?: boolean;
 }
@@ -181,6 +206,7 @@ declare class McpCurlServer {
     private _sessionManager;
     private _rateLimitInterval;
     private _injectionCleanupInterval;
+    private _wrapErrorCleanupInterval;
     private _utilities;
     /**
      * Configure server options.

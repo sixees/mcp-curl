@@ -1,6 +1,8 @@
 import {
   CURL_EXECUTE_TOOL_META,
+  CUSTOM_TOOL_HOSTNAME_LABEL,
   ENV,
+  JQ_QUERY_HOSTNAME_LABEL,
   JqQuerySchema,
   LIMITS,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
@@ -9,31 +11,33 @@ import {
   SESSION,
   applyDefaultHeaders,
   applyJqFilter,
-  applySpotlighting,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   createConfigError,
   createHttpOnlyUrlSchema,
   createSafeFilenameBase,
+  createWrapper,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
-  isSpotlightEnvelope,
   isValidSessionId,
   parsePort,
   registerCurlExecuteTool,
   resolveBaseUrl,
   resolveOutputDir,
+  safeHostname,
   safeStringCompare,
   sanitizeAndDetect,
   sanitizeDescription,
   startInjectionCleanup,
   startRateLimitCleanup,
+  startWrapErrorCleanup,
   stopInjectionCleanup,
   stopRateLimitCleanup,
+  stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-4CBQKI7Q.js";
+} from "./chunk-ZMU6VBN2.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -526,7 +530,7 @@ function createInstanceUtilities(config) {
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID } from "crypto";
 
 // src/lib/session/session-manager.ts
 var SessionManager = class {
@@ -721,11 +725,8 @@ function registerAllCapabilities(server) {
 // src/lib/extensible/mcp-curl-server.ts
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-// src/lib/extensible/tool-wrapper.ts
-import { randomUUID } from "crypto";
-
 // src/lib/extensible/hook-executor.ts
-async function executeWithHooks(tool, params, config, hooks, sessionId, executor) {
+async function executeWithHooks(tool, params, config, hooks, sessionId, executor, wrap, hostnameOf) {
   const ctx = {
     tool,
     params: { ...params },
@@ -736,10 +737,11 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
     const result = await hook(ctx);
     if (result) {
       if ("shortCircuit" in result && result.shortCircuit) {
-        return {
+        const shortCircuitResult = {
           content: [{ type: "text", text: result.response }],
           isError: result.isError
         };
+        return wrap(shortCircuitResult, hostnameOf(ctx.params));
       }
       if ("params" in result && result.params) {
         ctx.params = { ...ctx.params, ...result.params };
@@ -756,7 +758,7 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
         isError: !!response.isError
       });
     }
-    return response;
+    return wrap(response, hostnameOf(ctx.params));
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     for (const hook of hooks.onError) {
@@ -775,26 +777,6 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
 }
 
 // src/lib/extensible/tool-wrapper.ts
-function maybeApplySpotlighting(result, config) {
-  if (!config.enableSpotlighting || result.isError) {
-    return result;
-  }
-  const first = result.content[0];
-  if (!first || first.type !== "text" || typeof first.text !== "string") {
-    console.error("[tool-wrapper] invalid result shape \u2014 failing closed");
-    return {
-      content: [{ type: "text", text: "Error: invalid tool response shape" }],
-      isError: true
-    };
-  }
-  if (isSpotlightEnvelope(first.text)) {
-    return result;
-  }
-  return {
-    ...result,
-    content: [{ type: "text", text: applySpotlighting(first.text, randomUUID()) }]
-  };
-}
 function applySharedConfigDefaults(params, config) {
   if (config.outputDir && !params.output_dir) {
     params.output_dir = config.outputDir;
@@ -825,6 +807,7 @@ function applyConfigTransformsJq(params, config) {
 }
 function registerCurlToolWithHooks(server, options) {
   const { executor, enabled, config, hooks } = options;
+  const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
   const handler = async (params, extra) => {
     if (!enabled) {
       return {
@@ -833,13 +816,22 @@ function registerCurlToolWithHooks(server, options) {
       };
     }
     const transformedParams = applyConfigTransformsCurl(params, config);
-    const result = await executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
-    return maybeApplySpotlighting(result, config);
+    return await executeWithHooks(
+      "curl_execute",
+      transformedParams,
+      config,
+      hooks,
+      extra.sessionId,
+      executor,
+      wrap,
+      (p) => safeHostname(p.url)
+    );
   };
   server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, handler);
 }
 function registerJqToolWithHooks(server, options) {
   const { executor, enabled, config, hooks } = options;
+  const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
   const handler = async (params, extra) => {
     if (!enabled) {
       return {
@@ -848,8 +840,16 @@ function registerJqToolWithHooks(server, options) {
       };
     }
     const transformedParams = applyConfigTransformsJq(params, config);
-    const result = await executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
-    return maybeApplySpotlighting(result, config);
+    return await executeWithHooks(
+      "jq_query",
+      transformedParams,
+      config,
+      hooks,
+      extra.sessionId,
+      executor,
+      wrap,
+      () => JQ_QUERY_HOSTNAME_LABEL
+    );
   };
   server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
@@ -983,6 +983,7 @@ var McpCurlServer = class {
   _sessionManager = null;
   _rateLimitInterval = null;
   _injectionCleanupInterval = null;
+  _wrapErrorCleanupInterval = null;
   _utilities = null;
   /**
    * Configure server options.
@@ -1254,6 +1255,7 @@ var McpCurlServer = class {
       await cleanupOrphanedTempDirs();
       this._rateLimitInterval = startRateLimitCleanup();
       this._injectionCleanupInterval = startInjectionCleanup();
+      this._wrapErrorCleanupInterval = startWrapErrorCleanup();
       this._server = this.createConfiguredServer();
       if (transport === "http") {
         await this.startHttp(httpAuthToken);
@@ -1286,6 +1288,10 @@ var McpCurlServer = class {
       if (this._injectionCleanupInterval) {
         stopInjectionCleanup(this._injectionCleanupInterval);
         this._injectionCleanupInterval = null;
+      }
+      if (this._wrapErrorCleanupInterval) {
+        stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
+        this._wrapErrorCleanupInterval = null;
       }
       this._server = null;
       this._started = false;
@@ -1354,6 +1360,9 @@ var McpCurlServer = class {
     if (this._injectionCleanupInterval) {
       stopInjectionCleanup(this._injectionCleanupInterval);
     }
+    if (this._wrapErrorCleanupInterval) {
+      stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
+    }
     try {
       await cleanupTempDir();
     } catch (error) {
@@ -1364,6 +1373,7 @@ var McpCurlServer = class {
       this._utilities = null;
       this._rateLimitInterval = null;
       this._injectionCleanupInterval = null;
+      this._wrapErrorCleanupInterval = null;
       this._sessionManager = null;
     }
   }
@@ -1400,8 +1410,13 @@ var McpCurlServer = class {
       config,
       hooks: this._hooks
     });
+    const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
     for (const { name, meta, handler } of this._customTools) {
-      server.registerTool(name, meta, handler);
+      const wrappedHandler = async (params, extra) => {
+        const result = await handler(params, extra);
+        return wrap(result, CUSTOM_TOOL_HOSTNAME_LABEL);
+      };
+      server.registerTool(name, meta, wrappedHandler);
     }
   }
   /**
@@ -1622,7 +1637,7 @@ function createHttpApp(options) {
       }
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID2(),
+        sessionIdGenerator: () => randomUUID(),
         // `enableJsonResponse: true` makes the SDK return tool
         // responses as a single JSON body on the POST instead of
         // opening an SSE stream. The mcp-curl tools (`curl_execute`,

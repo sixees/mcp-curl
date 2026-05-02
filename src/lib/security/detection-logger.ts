@@ -36,9 +36,23 @@ export function logInjectionDetected(hostname: string): void {
 }
 
 /**
- * Sanitize text and log any detected injection patterns.
+ * Detect injection patterns in raw text, then sanitize for output.
  *
- * Bundles the sanitize → detect → log triplet that callers ran by hand.
+ * Order is load-bearing: detection runs against the **original** text, before
+ * any sanitisation. This is forward-readiness for future stripping passes
+ * (PR-7 plans to strip `<script>`/`<style>` blocks and external markdown
+ * beacons) — if those passes erase a malicious phrase before detection sees
+ * it, the per-host log signal is silenced. Detecting on the original keeps
+ * the signal alive for any class of injection that the sanitiser would
+ * otherwise wholesale-remove.
+ *
+ * **Acknowledged trade-off.** The reverse case (a phrase whose detection
+ * needs sanitisation to *succeed* — e.g. invisible-char-split phrases like
+ * `Ig​nore previous instructions` where the zero-width breaks the regex
+ * match) is no longer logged. The returned text is still sanitised so
+ * nothing leaks downstream; only the observability log is lost for that
+ * specific class. UTS #39 skeleton folding (deferred) would close it.
+ *
  * Detection-only: the sanitized text is returned regardless of whether
  * an injection pattern was matched. Logging is throttled per label by
  * `logInjectionDetected`.
@@ -48,11 +62,10 @@ export function logInjectionDetected(hostname: string): void {
  * @returns Sanitized text
  */
 export function sanitizeAndDetect(text: string, label: string): string {
-    const sanitized = sanitizeResponse(text);
-    if (detectInjectionPattern(sanitized)) {
+    if (detectInjectionPattern(text)) {
         logInjectionDetected(label);
     }
-    return sanitized;
+    return sanitizeResponse(text);
 }
 
 /**

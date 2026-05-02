@@ -1,13 +1,13 @@
 import {
   McpCurlServer
-} from "./chunk-V2MKT3OQ.js";
+} from "./chunk-ACVEY3ZW.js";
 import {
   generateToolDefinitions,
   getMethodAnnotations,
   loadApiSchema,
   loadApiSchemaFromString,
   validateApiSchema
-} from "./chunk-SA5QPKH6.js";
+} from "./chunk-NTZF7OY5.js";
 
 // src/lib/api-server.ts
 function configureServerFromSchema(server, schema, options) {
@@ -38,7 +38,12 @@ function configureServerFromSchema(server, schema, options) {
     allowLocalhost: mergedConfig.allowLocalhost,
     defaultUserAgent: mergedConfig.defaultUserAgent,
     defaultReferer: mergedConfig.defaultReferer,
-    ...options.generatorConfig
+    ...options.generatorConfig,
+    // PR-6b: server-level enableSpotlighting is authoritative across all
+    // tool paths and must NOT be overridable via options.generatorConfig.
+    // Set after the spread so the asymmetry it closes (built-in tools
+    // spotlight; YAML tools opt out via generatorConfig) cannot reappear.
+    enableSpotlighting: mergedConfig.enableSpotlighting
   };
   const toolDefs = generateToolDefinitions(schema, generatorConfig);
   for (const toolDef of toolDefs) {

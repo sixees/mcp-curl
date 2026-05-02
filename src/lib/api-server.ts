@@ -57,6 +57,11 @@ function configureServerFromSchema(
         defaultUserAgent: mergedConfig.defaultUserAgent,
         defaultReferer: mergedConfig.defaultReferer,
         ...options.generatorConfig,
+        // PR-6b: server-level enableSpotlighting is authoritative across all
+        // tool paths and must NOT be overridable via options.generatorConfig.
+        // Set after the spread so the asymmetry it closes (built-in tools
+        // spotlight; YAML tools opt out via generatorConfig) cannot reappear.
+        enableSpotlighting: mergedConfig.enableSpotlighting,
     };
 
     const toolDefs = generateToolDefinitions(schema, generatorConfig);

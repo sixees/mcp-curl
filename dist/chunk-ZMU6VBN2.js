@@ -219,11 +219,10 @@ function logInjectionDetected(hostname) {
   console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
 }
 function sanitizeAndDetect(text, label) {
-  const sanitized = sanitizeResponse(text);
-  if (detectInjectionPattern(sanitized)) {
+  if (detectInjectionPattern(text)) {
     logInjectionDetected(label);
   }
-  return sanitized;
+  return sanitizeResponse(text);
 }
 function startInjectionCleanup() {
   const interval = setInterval(cleanupInjectionDetectionMap, THROTTLE_WINDOW_MS);
@@ -420,6 +419,10 @@ function applyDefaultHeaders(headers, userAgent, config) {
   }
   return { headers: result, userAgent: resolvedUA };
 }
+
+// src/lib/config/labels.ts
+var JQ_QUERY_HOSTNAME_LABEL = "n/a";
+var CUSTOM_TOOL_HOSTNAME_LABEL = "custom";
 
 // src/lib/config/security/ssrf.ts
 var IPV4_MAPPED_IPV6_HEX_RE = /^\[?::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]?$/i;
@@ -1078,6 +1081,40 @@ async function validateFilePath(filepath) {
     );
   }
   return realFilePath;
+}
+
+// src/lib/security/wrap-error-logger.ts
+var THROTTLE_WINDOW_MS2 = 6e4;
+var lastErrorMap = /* @__PURE__ */ new Map();
+function normalizeLabel(label) {
+  return label.replace(/[ --]/g, "").slice(0, 128);
+}
+function logWrapError(label, error) {
+  const safeLabel = normalizeLabel(label);
+  const now = Date.now();
+  const lastSeen = lastErrorMap.get(safeLabel);
+  if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS2) {
+    return;
+  }
+  lastErrorMap.set(safeLabel, now);
+  const errorName = error instanceof Error && typeof error.name === "string" && error.name.length > 0 ? error.name : "UnknownError";
+  console.error(`[wrap-error] [${safeLabel}] ${errorName}`);
+}
+function cleanupWrapErrorMap() {
+  const now = Date.now();
+  for (const [key, timestamp] of lastErrorMap) {
+    if (now - timestamp >= THROTTLE_WINDOW_MS2) {
+      lastErrorMap.delete(key);
+    }
+  }
+}
+function startWrapErrorCleanup() {
+  const interval = setInterval(cleanupWrapErrorMap, THROTTLE_WINDOW_MS2);
+  interval.unref();
+  return interval;
+}
+function stopWrapErrorCleanup(interval) {
+  clearInterval(interval);
 }
 
 // src/lib/execution/command-executor.ts
@@ -1815,6 +1852,71 @@ async function processResponse(response, options) {
   };
 }
 
+// src/lib/response/post-processor.ts
+import { randomUUID as randomUUID2 } from "crypto";
+var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
+function hasOwnWrappedTag(result) {
+  try {
+    return Object.hasOwn(result, WRAPPED) && result[WRAPPED] === true;
+  } catch {
+    return false;
+  }
+}
+function isWrappedResult(result) {
+  if (result === null || typeof result !== "object") return false;
+  return hasOwnWrappedTag(result);
+}
+function tag(result) {
+  if (hasOwnWrappedTag(result)) return result;
+  try {
+    Object.defineProperty(result, WRAPPED, {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: false
+    });
+  } catch {
+  }
+  return result;
+}
+function processTextPart(part, hostname, requestId) {
+  if (part === null || typeof part !== "object") return part;
+  const contentPart = part;
+  let type;
+  let text;
+  try {
+    type = contentPart.type;
+    text = contentPart.text;
+  } catch {
+    return part;
+  }
+  if (type !== "text" || typeof text !== "string") return part;
+  const sanitised = sanitizeAndDetect(text, hostname);
+  const finalText = requestId ? applySpotlighting(sanitised, requestId) : sanitised;
+  try {
+    return { ...contentPart, text: finalText };
+  } catch {
+    return part;
+  }
+}
+function createWrapper(config) {
+  return function wrap(result, hostname) {
+    if (result === null || typeof result !== "object") return result;
+    if (isWrappedResult(result)) return result;
+    try {
+      if (!Array.isArray(result.content)) return tag(result);
+      const requestId = config.enableSpotlighting && !result.isError ? randomUUID2() : void 0;
+      const newContent = result.content.map(
+        (part) => processTextPart(part, hostname, requestId)
+      );
+      return tag({ ...result, content: newContent });
+    } catch (err) {
+      logWrapError(hostname, err);
+      return tag(result);
+    }
+  };
+}
+
 // src/lib/tools/curl-execute.ts
 var CURL_EXECUTE_TOOL_META = {
   title: "Execute cURL Request",
@@ -1988,7 +2090,6 @@ export {
   sanitizeDescription,
   sanitizeResponse,
   detectInjectionPattern,
-  isSpotlightEnvelope,
   applySpotlighting,
   SESSION,
   startRateLimitCleanup,
@@ -2000,6 +2101,8 @@ export {
   parsePort,
   SERVER,
   applyDefaultHeaders,
+  JQ_QUERY_HOSTNAME_LABEL,
+  CUSTOM_TOOL_HOSTNAME_LABEL,
   getOrCreateTempDir,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
@@ -2008,12 +2111,15 @@ export {
   sanitizeAndDetect,
   startInjectionCleanup,
   stopInjectionCleanup,
+  startWrapErrorCleanup,
+  stopWrapErrorCleanup,
   resolveOutputDir,
   validateOutputDir,
   CurlExecuteSchema,
   JqQuerySchema,
   createSafeFilenameBase,
   applyJqFilter,
+  createWrapper,
   CURL_EXECUTE_TOOL_META,
   executeCurlRequest,
   registerCurlExecuteTool
