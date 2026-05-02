@@ -294,11 +294,17 @@ export class McpCurlServer {
             throw new Error(`Custom tool "${name}" is already registered`);
         }
 
-        // Store a sanitized defensive copy — never trust caller's object directly.
-        // title, description, and every inputSchema field description (at every
-        // depth — see `./schema-sanitizer.ts`) are sanitised so externally-sourced
-        // strings cannot leak Unicode-attack chars (bidi, zero-width, variation
-        // selectors, …) into tool advertisement.
+        // Sanitise externally-sourced strings before advertising the tool.
+        // - title and description are sanitised into a fresh `sanitizedMeta`
+        //   object (the original `meta.title` / `meta.description` strings are
+        //   primitives and are not mutated).
+        // - `meta.inputSchema` is sanitised **in place**: the helper mutates
+        //   `z.globalRegistry` description entries on the caller's schema
+        //   instance (see `./schema-sanitizer.ts` for the side-effect
+        //   contract). The same instance is then placed in `sanitizedMeta`.
+        // Net effect: every `.describe()` string at every depth, plus title
+        // and description, is free of Unicode-attack chars (bidi, zero-width,
+        // variation selectors, …) before the tool is registered with the SDK.
         const sanitizedTitle = sanitizeDescription(meta.title);
         const sanitizedDesc = sanitizeDescription(meta.description);
         const truncatedDesc = sanitizedDesc.slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH);

@@ -2,9 +2,15 @@
 
 **Date:** 2026-05-01 | **Branch:** `feat/hardening-pr-5-custom-tool-zod-rebuild` | **Plan:** [`docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md`](../plans/2026-04-30-chore-pre-bigwork-hardening-plan.md) (PR-5 / B4) | **Status:** complete (post-review pivot)
 
-> **⚠️ Design pivot during review.** The original "rebuild via `z.object(newShape)` / `z.array(elem)` / `z.union(opts)`" approach (described in the sections below) was replaced after multi-agent review surfaced P1 correctness regressions: rebuilds silently strip `.refine()` / `.check()` / `.strict()` / `.passthrough()` / array length checks and freeze factory defaults. The shipped implementation **mutates `z.globalRegistry` entries in place** on the caller's schema instance — same security guarantee, zero runtime-invariant loss. See the **"Code Review — 2026-05-01"** section at the bottom for the full pivot record. Sections above this banner describe the **earlier, pre-pivot** implementation and are retained for historical context only.
+> **⚠️ Authoritative content lives in the post-pivot sections at the bottom of this file** — start with **[Code Review — 2026-05-01](#code-review--2026-05-01)** (which records the design pivot from the original "rebuild via `z.object`/`z.array`/`z.union`" approach to the shipped in-place `z.globalRegistry` mutation) and **[Review Comments Addressed — 2026-05-02](#review-comments-addressed--2026-05-02)**. Everything between this banner and those sections describes the **earlier, pre-pivot** implementation and is **superseded** — kept only as a historical appendix so the design evolution is traceable. Do not treat the appendix as documentation of current behaviour.
 
-## Summary
+---
+
+## Historical Appendix — Pre-pivot Implementation
+
+> The remainder of this file up to the **[Code Review — 2026-05-01](#code-review--2026-05-01)** section describes the original rebuild-based implementation. It does **not** match the shipped code — `WeakMap` cache, `sanitizeFieldDeep`, `reapplyDescription`, and the `z.object(newShape)` / `z.array(elem)` / `z.union(opts)` rebuild paths were all removed during the pivot. Coverage limits listed here ("ZodTuple/ZodRecord/...not covered") were also expanded post-pivot — see the [Review Comments Addressed](#review-comments-addressed--2026-05-02) section for the current descended-types list. Read for design context, not as current truth.
+
+### Summary (historical)
 
 Closes plan item **B4**. `McpCurlServer.registerCustomTool()` now auto-sanitises every `.describe()` string inside `inputSchema` at registration time — top-level fields, nested `ZodObject`, `ZodArray`, `ZodUnion` (including `ZodDiscriminatedUnion`), and through `ZodOptional` / `ZodDefault` / `ZodNullable` wrappers. The walker mutates the caller's schema's `z.globalRegistry` entries **in place** — preserving every runtime invariant (`.refine()`, `.check()`, `.strict()`, array `.min()` / `.max()` / `.length()`, factory defaults, discriminator routing) while neutralising Unicode-attack chars in advertised metadata. Standard-Schema regression check uses `z.toJSONSchema()` to verify sanitised values are visible at every depth.
 

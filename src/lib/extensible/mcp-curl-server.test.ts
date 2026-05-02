@@ -723,6 +723,50 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         expect(lazy.unwrap().description).toBe("pwn");
     });
 
+    it("strips a bidi override on a ZodMap's key and value descriptions", () => {
+        const inputSchema = z.object({
+            cache: z.map(z.string().describe(PWN), z.number().describe(`${ATTACK}n`)),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const map = sanitised.shape.cache as z.ZodMap<z.ZodString, z.ZodNumber>;
+        expect(map.keyType.description).toBe("pwn");
+        expect(map.valueType.description).toBe("n");
+    });
+
+    it("strips a bidi override on a ZodSet's value-type description", () => {
+        const inputSchema = z.object({
+            tags: z.set(z.string().describe(PWN)),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const set = sanitised.shape.tags as z.ZodSet<z.ZodString>;
+        const def = set.def as unknown as { valueType: z.ZodString };
+        expect(def.valueType.description).toBe("pwn");
+    });
+
+    it("strips a bidi override through a ZodCatch wrapper", () => {
+        const inputSchema = z.object({
+            field: z.string().describe(PWN).catch("fallback"),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const ca = sanitised.shape.field as z.ZodCatch<z.ZodString>;
+        expect(ca.unwrap().description).toBe("pwn");
+        // Catch fallback still applies after sanitisation.
+        expect(ca.parse(123 as unknown)).toBe("fallback");
+    });
+
+    it("strips a bidi override through a ZodPromise wrapper", () => {
+        const inputSchema = z.object({
+            future: z.promise(z.string().describe(PWN)),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const pr = sanitised.shape.future as z.ZodPromise<z.ZodString>;
+        expect(pr.unwrap().description).toBe("pwn");
+    });
+
     it("strips a bidi override through a ZodReadonly wrapper", () => {
         const inputSchema = z.object({
             frozen: z.string().describe(PWN).readonly(),
