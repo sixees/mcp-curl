@@ -1882,12 +1882,22 @@ function tag(result) {
 function processTextPart(part, hostname, requestId) {
   if (part === null || typeof part !== "object") return part;
   const contentPart = part;
-  if (contentPart.type !== "text" || typeof contentPart.text !== "string") {
-    return contentPart;
+  let type;
+  let text;
+  try {
+    type = contentPart.type;
+    text = contentPart.text;
+  } catch {
+    return part;
   }
-  const sanitised = sanitizeAndDetect(contentPart.text, hostname);
+  if (type !== "text" || typeof text !== "string") return part;
+  const sanitised = sanitizeAndDetect(text, hostname);
   const finalText = requestId ? applySpotlighting(sanitised, requestId) : sanitised;
-  return { ...contentPart, text: finalText };
+  try {
+    return { ...contentPart, text: finalText };
+  } catch {
+    return part;
+  }
 }
 function createWrapper(config) {
   return function wrap(result, hostname) {

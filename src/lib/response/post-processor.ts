@@ -205,12 +205,35 @@ function processTextPart(
     // valid text parts still get sanitise + detect + spotlight.
     if (part === null || typeof part !== "object") return part;
     const contentPart = part as WrappableContentPart;
-    if (contentPart.type !== "text" || typeof contentPart.text !== "string") {
-        return contentPart;
+
+    // Per-item containment: property reads on a hostile Proxy can invoke a
+    // throwing `get` trap (or a getter on a plain object). If the throw
+    // escaped this function, it would propagate out of `.map()`, hit the
+    // wrap's outer catch, and the entire result would be returned
+    // un-sanitised — losing sanitisation for every other text part in the
+    // array because of one bad neighbour. Catching at item scope keeps the
+    // failure contained to that single part: the original is passed through
+    // untouched while siblings continue to be sanitised normally.
+    let type: unknown;
+    let text: unknown;
+    try {
+        type = contentPart.type;
+        text = contentPart.text;
+    } catch {
+        return part;
     }
-    const sanitised = sanitizeAndDetect(contentPart.text, hostname);
+    if (type !== "text" || typeof text !== "string") return part;
+
+    const sanitised = sanitizeAndDetect(text, hostname);
     const finalText = requestId ? applySpotlighting(sanitised, requestId) : sanitised;
-    return { ...contentPart, text: finalText };
+    // Spread reads every own enumerable property, also routed through Proxy
+    // `get` / `ownKeys` traps. Contain the same way — a throwing trap on a
+    // sibling property must not lose sanitisation for the rest of the array.
+    try {
+        return { ...contentPart, text: finalText };
+    } catch {
+        return part;
+    }
 }
 
 /**

@@ -555,3 +555,107 @@ describe("createWrapper — hostile Proxy probe (PR #29 round-4 hardening)", () 
         expect(() => wrap(hostile, "host.com")).not.toThrow();
     });
 });
+
+describe("createWrapper — per-item content containment (PR #29 round-6 hardening)", () => {
+    // A hostile Proxy with a throwing `get` trap on `type` or `text` would
+    // previously propagate out of `.map()`, hit the outer catch, and return
+    // the entire result un-sanitised — losing sanitisation for every OTHER
+    // text part in the array because of one bad neighbour. Per-item
+    // containment keeps the failure scoped to that single part.
+
+    it("a throwing-get-trap on `text` does NOT abort sanitisation of sibling text parts", () => {
+        const wrap = createWrapper({});
+        const hostile = new Proxy(
+            { type: "text", text: "" },
+            {
+                get(_t, prop) {
+                    if (prop === "text") throw new Error("text-get-boom");
+                    if (prop === "type") return "text";
+                    return undefined;
+                },
+            }
+        );
+        const out = wrap(
+            {
+                content: [
+                    { type: "text", text: "before‮bytes" },
+                    hostile,
+                    { type: "text", text: "after​bytes" },
+                ],
+            },
+            "host.com"
+        );
+        const parts = out.content as Array<{ type?: string; text?: unknown }>;
+        expect(parts).toHaveLength(3);
+        // Sibling text parts ARE sanitised — the throwing getter on the
+        // middle entry does NOT abort the whole map.
+        expect(parts[0]).toEqual({ type: "text", text: "beforebytes" });
+        expect(parts[2]).toEqual({ type: "text", text: "afterbytes" });
+        // Hostile entry is passed through unchanged (not the spread copy).
+        expect(parts[1]).toBe(hostile);
+    });
+
+    it("a throwing-get-trap on `type` is contained per-item", () => {
+        const wrap = createWrapper({});
+        const hostile = new Proxy(
+            { type: "text", text: "x" },
+            {
+                get(_t, prop) {
+                    if (prop === "type") throw new Error("type-get-boom");
+                    return undefined;
+                },
+            }
+        );
+        const out = wrap(
+            {
+                content: [
+                    hostile,
+                    { type: "text", text: "ok‮text" },
+                ],
+            },
+            "host.com"
+        );
+        const parts = out.content as Array<unknown>;
+        expect(parts[0]).toBe(hostile);
+        expect(parts[1]).toEqual({ type: "text", text: "oktext" });
+    });
+
+    it("a throwing-get-trap on a sibling property (during spread) is contained", () => {
+        // The spread `{ ...contentPart, text: finalText }` reads every own
+        // enumerable property — a Proxy with a throwing get on, say,
+        // `annotations` would break the spread itself. Containment must
+        // catch this too.
+        const wrap = createWrapper({});
+        const hostile = new Proxy(
+            { type: "text", text: "hello", annotations: undefined },
+            {
+                ownKeys() {
+                    return ["type", "text", "annotations"];
+                },
+                getOwnPropertyDescriptor(t, prop) {
+                    return Reflect.getOwnPropertyDescriptor(t, prop) ?? {
+                        enumerable: true,
+                        configurable: true,
+                    };
+                },
+                get(t, prop, recv) {
+                    if (prop === "annotations") throw new Error("annotations-get-boom");
+                    return Reflect.get(t, prop, recv);
+                },
+            }
+        );
+        const out = wrap(
+            {
+                content: [
+                    hostile,
+                    { type: "text", text: "sibling‮bytes" },
+                ],
+            },
+            "host.com"
+        );
+        const parts = out.content as Array<unknown>;
+        // Hostile entry passes through unchanged; sibling is sanitised.
+        expect(parts[0]).toBe(hostile);
+        expect(parts[1]).toEqual({ type: "text", text: "siblingbytes" });
+    });
+});

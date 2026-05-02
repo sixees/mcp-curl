@@ -337,3 +337,37 @@ feat(response): defence-in-depth wrap on YAML/custom-tool/hook output (PR-6b / B
 ### Tests / build
 - `npm test`: 747/747 passing (7 skipped) — unchanged from round-4 (refactor + doc-only changes; no new tests needed)
 - `npm run build`: clean
+
+---
+
+## Review Comments Addressed — 2026-05-02 (PR #29 round 6)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `processTextPart` reads `contentPart.type` and `contentPart.text` bare. A Proxy with a throwing `get` trap on either property would propagate out of `.map()`, hit the wrap's outer catch, and the whole result would be returned un-sanitised — losing sanitisation for every OTHER text part in the array because of one hostile neighbour. | @coderabbitai | **P2 — Fix needed** | Added per-item containment in `processTextPart`: the `type` / `text` reads are now wrapped in try/catch that returns the original `part` unchanged on throw, and the closing spread `{ ...contentPart, text: finalText }` (which reads every own enumerable via `ownKeys`/`get`) is also try/catch-contained. Sibling text parts continue to be sanitised normally even when a hostile neighbour's getter throws. Added 3 regression tests in a new `per-item content containment` describe block: throwing get on `text`, throwing get on `type`, and throwing get during the spread (on a sibling property like `annotations`). |
+| `types/public.ts:57` JSDoc still says `Symbol.for("mcp-curl.wrapped")` — should reflect the module-private `Symbol(...)` implementation | @agent-optibot | **False positive (already fixed; thread isOutdated)** | The thread is `isOutdated: true` — the comment was filed before commit 52c4e54 (round 5) which already rewrote that exact JSDoc paragraph to describe the module-private, non-enumerable `Symbol` tag with own-property check. Verified the current `types/public.ts:55-63` matches what the reviewer asked for. No code change required; replied to the thread explaining and resolved. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| `processTextPart` reads `contentPart.type` and `contentPart.text` bare on the assumption that a runtime guard on `typeof === "string"` is enough | Reads are routed through a per-item try/catch; the closing spread is also try/catch-contained | The runtime guard prevents *use* of a non-string `text`, but it does not prevent *throws during read*. A Proxy with a throwing `get` trap would propagate out of `.map()` and the outer catch would lose sanitisation for the entire array. Per-item containment scopes the failure to the hostile entry only — siblings stay sanitised. Same fail-open philosophy as the round-4 hostile-Proxy hardening on the WRAPPED tag probe. | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was inline PR threads, not `docs/todos/` files_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — round-6 threads addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/response/post-processor.ts` (per-item try/catch around `type`/`text` reads and the closing spread in `processTextPart`)
+- `src/lib/response/post-processor.test.ts` (+3 throwing-getter regression tests in new `per-item content containment` describe block)
+- `docs/work/handoff-feat-hardening-pr-6b-defence-in-depth-wrap.md` (this section)
+
+### Tests / build
+- `npm test`: 750/750 passing (7 skipped) — was 747 after round-5, +3 net (per-item throwing-getter regression tests)
+- `npm run build`: clean
