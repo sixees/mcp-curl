@@ -108,27 +108,39 @@ declare function sanitizeDescription(input: string | null | undefined): string;
  * Sanitize HTTP response content before returning to LLM.
  *
  * Single-pass sanitization:
- * 1. Unicode attack vectors (bidi overrides, zero-width chars, Tags block, etc.) → removed
- * 2. Whitespace-padding runs (50+ consecutive spaces) → collapsed to a single space
+ * 1. Unicode attack vectors (bidi overrides, zero-width chars, Tags block,
+ *    Variation Selectors Supplement / "Sneaky Bits", Braille blank, Arabic
+ *    letter mark, Mongolian invisibles, Hangul fillers, …) → removed
+ * 2. Whitespace-padding runs (50+ consecutive characters from the visual-space
+ *    class — ASCII space, tab, NBSP, U+2000–U+200A en/em-spaces, U+202F NARROW
+ *    NO-BREAK SPACE, U+205F MEDIUM MATHEMATICAL SPACE, U+3000 IDEOGRAPHIC
+ *    SPACE) → collapsed to a single ASCII space.
+ * 3. Newline runs (20+ consecutive `\n`) → collapsed to a single `\n`. Preserves
+ *    rough document structure while defeating context-window-eviction attacks
+ *    that push trailing content past the visible scroll.
  *
- * Normal whitespace (\t, \n, \r) is preserved to maintain response formatting.
+ * Normal short whitespace (single `\t`, `\n`, `\r`, runs below threshold) is
+ * preserved to maintain response formatting.
  *
- * Whitespace runs collapse to a single space (rather than a marker like
+ * Whitespace runs collapse to a single ASCII space (rather than a marker like
  * "[WHITESPACE REMOVED]") because callers may JSON.parse the sanitized output
  * (see response/processor.ts → applyJqFilterToParsed). Inserting a non-whitespace
  * marker into the middle of a JSON document — between tokens or inside a deeply
  * pretty-printed value — would break the parse. A single space preserves
  * JSON validity while still neutralising the padding attack (the hidden tail
  * is no longer hidden behind a wall of whitespace), and detectInjectionPattern
- * still fires on the collapsed content for observability.
+ * still fires on the collapsed content for observability. Newline runs collapse
+ * to `\n` for the same reason — preserving JSON validity for prettified bodies
+ * with intentional line breaks.
  *
  * **Stability contract:** the security *invariant* is stable across versions —
  * output never contains Unicode-attack chars from the documented class, never
- * contains a run of 50+ consecutive spaces. The exact *byte-level form* of the
- * transformation is implementation detail and may tighten over time (broader
- * Unicode coverage, lower whitespace threshold, additional collapses). Do not
- * rely on `sanitizeResponse(x) === x` as a "is clean" oracle — re-run the
- * sanitiser instead, or compose with `sanitizeAndDetect`.
+ * contains a run of 50+ consecutive whitespace characters from the visual-space
+ * class, never contains a run of 20+ consecutive newlines. The exact
+ * *byte-level form* of the transformation is implementation detail and may
+ * tighten over time (broader Unicode coverage, lower thresholds, additional
+ * collapses). Do not rely on `sanitizeResponse(x) === x` as a "is clean"
+ * oracle — re-run the sanitiser instead, or compose with `sanitizeAndDetect`.
  *
  * @param input - Response content to sanitize (null/undefined returns "")
  * @returns Sanitized content

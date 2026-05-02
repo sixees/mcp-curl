@@ -37,7 +37,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-ZMU6VBN2.js";
+} from "./chunk-M7SJKUMX.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -366,6 +366,18 @@ Files can only be read from:
 - Symlinks resolved via realpath() before validation
 - Path traversal (\`..\`) blocked
 - jq_query restricted to temp dir, MCP_CURL_OUTPUT_DIR, and cwd
+
+### Response Sanitisation (text content only)
+- Unicode attack chars stripped: bidi overrides, zero-width family, "Sneaky Bits"
+  Variation Selector Supplement (U+E0100\u2013U+E01EF), Braille blank, Arabic letter
+  mark, Mongolian invisibles, Hangul fillers, Tags block, BOM, and more
+- Visual-space-padding runs (50+ tabs / NBSP / em-spaces / IDEOGRAPHIC SPACE)
+  collapsed to a single space; newline runs (20+) collapsed to a single newline
+- HTML / XHTML / SVG / *+xml: \`<script>\` and \`<style>\` blocks removed
+  (ReDoS-hardened, numeric-entity decode, 256 KB cap)
+- Markdown: image beacons and external links replaced with \`[image removed]\`
+  / \`[link removed]\`; dangerous-scheme URLs (\`javascript:\`, \`vbscript:\`,
+  \`file:\`, \`data:\`) blocked in both links and images
 
 ## Common Exit Codes
 

@@ -36,11 +36,35 @@ function safeHostname(url, fallback = "unknown") {
   }
 }
 
+// src/lib/utils/unicode-attack-ranges.ts
+var C0_CONTROLS = "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F";
+var C1_CONTROLS = "\\u007F-\\u009F";
+var SOFT_HYPHEN = "\\u00AD";
+var ARABIC_LETTER_MARK = "\\u061C";
+var HANGUL_FILLERS = "\\u115F\\u1160";
+var MONGOLIAN_INVISIBLES = "\\u180B-\\u180E";
+var ZERO_WIDTH_AND_DIRECTIONAL_MARKS = "\\u200B-\\u200F";
+var LINE_PARAGRAPH_SEPARATORS = "\\u2028\\u2029";
+var BIDI_EMBEDDING_OVERRIDE = "\\u202A-\\u202E";
+var WORD_JOINER_FAMILY = "\\u2060-\\u2064";
+var BIDI_ISOLATES = "\\u2066-\\u2069";
+var BRAILLE_PATTERN_BLANK = "\\u2800";
+var HANGUL_FILLER_3164 = "\\u3164";
+var BOM = "\\uFEFF";
+var VARIATION_SELECTORS_BASIC = "\\uFE00-\\uFE0F";
+var TAGS_BLOCK = "\\u{E0000}-\\u{E007F}";
+var VARIATION_SELECTORS_SUPPLEMENT = "\\u{E0100}-\\u{E01EF}";
+var UNICODE_ATTACK_RANGES = C0_CONTROLS + C1_CONTROLS + SOFT_HYPHEN + ARABIC_LETTER_MARK + HANGUL_FILLERS + MONGOLIAN_INVISIBLES + ZERO_WIDTH_AND_DIRECTIONAL_MARKS + LINE_PARAGRAPH_SEPARATORS + BIDI_EMBEDDING_OVERRIDE + WORD_JOINER_FAMILY + BIDI_ISOLATES + BRAILLE_PATTERN_BLANK + HANGUL_FILLER_3164 + BOM + VARIATION_SELECTORS_BASIC + TAGS_BLOCK + VARIATION_SELECTORS_SUPPLEMENT;
+var WHITESPACE_PADDING_CLASS = "\\u0020\\t\\u00A0\\u2000-\\u200A\\u202F\\u205F\\u3000";
+
 // src/lib/utils/sanitize.ts
 var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
-var UNICODE_ATTACK_RANGES = "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\u00AD\\u200B-\\u200F\\u2028\\u2029\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF\\uFE00-\\uFE0F\\u{E0000}-\\u{E007F}";
 var DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
-var RESPONSE_SANITIZE_PATTERN = new RegExp(`[${UNICODE_ATTACK_RANGES}]+| {50,}`, "gu");
+var WHITESPACE_PADDING_PATTERN = `[${WHITESPACE_PADDING_CLASS}]{50,}|\\n{20,}`;
+var RESPONSE_SANITIZE_PATTERN = new RegExp(
+  `[${UNICODE_ATTACK_RANGES}]+|${WHITESPACE_PADDING_PATTERN}`,
+  "gu"
+);
 var INJECTION_PATTERNS = new RegExp(
   [
     // Explicit instruction override
@@ -82,9 +106,19 @@ function sanitizeDescription(input) {
 function sanitizeResponse(input) {
   if (input == null) return "";
   return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
-    if (match[0] === " ") return " ";
+    if (match.charCodeAt(0) === 10) return "\n";
+    if (isWhitespacePaddingMatch(match)) return " ";
     return "";
   });
+}
+function isWhitespacePaddingMatch(match) {
+  const cp = match.codePointAt(0);
+  if (cp === void 0) return false;
+  if (cp === 32 || cp === 9 || cp === 160) return true;
+  if (cp >= 8192 && cp <= 8202) return true;
+  if (cp === 8239 || cp === 8287) return true;
+  if (cp === 12288) return true;
+  return false;
 }
 function detectInjectionPattern(input) {
   return INJECTION_PATTERNS.test(input);
@@ -200,6 +234,17 @@ function supportsMarkupComments(contentType) {
   if (!mime) return false;
   if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return true;
   return MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
+}
+var MARKDOWN_MIME_EXACT = /* @__PURE__ */ new Set([
+  "text/markdown",
+  "text/x-markdown"
+]);
+var MARKDOWN_MIME_SUFFIXES = ["+markdown"];
+function isMarkdownContentType(contentType) {
+  const mime = parseMimeType(contentType);
+  if (!mime) return false;
+  if (MARKDOWN_MIME_EXACT.has(mime)) return true;
+  return MARKDOWN_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
 }
 
 // src/lib/security/detection-logger.ts
@@ -1787,6 +1832,42 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 
 // src/lib/response/processor.ts
 var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+var STRIP_PATH_MAX_BYTES = 256 * 1024;
+var STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
+var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>(?:(?!<\/?script\b)[\s\S])*?<\/script\s*>/gi;
+var STYLE_BLOCK_PATTERN = /<style\b[^>]*>(?:(?!<\/?style\b)[\s\S])*?<\/style\s*>/gi;
+var ORPHAN_SCRIPT_OPEN_PATTERN = /<script\b[^>]*>/gi;
+var ORPHAN_SCRIPT_CLOSE_PATTERN = /<\/script\s*>/gi;
+var ORPHAN_STYLE_OPEN_PATTERN = /<style\b[^>]*>/gi;
+var ORPHAN_STYLE_CLOSE_PATTERN = /<\/style\s*>/gi;
+var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(https?:\/\/[^\s)]{1,2048}\)/g;
+var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\n]{0,256}\]\(https?:\/\/[^\s)]{1,2048}\)/g;
+var MARKDOWN_DANGEROUS_SCHEME_PATTERN = /!?\[[^\]\n]{0,256}\]\((?:javascript|vbscript|file|data):[^\s)]{0,4096}\)/gi;
+function decodeNumericHtmlEntities(input) {
+  return input.replace(/&#x([0-9a-f]+);?/gi, (_, hex) => {
+    const cp = Number.parseInt(hex, 16);
+    return Number.isFinite(cp) && cp >= 0 && cp <= 1114111 ? String.fromCodePoint(cp) : "";
+  }).replace(/&#(\d+);?/g, (_, dec) => {
+    const cp = Number.parseInt(dec, 10);
+    return Number.isFinite(cp) && cp >= 0 && cp <= 1114111 ? String.fromCodePoint(cp) : "";
+  });
+}
+function stripBlocksFixedPoint(input) {
+  if (Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES) return input;
+  let curr = decodeNumericHtmlEntities(input);
+  for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
+    const next = curr.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
+    if (next === curr) break;
+    curr = next;
+  }
+  return curr.replace(ORPHAN_SCRIPT_OPEN_PATTERN, "").replace(ORPHAN_SCRIPT_CLOSE_PATTERN, "").replace(ORPHAN_STYLE_OPEN_PATTERN, "").replace(ORPHAN_STYLE_CLOSE_PATTERN, "");
+}
+function stripMarkdownBeacons(input) {
+  return input.replace(
+    MARKDOWN_DANGEROUS_SCHEME_PATTERN,
+    (match) => match.startsWith("!") ? "[image removed]" : "[link removed]"
+  ).replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]");
+}
 async function processResponse(response, options) {
   const rawBytes = Buffer.byteLength(response, "utf8");
   if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
@@ -1800,6 +1881,10 @@ async function processResponse(response, options) {
   if (isText) {
     if (supportsMarkupComments(options.contentType)) {
       content = content.replace(HTML_COMMENT_PATTERN, "");
+      content = stripBlocksFixedPoint(content);
+    }
+    if (isMarkdownContentType(options.contentType)) {
+      content = stripMarkdownBeacons(content);
     }
     content = sanitizeAndDetect(content, hostname);
   }

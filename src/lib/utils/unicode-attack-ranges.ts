@@ -1,0 +1,134 @@
+// src/lib/utils/unicode-attack-ranges.ts
+// Single source of truth for the Unicode codepoint ranges used by the
+// description and response sanitisers. Stored as named string fragments so
+// each consumer builds its own RegExp instance — RegExp objects with the
+// `g` flag are stateful and must not be shared across call sites.
+//
+// Each block is a `\u…` / `\u{…}` character-class fragment (no surrounding
+// brackets) suitable for splicing into `[…]` inside a `new RegExp(..., "gu")`
+// constructor. Append-only when adding new attack classes — never remove
+// without a migration plan.
+//
+// References:
+//   - Unicode 15.0 (https://www.unicode.org/versions/Unicode15.0.0/)
+//   - "Sneaky Bits" prompt-injection research (2025–2026) — VS Supplement
+//     payload encoding (U+E0100–U+E01EF)
+//   - 2026 prompt-injection reports — Braille blank, Arabic letter mark,
+//     Hangul fillers as zero-width hiding characters
+
+/** C0 control chars EXCEPT `\t` (U+0009), `\n` (U+000A), `\r` (U+000D). */
+const C0_CONTROLS = "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F";
+
+/** C1 control chars (U+007F DEL through U+009F APPLICATION PROGRAM COMMAND). */
+const C1_CONTROLS = "\\u007F-\\u009F";
+
+/** U+00AD SOFT HYPHEN — invisible word-break opportunity. */
+const SOFT_HYPHEN = "\\u00AD";
+
+/**
+ * U+061C ARABIC LETTER MARK — bidi control routinely missed by sanitiser
+ * lists. Same hiding properties as U+202E. (PR-7 / B7-sub-1-3)
+ */
+const ARABIC_LETTER_MARK = "\\u061C";
+
+/**
+ * U+115F HANGUL CHOSEONG FILLER and U+1160 HANGUL JUNGSEONG FILLER — render
+ * as zero-width in many fonts; documented hiding chars in 2025–2026
+ * prompt-injection reports. (PR-7 / B7-sub-1-3)
+ */
+const HANGUL_FILLERS = "\\u115F\\u1160";
+
+/**
+ * U+180B–U+180D MONGOLIAN FREE VARIATION SELECTORs ONE-TO-THREE (used in 2025
+ * "Sneaky Bits" research alongside the U+FE00–U+FE0F Variation Selectors)
+ * AND U+180E MONGOLIAN VOWEL SEPARATOR. (PR-7 / B7-sub-1-3)
+ */
+const MONGOLIAN_INVISIBLES = "\\u180B-\\u180E";
+
+/** U+200B–U+200F: zero-width family + LRM/RLM bidi marks. */
+const ZERO_WIDTH_AND_DIRECTIONAL_MARKS = "\\u200B-\\u200F";
+
+/** U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR — ECMAScript line terminators. */
+const LINE_PARAGRAPH_SEPARATORS = "\\u2028\\u2029";
+
+/** U+202A–U+202E bidi embedding / override / pop-directional. */
+const BIDI_EMBEDDING_OVERRIDE = "\\u202A-\\u202E";
+
+/**
+ * U+2060–U+2064 word joiner family (WORD JOINER, FUNCTION APPLICATION,
+ * INVISIBLE TIMES, INVISIBLE SEPARATOR, INVISIBLE PLUS).
+ */
+const WORD_JOINER_FAMILY = "\\u2060-\\u2064";
+
+/** U+2066–U+2069 bidi isolation marks (LRI, RLI, FSI, PDI). */
+const BIDI_ISOLATES = "\\u2066-\\u2069";
+
+/**
+ * U+2800 BRAILLE PATTERN BLANK — renders as space in Braille fonts but is a
+ * single Braille codepoint, not whitespace. Tokenisation is inconsistent
+ * across MCP clients. (PR-7 / B7-sub-1-3)
+ */
+const BRAILLE_PATTERN_BLANK = "\\u2800";
+
+/**
+ * U+3164 HANGUL FILLER — zero-width-renderable filler in many fonts; classic
+ * homoglyph hiding char in 2026 reports. (PR-7 / B7-sub-1-3)
+ */
+const HANGUL_FILLER_3164 = "\\u3164";
+
+/** U+FEFF ZERO WIDTH NO-BREAK SPACE / BOM. */
+const BOM = "\\uFEFF";
+
+/** U+FE00–U+FE0F Variation Selectors One-to-Sixteen (basic plane). */
+const VARIATION_SELECTORS_BASIC = "\\uFE00-\\uFE0F";
+
+/**
+ * U+E0000–U+E007F TAGS block (deprecated tag characters; smuggled metadata
+ * carrier in 2024–2025 reports).
+ */
+const TAGS_BLOCK = "\\u{E0000}-\\u{E007F}";
+
+/**
+ * U+E0100–U+E01EF VARIATION SELECTORs SEVENTEEN-TO-256 (Variation Selectors
+ * Supplement). Distinct from the lower TAGS block — the original sanitiser
+ * range only covered U+E0000–U+E007F, leaving "Sneaky Bits" payloads encoded
+ * in the supplement intact. (PR-7 / B7-sub-1-3)
+ */
+const VARIATION_SELECTORS_SUPPLEMENT = "\\u{E0100}-\\u{E01EF}";
+
+/**
+ * Full attack-range fragment used inside the sanitiser character class.
+ * Composed in attack-class order (controls → marks → bidi → invisibles →
+ * supplementary planes) so the source reads as a taxonomy, not a soup.
+ *
+ * **Append-only.** Every entry has a regression test — removing any one of
+ * these without a deliberate migration breaks the corresponding bypass guard.
+ */
+export const UNICODE_ATTACK_RANGES =
+    C0_CONTROLS +
+    C1_CONTROLS +
+    SOFT_HYPHEN +
+    ARABIC_LETTER_MARK +
+    HANGUL_FILLERS +
+    MONGOLIAN_INVISIBLES +
+    ZERO_WIDTH_AND_DIRECTIONAL_MARKS +
+    LINE_PARAGRAPH_SEPARATORS +
+    BIDI_EMBEDDING_OVERRIDE +
+    WORD_JOINER_FAMILY +
+    BIDI_ISOLATES +
+    BRAILLE_PATTERN_BLANK +
+    HANGUL_FILLER_3164 +
+    BOM +
+    VARIATION_SELECTORS_BASIC +
+    TAGS_BLOCK +
+    VARIATION_SELECTORS_SUPPLEMENT;
+
+/**
+ * Whitespace-padding character class — used for the 50+-run collapse rule in
+ * `sanitizeResponse`. Includes ASCII space, tab, NBSP (U+00A0), the U+2000
+ * en/em-space family, NARROW NO-BREAK SPACE, MEDIUM MATHEMATICAL SPACE, and
+ * IDEOGRAPHIC SPACE. Newlines are handled by a separate run rule (`\n{20,}`)
+ * because their threshold is different.
+ */
+export const WHITESPACE_PADDING_CLASS =
+    "\\u0020\\t\\u00A0\\u2000-\\u200A\\u202F\\u205F\\u3000";

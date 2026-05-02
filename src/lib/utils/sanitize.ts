@@ -1,6 +1,8 @@
 // src/lib/utils/sanitize.ts
 // Response sanitization utilities for prompt injection defense
 
+import { UNICODE_ATTACK_RANGES, WHITESPACE_PADDING_CLASS } from "./unicode-attack-ranges.js";
+
 /**
  * Maximum length for custom tool descriptions.
  * Clients (OpenAI-compatible) truncate descriptions beyond ~1024 chars;
@@ -8,25 +10,24 @@
  */
 export const MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1000;
 
-// Single source of truth for the Unicode-attack character class used by both
-// the description and response sanitizers. Covers: C0/C1 control chars
-// (excluding \t \n \r), soft hyphen, zero-width chars, bidi embedding /
-// override / isolation, word-joiner family, BOM, variation selectors, Tags
-// block, U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR (ECMAScript
-// line terminators).
-//
-// Stored as a string fragment (not a RegExp) so each consumer builds its own
-// RegExp instance — RegExp objects with the g flag are stateful and must not
-// be shared across call sites.
-const UNICODE_ATTACK_RANGES =
-    "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\u00AD\\u200B-\\u200F\\u2028\\u2029\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF\\uFE00-\\uFE0F\\u{E0000}-\\u{E007F}";
-
 // NOT exported — g+u flags make regexes stateful; external .test() corrupts lastIndex.
 const DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
 
+// Whitespace-padding attacks: collapse runs of any visual-space character to
+// one space, and runs of newlines to one newline. Thresholds are heuristic —
+// 50 chars (or 20 newlines) is the smallest run unlikely in legitimate
+// formatting. 49-char runs are functionally equivalent for hiding content;
+// this is an accepted tolerance, not a bug — lowering the threshold raises
+// false-positive risk on legitimate code blocks and ASCII art.
+const WHITESPACE_PADDING_PATTERN = `[${WHITESPACE_PADDING_CLASS}]{50,}|\\n{20,}`;
+
 // NOT exported — same stateful reasoning.
-// Single-pass: same Unicode ranges as DESC_CONTROL_CHARS PLUS 50+ consecutive spaces.
-const RESPONSE_SANITIZE_PATTERN = new RegExp(`[${UNICODE_ATTACK_RANGES}]+| {50,}`, "gu");
+// Single-pass: Unicode attack chars + 50+-run whitespace padding (across the
+// extended visual-space class) + 20+-run newline collapse.
+const RESPONSE_SANITIZE_PATTERN = new RegExp(
+    `[${UNICODE_ATTACK_RANGES}]+|${WHITESPACE_PADDING_PATTERN}`,
+    "gu"
+);
 
 // No g flag — safe for repeated .test() without lastIndex accumulation.
 // [\s\S]{0,n} instead of .{0,n} so bounded wildcards match across newlines,
@@ -84,27 +85,39 @@ export function sanitizeDescription(input: string | null | undefined): string {
  * Sanitize HTTP response content before returning to LLM.
  *
  * Single-pass sanitization:
- * 1. Unicode attack vectors (bidi overrides, zero-width chars, Tags block, etc.) → removed
- * 2. Whitespace-padding runs (50+ consecutive spaces) → collapsed to a single space
+ * 1. Unicode attack vectors (bidi overrides, zero-width chars, Tags block,
+ *    Variation Selectors Supplement / "Sneaky Bits", Braille blank, Arabic
+ *    letter mark, Mongolian invisibles, Hangul fillers, …) → removed
+ * 2. Whitespace-padding runs (50+ consecutive characters from the visual-space
+ *    class — ASCII space, tab, NBSP, U+2000–U+200A en/em-spaces, U+202F NARROW
+ *    NO-BREAK SPACE, U+205F MEDIUM MATHEMATICAL SPACE, U+3000 IDEOGRAPHIC
+ *    SPACE) → collapsed to a single ASCII space.
+ * 3. Newline runs (20+ consecutive `\n`) → collapsed to a single `\n`. Preserves
+ *    rough document structure while defeating context-window-eviction attacks
+ *    that push trailing content past the visible scroll.
  *
- * Normal whitespace (\t, \n, \r) is preserved to maintain response formatting.
+ * Normal short whitespace (single `\t`, `\n`, `\r`, runs below threshold) is
+ * preserved to maintain response formatting.
  *
- * Whitespace runs collapse to a single space (rather than a marker like
+ * Whitespace runs collapse to a single ASCII space (rather than a marker like
  * "[WHITESPACE REMOVED]") because callers may JSON.parse the sanitized output
  * (see response/processor.ts → applyJqFilterToParsed). Inserting a non-whitespace
  * marker into the middle of a JSON document — between tokens or inside a deeply
  * pretty-printed value — would break the parse. A single space preserves
  * JSON validity while still neutralising the padding attack (the hidden tail
  * is no longer hidden behind a wall of whitespace), and detectInjectionPattern
- * still fires on the collapsed content for observability.
+ * still fires on the collapsed content for observability. Newline runs collapse
+ * to `\n` for the same reason — preserving JSON validity for prettified bodies
+ * with intentional line breaks.
  *
  * **Stability contract:** the security *invariant* is stable across versions —
  * output never contains Unicode-attack chars from the documented class, never
- * contains a run of 50+ consecutive spaces. The exact *byte-level form* of the
- * transformation is implementation detail and may tighten over time (broader
- * Unicode coverage, lower whitespace threshold, additional collapses). Do not
- * rely on `sanitizeResponse(x) === x` as a "is clean" oracle — re-run the
- * sanitiser instead, or compose with `sanitizeAndDetect`.
+ * contains a run of 50+ consecutive whitespace characters from the visual-space
+ * class, never contains a run of 20+ consecutive newlines. The exact
+ * *byte-level form* of the transformation is implementation detail and may
+ * tighten over time (broader Unicode coverage, lower thresholds, additional
+ * collapses). Do not rely on `sanitizeResponse(x) === x` as a "is clean"
+ * oracle — re-run the sanitiser instead, or compose with `sanitizeAndDetect`.
  *
  * @param input - Response content to sanitize (null/undefined returns "")
  * @returns Sanitized content
@@ -112,11 +125,36 @@ export function sanitizeDescription(input: string | null | undefined): string {
 export function sanitizeResponse(input: string | null | undefined): string {
     if (input == null) return "";
     return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
-        // Whitespace-padding attack: collapse 50+ spaces to one (JSON-safe).
-        if (match[0] === " ") return " ";
-        // Unicode control/invisible char — remove entirely
+        // Newline-padding attack: collapse 20+ `\n` to one (preserves rough
+        // document structure for prettified JSON / multi-line text).
+        if (match.charCodeAt(0) === 0x0a) return "\n";
+        // Visual-space-padding attack: collapse 50+ space-class chars to one
+        // ASCII space (JSON-safe). ASCII space is U+0020; anything else in the
+        // whitespace-padding class normalises to a single ASCII space.
+        if (isWhitespacePaddingMatch(match)) return " ";
+        // Unicode control/invisible char — remove entirely.
         return "";
     });
+}
+
+/**
+ * Internal: classify a `RESPONSE_SANITIZE_PATTERN` match as whitespace-padding
+ * (vs Unicode-invisible attack). Whitespace runs share a known starter set
+ * (ASCII space, tab, NBSP, en/em-spaces, NARROW NO-BREAK, MEDIUM MATHEMATICAL,
+ * IDEOGRAPHIC). Anything else is a Unicode invisible and is removed entirely.
+ */
+function isWhitespacePaddingMatch(match: string): boolean {
+    const cp = match.codePointAt(0);
+    if (cp === undefined) return false;
+    // U+0020 SPACE, U+0009 TAB, U+00A0 NBSP
+    if (cp === 0x20 || cp === 0x09 || cp === 0xa0) return true;
+    // U+2000–U+200A en/em-space family
+    if (cp >= 0x2000 && cp <= 0x200a) return true;
+    // U+202F NARROW NO-BREAK SPACE, U+205F MEDIUM MATHEMATICAL SPACE
+    if (cp === 0x202f || cp === 0x205f) return true;
+    // U+3000 IDEOGRAPHIC SPACE
+    if (cp === 0x3000) return true;
+    return false;
 }
 
 /**

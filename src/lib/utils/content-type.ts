@@ -101,3 +101,37 @@ export function supportsMarkupComments(contentType: string | undefined): boolean
     if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return true;
     return MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
 }
+
+// Markdown MIME types — used to gate the markdown image / link beacon strip
+// in the response processor. The structured-syntax suffix `+markdown` is
+// rare in practice but defined by RFC 6838 so we accept it for symmetry with
+// the `+xml` handling above.
+const MARKDOWN_MIME_EXACT: ReadonlySet<string> = new Set([
+    "text/markdown",
+    "text/x-markdown",
+]);
+
+const MARKDOWN_MIME_SUFFIXES = ["+markdown"] as const;
+
+/**
+ * Returns true for MIME types whose grammar is markdown.
+ *
+ * Used by the response processor to decide whether to strip markdown image
+ * beacons (`![alt](https://…)`) and external markdown links
+ * (`[label](https://…)`). These carry the same exfiltration class as
+ * `<img>`/`<a>` but bypass the HTML-tag layer because clients render them
+ * directly from the markdown source.
+ *
+ * Matches:
+ *  - `text/markdown` (RFC 7763, the canonical type)
+ *  - `text/x-markdown` (legacy / pre-registration form, still in the wild)
+ *  - any vendor MIME with the `+markdown` structured-syntax suffix
+ *
+ * Pure: depends only on its input. Safe to import anywhere.
+ */
+export function isMarkdownContentType(contentType: string | undefined): boolean {
+    const mime = parseMimeType(contentType);
+    if (!mime) return false;
+    if (MARKDOWN_MIME_EXACT.has(mime)) return true;
+    return MARKDOWN_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
+}

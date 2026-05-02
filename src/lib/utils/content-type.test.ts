@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isBinaryContentType, parseMimeType, supportsMarkupComments } from "./content-type.js";
+import {
+    isBinaryContentType,
+    isMarkdownContentType,
+    parseMimeType,
+    supportsMarkupComments,
+} from "./content-type.js";
 
 describe("parseMimeType", () => {
     it("returns empty string for undefined", () => {
@@ -165,5 +170,49 @@ describe("supportsMarkupComments", () => {
         expect(supportsMarkupComments("text/css")).toBe(false);
         expect(supportsMarkupComments("application/javascript")).toBe(false);
         expect(supportsMarkupComments("image/png")).toBe(false);
+    });
+});
+
+describe("isMarkdownContentType (PR-7 / B8)", () => {
+    it("returns false for undefined/empty", () => {
+        expect(isMarkdownContentType(undefined)).toBe(false);
+        expect(isMarkdownContentType("")).toBe(false);
+    });
+
+    it("returns true for canonical text/markdown (RFC 7763)", () => {
+        expect(isMarkdownContentType("text/markdown")).toBe(true);
+        expect(isMarkdownContentType("text/markdown; charset=utf-8")).toBe(true);
+    });
+
+    it("returns true for legacy text/x-markdown", () => {
+        expect(isMarkdownContentType("text/x-markdown")).toBe(true);
+    });
+
+    it("returns true for any +markdown structured-syntax suffix", () => {
+        expect(isMarkdownContentType("application/vnd.custom+markdown")).toBe(true);
+    });
+
+    it("is case-insensitive", () => {
+        expect(isMarkdownContentType("TEXT/MARKDOWN")).toBe(true);
+        expect(isMarkdownContentType("Text/X-Markdown")).toBe(true);
+    });
+
+    it("strips parameters before classifying", () => {
+        expect(isMarkdownContentType("text/markdown; variant=GFM")).toBe(true);
+    });
+
+    it("returns false for adjacent text content types", () => {
+        expect(isMarkdownContentType("text/html")).toBe(false);
+        expect(isMarkdownContentType("text/plain")).toBe(false);
+        expect(isMarkdownContentType("application/json")).toBe(false);
+        expect(isMarkdownContentType("image/png")).toBe(false);
+    });
+
+    it("does not match the bare 'markdown' word inside an unrelated MIME", () => {
+        // The structured-syntax suffix MUST be `+markdown`, not the word
+        // anywhere in the type — otherwise vendor MIMEs that happen to
+        // contain the substring would mis-fire.
+        expect(isMarkdownContentType("text/markdownish")).toBe(false);
+        expect(isMarkdownContentType("application/markdown-extra")).toBe(false);
     });
 });
