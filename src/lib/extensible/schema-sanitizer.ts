@@ -66,6 +66,13 @@ const MAX_RECURSION_DEPTH = 100;
  * Idempotent: a second call on the same schema is a no-op (sanitisation
  * doesn't change a value that's already clean).
  *
+ * Performance: O(N) WeakSet lookups across N schema nodes per call. The
+ * earlier WeakMap memo cache was removed because in-place idempotence
+ * makes it redundant for correctness, and `registerCustomTool` is a
+ * startup-time call site. Hot-reload patterns that re-register the same
+ * deeply nested schema hundreds of times per second would re-walk on
+ * every call — reintroduce a cache at that point.
+ *
  * @param schema - Top-level ZodObject to walk
  * @returns The same `schema` instance (registry entries mutated in place)
  */
@@ -126,7 +133,11 @@ function sanitizeNode(
         return;
     }
     if (field instanceof z.ZodRecord || field instanceof z.ZodMap) {
-        // Both expose `keyType` and `valueType` as own instance properties.
+        // ZodRecord and ZodMap expose `keyType` and `valueType` as own
+        // instance properties, so we read them directly off the instance.
+        // ZodSet (handled in the next branch) does NOT — it surfaces only
+        // `valueType`, and only via `.def` — which is why the access
+        // pattern below differs from this one.
         const keyed = field as unknown as {
             keyType: z.ZodTypeAny;
             valueType: z.ZodTypeAny;
@@ -136,6 +147,9 @@ function sanitizeNode(
         return;
     }
     if (field instanceof z.ZodSet) {
+        // Unlike ZodRecord/ZodMap above, ZodSet has no public instance
+        // accessor for its element schema in Zod v4 — `.def.valueType` is
+        // the supported public alias.
         const def = field.def as unknown as { valueType: z.ZodTypeAny };
         sanitizeNode(def.valueType, depth + 1, visited);
         return;
@@ -152,6 +166,9 @@ function sanitizeNode(
     if (field instanceof z.ZodPipe) {
         // `.transform()` and `.pipe()` both produce a ZodPipe whose `.in`
         // is the source schema and `.out` is the post-transform schema.
+        // `.in` / `.out` are public instance getters in Zod v4 (analogous
+        // to `ZodArray.element`). Re-verify on Zod v5 migration — the
+        // wider plan calls out Zod-v4 stability as a known fragility.
         const piped = field as unknown as {
             in: z.ZodTypeAny;
             out: z.ZodTypeAny;
@@ -193,14 +210,20 @@ function sanitizeNode(
  */
 function sanitizeOwnDescription(field: z.ZodTypeAny): void {
     const existing = z.globalRegistry.get(field);
-    const desc = existing?.description;
+    // Narrow `existing` to non-null up front so the registry-add calls
+    // below need no `!` assertion. `desc` being a non-empty string already
+    // implies `existing` is non-null, but spelling that out avoids relying
+    // on the implication and removes any TOCTOU-style fragility if a
+    // future caller mutates the registry between the two reads.
+    if (!existing) return;
+    const desc = existing.description;
     if (typeof desc !== "string" || desc.length === 0) return;
 
     const sanitised = sanitizeDescription(desc);
     if (sanitised === desc) return;
 
     if (sanitised.length === 0) {
-        const { description: _omit, ...rest } = existing!;
+        const { description: _omit, ...rest } = existing;
         if (Object.keys(rest).length === 0) {
             z.globalRegistry.remove(field);
         } else {
