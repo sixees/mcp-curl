@@ -345,8 +345,7 @@ function getAuthConfig(auth, override) {
   }
   if (auth.apiKey) {
     const value = override?.[auth.apiKey.envVar] ?? process.env[auth.apiKey.envVar];
-    const isRequired = auth.apiKey.required !== false;
-    if (!value && isRequired) {
+    if (!value && auth.apiKey.required) {
       throw new AuthenticationError(
         `Missing required environment variable: ${auth.apiKey.envVar}`
       );
@@ -361,8 +360,7 @@ function getAuthConfig(auth, override) {
   }
   if (auth.bearer) {
     const value = override?.[auth.bearer.envVar] ?? process.env[auth.bearer.envVar];
-    const isRequired = auth.bearer.required !== false;
-    if (!value && isRequired) {
+    if (!value && auth.bearer.required) {
       throw new AuthenticationError(
         `Missing required environment variable: ${auth.bearer.envVar}`
       );

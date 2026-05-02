@@ -152,10 +152,15 @@ function sanitiseStringField(obj: Record<string, unknown>, key: string): void {
  * `Missing required environment variable: …` message that
  * `generator.ts:createToolHandler` returns to the LLM on auth failure).
  *
- * **NOT sanitised:** `parameter.name` (used as object keys in input schemas
- * and as URL parameter names — sanitising could change client semantics) and
- * `preset.jqFilter` (engine receives the raw filter; the human-readable
- * interpolation in `generator.ts` sanitises at display time).
+ * **NOT sanitised:** machine-readable identifiers and engine-input strings:
+ *   - `parameter.name` — used as object keys in input schemas and as URL
+ *     parameter names; sanitising could change client semantics.
+ *   - `preset.jqFilter` — the engine receives the raw filter; the
+ *     human-readable interpolation in `generator.ts` sanitises at display
+ *     time via `renderJqFilterForDisplay()`.
+ *   - `api.name` and `api.version` — machine-readable identifier and
+ *     version string; same rationale as `parameter.name`. Neither is
+ *     interpolated into LLM-visible text.
  */
 function sanitiseRawSchema(value: unknown): unknown {
     if (!asObject(value)) return value;

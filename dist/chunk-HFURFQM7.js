@@ -7,7 +7,7 @@ import {
   loadApiSchema,
   loadApiSchemaFromString,
   validateApiSchema
-} from "./chunk-V5CFXYK6.js";
+} from "./chunk-SA5QPKH6.js";
 
 // src/lib/api-server.ts
 function configureServerFromSchema(server, schema, options) {
