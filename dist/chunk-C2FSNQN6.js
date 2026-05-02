@@ -1861,7 +1861,7 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 // src/lib/response/strip-blocks.ts
 var STRIP_PATH_MAX_BYTES = 256 * 1024;
 var STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
-var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+var HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
 var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?(?:<\/\s*script\b[^>]*>|$)/gi;
 var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?(?:<\/\s*style\b[^>]*>|$)/gi;
 var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]{1,2048}\)/g;
@@ -1879,9 +1879,10 @@ function decodeNumericHtmlEntities(input) {
 }
 function stripBlocksFixedPoint(input) {
   if (Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES) return input;
-  let curr = decodeNumericHtmlEntities(input);
+  let curr = input;
   for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
-    const next = curr.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
+    const decoded = decodeNumericHtmlEntities(curr);
+    const next = decoded.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
     if (next === curr) return next;
     curr = next;
   }
@@ -1918,6 +1919,9 @@ async function processResponse(response, options) {
     }
     if (isMarkdown) {
       content = stripMarkdownBeacons(content);
+    }
+    if (isMarkup || isMarkdown) {
+      content = sanitizeResponse(content);
     }
   }
   if (options.jqFilter) {

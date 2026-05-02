@@ -34,11 +34,19 @@ const STRIP_PATH_MAX_BYTES = 256 * 1024;
 const STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
 
 /**
- * NOT exported — `g` flag makes the regex stateful. Used only with
- * `.replace()` here (which doesn't read `lastIndex`). Never use with
- * `.test()` or `.exec()` — both would corrupt state across calls.
+ * Strip HTML comments. NOT exported — `g` flag makes the regex stateful;
+ * used only with `.replace()` (which doesn't read `lastIndex`).
+ *
+ * Shape: `<!--[\s\S]*?(?:-->|$)` — open-to-closer-or-EOF.
+ *
+ * The naive `<!--[\s\S]*?-->` pattern leaves an orphan `<!--` opener in
+ * inputs like `<!-- a --> <!--` (the first comment matches and removes,
+ * the second has no closer so single-pass replace can't match). CodeQL's
+ * "Incomplete multi-character sanitization" rule flags exactly this
+ * residue. The `$` alternative absorbs unclosed openers — mirrors the
+ * script/style strip pattern's open-to-EOF shape and stays linear-time.
  */
-const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+const HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
 
 /**
  * Strip patterns for `<script>` and `<style>` blocks. These match either:
@@ -177,8 +185,12 @@ function decodeNumericHtmlEntities(input: string): string {
  * removal. Bodies above {@link STRIP_PATH_MAX_BYTES} skip the strip path
  * entirely — the caller's sanitiser is the only defence above the cap.
  *
- * Pre-decode of numeric HTML entities runs first so payloads like
- * `&#x3c;script&#x3e;` are unmasked before the strip patterns see them.
+ * **Numeric-entity decode runs INSIDE the loop**, not once at entry, so
+ * nested encodings like `&#x26;#x3c;script&#x26;#x3e;` (where `&#x26;`
+ * decodes to `&`, exposing `&#x3c;script&#x3e;` for the next iteration's
+ * decode to turn into `<script>`) are caught. Decoding once at entry left
+ * a single layer unmasked; a payload encoded twice would survive the
+ * strip with the inner attack-token shape intact.
  *
  * Returns the input unchanged when no further reductions are possible.
  *
@@ -187,9 +199,10 @@ function decodeNumericHtmlEntities(input: string): string {
  */
 export function stripBlocksFixedPoint(input: string): string {
     if (Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES) return input;
-    let curr = decodeNumericHtmlEntities(input);
+    let curr = input;
     for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
-        const next = curr.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
+        const decoded = decodeNumericHtmlEntities(curr);
+        const next = decoded.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
         if (next === curr) return next;
         curr = next;
     }

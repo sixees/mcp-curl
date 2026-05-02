@@ -14,6 +14,7 @@ import {
     isBinaryContentType,
     isMarkdownContentType,
     safeHostname,
+    sanitizeResponse,
     supportsMarkupComments,
 } from "../utils/index.js";
 import { sanitizeAndDetect } from "../security/index.js";
@@ -81,7 +82,7 @@ export async function processResponse(
     const isMarkup = supportsMarkupComments(options.contentType);
     const isMarkdown = isMarkdownContentType(options.contentType);
 
-    // Steps 2-4: Sanitize, detect, then strip blocks/beacons (text only)
+    // Steps 2-5: Sanitize, detect, strip, then re-sanitise (text only)
     if (isText) {
         // Step 2 — sanitise + detect FIRST so the strip path's 256 KB cap
         // is checked against post-sanitise size. An attacker padding the
@@ -110,6 +111,19 @@ export async function processResponse(
         // Step 4 — markdown beacons. Image / link / dangerous-scheme.
         if (isMarkdown) {
             content = stripMarkdownBeacons(content);
+        }
+
+        // Step 5 — re-sanitise IF the strip path ran. The strip path's
+        // numeric-entity decoder unmasks `&#x200B;` / `&#x202E;` / etc.
+        // into real Unicode-attack chars AFTER the step-2 sanitise
+        // already passed, so without this final pass those decoded
+        // invisibles reach the LLM. We skip the re-detection log on this
+        // pass (already fired in step 2) by calling `sanitizeResponse`
+        // directly — observability has already logged what the attacker
+        // sent on the original; logging again on the post-strip surface
+        // would just double-count for the same hostname.
+        if (isMarkup || isMarkdown) {
+            content = sanitizeResponse(content);
         }
     }
 

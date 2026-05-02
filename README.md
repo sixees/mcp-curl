@@ -260,7 +260,7 @@ Alternatively, install `mcp-curl` as an npm dependency in a separate project —
 - **Secure file permissions** — temp dirs 0o700, files 0o600 (owner-only)
 - **Auth-token validation** — `MCP_AUTH_TOKEN` rejected at HTTP startup if not printable ASCII (0x20–0x7E) or longer than 4096 chars; bearer comparison is timing-safe
 - **Response sanitisation** — Unicode attack chars (bidi overrides, zero-width family, "Sneaky Bits" Variation Selector Supplement, Braille blank, Hangul fillers, …) stripped from text responses; visual-space-padding runs (50+ tabs / NBSP / em-spaces / IDEOGRAPHIC SPACE) and newline runs (20+) collapsed before reaching the LLM
-- **HTML / markdown content stripping** — `<script>` and `<style>` blocks removed from HTML/XHTML/SVG/`*+xml` responses (ReDoS-hardened with negative-lookahead body, fixed-point iteration, numeric-entity decode, 256 KB cap); markdown image beacons and external-URL links replaced with `[image removed]` / `[link removed]`; dangerous-scheme URLs (`javascript:`, `vbscript:`, `file:`, `data:`) blocked in markdown links and images
+- **HTML / Markdown content stripping** — `<script>` and `<style>` blocks removed from HTML/XHTML/SVG/`*+xml` responses (ReDoS-hardened with bounded fixed-point stripping, numeric-entity decode, 256 KB cap); Markdown image beacons and external-URL links replaced with `[image removed]` / `[link removed]`; dangerous-scheme URLs (`javascript:`, `vbscript:`, `file:`, `data:`) blocked in Markdown links and images
 
 ## Environment Variables
 

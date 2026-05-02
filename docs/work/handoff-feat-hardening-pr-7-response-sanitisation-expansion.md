@@ -492,3 +492,48 @@ None — all P1 fixed; relevant P2 fixed; deferred items are deliberately scoped
 ### Tests / build
 - `npm test`: 875/875 passing (7 skipped) — was 815/7 before review fixes, **net +60 regression tests**.
 - `npm run build`: clean.
+
+---
+
+## Review Comments Addressed — 2026-05-02 (PR #30 round 1)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Re-sanitise after entity-decoding strip pass — pipeline reorder lost the post-strip sanitise gate | @chatgpt-codex-connector | **P1 — Fix needed (real security regression I introduced)** | Added Step 5 in `processor.ts` pipeline: `if (isMarkup \|\| isMarkdown) content = sanitizeResponse(content)` AFTER the strip path. Skips re-detection (already fired in Step 2 against original input per S4 ordering). 4 regression tests in `processor.test.ts` covering ZWSP via `&#x200B;`, U+202E via `&#x202E;`, markdown invisibles, doubly-entity-encoded ZWSP. |
+| Same finding with concrete suggestion | @gemini-code-assist | **P1 — Fix needed (duplicate)** | Same fix; suggestion's logic adopted. |
+| `decodeNumericHtmlEntities` only runs once before fixed-point loop — vulnerable to nested entity encoding (`&#x26;#x3c;script&#x26;#x3e;`) | @gemini-code-assist | **P2 — Fix needed** | Moved decode INSIDE the loop in `stripBlocksFixedPoint`. Two regression tests: doubly-encoded `<script>` and triply-encoded `<script>` (3 iterations). |
+| CodeQL incomplete-sanitization: orphan `<!--` opener residue from inputs like `<!-- a --> <!--` | @github-advanced-security | **P2 — Fix needed** | Changed `HTML_COMMENT_PATTERN` from `/<!--[\s\S]*?-->/g` to `/<!--[\s\S]*?(?:-->|$)/g` — open-to-closer-or-EOF, mirroring the script/style strip shape. Two regression tests in `strip-blocks.test.ts`. |
+| README "negative-lookahead body" wording is stale (technique changed in review pass) | @coderabbitai | **P3 — Doc nit (technically correct now)** | Updated to "bounded fixed-point stripping" + "Markdown" capitalisation. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| Pipeline ends at strip path; sanitiser ran once at Step 2 | Pipeline ends at re-sanitise (Step 5) when strip ran. Step 2 sanitise + Step 5 sanitise — first runs on original (detection); second runs on post-strip surface (entity-decoded invisibles). | The numeric-entity decoder unmasks `&#x200B;` → real ZWSP AFTER the initial sanitiser. Without Step 5 the unmasked invisibles reach the LLM unsanitised — this is the exact attack class the sanitiser was designed to block. | @chatgpt-codex-connector + @gemini-code-assist |
+| `decodeNumericHtmlEntities` runs once at entry to `stripBlocksFixedPoint` | Decode runs INSIDE the fixed-point loop on every iteration | Single-pass decode left nested encodings (`&#x26;#x3c;`) one layer un-decoded. Decoding inside the loop catches `(N+1)`-level nesting in `N` extra iterations, bounded by `STRIP_FIXED_POINT_MAX_ITERATIONS = 4`. | @gemini-code-assist |
+| `HTML_COMMENT_PATTERN` requires balanced `<!-- … -->` | Pattern allows open-to-EOF: `<!--[\s\S]*?(?:-->|$)` | Single-pass replace on `<!-- a --> <!--` left a `<!--` opener residue (CodeQL's textbook incomplete-sanitization case). The new shape mirrors the script/style strip's open-to-closer-or-EOF form. | @github-advanced-security (CodeQL) |
+| README listed "negative-lookahead body" as the ReDoS-hardening technique | "Bounded fixed-point stripping" — describes the behaviour, not the regex shape | The negative-lookahead technique was replaced with lazy `[\s\S]*?` + alternation in the prior review round. Keeping the old wording is now misleading. | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was inline PR threads, not `docs/todos/` files_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — all 5 round-1 PR threads addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/response/processor.ts` (Step 5 re-sanitise + `sanitizeResponse` import)
+- `src/lib/response/processor.test.ts` (+5 post-strip re-sanitise regression tests)
+- `src/lib/response/strip-blocks.ts` (HTML comment pattern → open-to-EOF; entity decode moved inside loop)
+- `src/lib/response/strip-blocks.test.ts` (+4 regression tests: orphan `<!--`, doubly-encoded, triply-encoded)
+- `README.md` (Security Highlights wording: "bounded fixed-point stripping" + Markdown capitalisation)
+
+### Tests / build
+- `npm test`: 884/884 passing (7 skipped) — was 875 after the prior review pass, **net +9 regression tests**.
+- `npm run build`: clean.
+
+### Reviewer assessment
+All 5 unresolved threads were P1/P2 fixes (no false positives). @chatgpt-codex-connector and @gemini-code-assist independently caught a real P1 regression I introduced with the previous review's pipeline reorder — the fix invalidated my own claim ("detection still runs on original via S4 ordering" was true, but didn't address the post-strip surface). Codex's finding was the load-bearing security fix; Gemini's nested-entity fix and CodeQL's orphan-`<!--` fix close adjacent bypass classes.
