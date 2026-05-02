@@ -854,6 +854,91 @@ function registerJqToolWithHooks(server, options) {
   server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
 
+// src/lib/extensible/schema-sanitizer.ts
+import { z as z3 } from "zod";
+var MAX_RECURSION_DEPTH = 100;
+function sanitizeFieldDescriptionsDeep(schema) {
+  sanitizeNode(schema, 0, /* @__PURE__ */ new WeakSet());
+  return schema;
+}
+function sanitizeNode(field, depth, visited) {
+  if (depth > MAX_RECURSION_DEPTH) return;
+  if (visited.has(field)) return;
+  visited.add(field);
+  sanitizeOwnDescription(field);
+  if (field instanceof z3.ZodObject) {
+    for (const key of Object.keys(field.shape)) {
+      sanitizeNode(field.shape[key], depth + 1, visited);
+    }
+    return;
+  }
+  if (field instanceof z3.ZodArray) {
+    sanitizeNode(field.element, depth + 1, visited);
+    return;
+  }
+  if (field instanceof z3.ZodUnion) {
+    for (const opt of field.options) {
+      sanitizeNode(opt, depth + 1, visited);
+    }
+    return;
+  }
+  if (field instanceof z3.ZodTuple) {
+    const def = field.def;
+    for (const item of def.items) {
+      sanitizeNode(item, depth + 1, visited);
+    }
+    if (def.rest) {
+      sanitizeNode(def.rest, depth + 1, visited);
+    }
+    return;
+  }
+  if (field instanceof z3.ZodRecord || field instanceof z3.ZodMap) {
+    const keyed = field;
+    sanitizeNode(keyed.keyType, depth + 1, visited);
+    sanitizeNode(keyed.valueType, depth + 1, visited);
+    return;
+  }
+  if (field instanceof z3.ZodSet) {
+    const def = field.def;
+    sanitizeNode(def.valueType, depth + 1, visited);
+    return;
+  }
+  if (field instanceof z3.ZodIntersection) {
+    const def = field.def;
+    sanitizeNode(def.left, depth + 1, visited);
+    sanitizeNode(def.right, depth + 1, visited);
+    return;
+  }
+  if (field instanceof z3.ZodPipe) {
+    const piped = field;
+    sanitizeNode(piped.in, depth + 1, visited);
+    sanitizeNode(piped.out, depth + 1, visited);
+    return;
+  }
+  if (field instanceof z3.ZodOptional || field instanceof z3.ZodNullable || field instanceof z3.ZodDefault || field instanceof z3.ZodReadonly || field instanceof z3.ZodCatch || field instanceof z3.ZodPromise || field instanceof z3.ZodLazy) {
+    const inner = field.unwrap();
+    sanitizeNode(inner, depth + 1, visited);
+    return;
+  }
+}
+function sanitizeOwnDescription(field) {
+  const existing = z3.globalRegistry.get(field);
+  const desc = existing?.description;
+  if (typeof desc !== "string" || desc.length === 0) return;
+  const sanitised = sanitizeDescription(desc);
+  if (sanitised === desc) return;
+  if (sanitised.length === 0) {
+    const { description: _omit, ...rest } = existing;
+    if (Object.keys(rest).length === 0) {
+      z3.globalRegistry.remove(field);
+    } else {
+      z3.globalRegistry.add(field, rest);
+    }
+    return;
+  }
+  z3.globalRegistry.add(field, { ...existing, description: sanitised });
+}
+
 // src/lib/extensible/mcp-curl-server.ts
 var KNOWN_CONFIG_KEYS_ARRAY = [
   "baseUrl",
@@ -992,9 +1077,30 @@ var McpCurlServer = class {
    *
    * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
    * @param meta - Tool metadata (title, description, inputSchema). title and description
-   *   are sanitized automatically. inputSchema field descriptions (.describe() strings)
-   *   are NOT sanitized — callers must sanitize any field descriptions sourced from
-   *   external input using sanitizeDescription() before registering.
+   *   are sanitized automatically. **inputSchema field descriptions are also
+   *   sanitised at every depth** at registration time via the
+   *   `sanitizeFieldDescriptionsDeep` helper. Recursion descends into
+   *   `ZodObject` (`.shape` values), `ZodArray` (`.element`),
+   *   `ZodUnion` (including `ZodDiscriminatedUnion`, which `instanceof
+   *   ZodUnion` in Zod v4) options, `ZodTuple` items + rest, `ZodRecord` /
+   *   `ZodMap` (key + value types), `ZodSet` value type, `ZodIntersection`
+   *   left/right, `ZodPipe` (produced by `.transform()` / `.pipe()`)
+   *   in/out, `ZodLazy` getter result, and through `ZodOptional` /
+   *   `ZodDefault` / `ZodNullable` / `ZodReadonly` / `ZodCatch` /
+   *   `ZodPromise` wrappers (via `.unwrap()`). `.refine()` / `.check()` /
+   *   `.superRefine()` append checks in place in Zod v4 and do not wrap
+   *   the schema, so descriptions placed before a refinement are sanitised
+   *   on the underlying instance.
+   *
+   *   **Side effect:** the helper mutates `z.globalRegistry` entries on the
+   *   passed-in schema *in place* (description metadata only — no parsing
+   *   semantics change). Runtime invariants are preserved, including
+   *   `.refine()` / `.check()` chains, `.strict()` / `.passthrough()`
+   *   modes, `z.array().min()` / `.max()` / `.length()` / `.nonempty()`
+   *   constraints, factory defaults on `ZodDefault`, and
+   *   `ZodDiscriminatedUnion` discriminators. Callers no longer need to
+   *   defensively sanitise field descriptions sourced from external input;
+   *   doing so remains harmless (the walk is idempotent).
    * @param handler - Tool handler function
    * @returns this for chaining
    * @throws Error if called after start()
@@ -1038,7 +1144,8 @@ var McpCurlServer = class {
     const sanitizedMeta = {
       ...meta,
       title: sanitizedTitle,
-      description: truncatedDesc
+      description: truncatedDesc,
+      inputSchema: sanitizeFieldDescriptionsDeep(meta.inputSchema)
     };
     if (sanitizedDesc.length > MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) {
       console.warn(

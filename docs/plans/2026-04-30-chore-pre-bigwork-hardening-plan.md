@@ -620,12 +620,12 @@ Call from `registerCustomTool()` immediately before `this._customTools.push(...)
 
 **Acceptance criteria.**
 
-- [ ] Field descriptions are sanitised at registration time at **every depth** — top-level, nested `ZodObject`, `ZodArray<ZodObject>`, `ZodUnion`-of-object, and through `ZodOptional`/`ZodDefault`/`ZodNullable` wrappers — **verified through the public `.description` getter and `z.toJSONSchema()` output** (not `_def.description`).
-- [ ] Helper is named `sanitizeFieldDescriptionsDeep` (not `sanitizeTopLevelFieldDescriptions`); doc-comment + `docs/custom-tools.md` reflect the deep contract.
-- [ ] Repeated registration of the same schema reference returns the memoised output (no rebuild) — verified via reference equality.
-- [ ] `z.toJSONSchema()` round-trip preserves sanitised descriptions at every depth (Standard-Schema regression check).
-- [ ] Existing `mcp-curl-server.test.ts` cases still pass.
-- [ ] B2's README example wording softens from "required" to "defensive — also runs at registration at every depth."
+- [x] Field descriptions are sanitised at registration time at **every depth** — top-level, nested `ZodObject`, `ZodArray<ZodObject>`, `ZodUnion`-of-object (including `ZodDiscriminatedUnion`), `ZodTuple` items + rest, `ZodRecord`/`ZodMap` keys + values, `ZodSet` value type, `ZodIntersection` arms, `ZodPipe` (i.e. `.transform()`/`.pipe()`) in/out, `ZodLazy` getter result, and through `ZodOptional`/`ZodDefault`/`ZodNullable`/`ZodReadonly`/`ZodCatch`/`ZodPromise` wrappers — **verified through the public `.description` getter and `z.toJSONSchema()` output** (not `_def.description`).
+- [x] Helper is named `sanitizeFieldDescriptionsDeep` (not `sanitizeTopLevelFieldDescriptions`); doc-comment + `docs/custom-tools.md` reflect the deep contract.
+- [x] Repeated registration of the same schema reference is idempotent and returns the original schema instance (no clone, no rebuild) — verified via reference equality. The shipped `sanitizeFieldDescriptionsDeep` mutates `z.globalRegistry` entries in place; the change-on-equal short-circuit makes a second walk a no-op without any cache.
+- [x] `z.toJSONSchema()` round-trip preserves sanitised descriptions at every depth (Standard-Schema regression check).
+- [x] Existing `mcp-curl-server.test.ts` cases still pass.
+- [x] B2's README example wording softens from "required" to "defensive — also runs at registration at every depth."
 
 **Research Insights (added 2026-05-01).**
 

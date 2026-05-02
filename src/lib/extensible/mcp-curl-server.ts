@@ -4,7 +4,7 @@
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Server } from "http";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { z } from "zod";
+import { z } from "zod";
 
 import type {
     McpCurlConfig,
@@ -16,6 +16,7 @@ import type {
 import type { Hooks } from "./types.js";
 import { createInstanceUtilities, type InstanceUtilities } from "./instance-utilities.js";
 import { registerCurlToolWithHooks, registerJqToolWithHooks } from "./tool-wrapper.js";
+import { sanitizeFieldDescriptionsDeep } from "./schema-sanitizer.js";
 
 import { createServer } from "../server/server-factory.js";
 import { registerAllResources } from "../resources/index.js";
@@ -221,9 +222,30 @@ export class McpCurlServer {
      *
      * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
      * @param meta - Tool metadata (title, description, inputSchema). title and description
-     *   are sanitized automatically. inputSchema field descriptions (.describe() strings)
-     *   are NOT sanitized — callers must sanitize any field descriptions sourced from
-     *   external input using sanitizeDescription() before registering.
+     *   are sanitized automatically. **inputSchema field descriptions are also
+     *   sanitised at every depth** at registration time via the
+     *   `sanitizeFieldDescriptionsDeep` helper. Recursion descends into
+     *   `ZodObject` (`.shape` values), `ZodArray` (`.element`),
+     *   `ZodUnion` (including `ZodDiscriminatedUnion`, which `instanceof
+     *   ZodUnion` in Zod v4) options, `ZodTuple` items + rest, `ZodRecord` /
+     *   `ZodMap` (key + value types), `ZodSet` value type, `ZodIntersection`
+     *   left/right, `ZodPipe` (produced by `.transform()` / `.pipe()`)
+     *   in/out, `ZodLazy` getter result, and through `ZodOptional` /
+     *   `ZodDefault` / `ZodNullable` / `ZodReadonly` / `ZodCatch` /
+     *   `ZodPromise` wrappers (via `.unwrap()`). `.refine()` / `.check()` /
+     *   `.superRefine()` append checks in place in Zod v4 and do not wrap
+     *   the schema, so descriptions placed before a refinement are sanitised
+     *   on the underlying instance.
+     *
+     *   **Side effect:** the helper mutates `z.globalRegistry` entries on the
+     *   passed-in schema *in place* (description metadata only — no parsing
+     *   semantics change). Runtime invariants are preserved, including
+     *   `.refine()` / `.check()` chains, `.strict()` / `.passthrough()`
+     *   modes, `z.array().min()` / `.max()` / `.length()` / `.nonempty()`
+     *   constraints, factory defaults on `ZodDefault`, and
+     *   `ZodDiscriminatedUnion` discriminators. Callers no longer need to
+     *   defensively sanitise field descriptions sourced from external input;
+     *   doing so remains harmless (the walk is idempotent).
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()
@@ -272,11 +294,17 @@ export class McpCurlServer {
             throw new Error(`Custom tool "${name}" is already registered`);
         }
 
-        // Store a sanitized defensive copy — never trust caller's object directly.
-        // title and description are sanitized here. inputSchema field descriptions
-        // (.describe() on individual Zod fields) are the caller's responsibility —
-        // traversing arbitrary Zod v4 schemas safely is non-trivial. Callers should
-        // apply sanitizeDescription() to any field descriptions sourced from external input.
+        // Sanitise externally-sourced strings before advertising the tool.
+        // - title and description are sanitised into a fresh `sanitizedMeta`
+        //   object (the original `meta.title` / `meta.description` strings are
+        //   primitives and are not mutated).
+        // - `meta.inputSchema` is sanitised **in place**: the helper mutates
+        //   `z.globalRegistry` description entries on the caller's schema
+        //   instance (see `./schema-sanitizer.ts` for the side-effect
+        //   contract). The same instance is then placed in `sanitizedMeta`.
+        // Net effect: every `.describe()` string at every depth, plus title
+        // and description, is free of Unicode-attack chars (bidi, zero-width,
+        // variation selectors, …) before the tool is registered with the SDK.
         const sanitizedTitle = sanitizeDescription(meta.title);
         const sanitizedDesc = sanitizeDescription(meta.description);
         const truncatedDesc = sanitizedDesc.slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH);
@@ -285,6 +313,7 @@ export class McpCurlServer {
             ...meta,
             title: sanitizedTitle,
             description: truncatedDesc,
+            inputSchema: sanitizeFieldDescriptionsDeep(meta.inputSchema),
         };
 
         // Warn only when sanitization itself caused truncation — not when the pre-existing

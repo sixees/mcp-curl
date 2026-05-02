@@ -99,10 +99,45 @@ schema registration, prompts, or downstream HTTP requests.
 
 ### Tool metadata and schema descriptions
 
-`registerCustomTool()` auto-sanitizes only `meta.title` and `meta.description`. Anything passed
-through `inputSchema` — `.describe()` strings, `z.enum([...])` literals, `.default(...)` values,
-field key names — reaches the LLM verbatim. When any of these originate from an external source
-(database, user input, remote API, third-party YAML), sanitize them explicitly before registration:
+`registerCustomTool()` auto-sanitizes `meta.title`, `meta.description`, **and** every `.describe()`
+string inside `inputSchema` — at every depth. The deep walk recurses through:
+
+- `z.object()` shape values
+- `z.array()` element type
+- `z.union()` and `z.discriminatedUnion()` options (the latter `instanceof ZodUnion` in Zod v4)
+- `z.tuple()` items and the rest type
+- `z.record()` / `z.map()` key + value types
+- `z.set()` value type
+- `z.intersection()` left and right arms
+- `.transform()` / `.pipe()` (`ZodPipe`) source and destination schemas
+- `z.lazy()` getter result (recursive lazy schemas are bounded by an internal cycle guard)
+- `.optional()` / `.nullable()` / `.default()` / `.readonly()` / `.catch()` / `z.promise()` wrappers
+  (descended via `.unwrap()`)
+
+`.refine()` / `.check()` / `.superRefine()` append checks to the existing instance in Zod v4 and do
+not produce a wrapper, so descriptions placed before a refinement are sanitised on the underlying
+schema by the leaf walk.
+
+The walker mutates `z.globalRegistry` entries on the schema you passed in — **the schema instance
+itself is shared**, only the registered descriptions on each node are rewritten to their sanitised
+form. Runtime parsing semantics are not touched, so every Zod check survives the walk: `.refine()`
+and `.check()` chains, `.strict()` / `.passthrough()` modes, `z.array().min()` / `.max()` / `.length()`
+constraints, factory `default(() => ...)` closures, and `ZodDiscriminatedUnion` discriminator
+routing all continue to work exactly as before. The walk is idempotent (a clean description is
+never rewritten to itself) and depth-bounded against pathological recursion.
+
+If you need to retain the *unsanitised* description text for some downstream use, clone the schema
+with `.describe(originalText)` before handing it in — the clone keeps the un-mutated registry
+entry on a fresh node.
+
+Other content inside `inputSchema` reaches the LLM verbatim — `z.enum([...])` literals,
+`.default(...)` values, field key names. Field-key names and enum literals are part of the public
+shape contract, so the helper does not mutate them. Sanitize these explicitly when they originate
+from an external source.
+
+`.describe()` strings sourced externally are covered automatically, but a defensive
+`sanitizeDescription()` at the call site is harmless and a useful belt-and-braces signal for
+reviewers:
 
 ```typescript
 import { McpCurlServer, sanitizeDescription } from "mcp-curl";
@@ -115,9 +150,10 @@ const server = new McpCurlServer();
 server.registerCustomTool(
     "search_records",
     {
-        title: sanitizeDescription(toolMeta.title),
-        description: sanitizeDescription(toolMeta.description),
+        title: sanitizeDescription(toolMeta.title),         // optional — also sanitised internally
+        description: sanitizeDescription(toolMeta.description), // optional — also sanitised internally
         inputSchema: z.object({
+            // Defensive — registerCustomTool() also walks inputSchema and sanitises every .describe() string at every depth.
             query: z.string().describe(sanitizeDescription(toolMeta.queryDescription)),
         }),
     },
