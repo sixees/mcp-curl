@@ -43,15 +43,25 @@ const MAX_RECURSION_DEPTH = 100;
  * Recursion contract — descends into:
  *   - `ZodObject` — every value of `.shape`.
  *   - `ZodArray` — `.element`.
- *   - `ZodUnion` (and `ZodDiscriminatedUnion`, since the latter
- *     `instanceof ZodUnion`) — every `.options` entry.
- *   - `ZodOptional` / `ZodNullable` / `ZodDefault` — `.unwrap()`.
+ *   - `ZodUnion` (and `ZodDiscriminatedUnion`, which `instanceof ZodUnion`
+ *     in Zod v4) — every `.options` entry.
+ *   - `ZodTuple` — every `.def.items` entry plus `.def.rest` if set.
+ *   - `ZodRecord` / `ZodMap` — `.keyType` and `.valueType`.
+ *   - `ZodSet` — `.def.valueType`.
+ *   - `ZodIntersection` — `.def.left` and `.def.right`.
+ *   - `ZodPipe` (produced by `.transform()` and `.pipe()`) — `.in` and `.out`.
+ *   - `ZodLazy` — the schema returned by `.unwrap()` (which calls the lazy
+ *     getter). Recursive lazy schemas are handled by the WeakSet cycle guard.
+ *   - `ZodOptional` / `ZodNullable` / `ZodDefault` / `ZodReadonly` /
+ *     `ZodCatch` / `ZodPromise` — `.unwrap()`.
  *
- * Other Zod types are treated as leaves: their own description (if any)
- * is sanitised but no further descent happens. This is conservative —
- * adding a new wrapper type to Zod won't break us, it just won't recurse
- * into it (unsanitised text in newly-added wrapper bodies would surface
- * as a follow-up review item, not a runtime regression).
+ * `.refine()` / `.check()` / `.superRefine()` do **not** wrap the schema in
+ * Zod v4 — they append checks to the existing instance — so descriptions
+ * placed before a refinement are sanitised in place by the leaf walk.
+ *
+ * Other Zod types (numeric/string/literal/enum leaves, plus any future
+ * wrapper not enumerated above) are treated as leaves: their own description
+ * (if any) is sanitised but no further descent happens.
  *
  * Idempotent: a second call on the same schema is a no-op (sanitisation
  * doesn't change a value that's already clean).
@@ -70,8 +80,8 @@ export function sanitizeFieldDescriptionsDeep<T extends z.ZodObject<z.ZodRawShap
  * Internal walker. Sanitises the node's own description, then recurses
  * into structural children. The `visited` WeakSet guards against cycles
  * — schemas can be referenced multiple times in the same tree (DAG-shaped
- * registrations are legitimate), and re-walking is wasted work even when
- * not cyclic.
+ * registrations and recursive `z.lazy(...)` definitions are legitimate),
+ * and re-walking is wasted work even when not cyclic.
  */
 function sanitizeNode(
     field: z.ZodTypeAny,
@@ -100,14 +110,70 @@ function sanitizeNode(
         }
         return;
     }
+    if (field instanceof z.ZodTuple) {
+        // ZodTuple has no public instance accessor for items; `.def.items`
+        // is the supported public alias for the underlying definition.
+        const def = field.def as unknown as {
+            items: readonly z.ZodTypeAny[];
+            rest: z.ZodTypeAny | null;
+        };
+        for (const item of def.items) {
+            sanitizeNode(item, depth + 1, visited);
+        }
+        if (def.rest) {
+            sanitizeNode(def.rest, depth + 1, visited);
+        }
+        return;
+    }
+    if (field instanceof z.ZodRecord || field instanceof z.ZodMap) {
+        // Both expose `keyType` and `valueType` as own instance properties.
+        const keyed = field as unknown as {
+            keyType: z.ZodTypeAny;
+            valueType: z.ZodTypeAny;
+        };
+        sanitizeNode(keyed.keyType, depth + 1, visited);
+        sanitizeNode(keyed.valueType, depth + 1, visited);
+        return;
+    }
+    if (field instanceof z.ZodSet) {
+        const def = field.def as unknown as { valueType: z.ZodTypeAny };
+        sanitizeNode(def.valueType, depth + 1, visited);
+        return;
+    }
+    if (field instanceof z.ZodIntersection) {
+        const def = field.def as unknown as {
+            left: z.ZodTypeAny;
+            right: z.ZodTypeAny;
+        };
+        sanitizeNode(def.left, depth + 1, visited);
+        sanitizeNode(def.right, depth + 1, visited);
+        return;
+    }
+    if (field instanceof z.ZodPipe) {
+        // `.transform()` and `.pipe()` both produce a ZodPipe whose `.in`
+        // is the source schema and `.out` is the post-transform schema.
+        const piped = field as unknown as {
+            in: z.ZodTypeAny;
+            out: z.ZodTypeAny;
+        };
+        sanitizeNode(piped.in, depth + 1, visited);
+        sanitizeNode(piped.out, depth + 1, visited);
+        return;
+    }
     if (
         field instanceof z.ZodOptional ||
         field instanceof z.ZodNullable ||
-        field instanceof z.ZodDefault
+        field instanceof z.ZodDefault ||
+        field instanceof z.ZodReadonly ||
+        field instanceof z.ZodCatch ||
+        field instanceof z.ZodPromise ||
+        field instanceof z.ZodLazy
     ) {
-        // `unwrap()` returns the core `$ZodType` base; the classic
-        // walker recurses on the wider classic type. Casting through
-        // unknown keeps the assertion narrow without `any`.
+        // `unwrap()` returns the core `$ZodType` base; the classic walker
+        // recurses on the wider classic type. Casting through unknown keeps
+        // the assertion narrow without `any`. For ZodLazy, `unwrap()` invokes
+        // the deferred getter — recursive lazy schemas are bounded by the
+        // WeakSet cycle guard above.
         const inner = field.unwrap() as unknown as z.ZodTypeAny;
         sanitizeNode(inner, depth + 1, visited);
         return;

@@ -100,9 +100,23 @@ schema registration, prompts, or downstream HTTP requests.
 ### Tool metadata and schema descriptions
 
 `registerCustomTool()` auto-sanitizes `meta.title`, `meta.description`, **and** every `.describe()`
-string inside `inputSchema` — at every depth. The deep walk recurses through nested `z.object()`,
-`z.array()`, `z.union()` (including `z.discriminatedUnion()`), and through `z.optional()` /
-`z.default()` / `z.nullable()` wrappers.
+string inside `inputSchema` — at every depth. The deep walk recurses through:
+
+- `z.object()` shape values
+- `z.array()` element type
+- `z.union()` and `z.discriminatedUnion()` options (the latter `instanceof ZodUnion` in Zod v4)
+- `z.tuple()` items and the rest type
+- `z.record()` / `z.map()` key + value types
+- `z.set()` value type
+- `z.intersection()` left and right arms
+- `.transform()` / `.pipe()` (`ZodPipe`) source and destination schemas
+- `z.lazy()` getter result (recursive lazy schemas are bounded by an internal cycle guard)
+- `.optional()` / `.nullable()` / `.default()` / `.readonly()` / `.catch()` / `z.promise()` wrappers
+  (descended via `.unwrap()`)
+
+`.refine()` / `.check()` / `.superRefine()` append checks to the existing instance in Zod v4 and do
+not produce a wrapper, so descriptions placed before a refinement are sanitised on the underlying
+schema by the leaf walk.
 
 The walker mutates `z.globalRegistry` entries on the schema you passed in — **the schema instance
 itself is shared**, only the registered descriptions on each node are rewritten to their sanitised

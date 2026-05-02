@@ -249,11 +249,19 @@ declare class McpCurlServer {
      * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
      * @param meta - Tool metadata (title, description, inputSchema). title and description
      *   are sanitized automatically. **inputSchema field descriptions are also
-     *   sanitised at every depth** at registration time — top-level fields,
-     *   nested `ZodObject`, `ZodArray`, `ZodUnion` (including
-     *   `ZodDiscriminatedUnion`) options, and through
-     *   `ZodOptional` / `ZodDefault` / `ZodNullable` wrappers — via the
-     *   `sanitizeFieldDescriptionsDeep` helper.
+     *   sanitised at every depth** at registration time via the
+     *   `sanitizeFieldDescriptionsDeep` helper. Recursion descends into
+     *   `ZodObject` (`.shape` values), `ZodArray` (`.element`),
+     *   `ZodUnion` (including `ZodDiscriminatedUnion`, which `instanceof
+     *   ZodUnion` in Zod v4) options, `ZodTuple` items + rest, `ZodRecord` /
+     *   `ZodMap` (key + value types), `ZodSet` value type, `ZodIntersection`
+     *   left/right, `ZodPipe` (produced by `.transform()` / `.pipe()`)
+     *   in/out, `ZodLazy` getter result, and through `ZodOptional` /
+     *   `ZodDefault` / `ZodNullable` / `ZodReadonly` / `ZodCatch` /
+     *   `ZodPromise` wrappers (via `.unwrap()`). `.refine()` / `.check()` /
+     *   `.superRefine()` append checks in place in Zod v4 and do not wrap
+     *   the schema, so descriptions placed before a refinement are sanitised
+     *   on the underlying instance.
      *
      *   **Side effect:** the helper mutates `z.globalRegistry` entries on the
      *   passed-in schema *in place* (description metadata only — no parsing

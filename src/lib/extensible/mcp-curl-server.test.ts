@@ -649,6 +649,109 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         expect((arms[1].shape.b as z.ZodString).description).toBe("b");
     });
 
+    // -------- additional wrapper coverage (Tuple/Record/Intersection/Pipe/Lazy/Readonly) --------
+
+    it("strips a bidi override on every item of a ZodTuple (and the rest type)", () => {
+        const inputSchema = z.object({
+            pair: z.tuple(
+                [z.string().describe(PWN), z.number().describe(`${ATTACK}n`)],
+                z.boolean().describe(`${ATTACK}rest`),
+            ),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const tuple = sanitised.shape.pair as z.ZodTuple;
+        const def = tuple.def as unknown as {
+            items: readonly z.ZodTypeAny[];
+            rest: z.ZodTypeAny | null;
+        };
+        expect(def.items[0].description).toBe("pwn");
+        expect(def.items[1].description).toBe("n");
+        expect(def.rest?.description).toBe("rest");
+    });
+
+    it("strips a bidi override on a ZodRecord's key and value descriptions", () => {
+        const inputSchema = z.object({
+            headers: z.record(z.string().describe(PWN), z.number().describe(`${ATTACK}n`)),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const record = sanitised.shape.headers as z.ZodRecord<z.ZodString, z.ZodNumber>;
+        expect(record.keyType.description).toBe("pwn");
+        expect(record.valueType.description).toBe("n");
+    });
+
+    it("strips a bidi override on both arms of a ZodIntersection", () => {
+        const inputSchema = z.object({
+            combo: z.intersection(
+                z.object({ a: z.string().describe(PWN) }),
+                z.object({ b: z.number().describe(`${ATTACK}b`) }),
+            ),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const intersection = sanitised.shape.combo as z.ZodIntersection<
+            z.ZodObject<{ a: z.ZodString }>,
+            z.ZodObject<{ b: z.ZodNumber }>
+        >;
+        const def = intersection.def as unknown as {
+            left: z.ZodObject<{ a: z.ZodString }>;
+            right: z.ZodObject<{ b: z.ZodNumber }>;
+        };
+        expect(def.left.shape.a.description).toBe("pwn");
+        expect(def.right.shape.b.description).toBe("b");
+    });
+
+    it("strips a bidi override on the source schema inside a ZodPipe (`.transform()`)", () => {
+        const inputSchema = z.object({
+            derived: z.string().describe(PWN).transform((s) => s.length),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const piped = sanitised.shape.derived as unknown as { in: z.ZodString };
+        expect(piped.in.description).toBe("pwn");
+        // Transform still fires after sanitisation — the pipe was not rebuilt.
+        expect(sanitised.parse({ derived: "hello" })).toEqual({ derived: 5 });
+    });
+
+    it("strips a bidi override on the schema returned by a ZodLazy getter", () => {
+        const inner = z.string().describe(PWN);
+        const inputSchema = z.object({ deferred: z.lazy(() => inner) });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const lazy = sanitised.shape.deferred as z.ZodLazy<z.ZodString>;
+        expect(lazy.unwrap().description).toBe("pwn");
+    });
+
+    it("strips a bidi override through a ZodReadonly wrapper", () => {
+        const inputSchema = z.object({
+            frozen: z.string().describe(PWN).readonly(),
+        });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const readonly = sanitised.shape.frozen as z.ZodReadonly<z.ZodString>;
+        expect(readonly.unwrap().description).toBe("pwn");
+    });
+
+    it("does not loop on a recursive ZodLazy — cycle guard short-circuits", () => {
+        // Canonical recursive-type pattern: a named const with a lazy
+        // back-edge. The inner lazy's getter returns the same `Tree`
+        // reference, so the WeakSet must detect the back-edge and stop.
+        type Tree = { label: string; children: Tree[] };
+        const Tree: z.ZodType<Tree> = z.object({
+            label: z.string().describe(PWN),
+            children: z.array(z.lazy((): z.ZodType<Tree> => Tree)),
+        }) as unknown as z.ZodType<Tree>;
+        const inputSchema = z.object({
+            root: Tree as unknown as z.ZodObject<{ label: z.ZodString }>,
+        });
+        // Should return synchronously (no infinite recursion).
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        const sanitised = lastTool(server).meta.inputSchema;
+        const root = sanitised.shape.root as z.ZodObject<{ label: z.ZodString }>;
+        expect(root.shape.label.description).toBe("pwn");
+    });
+
     // -------- regression for `z.toJSONSchema()` (Standard-Schema integration) --------
 
     it("z.toJSONSchema() round-trip carries the sanitised description at every depth (Standard-Schema regression / A7)", () => {

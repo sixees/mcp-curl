@@ -228,3 +228,45 @@ The original handoff (sections above the banner) was honest about *what was buil
 ### Blockers
 
 None — clear to merge. All P1 correctness regressions are fixed, all tests pass, type-check is clean, build is clean, and the implementation now matches the contract advertised in the JSDoc.
+
+## Review Comments Addressed — 2026-05-02
+
+External reviewers (gemini-code-assist, chatgpt-codex-connector, coderabbitai) flagged that the walker's recursion contract was narrower than advertised — sanitisation guaranteed "at every depth" only covered `ZodObject` / `ZodArray` / `ZodUnion` / `ZodOptional` / `ZodNullable` / `ZodDefault`. Schemas built around `ZodTuple`, `ZodRecord`, `ZodMap`, `ZodSet`, `ZodIntersection`, `ZodPipe` (produced by `.transform()` / `.pipe()`), `ZodLazy`, `ZodReadonly`, `ZodCatch`, or `ZodPromise` would be silently skipped, leaving bidi/zero-width attack characters intact in nested `.describe()` strings. Two of the four threads were AI false positives (DU is a `ZodUnion` subclass in Zod v4; `.refine()` does not produce a wrapper in Zod v4), but the underlying coverage gap was real.
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `ZodDiscriminatedUnion` doesn't `instanceof ZodUnion` (claim) | @gemini-code-assist | False positive | Replied with empirical proof from the installed Zod v4 (`du instanceof z.ZodUnion === true`); the DU-discriminator-routing test in the suite locks the contract |
+| Walker should recurse into `ZodEffects` (`.refine`/`.transform`/`.superRefine`) | @gemini-code-assist | Fix needed (partial) | `.refine()` no longer wraps in Zod v4 — `ZodEffects` is gone; `.transform()` produces `ZodPipe`. Walker now recurses into `ZodPipe.in` / `.out`. New test covers `.transform()` |
+| Walker should also recurse into `ZodTuple` / `ZodRecord` / `ZodIntersection` / `ZodPipe` / `ZodLazy` (and is advertised to do so) | @chatgpt-codex-connector | Fix needed (P1) | Added dispatch branches for `ZodTuple`, `ZodRecord`, `ZodMap`, `ZodSet`, `ZodIntersection`, `ZodPipe`, `ZodLazy`, plus unwrap-style coverage for `ZodReadonly` / `ZodCatch` / `ZodPromise`. Six new tests cover the new branches |
+| Acceptance criteria still describes the removed WeakMap design | @coderabbitai | Fix needed | Reworded plan acceptance criteria line 625 — idempotence is achieved by the in-place change-on-equal short-circuit, not a memoisation cache. Same edit also expanded the depth-coverage line to enumerate all wrappers |
+
+### Decisions Revised
+
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|-------------|--------|----------|
+| Treat `ZodTuple`/`ZodRecord`/`ZodIntersection`/`ZodPipe`/`ZodLazy` as leaves (documented in original handoff "Edge cases not covered") | Recurse into each via the public accessors (`.def.items`/`.def.rest` for tuple, `.keyType`/`.valueType` for record/map, `.def.left`/`.def.right` for intersection, `.in`/`.out` for pipe, `.unwrap()` for lazy/readonly/catch/promise) | The original handoff explicitly deferred these as "out of scope"; reviewers correctly pointed out that the security claim ("sanitised at every depth") is undermined by silent leaf-treatment of common wrappers. Coverage is now mandatory, not "follow-up" | @chatgpt-codex-connector |
+
+### Resolved Todos
+<!-- Recorded before deletion. File no longer exists in docs/todos/. -->
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _(none)_ | | | | |
+
+### Outstanding Todos
+<!-- Todos created this pass — see docs/todos/ for full content. -->
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _(none — all four threads resolved with code changes or replies)_ | | | |
+
+### Files Modified
+- `src/lib/extensible/schema-sanitizer.ts` — extended `sanitizeNode` dispatch with branches for `ZodTuple`, `ZodRecord`, `ZodMap`, `ZodSet`, `ZodIntersection`, `ZodPipe`, `ZodLazy`, plus added `ZodReadonly` / `ZodCatch` / `ZodPromise` to the `unwrap()` branch. Top-of-file JSDoc updated to enumerate the new descents and to note that `.refine()`/`.check()`/`.superRefine()` append in place in Zod v4.
+- `src/lib/extensible/mcp-curl-server.ts` — `registerCustomTool` JSDoc rewritten to enumerate all descended types.
+- `src/lib/extensible/mcp-curl-server.test.ts` — seven new tests in the B4 block (tuple, record, intersection, pipe-from-transform, lazy, readonly, recursive-lazy cycle guard). Block size: 17 → 24.
+- `docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md` — depth-coverage and idempotence acceptance-criteria lines updated to match the shipped contract.
+- `docs/work/handoff-feat-hardening-pr-5-custom-tool-zod-rebuild.md` — this section.
+
+### Verification
+- `npm test` — 658 passed / 7 skipped (was 651/7 before this pass; +7 from the new B4 cases).
+- `npx tsc --noEmit` — clean apart from the pre-existing `src/lib.test.ts(78,5)` `BeforeRequestResult` generic-arity error confirmed unchanged on `main`.
+- `npm run build` — clean dist.
