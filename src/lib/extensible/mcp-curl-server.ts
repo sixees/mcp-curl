@@ -372,9 +372,28 @@ export class McpCurlServer {
      *
      * Useful for tests that need to assert what was registered (and what its
      * advertised title/description look like) without starting the server.
+     *
+     * Returned entries are frozen — including `meta` and `meta.annotations` —
+     * so a caller cannot mutate them and indirectly change tool registrations
+     * after the fact (the same `meta` reference was forwarded to
+     * `server.registerTool` during start). `meta.inputSchema` is intentionally
+     * shared by reference: Zod schema instances rely on internal mutable state
+     * and freezing would break them; treat it as read-only by convention.
      */
-    getRegisteredCustomTools(): ReadonlyArray<{ readonly name: string; readonly meta: CustomToolMeta }> {
-        return this._customTools.map(({ name, meta }) => ({ name, meta }));
+    getRegisteredCustomTools(): ReadonlyArray<{ readonly name: string; readonly meta: Readonly<CustomToolMeta> }> {
+        return this._customTools.map(({ name, meta }) =>
+            Object.freeze({
+                name,
+                meta: Object.freeze({
+                    title: meta.title,
+                    description: meta.description,
+                    inputSchema: meta.inputSchema,
+                    annotations: meta.annotations
+                        ? Object.freeze({ ...meta.annotations })
+                        : undefined,
+                }),
+            })
+        );
     }
 
     /**

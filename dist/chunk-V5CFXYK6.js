@@ -82,7 +82,12 @@ function sanitiseStringField(obj, key) {
 }
 function sanitiseRawSchema(value) {
   if (!asObject(value)) return value;
-  const root = structuredClone(value);
+  let root;
+  try {
+    root = structuredClone(value);
+  } catch {
+    return value;
+  }
   const api = asObject(root.api);
   if (api) {
     sanitiseStringField(api, "title");

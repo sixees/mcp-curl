@@ -7,39 +7,47 @@
 
 ## Summary
 
-Moves YAML schema sanitisation from a per-call concern in the generator into an invariant of the parser itself. `ApiSchemaValidator` now carries a `.transform()` step that runs `sanitizeDescription()` on every user-facing string field, so every public entry point — `loadApiSchema`, `loadApiSchemaFromString`, `validateApiSchema`, *and* the directly-re-exported `ApiSchemaValidator.parse()` — yields a pre-sanitised schema. The downstream generator now trusts the contract and stops re-sanitising.
+Moves YAML schema sanitisation from a per-call concern in the generator into an invariant of the parser itself. `ApiSchemaValidator` now wraps the inner Zod schema in a `z.preprocess(sanitiseRawSchema, …)` step that produces a sanitised deep clone of the raw input *before* any Zod check runs. Every public entry point — `loadApiSchema`, `loadApiSchemaFromString`, `validateApiSchema`, *and* the directly-re-exported `ApiSchemaValidator.parse()` — therefore yields a sanitised schema, AND Zod's own issue messages (and downstream cross-field error messages) quote sanitised values rather than raw attacker bytes. The downstream generator trusts the contract and no longer re-sanitises.
 
-This closes the security hole identified by the technical review (S1): a consumer who imported `ApiSchemaValidator` from the public barrel and called `.parse()` directly was bypassing the loader-level sanitisation entirely. Belt-and-braces, the loader also pre-walks the raw YAML object before Zod sees it (A8), so a malformed payload cannot smuggle bidi/zero-width characters through Zod error messages.
+This closes the security hole identified by the technical review (S1): a consumer who imported `ApiSchemaValidator` from the public barrel and called `.parse()` directly was bypassing the loader-level sanitisation entirely. The loader is no longer a sanitisation layer — there is one chokepoint, in the validator. Caller-supplied schemas passed to `createApiServer({ schema })` / `createApiServerSync(schema)` are re-validated for the same reason.
 
 ## What was implemented
 
-### Validator: sanitisation as a parser invariant
+### Validator: sanitisation as a `z.preprocess` chokepoint
 - **Files:** `src/lib/schema/validator.ts`
-- **What:** Wrapped the existing object schema in a `.transform()` step (`sanitizeApiSchemaInPlace`) that mutates `api.title/description`, every `endpoint.title/description`, every `parameter.description`, and every `filterPresets[*].name/description`. Combined with the same transform: filter-preset name collision detection (`reportDuplicatePresetNames`) keyed on the *post-sanitise* name, raising via `ctx.addIssue` so duplicates fail validation rather than crash the generator at runtime.
-- **Approach:** A single `.transform((schema, ctx) => …)` step does both jobs because the duplicate check needs to read the post-sanitise names. The earlier draft used a separate `.superRefine(...).transform(...)` chain, but `superRefine` ran *before* the transform and so saw raw (un-sanitised) names — collisions like `"Summary"` vs `"​Summary"` would slip past it. Folding the check into the transform keeps both invariants in one place.
-- **Doc comment:** `ApiSchemaValidator`'s JSDoc explicitly documents the contract; a top-of-file comment in `validator.ts` declares it the load-bearing invariant.
+- **What:** `ApiSchemaValidator = z.preprocess(sanitiseRawSchema, RawApiSchema.transform((schema, ctx) => { … cross-field checks via ctx.addIssue …; return schema; }))`. The preprocess step deep-clones the raw input via `structuredClone` (defeats `__proto__`-style payloads, leaves caller's input unchanged) and walks the clone, replacing every user-facing string field via `sanitizeDescription()`. The `.transform()` step then runs the cross-field checks: duplicate endpoint IDs, undefined path parameters, and duplicate filter-preset names. Each check uses `ctx.addIssue` so the parse fails with a normal Zod error (translated to `ApiSchemaValidationError` by `validateApiSchema()`).
+- **Fields sanitised:** `api.title`, `api.description`, `endpoint.id`, `endpoint.path`, `endpoint.title`, `endpoint.description`, `parameter.description`, `filterPresets[*].name`, `filterPresets[*].description`, `auth.apiKey.envVar`, `auth.bearer.envVar`. The `id` and `path` inclusions keep cross-field error messages free of attacker bytes; `auth.*.envVar` inclusion keeps the LLM-visible `Authentication error: Missing required environment variable: …` response clean.
+- **Fields NOT sanitised:** `parameter.name` (used as object keys in input schemas and as URL parameter names — sanitising could change client semantics) and `preset.jqFilter` (engine receives the raw filter; the human-readable interpolation in `generator.ts` sanitises at display time via `renderJqFilterForDisplay()`).
+- **Tolerant by design:** any unexpected shape (non-object, missing keys, wrong types) is left untouched — Zod will reject it with a normal validation error downstream. `structuredClone` is wrapped in `try/catch`; on `DataCloneError` the original value is returned and Zod still emits its normal validation error.
+- **Doc comment:** `ApiSchemaValidator`'s JSDoc explicitly documents the contract; a top-of-file comment in `validator.ts` declares it the load-bearing invariant. The TypeScript type does NOT carry the invariant; it is a runtime property only.
 
-### Loader: pre-Zod raw-YAML sanitisation (A8)
+### Loader: no longer a sanitisation layer
 - **Files:** `src/lib/schema/loader.ts`
-- **What:** Added an internal `sanitizeRawYamlDescriptions(parsed)` walker called between `parseYaml()` and `validateApiSchema()`. Tolerant by design — any unexpected shape (non-object, missing keys, wrong types) is left untouched so Zod can produce a normal validation error.
-- **Why:** Even with the validator's transform in place, a malformed payload could produce Zod issue messages that quote the raw (attacker-controlled) values verbatim. Pre-sanitising raw description fields keeps those error messages clean. The validator's `.transform()` remains the security-critical sanitiser; this layer is observability hygiene.
+- **What:** The loader was deliberately stripped of any sanitisation walker. `loadApiSchema` and `loadApiSchemaFromString` are thin pass-throughs that parse YAML safely (`yaml.JSON_SCHEMA` to block `!!js/function` etc.) and hand the result to `validateApiSchema()` — which routes through the single `z.preprocess` chokepoint. A loader-side walker would duplicate the field-set knowledge and miss the direct `ApiSchemaValidator.parse(rawObj)` and `validateApiSchema(rawObj)` entry points.
+- **Note:** A top-of-file comment explicitly states the absence of a loader-side sanitiser and points the next reader to `validator.ts`.
+
+### Factory: `createApiServer*` re-validates caller-supplied schemas
+- **Files:** `src/lib/api-server.ts`
+- **What:** Both factories (`createApiServer({ schema })` and `createApiServerSync(schema)`) now call `validateApiSchema(schema)` on the caller-supplied branch before configuring the server. Without this, a hand-constructed `ApiSchema` (or one cast from a `Record<string, unknown>`) bypasses the sanitiser — bidi/zero-width bytes would flow into MCP tool advertisement unchecked.
 
 ### Generator: trust, document, stop re-sanitising
 - **Files:** `src/lib/schema/generator.ts`
-- **What:** Removed the redundant `sanitizeDescription()` calls from every site that consumes pre-sanitised fields (`endpoint.title/description`, `parameter.description`, `filterPresets[*].name`, `filterPresets[*].description`). Top-of-file comment block declares the trust contract; per-site `// pre-sanitised by validateApiSchema()` comments mark the boundary at every call site that used to call the sanitiser.
-- **What stays:** The single `sanitizeDescription(preset.jqFilter)` call inside `buildToolDescription()`. `jqFilter` is *deliberately* not sanitised by the validator — the engine receives the raw filter — so when interpolated into the human-readable description text, it must be cleaned at display time. This is documented in the top-of-file comment.
+- **What:** Removed the redundant `sanitizeDescription()` calls from every site that consumes pre-sanitised fields. Top-of-file comment block declares the trust contract.
+- **What stays:** A single `sanitizeDescription` call, encapsulated in the named helper `renderJqFilterForDisplay()` and used only at the display-time interpolation of `preset.jqFilter`. The validator deliberately leaves `jqFilter` raw so the engine receives the author's filter unchanged. The drift-resistance test `generator.ts has at most one sanitizeDescription call` (in `schema.test.ts`) guards the boundary against future regressions.
 - **Removed:** The runtime `if (uniqueNames.size !== presetNames.length) throw …` block in `generateInputSchema()`. Duplicates are now a parse-time `ApiSchemaValidationError`.
 
-### Tests: new PR-6a invariant suite (84 tests in schema.test.ts, +13 from before)
-- **Files:** `src/lib/schema/schema.test.ts`
+### Tests: PR-6a sanitisation invariant + review-fix coverage (90 tests in schema.test.ts)
+- **Files:** `src/lib/schema/schema.test.ts`, `src/lib/api-server.test.ts`
 - **Updated existing tests** that asserted the old generator-side sanitisation behaviour: they now assert the *boundary contract* (validator-bypassed input survives the generator unchanged) and point readers to the validator-side coverage.
-- **Added a `PR-6a sanitisation invariant` describe block** with five sub-describes:
-  - `ApiSchemaValidator.parse()` (raw-validator-bypass path — S1) — direct `.parse()` strips bidi/zero-width chars from `api.*`, `endpoint.*`, `parameter.description`, `filterPresets[*].*`, and rejects post-sanitise duplicate preset names.
+- **`PR-6a sanitisation invariant` describe block** (six sub-describes):
+  - `ApiSchemaValidator.parse()` (raw-validator-bypass path — S1) — direct `.parse()` strips bidi/zero-width chars from `api.*`, `endpoint.*`, `parameter.description`, `filterPresets[*].*`, `auth.apiKey.envVar`, `auth.bearer.envVar`; rejects post-sanitise duplicate preset names.
   - `validateApiSchema()` (wrapper parity) — wrapper produces identical output to direct `.parse()`; raises `ApiSchemaValidationError` on duplicates.
   - `loadApiSchemaFromString()` round-trip — bidi chars in YAML are stripped end-to-end.
-  - `loader pre-Zod sanitisation (A8)` — Zod error messages on malformed payloads do not echo raw bidi bytes.
-  - `integration #020: data: baseUrl rejection through every entry point` — the URL-scheme invariant survives the new transform; `baseUrl: data:...` is rejected through `loadApiSchemaFromString`, `validateApiSchema`, *and* `ApiSchemaValidator.parse`.
+  - `preprocess sanitisation keeps Zod and cross-field error messages clean` — Zod error messages on malformed payloads do not echo raw bidi bytes (single chokepoint covers all entry points).
+  - `integration #020: data: baseUrl rejection through every entry point` — the URL-scheme invariant survives the new preprocess; `baseUrl: data:...` is rejected through `loadApiSchemaFromString`, `validateApiSchema`, *and* `ApiSchemaValidator.parse`.
   - `generator boundary` — explicit test that `generateInputSchema()` preserves an unsanitised `param.description` verbatim, asserted via `z.toJSONSchema()` (the projection an MCP client actually sees), proving the trust boundary is now in code.
+- **`review-fix coverage (P1/P2 closure)` describe block** (five cases) — empty-string rejection, cross-field error hygiene for `endpoint.path` and `endpoint.id`, drift-resistance grep for `generator.ts`, and structurally-malformed-input tolerance for the preprocess walker.
+- **`api-server.test.ts`** — three new cases that assert against `server.getRegisteredCustomTools()` (a new public read-only accessor on `McpCurlServer`) so the bypass-closure tests verify actual tool metadata, not just `getConfig()`.
 
 ## Key decisions
 
@@ -214,4 +222,42 @@ None — clear to merge. PR-6a now meets the security invariants the original co
 
 ### Tests / build
 - `npm test`: 684/684 passing (7 skipped)
+- `npm run build`: clean
+
+---
+
+## Review Comments Addressed — 2026-05-02 (PR #28 round 3)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `structuredClone` can throw `DataCloneError` on functions/symbols/etc., breaking the "tolerant by design" contract | @coderabbitai | Fix needed (Major) | Wrapped the `structuredClone(value)` call in `try/catch`; on failure return the original value so Zod emits its normal validation error. |
+| `getRegisteredCustomTools()` returned live `meta` references — caller mutation could change registered tool metadata after the fact | @coderabbitai | Fix needed (Major) | Each entry is now `Object.freeze({ name, meta: Object.freeze({ title, description, inputSchema, annotations: frozen-or-undefined }) })`. `inputSchema` is intentionally shared by reference because Zod schema instances rely on internal mutable state and freezing them breaks Zod. Return type tightened to `Readonly<CustomToolMeta>`. |
+| Test gap: no regression coverage for the new `auth.*.envVar` sanitisation | @coderabbitai | Fix needed | Added `strips bidi/zero-width chars from auth.apiKey.envVar and auth.bearer.envVar` test under the `PR-6a sanitisation invariant > ApiSchemaValidator.parse()` describe — covers both auth shapes. |
+| Handoff `Summary` + `What was implemented` subsections still described the pre-review architecture (`.transform()` + loader walker) | @coderabbitai | Fix needed | Rewrote `Summary`, `Validator`, `Loader` (now: `no longer a sanitisation layer`), `Generator`, and `Tests` subsections to describe the shipped `z.preprocess` design end-to-end. Also added a `Factory` subsection covering the `createApiServer*` re-validation. The pre-review reasoning now lives only in the round-1/round-2 review-comments tables, which is where the historical record belongs. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| Trust `structuredClone` to succeed on any object reaching the preprocess walker | Wrap in `try/catch` and pass the original value through on failure | Functions/symbols/WeakMaps would throw `DataCloneError` before Zod could emit a normal validation error, breaking the "tolerant by design" contract | @coderabbitai |
+| `getRegisteredCustomTools()` returned an array of `{ name, meta }` with `meta` shared by reference to `_customTools[i].meta` | Each returned entry is shallow-frozen; `meta` is a fresh frozen copy with `annotations` also frozen | The same `meta` reference was forwarded to `server.registerTool` during start; caller mutation would change registered tool metadata after the fact | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — input was a PR review, not a `docs/todos/` file_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — all four review threads addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/schema/validator.ts` (try/catch around `structuredClone`)
+- `src/lib/extensible/mcp-curl-server.ts` (`getRegisteredCustomTools` returns frozen projection)
+- `src/lib/schema/schema.test.ts` (auth.envVar sanitisation regression test)
+- `docs/work/handoff-feat-hardening-pr-6a-yaml-validate-sanitise.md` (Summary + What was implemented rewritten to match shipped design)
+
+### Tests / build
+- `npm test`: 685/685 passing (7 skipped)
 - `npm run build`: clean

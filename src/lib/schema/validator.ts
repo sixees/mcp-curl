@@ -161,8 +161,17 @@ function sanitiseRawSchema(value: unknown): unknown {
     if (!asObject(value)) return value;
 
     // Deep clone first so callers' objects are never mutated and
-    // attacker-controlled `__proto__` keys are stripped.
-    const root = structuredClone(value) as Record<string, unknown>;
+    // attacker-controlled `__proto__` keys are stripped. structuredClone
+    // throws DataCloneError on non-cloneable inputs (functions, symbols,
+    // WeakMaps, …) — fall back to returning the original value so Zod can
+    // emit its normal validation error downstream, preserving the
+    // "Tolerant by design" contract.
+    let root: Record<string, unknown>;
+    try {
+        root = structuredClone(value) as Record<string, unknown>;
+    } catch {
+        return value;
+    }
 
     const api = asObject(root.api);
     if (api) {

@@ -1452,11 +1452,42 @@ describe("PR-6a sanitisation invariant", () => {
             expect(preset?.description).not.toMatch(/[‮]/);
         });
 
+        it("strips bidi/zero-width chars from auth.apiKey.envVar and auth.bearer.envVar", () => {
+            // auth.apiKey.envVar / auth.bearer.envVar are interpolated into
+            // the LLM-visible "Missing required environment variable: …"
+            // response from generator.ts:createToolHandler when an env var
+            // is missing. Lock them under the same sanitisation invariant —
+            // dropping them from sanitiseRawSchema would let attacker bytes
+            // surface in the auth-error path otherwise.
+            const apiKeyParsed = ApiSchemaValidator.parse({
+                ...baseSchema,
+                auth: {
+                    apiKey: {
+                        type: "header",
+                        name: "X-API-Key",
+                        envVar: "API_KEY​EVIL",
+                    },
+                },
+            });
+            expect(apiKeyParsed.auth?.apiKey?.envVar).not.toMatch(/[​]/);
+
+            const bearerParsed = ApiSchemaValidator.parse({
+                ...baseSchema,
+                auth: {
+                    bearer: {
+                        envVar: "BEARER‮TOKEN",
+                    },
+                },
+            });
+            expect(bearerParsed.auth?.bearer?.envVar).not.toMatch(/[‮]/);
+        });
+
         it("rejects duplicate filter preset names after sanitisation", () => {
             // "Summary" and "​Summary" both sanitise to "Summary" — the
-            // .superRefine() step inside ApiSchemaValidator must catch the
-            // collision and surface it as a validation error rather than let
-            // the generator silently pick the wrong jq filter at runtime.
+            // cross-field check inside ApiSchemaValidator's `.transform()`
+            // step must catch the collision and surface it as a validation
+            // error rather than let the generator silently pick the wrong
+            // jq filter at runtime.
             expect(() =>
                 ApiSchemaValidator.parse({
                     ...baseSchema,
