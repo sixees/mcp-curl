@@ -16,13 +16,17 @@
 //   7. Response-side defence helpers    — sanitize / detect / spotlight / composer
 //   8. URL validation helpers           — createHttpOnlyUrlSchema, safeHostname
 //
-// PR-6b will add `wrapWithDefence(handler)`. Decision recorded for that PR:
-// `wrapWithDefence` becomes the canonical higher-level helper; the underlying
-// primitives (`sanitizeResponse`, `detectInjectionPattern`, `applySpotlighting`,
-// `sanitizeAndDetect`) stay public for callers needing finer-grained control,
-// but the JSDoc for the primitives will point at `wrapWithDefence` as the
-// recommended entry point. No subpath exports — flat barrel + section comments
-// is the convention.
+// PR-6b shipped the defence-in-depth wrap as
+// `createWrapper(config) → (result, hostname) => CallToolResult` rather than
+// the originally-sketched `wrapWithDefence(handler)`. The factory shape lets
+// the same closure compose at four call sites (curl_execute / jq_query in
+// tool-wrapper.ts, YAML createToolHandler in schema/generator.ts, custom-tool
+// registration in extensible/mcp-curl-server.ts, and the hook short-circuit in
+// extensible/hook-executor.ts) with idempotence via a Symbol tag. The wrap is
+// applied automatically — library consumers only ever interact with it via
+// `enableSpotlighting` (see McpCurlConfig). The primitives below stay public
+// for callers needing finer-grained control over their own non-MCP pipelines.
+// No subpath exports — flat barrel + section comments is the convention.
 
 // 1. Main server class
 export { McpCurlServer } from "./lib/extensible/index.js";
@@ -103,13 +107,19 @@ export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/u
 // file content, third-party API response) should sanitise + spotlight to honour
 // the same trust boundary the server enforces on built-in tools.
 //
-// Prefer `sanitizeAndDetect(text, label)` over hand-wiring `sanitizeResponse` +
-// `detectInjectionPattern` + `logInjectionDetected` — it locks the
-// sanitize → detect → log ordering invariant. Calling `detectInjectionPattern`
-// on raw (un-sanitized) text silently degrades detection coverage because the
-// matcher will not see invisible-char-split phrases like "Ig​nore" → "Ignore".
+// Prefer `sanitizeAndDetect(text, label)` over hand-wiring `sanitizeResponse`
+// + `detectInjectionPattern` + `logInjectionDetected`. Since PR-6b the
+// helper detects on the **original** text *before* sanitisation: a malicious
+// pattern that the sanitiser would otherwise strip (e.g. content inside a
+// future PR-7 HTML-script-strip pass) still lands in the per-host
+// `[injection-defense]` log signal, and the returned text is the sanitised
+// version. The trade-off is a small regression on invisible-char-split
+// phrases (`Ig​nore` → the matcher does not see `Ignore`) — acceptable
+// because the throttled log is observability only, not a content gate.
 //
-// Key spotlight by `randomUUID()` per request. See docs/custom-tools.md.
+// Spotlight (when used directly) must key on `randomUUID()` per request /
+// per message; nothing else gives the per-call entropy the sentinel
+// boundary depends on. See docs/custom-tools.md.
 export { applySpotlighting, sanitizeResponse, detectInjectionPattern } from "./lib/utils/index.js";
 export { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 
@@ -117,9 +127,10 @@ export { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detectio
 // Built-in tools and YAML schemas use these same helpers internally; exporting
 // them keeps custom tools at parity without deep-importing.
 //
-// `safeHostname` is the malformed-URL-tolerant hostname extractor used in error
-// paths and log labels — PR-6b's `wrapWithDefence(result, hostname, config)`
-// callers will need it to derive a per-request hostname without reimplementing
-// the URL-parse-with-fallback pattern.
+// `safeHostname` is the malformed-URL-tolerant hostname extractor used in
+// error paths and log labels — pair it with `sanitizeAndDetect(text,
+// hostname)` in any custom non-MCP pipeline that emits external content; the
+// same per-host throttle the server uses internally then keys correctly
+// across both.
 export { createHttpOnlyUrlSchema, safeHostname } from "./lib/utils/index.js";
 export type { CreateHttpOnlyUrlSchemaOptions } from "./lib/utils/index.js";

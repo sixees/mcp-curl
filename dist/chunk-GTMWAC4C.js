@@ -9,21 +9,21 @@ import {
   SESSION,
   applyDefaultHeaders,
   applyJqFilter,
-  applySpotlighting,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   createConfigError,
   createHttpOnlyUrlSchema,
   createSafeFilenameBase,
+  createWrapper,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
-  isSpotlightEnvelope,
   isValidSessionId,
   parsePort,
   registerCurlExecuteTool,
   resolveBaseUrl,
   resolveOutputDir,
+  safeHostname,
   safeStringCompare,
   sanitizeAndDetect,
   sanitizeDescription,
@@ -33,7 +33,7 @@ import {
   stopRateLimitCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-4CBQKI7Q.js";
+} from "./chunk-NCR5EM33.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -526,7 +526,7 @@ function createInstanceUtilities(config) {
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID } from "crypto";
 
 // src/lib/session/session-manager.ts
 var SessionManager = class {
@@ -721,11 +721,8 @@ function registerAllCapabilities(server) {
 // src/lib/extensible/mcp-curl-server.ts
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-// src/lib/extensible/tool-wrapper.ts
-import { randomUUID } from "crypto";
-
 // src/lib/extensible/hook-executor.ts
-async function executeWithHooks(tool, params, config, hooks, sessionId, executor) {
+async function executeWithHooks(tool, params, config, hooks, sessionId, executor, wrap, hostname) {
   const ctx = {
     tool,
     params: { ...params },
@@ -736,10 +733,11 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
     const result = await hook(ctx);
     if (result) {
       if ("shortCircuit" in result && result.shortCircuit) {
-        return {
+        const shortCircuitResult = {
           content: [{ type: "text", text: result.response }],
           isError: result.isError
         };
+        return wrap(shortCircuitResult, hostname);
       }
       if ("params" in result && result.params) {
         ctx.params = { ...ctx.params, ...result.params };
@@ -775,26 +773,7 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
 }
 
 // src/lib/extensible/tool-wrapper.ts
-function maybeApplySpotlighting(result, config) {
-  if (!config.enableSpotlighting || result.isError) {
-    return result;
-  }
-  const first = result.content[0];
-  if (!first || first.type !== "text" || typeof first.text !== "string") {
-    console.error("[tool-wrapper] invalid result shape \u2014 failing closed");
-    return {
-      content: [{ type: "text", text: "Error: invalid tool response shape" }],
-      isError: true
-    };
-  }
-  if (isSpotlightEnvelope(first.text)) {
-    return result;
-  }
-  return {
-    ...result,
-    content: [{ type: "text", text: applySpotlighting(first.text, randomUUID()) }]
-  };
-}
+var JQ_QUERY_HOSTNAME_LABEL = "n/a";
 function applySharedConfigDefaults(params, config) {
   if (config.outputDir && !params.output_dir) {
     params.output_dir = config.outputDir;
@@ -825,6 +804,7 @@ function applyConfigTransformsJq(params, config) {
 }
 function registerCurlToolWithHooks(server, options) {
   const { executor, enabled, config, hooks } = options;
+  const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
   const handler = async (params, extra) => {
     if (!enabled) {
       return {
@@ -833,13 +813,23 @@ function registerCurlToolWithHooks(server, options) {
       };
     }
     const transformedParams = applyConfigTransformsCurl(params, config);
-    const result = await executeWithHooks("curl_execute", transformedParams, config, hooks, extra.sessionId, executor);
-    return maybeApplySpotlighting(result, config);
+    const result = await executeWithHooks(
+      "curl_execute",
+      transformedParams,
+      config,
+      hooks,
+      extra.sessionId,
+      executor,
+      wrap,
+      safeHostname(transformedParams.url)
+    );
+    return wrap(result, safeHostname(transformedParams.url));
   };
   server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, handler);
 }
 function registerJqToolWithHooks(server, options) {
   const { executor, enabled, config, hooks } = options;
+  const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
   const handler = async (params, extra) => {
     if (!enabled) {
       return {
@@ -848,8 +838,17 @@ function registerJqToolWithHooks(server, options) {
       };
     }
     const transformedParams = applyConfigTransformsJq(params, config);
-    const result = await executeWithHooks("jq_query", transformedParams, config, hooks, extra.sessionId, executor);
-    return maybeApplySpotlighting(result, config);
+    const result = await executeWithHooks(
+      "jq_query",
+      transformedParams,
+      config,
+      hooks,
+      extra.sessionId,
+      executor,
+      wrap,
+      JQ_QUERY_HOSTNAME_LABEL
+    );
+    return wrap(result, JQ_QUERY_HOSTNAME_LABEL);
   };
   server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
@@ -948,6 +947,7 @@ function removeDescriptionEntry(field, existing) {
 }
 
 // src/lib/extensible/mcp-curl-server.ts
+var CUSTOM_TOOL_HOSTNAME_LABEL = "custom";
 var KNOWN_CONFIG_KEYS_ARRAY = [
   "baseUrl",
   "defaultHeaders",
@@ -1400,8 +1400,13 @@ var McpCurlServer = class {
       config,
       hooks: this._hooks
     });
+    const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
     for (const { name, meta, handler } of this._customTools) {
-      server.registerTool(name, meta, handler);
+      const wrappedHandler = (async (...args) => {
+        const result = await handler(...args);
+        return wrap(result, CUSTOM_TOOL_HOSTNAME_LABEL);
+      });
+      server.registerTool(name, meta, wrappedHandler);
     }
   }
   /**
@@ -1622,7 +1627,7 @@ function createHttpApp(options) {
       }
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID2(),
+        sessionIdGenerator: () => randomUUID(),
         // `enableJsonResponse: true` makes the SDK return tool
         // responses as a single JSON body on the POST instead of
         // opening an SSE stream. The mcp-curl tools (`curl_execute`,

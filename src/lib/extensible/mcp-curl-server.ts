@@ -26,6 +26,20 @@ import { executeJqQuery } from "../tools/jq-query.js";
 import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import { startRateLimitCleanup, stopRateLimitCleanup, startInjectionCleanup, stopInjectionCleanup } from "../security/index.js";
 import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
+import { createWrapper, type WrappableResult } from "../response/post-processor.js";
+
+/**
+ * Hostname label used for the per-call wrap on user-supplied custom tools.
+ *
+ * User custom tools may reach out to anywhere (or nowhere — they may
+ * synthesise text from local state); the registration adapter has no way to
+ * know the request hostname at call time. The label keeps the per-host
+ * injection-detection throttle bounded and lets ops grep for custom-tool
+ * events specifically. YAML-driven tools, by contrast, wrap inside
+ * `createToolHandler` (see `schema/generator.ts`) where the request URL is
+ * known, and tag the result so this outer wrap is a no-op for them.
+ */
+const CUSTOM_TOOL_HOSTNAME_LABEL = "custom";
 import {
     createHttpApp,
     resolveHost,
@@ -611,9 +625,21 @@ export class McpCurlServer {
             hooks: this._hooks,
         });
 
-        // Register custom tools
+        // Register custom tools — wrap each handler with the defence-in-depth
+        // post-processor (PR-6b). User custom tools and YAML-driven tools both
+        // flow through this loop; YAML tools are double-wrapped (the inner
+        // wrap fires inside `createToolHandler` with the real request hostname
+        // and tags the result) but the Symbol-tag idempotence makes the outer
+        // wrap a no-op for them. Custom tools registered by library consumers
+        // are wrapped here for the first time, with the "custom" hostname
+        // label.
+        const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
         for (const { name, meta, handler } of this._customTools) {
-            server.registerTool(name, meta, handler);
+            const wrappedHandler = (async (...args: unknown[]) => {
+                const result = await (handler as (...a: unknown[]) => Promise<WrappableResult>)(...args);
+                return wrap(result, CUSTOM_TOOL_HOSTNAME_LABEL);
+            }) as typeof handler;
+            server.registerTool(name, meta, wrappedHandler);
         }
     }
 

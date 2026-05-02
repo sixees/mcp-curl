@@ -36,3 +36,12 @@ export {
     // Note: clearInjectionDetectionMap intentionally not exported here (test-only).
     // Tests should import directly from "./detection-logger.js" if needed.
 } from "./detection-logger.js";
+
+export {
+    logWrapError,
+    cleanupWrapErrorMap,
+    startWrapErrorCleanup,
+    stopWrapErrorCleanup,
+    // Note: clearWrapErrorMap intentionally not exported here (test-only).
+    // Tests should import directly from "./wrap-error-logger.js" if needed.
+} from "./wrap-error-logger.js";

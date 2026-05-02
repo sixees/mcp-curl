@@ -1,10 +1,12 @@
 import {
   applyDefaultHeaders,
   createHttpOnlyUrlSchema,
+  createWrapper,
   executeCurlRequest,
   resolveBaseUrl,
+  safeHostname,
   sanitizeDescription
-} from "./chunk-4CBQKI7Q.js";
+} from "./chunk-NCR5EM33.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -426,6 +428,7 @@ function resolveJqFilter(endpoint, params) {
   return endpoint.response?.jqFilter;
 }
 function createToolHandler(schema, endpoint, config) {
+  const wrap = createWrapper({ enableSpotlighting: config?.enableSpotlighting });
   return async (params, extra) => {
     try {
       const { pathParams, queryParams, headerParams, bodyData } = separateParams(
@@ -454,7 +457,7 @@ function createToolHandler(schema, endpoint, config) {
         ...extra,
         allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost
       };
-      return await executeCurlRequest(
+      const result = await executeCurlRequest(
         {
           url,
           method: endpoint.method,
@@ -472,6 +475,7 @@ function createToolHandler(schema, endpoint, config) {
         },
         execExtra
       );
+      return wrap(result, safeHostname(url));
     } catch (error) {
       if (error instanceof AuthenticationError) {
         return {

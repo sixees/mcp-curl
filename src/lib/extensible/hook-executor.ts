@@ -9,6 +9,17 @@ import type {
     JqQueryInput,
 } from "../types/public.js";
 import type { Hooks, ToolResult, ToolName } from "./types.js";
+import type { WrappableResult } from "../response/post-processor.js";
+
+/**
+ * Per-call wrap closure injected by the caller (built in `tool-wrapper.ts`
+ * via `createWrapper(config)`). Routing the short-circuit return value through
+ * this closure closes the bypass flagged by S2: a `beforeRequest` hook that
+ * returns a `CallToolResult` skipped wrap entirely before PR-6b. The wrap is
+ * idempotent (Symbol-tag short-circuit), so callers that re-wrap downstream
+ * see no double-processing.
+ */
+type WrapFn = <T extends WrappableResult>(result: T, hostname: string) => T;
 
 /**
  * Execute a tool with before/after/error hooks.
@@ -42,7 +53,9 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
     config: Readonly<McpCurlConfig>,
     hooks: Hooks,
     sessionId: string | undefined,
-    executor: (p: T, extra: { sessionId?: string; allowLocalhost?: boolean }) => Promise<ToolResult>
+    executor: (p: T, extra: { sessionId?: string; allowLocalhost?: boolean }) => Promise<ToolResult>,
+    wrap: WrapFn,
+    hostname: string
 ): Promise<ToolResult> {
     // Create mutable context for hooks
     const ctx: HookContext<T> = {
@@ -59,10 +72,16 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         if (result) {
             // Check for short-circuit
             if ("shortCircuit" in result && result.shortCircuit) {
-                return {
+                // Defence-in-depth: a hook that returns synthesised text
+                // bypasses the cURL pipeline (and therefore `processor.ts`'s
+                // sanitise+detect pass). Route the synthesised result through
+                // the same wrap the executor's return value would hit, so the
+                // LLM never receives unsanitised hook output.
+                const shortCircuitResult: ToolResult = {
                     content: [{ type: "text", text: result.response }],
                     isError: result.isError,
                 };
+                return wrap(shortCircuitResult, hostname) as ToolResult;
             }
 
             // Merge params if provided

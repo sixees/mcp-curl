@@ -36,9 +36,15 @@ export function logInjectionDetected(hostname: string): void {
 }
 
 /**
- * Sanitize text and log any detected injection patterns.
+ * Detect injection patterns in raw text, then sanitize for output.
  *
- * Bundles the sanitize → detect → log triplet that callers ran by hand.
+ * Order is load-bearing: detection runs against the **original** text, before
+ * any sanitisation, because the sanitiser's job is to strip the very characters
+ * (bidi marks, zero-width spaces, Tags-block bytes) that the detector relies on
+ * to spot phrases like `Ig​nore previous instructions`. Detecting on the
+ * sanitised string would silently lose signal precisely on the inputs we care
+ * most about.
+ *
  * Detection-only: the sanitized text is returned regardless of whether
  * an injection pattern was matched. Logging is throttled per label by
  * `logInjectionDetected`.
@@ -48,11 +54,10 @@ export function logInjectionDetected(hostname: string): void {
  * @returns Sanitized text
  */
 export function sanitizeAndDetect(text: string, label: string): string {
-    const sanitized = sanitizeResponse(text);
-    if (detectInjectionPattern(sanitized)) {
+    if (detectInjectionPattern(text)) {
         logInjectionDetected(label);
     }
-    return sanitized;
+    return sanitizeResponse(text);
 }
 
 /**

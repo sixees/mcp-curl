@@ -56,6 +56,10 @@ function configureServerFromSchema(
         allowLocalhost: mergedConfig.allowLocalhost,
         defaultUserAgent: mergedConfig.defaultUserAgent,
         defaultReferer: mergedConfig.defaultReferer,
+        // PR-6b: propagate the spotlighting flag so YAML-driven tools wrap
+        // their text responses with the same defence-in-depth pipeline
+        // applied to curl_execute / jq_query.
+        enableSpotlighting: mergedConfig.enableSpotlighting,
         ...options.generatorConfig,
     };
 

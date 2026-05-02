@@ -239,6 +239,16 @@ interface GeneratorConfig {
     defaultUserAgent?: string;
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
+    /**
+     * Wrap YAML-driven tool responses in spotlighting sentinels (PR-6b).
+     *
+     * Sanitise + detect always run on text responses regardless of this flag;
+     * the flag only controls the additional `applySpotlighting` step. Mirrors
+     * `McpCurlConfig.enableSpotlighting` so the YAML path inherits the same
+     * setting from `createApiServer({ config })` callers without a separate
+     * knob.
+     */
+    enableSpotlighting?: boolean;
 }
 /**
  * Generate a Zod input schema from endpoint parameter definitions.

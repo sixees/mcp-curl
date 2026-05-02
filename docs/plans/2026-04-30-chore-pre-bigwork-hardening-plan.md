@@ -814,18 +814,18 @@ This requires plumbing `config.enableSpotlighting` through `GeneratorConfig`. Ad
 
 **Acceptance criteria.**
 
-- [ ] `createWrapper(config)` exported from `src/lib/response/post-processor.ts`; the closure has signature `(result, hostname) => CallToolResult`.
-- [ ] Called from `tool-wrapper.ts`, the YAML tool handler path, `registerCustomTool`'s adapter, **and** the `hook-executor` short-circuit path; `maybeApplySpotlighting()` removed.
-- [ ] `sanitizeAndDetect()` in `detection-logger.ts` detects on the original text before sanitising (S4).
-- [ ] **Idempotence:** double-wrap is a no-op via the `Symbol.for("mcp-curl.wrapped")` tag — regression test asserts `sanitizeAndDetect` runs exactly once for a result wrapped twice (A1).
-- [ ] **Hook short-circuit** routes through wrap (S2); regression test in `hook-executor.test.ts` covers the bypass.
-- [ ] `enableSpotlighting: true` wraps YAML-tool text responses with sentinels.
-- [ ] Custom-tool / YAML-tool text output is sanitised and detection-logged regardless of spotlighting flag.
-- [ ] Spotlight UUID is generated **per `wrap()` call** (per-message), not per-session (A11).
-- [ ] **Defence-in-depth invariant (blind-spot):** wrap try/catches its body; on error, returns the original `result` and emits a throttled `[wrap-error]` log. Wrap never propagates exceptions to the handler boundary.
-- [ ] Error results pass through unchanged.
-- [ ] Doc comment in `types/public.ts` no longer warns about partial coverage.
-- [ ] `applySpotlighting()` reused; no duplicate sentinel logic.
+- [x] `createWrapper(config)` exported from `src/lib/response/post-processor.ts`; the closure has signature `(result, hostname) => CallToolResult`. Module also exports `isWrappedResult` (testing/inspection) and `WrapperConfig` / `WrappableResult` / `WrappableContentPart` types.
+- [x] Called from `tool-wrapper.ts` (curl_execute / jq_query), the YAML tool handler path (`schema/generator.ts:createToolHandler`), `registerToolsOnServer` in `extensible/mcp-curl-server.ts` (the custom-tool registration adapter, covering both user-supplied and YAML-derived custom tools), **and** the `hook-executor.ts` short-circuit path (`executeWithHooks` now takes `wrap`/`hostname` params); `maybeApplySpotlighting()` removed.
+- [x] `sanitizeAndDetect()` in `detection-logger.ts` detects on the original text before sanitising (S4). Documented trade-off: invisible-char-split phrases like `Ig​nore` no longer fire the per-host log (the regex doesn't match the original) — the returned text is still sanitised, so nothing leaks; the lost signal is observability only and the trade-off is explicit in `src/lib.ts §7`.
+- [x] **Idempotence:** double-wrap is a no-op via the `Symbol.for("mcp-curl.wrapped")` tag — `post-processor.test.ts` asserts `sanitizeAndDetect` runs exactly once across two wrap calls on the same result, plus the YAML path is double-wrapped at runtime (inside `createToolHandler` *and* at `registerToolsOnServer`) and the registration-side call is verifiably a no-op.
+- [x] **Hook short-circuit** routes through wrap (S2); regression test in `tool-wrapper.test.ts` ("hook short-circuit return value is sanitised (S2 closure regression)") covers the bypass.
+- [x] `enableSpotlighting: true` wraps YAML-tool text responses with sentinels — covered in the new `PR-6b wrap on YAML-tool output` describe-block in `schema.test.ts`.
+- [x] Custom-tool / YAML-tool text output is sanitised and detection-logged regardless of spotlighting flag — `mcp-curl-server.test.ts > PR-6b custom-tool wrap > sanitises bidi/zero-width chars in user-handler text output (4th asymmetry)`.
+- [x] Spotlight UUID is generated **per `wrap()` call** (per-message), not per-session (A11) — `post-processor.test.ts` asserts a single UUID across multi-text-part results AND distinct UUIDs across consecutive wrap calls.
+- [x] **Defence-in-depth invariant (blind-spot):** wrap try/catches its body; on error, returns the original `result` and emits a throttled `[wrap-error]` log via the new `src/lib/security/wrap-error-logger.ts`. Wrap never propagates exceptions to the handler boundary; covered by `post-processor.test.ts > wrap-internal exceptions return original + log [wrap-error]`.
+- [x] Error results pass through unchanged (still tagged so a downstream wrap is a no-op) — covered in every layer's tests.
+- [x] Doc comment in `types/public.ts` no longer warns about partial coverage; rewritten to describe the four call sites and the wrap pipeline. `src/lib.ts` §7 + the section-7 banner comment also updated to reflect the shipped `createWrapper` factory (the lib.ts banner had previously promised `wrapWithDefence(handler)`).
+- [x] `applySpotlighting()` reused; no duplicate sentinel logic. The wrap delegates spotlight to the existing helper and `sanitizeResponse` + `detectInjectionPattern` to `sanitizeAndDetect()`.
 
 **Research Insights (added 2026-05-01).**
 

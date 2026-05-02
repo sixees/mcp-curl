@@ -22,3 +22,11 @@ export {
     type ProcessResponseOptions,
     type ProcessedResponse,
 } from "./processor.js";
+
+export {
+    createWrapper,
+    isWrappedResult,
+    type WrapperConfig,
+    type WrappableResult,
+    type WrappableContentPart,
+} from "./post-processor.js";
