@@ -204,33 +204,50 @@ function sanitizeNode(
  * result back via `z.globalRegistry.add()` (which overwrites the existing
  * entry on the same instance — no clone, no rebuild).
  *
- * Empty-after-sanitisation ⇒ remove the description key so it doesn't
- * surface in JSON Schema output as a meaningless empty string. Other
+ * Empty descriptions ⇒ remove the description key so it doesn't surface in
+ * JSON Schema output as a meaningless empty string. Applies symmetrically
+ * to two cases: the caller registered `.describe("")` directly, OR the
+ * description was non-empty but sanitised down to an empty string. Other
  * registered meta keys (id, title, …) are preserved.
  */
 function sanitizeOwnDescription(field: z.ZodTypeAny): void {
     const existing = z.globalRegistry.get(field);
-    // Narrow `existing` to non-null up front so the registry-add calls
-    // below need no `!` assertion. `desc` being a non-empty string already
-    // implies `existing` is non-null, but spelling that out avoids relying
-    // on the implication and removes any TOCTOU-style fragility if a
+    // Narrow `existing` to non-null up front so the registry writes below
+    // need no `!` assertion, and to remove any TOCTOU-style fragility if a
     // future caller mutates the registry between the two reads.
     if (!existing) return;
     const desc = existing.description;
-    if (typeof desc !== "string" || desc.length === 0) return;
+    if (typeof desc !== "string") return;
+
+    if (desc.length === 0) {
+        removeDescriptionEntry(field, existing);
+        return;
+    }
 
     const sanitised = sanitizeDescription(desc);
     if (sanitised === desc) return;
 
     if (sanitised.length === 0) {
-        const { description: _omit, ...rest } = existing;
-        if (Object.keys(rest).length === 0) {
-            z.globalRegistry.remove(field);
-        } else {
-            z.globalRegistry.add(field, rest);
-        }
+        removeDescriptionEntry(field, existing);
         return;
     }
 
     z.globalRegistry.add(field, { ...existing, description: sanitised });
+}
+
+/**
+ * Strip the `description` key from an existing registry entry, removing the
+ * whole entry when no other meta keys remain. Caller is responsible for
+ * having already confirmed `existing` is non-null.
+ */
+function removeDescriptionEntry(
+    field: z.ZodTypeAny,
+    existing: { description?: string } & Record<string, unknown>
+): void {
+    const { description: _omit, ...rest } = existing;
+    if (Object.keys(rest).length === 0) {
+        z.globalRegistry.remove(field);
+    } else {
+        z.globalRegistry.add(field, rest);
+    }
 }

@@ -777,6 +777,18 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         expect(readonly.unwrap().description).toBe("pwn");
     });
 
+    it("removes a directly-empty description so JSON Schema sees no empty string", () => {
+        const blank = z.string().describe("");
+        const inputSchema = z.object({ blank });
+        server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
+        // The leaf and the wrapping object both started with `.describe("")`
+        // (well, the leaf did). After registration the registry entry for the
+        // leaf must not carry an empty `description` key.
+        const sanitised = lastTool(server).meta.inputSchema;
+        const leaf = sanitised.shape.blank as z.ZodString;
+        expect(leaf.description).toBeUndefined();
+    });
+
     it("does not loop on a recursive ZodLazy — cycle guard short-circuits", () => {
         // Canonical recursive-type pattern: a named const with a lazy
         // back-edge. The inner lazy's getter returns the same `Tree`

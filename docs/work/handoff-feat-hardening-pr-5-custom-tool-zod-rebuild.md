@@ -276,3 +276,23 @@ External reviewers (gemini-code-assist, chatgpt-codex-connector, coderabbitai) f
 - `npm test` — 658 passed / 7 skipped (was 651/7 before this pass; +7 from the new B4 cases).
 - `npx tsc --noEmit` — clean apart from the pre-existing `src/lib.test.ts(78,5)` `BeforeRequestResult` generic-arity error confirmed unchanged on `main`.
 - `npm run build` — clean dist.
+
+## Review Comments Addressed — 2026-05-02 (round 3)
+
+CodeRabbit re-reviewed commits `f7757cf` → `fb0dea6` and surfaced two follow-ups.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `.describe("")` leaves an empty `description` in `z.globalRegistry`, contradicting the documented contract that empty descriptions are removed | @coderabbitai | Fix needed (Minor / Quick win) | Refactored `sanitizeOwnDescription` to apply the cleanup branch symmetrically — both for descriptions that start empty and for descriptions that sanitise down to empty. Extracted the shared cleanup into a `removeDescriptionEntry` helper to keep it DRY. New regression test in `mcp-curl-server.test.ts` locks the new behaviour. JSDoc updated to reflect the symmetric contract. |
+| Markdown-lint warnings on the handoff doc (heading blank-line, code-block language) | @coderabbitai | Won't fix (cosmetic) | Replied — `docs/work/` is a working artifact tracking the PR's evolution, not a published doc. CodeRabbit itself flagged this as Trivial / Low value. Not fixing avoids needless churn on a doc that gains another review-comments section every round. |
+
+### Files Modified
+- `src/lib/extensible/schema-sanitizer.ts` — `sanitizeOwnDescription` symmetric cleanup, new `removeDescriptionEntry` helper, updated JSDoc.
+- `src/lib/extensible/mcp-curl-server.test.ts` — one new test for the empty-description cleanup. B4 block now 29 tests.
+
+### Verification
+- `npm test` — 663 passed / 7 skipped.
+- `npx tsc --noEmit` — clean (pre-existing `lib.test.ts(78)` unchanged).
+- `npm run build` — clean dist.
