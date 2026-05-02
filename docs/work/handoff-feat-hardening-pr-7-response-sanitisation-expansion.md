@@ -537,3 +537,63 @@ None — all P1 fixed; relevant P2 fixed; deferred items are deliberately scoped
 
 ### Reviewer assessment
 All 5 unresolved threads were P1/P2 fixes (no false positives). @chatgpt-codex-connector and @gemini-code-assist independently caught a real P1 regression I introduced with the previous review's pipeline reorder — the fix invalidated my own claim ("detection still runs on original via S4 ordering" was true, but didn't address the post-strip surface). Codex's finding was the load-bearing security fix; Gemini's nested-entity fix and CodeQL's orphan-`<!--` fix close adjacent bypass classes.
+
+---
+
+## P1/P2/P3 Closure Audit — 2026-05-02
+
+Walking every finding from the 3 review agents (security-sentinel, code-simplicity-reviewer, typescript-reviewer) and PR #30 round-1 reviewers (codex, gemini, codeql, coderabbit) against shipped code.
+
+### P1 — 7/7 closed
+| ID | Source | Finding | Closure |
+|----|--------|---------|---------|
+| P1-A | security-sentinel | Mismatched/malformed `</script>` closer leaks body | ✅ `4a76ea4` (open-to-EOF pattern) |
+| P1-B | security-sentinel | 256 KB cap evasion via Unicode-padding inflation | ✅ `4a76ea4` (pipeline reorder) |
+| P1-C | typescript-reviewer + security-sentinel | `decodeNumericHtmlEntities` accepts surrogate halves | ✅ `4a76ea4` (range guard) |
+| P1-D | security-sentinel + typescript-reviewer | Markdown content-type skips `<script>` strip | ✅ `4a76ea4` (added markdown to strip branch) |
+| P1-E | typescript-reviewer | Title-syntax / paren-bearing URLs not stripped | ✅ `4a76ea4` (URL char class widened to `[^)\n]`) |
+| P1-F | security-sentinel | Dangerous-scheme whitespace bypass | ✅ `4a76ea4` (same widening + leading `\s*`) |
+| P1 (PR#30) | codex + gemini | Re-sanitise after entity-decoding strip pass | ✅ `ac68c14` (Step 5 re-sanitise) |
+
+### P2 — 10/10 addressed (7 fixed, 3 explicitly rejected/subsumed with rationale)
+| ID | Source | Finding | Closure |
+|----|--------|---------|---------|
+| P2-A | security-sentinel | Whitespace-padding interleaving bypass | ✅ `4a76ea4` (idempotence loop) |
+| P2-B | code-simplicity | Extract `strip-blocks.ts` | ✅ `4a76ea4` |
+| P2-C | code-simplicity | Flatten `unicode-attack-ranges.ts` named-class structure | ❌ REJECTED — P2-G derivation makes the structure earn its keep |
+| P2-D | typescript-reviewer | `@internal` JSDoc on internal exports | ✅ `4a76ea4` |
+| P2-E | code-simplicity | Orphan-tag union (4 patterns → 1) | ❌ SUBSUMED — orphan strip dropped via P1-A |
+| P2-F | code-simplicity | Numeric-entity decoder collapse | ✅ `4a76ea4` (single regex with hex/dec alternation) |
+| P2-G | typescript-reviewer | `isWhitespacePaddingMatch` desync risk | ✅ `4a76ea4` (single source of truth) |
+| P2-H | typescript-reviewer | Type guard at `processResponse` entry | ✅ `4a76ea4` |
+| P2-5 | security-sentinel | Numeric-entity decoder false positive on legit code samples | ❌ DEFERRED — direction-of-risk preference; documented inline |
+| P2 (PR#30) | gemini | Decode inside fixed-point loop (nested entity bypass) | ✅ `ac68c14` |
+| P2 (PR#30) | github-advanced-security | Orphan `<!--` opener residue | ✅ `ac68c14` (open-to-closer-or-EOF comment pattern) |
+
+### P3 — 11/11 addressed (3 fixed-via-P1-cascade, 5 deliberate trade-offs documented in Known Issues, 1 doc-polish, 2 verified-no-issue)
+| ID | Source | Finding | Closure |
+|----|--------|---------|---------|
+| P3-1 | security-sentinel | URL titles defeat strip | ✅ Subsumed by P1-E |
+| P3-2 | security-sentinel | Reference-style markdown links | ❌ DEFERRED — Known Issues |
+| P3-3 | security-sentinel | Image-inside-link outer URL | ❌ DEFERRED — Known Issues |
+| P3-4 | security-sentinel | Multi-line label rejected | ❌ DEFERRED — Known Issues (rare in HTTP responses) |
+| P3-5 | security-sentinel | Orphan-strip pattern doesn't handle `</ script>` | ✅ Subsumed by P1-A |
+| P3-6 | security-sentinel | ReDoS resistance verified | n/a — verified safe within cap |
+| P3-A | code-simplicity | Markdown patterns `(!?)` capture | ❌ REJECTED — broke nesting case during application; rationale documented |
+| P3-B | code-simplicity | `SCRIPT_BLOCK` / `STYLE_BLOCK` factory | ❌ DEFERRED — reviewer's own caveat ("only worth when adding a 3rd tag") |
+| P3-ts-1 | typescript-reviewer | Section comment confirming `g`-flag regex safety contract | ✅ `[this commit]` (module-private safety block in `strip-blocks.ts`) |
+| P3-ts-2 | typescript-reviewer | `STRIP_FIXED_POINT_MAX_ITERATIONS` rationale conflates "max nesting" with "termination guarantee" | ✅ `4a76ea4` (already corrected: "soft termination guarantee, not a theoretical max nesting depth") |
+| P3 (PR#30) | coderabbit | README "negative-lookahead body" wording stale | ✅ `ac68c14` |
+
+### Closure summary
+- **All P1 fixed.** No security-blockers remain.
+- **All P2 addressed.** Three rejected/subsumed with rationale documented in Key Decisions / Known Issues.
+- **All P3 addressed.** Five deferred items are explicit trade-offs (image-inside-link nesting, reference-style markdown, multi-line labels, named-entity decode false positives, factory pattern) all documented in Known Issues with reasons. Two verified-no-issue. Four shipped via either dedicated commit or P1-cascade subsumption.
+
+### Files modified (this audit pass)
+- `src/lib/response/strip-blocks.ts` (added module-private safety block for `g`-flag regex contract; per-pattern `g`-flag reminders trimmed to a "see safety contract above" pointer)
+- `docs/work/handoff-feat-hardening-pr-7-response-sanitisation-expansion.md` (this section)
+
+### Tests / build
+- `npm test`: 884/884 passing (7 skipped) — unchanged from PR-#30-round-1 (doc-comment-only change).
+- `npm run build`: clean.

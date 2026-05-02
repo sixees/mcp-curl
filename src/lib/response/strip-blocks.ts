@@ -33,9 +33,21 @@ const STRIP_PATH_MAX_BYTES = 256 * 1024;
  */
 const STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
 
+// -----------------------------------------------------------------------------
+// Module-private regex constants — `g`/`gi` flags make these stateful (they
+// track `lastIndex` across calls). They are used **exclusively** with
+// `String.prototype.replace`, which iterates internally and does not consume
+// `lastIndex` — that means the shared module-scope regex objects are safe to
+// reuse across requests. Never call `.test()` or `.exec()` on these patterns:
+// both consult `lastIndex` and would corrupt subsequent calls. If a future
+// callsite needs `.test`/`.exec`, build a fresh `new RegExp(source, flags)`
+// per call instead of importing one of these constants.
+// -----------------------------------------------------------------------------
+
 /**
- * Strip HTML comments. NOT exported — `g` flag makes the regex stateful;
- * used only with `.replace()` (which doesn't read `lastIndex`).
+ * Strip HTML comments.
+ *
+ * `g` flag — see safety contract above. Used only with `.replace()`.
  *
  * Shape: `<!--[\s\S]*?(?:-->|$)` — open-to-closer-or-EOF.
  *
