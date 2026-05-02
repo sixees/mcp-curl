@@ -34,19 +34,6 @@ import {
 } from "../security/index.js";
 import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
 import { createWrapper } from "../response/post-processor.js";
-
-/**
- * Hostname label used for the per-call wrap on user-supplied custom tools.
- *
- * User custom tools may reach out to anywhere (or nowhere — they may
- * synthesise text from local state); the registration adapter has no way to
- * know the request hostname at call time. The label keeps the per-host
- * injection-detection throttle bounded and lets ops grep for custom-tool
- * events specifically. YAML-driven tools, by contrast, wrap inside
- * `createToolHandler` (see `schema/generator.ts`) where the request URL is
- * known, and tag the result so this outer wrap is a no-op for them.
- */
-const CUSTOM_TOOL_HOSTNAME_LABEL = "custom";
 import {
     createHttpApp,
     resolveHost,
@@ -55,7 +42,7 @@ import {
     validateAuthToken,
 } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
-import { ENV, LIMITS, parsePort } from "../config/index.js";
+import { ENV, LIMITS, parsePort, CUSTOM_TOOL_HOSTNAME_LABEL } from "../config/index.js";
 
 /**
  * Metadata for a custom tool registration.

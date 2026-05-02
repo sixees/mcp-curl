@@ -292,3 +292,48 @@ feat(response): defence-in-depth wrap on YAML/custom-tool/hook output (PR-6b / B
 ### Tests / build
 - `npm test`: 747/747 passing (7 skipped) — was 743 after round-3, +4 net (Proxy fail-open regression tests)
 - `npm run build`: clean
+
+---
+
+## Review Comments Addressed — 2026-05-02 (PR #29 round 5 — small DRY nits)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `types/public.ts` JSDoc still claims `Symbol.for("mcp-curl.wrapped")` for idempotence — implementation has used a module-private `Symbol(...)` since round 1 | reviewer (small DRY pass) | **P3 — Fix needed (docs)** | Rewrote the relevant JSDoc paragraph to describe the module-private, non-enumerable symbol with own-property check, and the two security properties this gives (no external forgery; inherited tags on a wrapped prototype don't bypass processing). |
+| `lib.ts` §7 commentary frames `createWrapper` as the PR-6b shipped form, but `createWrapper` is intentionally NOT exported from `lib.ts` — confusing to future readers | reviewer (small DRY pass) | **P3 — Fix needed (docs)** | Reframed §7 commentary: `createWrapper` is now described as **internal**, with an explicit "**It is intentionally not exported.**" sentence and a pointer to the public primitives (`sanitizeAndDetect`, `applySpotlighting`) for callers building their own non-MCP pipelines. Aligns with the "`createWrapper` itself is not exported" decision documented in the original handoff Known Issues. |
+| Hostname-label constants `"n/a"` (jq) and `"custom"` (custom tools) are defined in different files — risk of drift across modules and tests | reviewer (small DRY pass) | **P3 — Refactor (centralisation)** | Created `src/lib/config/labels.ts` exporting `JQ_QUERY_HOSTNAME_LABEL` and `CUSTOM_TOOL_HOSTNAME_LABEL`. Added to the `config/index.ts` barrel. `tool-wrapper.ts` and `mcp-curl-server.ts` now import from `../config/index.js` instead of defining their own copies. The doc comments that originally lived above each local constant moved to the new file. |
+
+### Decisions Considered But Not Applied
+| Suggestion | Reviewer | Decision | Reason |
+|-----------|----------|----------|--------|
+| Extract a shared `src/lib/security/logging-utils.ts` exporting `THROTTLE_WINDOW_MS = 60_000` and `normalizeLabel(label)` | reviewer (small DRY pass) | **Deferred (consistent with original handoff decision)** | The original handoff explicitly defers this: *"`wrap-error-logger.ts` mirrors `detection-logger.ts` rather than sharing code … The pattern is small enough that duplication is honest. Extract a `createThrottledLabelLogger` factory. Deferred."* The duplication is one constant + one ~3-line function. CLAUDE.md guidance: *"Three similar lines is better than a premature abstraction."* If a third logger lands, the factory becomes worth extracting. |
+| Cheap fast-path in `wrap()`: `result.content.some(p => isText(p))` early-exit when no text parts exist | reviewer (small DRY pass) | **Rejected** | The patch adds an O(n) `.some()` traversal BEFORE the existing O(n) `.map()`. In the common case (curl/jq response is all-text or mixed) it is strictly more work. Savings only materialise for the edge case where 100% of content is non-text (e.g. pure-image responses) — which the original handoff's Known Issues already calls out as out-of-scope for sanitisation anyway. The reviewer's own caveat ("If benchmarks later show…") confirms there is no measurement to justify the change; the original handoff explicitly notes *"No benchmark coverage."* Adding speculative micro-optimisations conflicts with the project guidance to *"not add features … beyond what the task requires."* If p95 regresses post-PR-9 (perf-budget framework), revisit. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| Hostname labels (`"n/a"`, `"custom"`) defined as private module-locals at their consumption sites | Centralised in `src/lib/config/labels.ts`, exported through the `config/index.ts` barrel | Pure code motion. Improves discoverability (every label lives in one place) and removes the drift risk a future contributor adding a third label could introduce. No behavioural change. | reviewer (small DRY pass) |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was an inline list, not `docs/todos/` files_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — round-5 nits triaged and addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/config/labels.ts` (new — centralises `JQ_QUERY_HOSTNAME_LABEL` and `CUSTOM_TOOL_HOSTNAME_LABEL`)
+- `src/lib/config/index.ts` (barrel re-export)
+- `src/lib/extensible/tool-wrapper.ts` (import from config; remove local constant + comment)
+- `src/lib/extensible/mcp-curl-server.ts` (import from config; remove local constant + comment)
+- `src/lib/types/public.ts` (`enableSpotlighting` JSDoc rewritten — module-private Symbol with own-property check)
+- `src/lib.ts` (§7 framing — `createWrapper` is internal, point users at public primitives)
+- `docs/work/handoff-feat-hardening-pr-6b-defence-in-depth-wrap.md` (this section)
+
+### Tests / build
+- `npm test`: 747/747 passing (7 skipped) — unchanged from round-4 (refactor + doc-only changes; no new tests needed)
+- `npm run build`: clean

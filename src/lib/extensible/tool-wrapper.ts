@@ -12,17 +12,9 @@ import {
 import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
-import { LIMITS, applyDefaultHeaders } from "../config/index.js";
+import { LIMITS, applyDefaultHeaders, JQ_QUERY_HOSTNAME_LABEL } from "../config/index.js";
 import { resolveBaseUrl, safeHostname } from "../utils/index.js";
 import { createWrapper } from "../response/post-processor.js";
-
-// Built-in jq_query tool reads from a file path, not a URL — no hostname is
-// meaningful. The throttle still keys on the label so the per-tool log volume
-// is bounded, but the label intentionally distinguishes file-source events
-// from real-host events. Custom tools (and other label-less callers) should
-// use a similarly-marked sentinel rather than reaching through an empty
-// string.
-const JQ_QUERY_HOSTNAME_LABEL = "n/a";
 
 interface ConfigDefaultableParams {
     output_dir?: string;

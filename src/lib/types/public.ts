@@ -53,11 +53,14 @@ export interface McpCurlConfig {
      *      using a fresh per-message UUID.
      *
      * Steps 1 and 2 always run regardless of this flag — only step 3
-     * (spotlighting sentinels) is gated. The wrap is idempotent
-     * (`Symbol.for("mcp-curl.wrapped")` short-circuit) and fail-open: if any
-     * internal step throws it returns the original result unchanged and
-     * emits a throttled `[wrap-error]` log line, so defence-in-depth never
-     * becomes a load-bearing failure mode for the handler boundary.
+     * (spotlighting sentinels) is gated. The wrap is idempotent via a
+     * module-private, non-enumerable `Symbol` tag with an own-property check
+     * (so the tag cannot be forged from outside the wrap module and an
+     * inherited tag on a wrapped prototype cannot bypass processing of
+     * descendant content), and is fail-open: if any internal step throws it
+     * returns the original result unchanged and emits a throttled
+     * `[wrap-error]` log line, so defence-in-depth never becomes a
+     * load-bearing failure mode for the handler boundary.
      */
     enableSpotlighting?: boolean;
 }

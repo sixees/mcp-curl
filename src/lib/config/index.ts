@@ -7,4 +7,5 @@ export * from "./session.js";
 export * from "./jq.js";
 export * from "./environment.js";
 export * from "./defaults.js";
+export * from "./labels.js";
 export * from "./security/index.js";

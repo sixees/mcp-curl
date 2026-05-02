@@ -1,6 +1,8 @@
 import {
   CURL_EXECUTE_TOOL_META,
+  CUSTOM_TOOL_HOSTNAME_LABEL,
   ENV,
+  JQ_QUERY_HOSTNAME_LABEL,
   JqQuerySchema,
   LIMITS,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
@@ -35,7 +37,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-K5O6HBUC.js";
+} from "./chunk-MNROFAYI.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -775,7 +777,6 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
 }
 
 // src/lib/extensible/tool-wrapper.ts
-var JQ_QUERY_HOSTNAME_LABEL = "n/a";
 function applySharedConfigDefaults(params, config) {
   if (config.outputDir && !params.output_dir) {
     params.output_dir = config.outputDir;
@@ -947,7 +948,6 @@ function removeDescriptionEntry(field, existing) {
 }
 
 // src/lib/extensible/mcp-curl-server.ts
-var CUSTOM_TOOL_HOSTNAME_LABEL = "custom";
 var KNOWN_CONFIG_KEYS_ARRAY = [
   "baseUrl",
   "defaultHeaders",

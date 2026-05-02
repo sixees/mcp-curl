@@ -420,6 +420,10 @@ function applyDefaultHeaders(headers, userAgent, config) {
   return { headers: result, userAgent: resolvedUA };
 }
 
+// src/lib/config/labels.ts
+var JQ_QUERY_HOSTNAME_LABEL = "n/a";
+var CUSTOM_TOOL_HOSTNAME_LABEL = "custom";
+
 // src/lib/config/security/ssrf.ts
 var IPV4_MAPPED_IPV6_HEX_RE = /^\[?::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]?$/i;
 function normalizeIpv4MappedIpv6(host) {
@@ -2087,6 +2091,8 @@ export {
   parsePort,
   SERVER,
   applyDefaultHeaders,
+  JQ_QUERY_HOSTNAME_LABEL,
+  CUSTOM_TOOL_HOSTNAME_LABEL,
   getOrCreateTempDir,
   cleanupOrphanedTempDirs,
   cleanupTempDir,

@@ -16,17 +16,19 @@
 //   7. Response-side defence helpers    — sanitize / detect / spotlight / composer
 //   8. URL validation helpers           — createHttpOnlyUrlSchema, safeHostname
 //
-// PR-6b shipped the defence-in-depth wrap as
-// `createWrapper(config) → (result, hostname) => CallToolResult` rather than
-// the originally-sketched `wrapWithDefence(handler)`. The factory shape lets
-// the same closure compose at four call sites (curl_execute / jq_query in
-// tool-wrapper.ts, YAML createToolHandler in schema/generator.ts, custom-tool
-// registration in extensible/mcp-curl-server.ts, and the hook short-circuit in
-// extensible/hook-executor.ts) with idempotence via a Symbol tag. The wrap is
-// applied automatically — library consumers only ever interact with it via
-// `enableSpotlighting` (see McpCurlConfig). The primitives below stay public
-// for callers needing finer-grained control over their own non-MCP pipelines.
-// No subpath exports — flat barrel + section comments is the convention.
+// PR-6b ships an internal defence-in-depth wrap (`createWrapper(config)` in
+// `src/lib/response/post-processor.ts`) that the server applies automatically
+// at four call sites (curl_execute / jq_query in tool-wrapper.ts, YAML
+// createToolHandler in schema/generator.ts, custom-tool registration in
+// extensible/mcp-curl-server.ts, and the hook short-circuit in
+// extensible/hook-executor.ts) with idempotence via a module-private Symbol
+// tag. **It is intentionally not exported.** Library consumers interact with
+// it only via `enableSpotlighting` (see McpCurlConfig). Callers building their
+// own non-MCP pipelines should compose the public primitives below
+// (`sanitizeAndDetect`, `applySpotlighting`) directly — they cover the same
+// trust-boundary semantics without coupling to the server's internal
+// post-processor shape. No subpath exports — flat barrel + section comments
+// is the convention.
 
 // 1. Main server class
 export { McpCurlServer } from "./lib/extensible/index.js";
