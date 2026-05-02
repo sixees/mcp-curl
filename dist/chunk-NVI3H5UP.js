@@ -55,9 +55,33 @@ var VARIATION_SELECTORS_BASIC = "\\uFE00-\\uFE0F";
 var TAGS_BLOCK = "\\u{E0000}-\\u{E007F}";
 var VARIATION_SELECTORS_SUPPLEMENT = "\\u{E0100}-\\u{E01EF}";
 var UNICODE_ATTACK_RANGES = C0_CONTROLS + C1_CONTROLS + SOFT_HYPHEN + ARABIC_LETTER_MARK + HANGUL_FILLERS + MONGOLIAN_INVISIBLES + ZERO_WIDTH_AND_DIRECTIONAL_MARKS + LINE_PARAGRAPH_SEPARATORS + BIDI_EMBEDDING_OVERRIDE + WORD_JOINER_FAMILY + BIDI_ISOLATES + BRAILLE_PATTERN_BLANK + HANGUL_FILLER_3164 + BOM + VARIATION_SELECTORS_BASIC + TAGS_BLOCK + VARIATION_SELECTORS_SUPPLEMENT;
-var WHITESPACE_PADDING_CLASS = "\\u0020\\t\\u00A0\\u2000-\\u200A\\u202F\\u205F\\u3000";
+var WHITESPACE_PADDING_CODEPOINTS = {
+  discrete: [
+    32,
+    // SPACE
+    9,
+    // TAB
+    160,
+    // NO-BREAK SPACE
+    8239,
+    // NARROW NO-BREAK SPACE
+    8287,
+    // MEDIUM MATHEMATICAL SPACE
+    12288
+    // IDEOGRAPHIC SPACE
+  ],
+  ranges: [
+    [8192, 8202]
+    // EN/EM-space family
+  ]
+};
+var fmt = (cp) => cp <= 65535 ? `\\u${cp.toString(16).toUpperCase().padStart(4, "0")}` : `\\u{${cp.toString(16).toUpperCase()}}`;
+var WHITESPACE_PADDING_CLASS = WHITESPACE_PADDING_CODEPOINTS.discrete.map(fmt).join("") + WHITESPACE_PADDING_CODEPOINTS.ranges.map(([lo, hi]) => `${fmt(lo)}-${fmt(hi)}`).join("");
 
 // src/lib/utils/sanitize.ts
+var WS_PADDING_DISCRETE_SET = new Set(
+  WHITESPACE_PADDING_CODEPOINTS.discrete
+);
 var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
 var DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
 var WHITESPACE_PADDING_PATTERN = `[${WHITESPACE_PADDING_CLASS}]{50,}|\\n{20,}`;
@@ -103,22 +127,26 @@ function sanitizeDescription(input) {
   if (input == null) return "";
   return input.replace(DESC_CONTROL_CHARS, " ").trim();
 }
+var SANITIZE_FIXED_POINT_MAX_ITERATIONS = 4;
 function sanitizeResponse(input) {
   if (input == null) return "";
-  return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
-    if (match.charCodeAt(0) === 10) return "\n";
-    if (isWhitespacePaddingMatch(match)) return " ";
-    return "";
-  });
+  let curr = input;
+  for (let i = 0; i < SANITIZE_FIXED_POINT_MAX_ITERATIONS; i++) {
+    const next = curr.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
+      if (match.charCodeAt(0) === 10) return "\n";
+      if (isWhitespacePaddingMatch(match)) return " ";
+      return "";
+    });
+    if (next === curr) return next;
+    curr = next;
+  }
+  return curr;
 }
 function isWhitespacePaddingMatch(match) {
   const cp = match.codePointAt(0);
   if (cp === void 0) return false;
-  if (cp === 32 || cp === 9 || cp === 160) return true;
-  if (cp >= 8192 && cp <= 8202) return true;
-  if (cp === 8239 || cp === 8287) return true;
-  if (cp === 12288) return true;
-  return false;
+  if (WS_PADDING_DISCRETE_SET.has(cp)) return true;
+  return WHITESPACE_PADDING_CODEPOINTS.ranges.some(([lo, hi]) => cp >= lo && cp <= hi);
 }
 function detectInjectionPattern(input) {
   return INJECTION_PATTERNS.test(input);
@@ -1830,26 +1858,23 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
   return applyJqFilterToParsed(data, filter);
 }
 
-// src/lib/response/processor.ts
-var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+// src/lib/response/strip-blocks.ts
 var STRIP_PATH_MAX_BYTES = 256 * 1024;
 var STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
-var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>(?:(?!<\/?script\b)[\s\S])*?<\/script\s*>/gi;
-var STYLE_BLOCK_PATTERN = /<style\b[^>]*>(?:(?!<\/?style\b)[\s\S])*?<\/style\s*>/gi;
-var ORPHAN_SCRIPT_OPEN_PATTERN = /<script\b[^>]*>/gi;
-var ORPHAN_SCRIPT_CLOSE_PATTERN = /<\/script\s*>/gi;
-var ORPHAN_STYLE_OPEN_PATTERN = /<style\b[^>]*>/gi;
-var ORPHAN_STYLE_CLOSE_PATTERN = /<\/style\s*>/gi;
-var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(https?:\/\/[^\s)]{1,2048}\)/g;
-var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\n]{0,256}\]\(https?:\/\/[^\s)]{1,2048}\)/g;
-var MARKDOWN_DANGEROUS_SCHEME_PATTERN = /!?\[[^\]\n]{0,256}\]\((?:javascript|vbscript|file|data):[^\s)]{0,4096}\)/gi;
+var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?(?:<\/\s*script\b[^>]*>|$)/gi;
+var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?(?:<\/\s*style\b[^>]*>|$)/gi;
+var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]{1,2048}\)/g;
+var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]{1,2048}\)/g;
+var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
+var MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN = /(?<!!)\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
 function decodeNumericHtmlEntities(input) {
-  return input.replace(/&#x([0-9a-f]+);?/gi, (_, hex) => {
-    const cp = Number.parseInt(hex, 16);
-    return Number.isFinite(cp) && cp >= 0 && cp <= 1114111 ? String.fromCodePoint(cp) : "";
-  }).replace(/&#(\d+);?/g, (_, dec) => {
-    const cp = Number.parseInt(dec, 10);
-    return Number.isFinite(cp) && cp >= 0 && cp <= 1114111 ? String.fromCodePoint(cp) : "";
+  return input.replace(/&#(x[0-9a-f]+|\d+);?/gi, (_, body) => {
+    const cp = body[0] === "x" || body[0] === "X" ? Number.parseInt(body.slice(1), 16) : Number.parseInt(body, 10);
+    if (!Number.isInteger(cp) || cp < 0 || cp > 1114111 || cp >= 55296 && cp <= 57343) {
+      return "";
+    }
+    return String.fromCodePoint(cp);
   });
 }
 function stripBlocksFixedPoint(input) {
@@ -1857,18 +1882,23 @@ function stripBlocksFixedPoint(input) {
   let curr = decodeNumericHtmlEntities(input);
   for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
     const next = curr.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
-    if (next === curr) break;
+    if (next === curr) return next;
     curr = next;
   }
-  return curr.replace(ORPHAN_SCRIPT_OPEN_PATTERN, "").replace(ORPHAN_SCRIPT_CLOSE_PATTERN, "").replace(ORPHAN_STYLE_OPEN_PATTERN, "").replace(ORPHAN_STYLE_CLOSE_PATTERN, "");
+  return curr;
+}
+function stripHtmlComments(input) {
+  return input.replace(HTML_COMMENT_PATTERN, "");
 }
 function stripMarkdownBeacons(input) {
-  return input.replace(
-    MARKDOWN_DANGEROUS_SCHEME_PATTERN,
-    (match) => match.startsWith("!") ? "[image removed]" : "[link removed]"
-  ).replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]");
+  return input.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, "[link removed]").replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]");
 }
+
+// src/lib/response/processor.ts
 async function processResponse(response, options) {
+  if (typeof response !== "string") {
+    throw new TypeError("processResponse: response must be a string");
+  }
   const rawBytes = Buffer.byteLength(response, "utf8");
   if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
     throw new Error(
@@ -1878,15 +1908,17 @@ async function processResponse(response, options) {
   let content = response;
   const hostname = safeHostname(options.url);
   const isText = !isBinaryContentType(options.contentType);
+  const isMarkup = supportsMarkupComments(options.contentType);
+  const isMarkdown = isMarkdownContentType(options.contentType);
   if (isText) {
-    if (supportsMarkupComments(options.contentType)) {
-      content = content.replace(HTML_COMMENT_PATTERN, "");
+    content = sanitizeAndDetect(content, hostname);
+    if (isMarkup || isMarkdown) {
+      content = stripHtmlComments(content);
       content = stripBlocksFixedPoint(content);
     }
-    if (isMarkdownContentType(options.contentType)) {
+    if (isMarkdown) {
       content = stripMarkdownBeacons(content);
     }
-    content = sanitizeAndDetect(content, hostname);
   }
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);

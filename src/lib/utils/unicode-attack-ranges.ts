@@ -1,4 +1,12 @@
 // src/lib/utils/unicode-attack-ranges.ts
+//
+// **@internal — package-internal only.** Not re-exported from the package
+// barrel (`src/lib.ts` / `src/lib/utils/index.ts`). The only legitimate
+// consumer is `src/lib/utils/sanitize.ts`, which builds RegExp instances
+// from these character-class fragments. Custom-tool authors and external
+// callers should compose with the public `sanitizeResponse` /
+// `sanitizeAndDetect` primitives instead — those are the stable contract.
+//
 // Single source of truth for the Unicode codepoint ranges used by the
 // description and response sanitisers. Stored as named string fragments so
 // each consumer builds its own RegExp instance — RegExp objects with the
@@ -124,11 +132,47 @@ export const UNICODE_ATTACK_RANGES =
     VARIATION_SELECTORS_SUPPLEMENT;
 
 /**
- * Whitespace-padding character class — used for the 50+-run collapse rule in
- * `sanitizeResponse`. Includes ASCII space, tab, NBSP (U+00A0), the U+2000
- * en/em-space family, NARROW NO-BREAK SPACE, MEDIUM MATHEMATICAL SPACE, and
- * IDEOGRAPHIC SPACE. Newlines are handled by a separate run rule (`\n{20,}`)
- * because their threshold is different.
+ * **@internal** Whitespace-padding codepoints, structured for re-use by both
+ * the regex character class and the runtime classifier in
+ * `sanitize.ts → isWhitespacePaddingMatch`. Single source of truth — adding
+ * a new whitespace class is one edit here, not two.
+ *
+ *   - `discrete`: codepoints with no neighbouring class-members.
+ *   - `ranges`: contiguous ranges as `[lo, hi]` inclusive tuples.
+ */
+export const WHITESPACE_PADDING_CODEPOINTS = {
+    discrete: [
+        0x0020, // SPACE
+        0x0009, // TAB
+        0x00a0, // NO-BREAK SPACE
+        0x202f, // NARROW NO-BREAK SPACE
+        0x205f, // MEDIUM MATHEMATICAL SPACE
+        0x3000, // IDEOGRAPHIC SPACE
+    ] as const,
+    ranges: [
+        [0x2000, 0x200a], // EN/EM-space family
+    ] as const,
+} as const;
+
+/**
+ * **@internal** Format a codepoint as a `\u{…}` regex-class atom, picking the
+ * BMP-friendly form for codepoints ≤ 0xFFFF (which V8 accepts in both `u`
+ * and non-`u` modes) and the wide form otherwise.
+ */
+const fmt = (cp: number): string =>
+    cp <= 0xffff
+        ? `\\u${cp.toString(16).toUpperCase().padStart(4, "0")}`
+        : `\\u{${cp.toString(16).toUpperCase()}}`;
+
+/**
+ * **@internal** Whitespace-padding character class — used for the 50+-run
+ * collapse rule in `sanitizeResponse`. Derived from {@link
+ * WHITESPACE_PADDING_CODEPOINTS} so the runtime classifier can never
+ * silently desync from the regex source-of-truth. Newlines are handled by a
+ * separate run rule (`\n{20,}`) because their threshold is different.
  */
 export const WHITESPACE_PADDING_CLASS =
-    "\\u0020\\t\\u00A0\\u2000-\\u200A\\u202F\\u205F\\u3000";
+    WHITESPACE_PADDING_CODEPOINTS.discrete.map(fmt).join("") +
+    WHITESPACE_PADDING_CODEPOINTS.ranges
+        .map(([lo, hi]) => `${fmt(lo)}-${fmt(hi)}`)
+        .join("");

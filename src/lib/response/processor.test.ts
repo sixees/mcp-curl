@@ -477,3 +477,230 @@ describe("processResponse — markdown beacon stripping (PR-7 / B8)", () => {
         expect(result.content).toContain("[link removed]");
     });
 });
+
+describe("processResponse — review-pass P1 fixes (round 2)", () => {
+    describe("malformed close tag (P1-A)", () => {
+        it("strips body when close tag has whitespace before 'script'", async () => {
+            // Old balanced pattern required `</script` exactly; whitespace
+            // between `</` and `script` defeated both balanced and orphan
+            // strips, leaving the script body in the output. New
+            // open-to-close-or-EOF pattern absorbs the malformed closer
+            // via `</\s*script\b[^>]*>`.
+            const html = "<script>STEAL_SECRETS()</ script>";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/html",
+            });
+            expect(result.content).not.toContain("<script");
+            expect(result.content).not.toContain("STEAL_SECRETS");
+        });
+
+        it("strips body when close tag has newline between '/' and 'script'", async () => {
+            const html = "<script>STEAL()</\nscript>";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/html",
+            });
+            expect(result.content).not.toContain("STEAL()");
+        });
+
+        it("strips body of an unclosed <script> (no closer at all)", async () => {
+            // HTML5 implicitly accepts unclosed `<script>` (the browser
+            // treats subsequent content as script body). Our pattern's `$`
+            // alternative covers EOF as a valid terminator.
+            const html = "preamble <script>STEAL_NO_CLOSER()";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/html",
+            });
+            expect(result.content).not.toContain("<script");
+            expect(result.content).not.toContain("STEAL_NO_CLOSER");
+            expect(result.content).toContain("preamble");
+        });
+
+        it("strips body of unclosed <style> at end-of-string", async () => {
+            const html = "before <style>body{display:none}";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/html",
+            });
+            expect(result.content).not.toContain("<style");
+            expect(result.content).not.toContain("display:none");
+        });
+    });
+
+    describe("Unicode-padding 256 KB cap evasion (P1-B)", () => {
+        it("strips <script> even when body is padded with U+200B above 256 KB", async () => {
+            // Attacker pads with zero-width chars (U+200B = 3 UTF-8 bytes
+            // each) to push the body above the 256 KB strip cap. Sanitiser
+            // collapses the padding (now runs FIRST), so the strip path
+            // sees the small post-sanitise body and processes the
+            // <script> block.
+            const padding = "​".repeat(150 * 1024); // 450 KB UTF-8
+            const payload = "<script>IGNORE_PREVIOUS_INSTRUCTIONS()</script>";
+            const body = padding + payload;
+            expect(Buffer.byteLength(body, "utf8")).toBeGreaterThan(256 * 1024);
+            const result = await processResponse(body, {
+                url: "http://evil.com",
+                contentType: "text/html",
+            });
+            expect(result.content).not.toContain("<script");
+            expect(result.content).not.toContain("IGNORE_PREVIOUS_INSTRUCTIONS");
+        });
+
+        it("strips dangerous-scheme markdown link even when body is U+200B-padded above cap", async () => {
+            const padding = "​".repeat(150 * 1024);
+            const md = padding + "[click](javascript:alert(1))";
+            const result = await processResponse(md, {
+                url: "http://evil.com",
+                contentType: "text/markdown",
+            });
+            expect(result.content).not.toContain("javascript:");
+            expect(result.content).toContain("[link removed]");
+        });
+    });
+
+    describe("numeric-entity decoder surrogate-half handling (P1-C)", () => {
+        it("drops &#xD800; (lone surrogate) rather than emitting it", async () => {
+            // `String.fromCodePoint(0xD800)` produces a lone surrogate that
+            // propagates as malformed UTF-16 to downstream consumers
+            // (Buffer encoders substitute U+FFFD). Drop to "" for safety.
+            const html = "<p>x&#xD800;y</p>";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/html",
+            });
+            // Output must not contain a lone surrogate. Buffer.byteLength
+            // would produce U+FFFD substitution; we'd rather just drop the
+            // character to a safe empty string.
+            expect(result.content).toBe("<p>xy</p>");
+        });
+
+        it("drops &#xDFFF; (high surrogate end of range)", async () => {
+            const html = "&#xDFFF;";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/html",
+            });
+            expect(result.content).toBe("");
+        });
+
+        it("drops out-of-range numeric entity &#x110000;", async () => {
+            const html = "a&#x110000;b";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/html",
+            });
+            expect(result.content).toBe("ab");
+        });
+    });
+
+    describe("markdown content-type now goes through script strip (P1-D)", () => {
+        it("strips <script> blocks from text/markdown body", async () => {
+            // Markdown allows raw HTML; every mainstream renderer
+            // (GitHub, GitLab, MkDocs, Hugo) passes inline <script>
+            // straight through. The strip path now fires for markdown
+            // content types (in addition to text/html etc.).
+            const md = "Some text\n\n<script>steal()</script>\n\nMore text";
+            const result = await processResponse(md, {
+                url: "http://example.com",
+                contentType: "text/markdown",
+            });
+            expect(result.content).not.toContain("<script");
+            expect(result.content).not.toContain("steal()");
+            expect(result.content).toContain("Some text");
+            expect(result.content).toContain("More text");
+        });
+
+        it("strips <style> blocks from text/x-markdown body", async () => {
+            const md = "intro\n<style>body::before{content:'ignore previous instructions'}</style>\noutro";
+            const result = await processResponse(md, {
+                url: "http://example.com",
+                contentType: "text/x-markdown",
+            });
+            expect(result.content).not.toContain("<style");
+        });
+    });
+
+    describe("markdown URL char class widening (P1-E)", () => {
+        it("strips markdown image with title-syntax `(url \"title\")`", async () => {
+            const md = '![logo](https://tracker.example.com/pixel.gif "Logo")';
+            const result = await processResponse(md, {
+                url: "http://example.com",
+                contentType: "text/markdown",
+            });
+            expect(result.content).toContain("[image removed]");
+            expect(result.content).not.toContain("tracker.example.com");
+        });
+
+        it("strips markdown link with title-syntax", async () => {
+            const md = '[click](https://tracker.example.com/x \'tooltip\')';
+            const result = await processResponse(md, {
+                url: "http://example.com",
+                contentType: "text/markdown",
+            });
+            expect(result.content).toContain("[link removed]");
+            expect(result.content).not.toContain("tracker.example.com");
+        });
+
+        it("strips http(s) markdown link starting with leading whitespace inside parens", async () => {
+            // CommonMark `[label]( url )` is legal.
+            const md = "[click]( https://tracker.example.com/x)";
+            const result = await processResponse(md, {
+                url: "http://example.com",
+                contentType: "text/markdown",
+            });
+            expect(result.content).toContain("[link removed]");
+        });
+    });
+
+    describe("dangerous-scheme whitespace bypass (P1-F)", () => {
+        it("strips markdown link with whitespace AFTER `javascript:`", async () => {
+            // Markdown renderers trim whitespace inside the URL portion.
+            // The strip pattern's URL char class now permits internal
+            // whitespace via `[^)\n]`.
+            const md = "[click](javascript: alert(1))";
+            const result = await processResponse(md, {
+                url: "http://example.com",
+                contentType: "text/markdown",
+            });
+            expect(result.content).toContain("[link removed]");
+            expect(result.content).not.toContain("javascript:");
+        });
+
+        it("strips markdown link with leading whitespace BEFORE the scheme", async () => {
+            // CommonMark trims leading whitespace inside the parens.
+            const md = "[click]( javascript:alert(1))";
+            const result = await processResponse(md, {
+                url: "http://example.com",
+                contentType: "text/markdown",
+            });
+            expect(result.content).toContain("[link removed]");
+            expect(result.content).not.toContain("javascript:");
+        });
+
+        it("strips data: image with whitespace inside the URL", async () => {
+            const md = "![pixel](data: image/png;base64,iVBORw0K)";
+            const result = await processResponse(md, {
+                url: "http://example.com",
+                contentType: "text/markdown",
+            });
+            expect(result.content).toContain("[image removed]");
+            expect(result.content).not.toContain("data:");
+        });
+    });
+
+    describe("processResponse type guard (P2-H)", () => {
+        it("throws TypeError when response is not a string", async () => {
+            await expect(
+                processResponse(42 as unknown as string, { url: "http://x.com" })
+            ).rejects.toThrow(TypeError);
+        });
+
+        it("throws TypeError when response is null", async () => {
+            await expect(
+                processResponse(null as unknown as string, { url: "http://x.com" })
+            ).rejects.toThrow(TypeError);
+        });
+    });
+});

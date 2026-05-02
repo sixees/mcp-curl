@@ -1,7 +1,16 @@
 // src/lib/utils/sanitize.ts
 // Response sanitization utilities for prompt injection defense
 
-import { UNICODE_ATTACK_RANGES, WHITESPACE_PADDING_CLASS } from "./unicode-attack-ranges.js";
+import {
+    UNICODE_ATTACK_RANGES,
+    WHITESPACE_PADDING_CLASS,
+    WHITESPACE_PADDING_CODEPOINTS,
+} from "./unicode-attack-ranges.js";
+
+/** Pre-computed Set of single whitespace-padding codepoints for O(1) lookup. */
+const WS_PADDING_DISCRETE_SET: ReadonlySet<number> = new Set<number>(
+    WHITESPACE_PADDING_CODEPOINTS.discrete
+);
 
 /**
  * Maximum length for custom tool descriptions.
@@ -81,10 +90,13 @@ export function sanitizeDescription(input: string | null | undefined): string {
     return input.replace(DESC_CONTROL_CHARS, " ").trim();
 }
 
+/** Idempotence cap for {@link sanitizeResponse}. See JSDoc there. */
+const SANITIZE_FIXED_POINT_MAX_ITERATIONS = 4;
+
 /**
  * Sanitize HTTP response content before returning to LLM.
  *
- * Single-pass sanitization:
+ * Per-pass sanitization:
  * 1. Unicode attack vectors (bidi overrides, zero-width chars, Tags block,
  *    Variation Selectors Supplement / "Sneaky Bits", Braille blank, Arabic
  *    letter mark, Mongolian invisibles, Hangul fillers, …) → removed
@@ -95,6 +107,16 @@ export function sanitizeDescription(input: string | null | undefined): string {
  * 3. Newline runs (20+ consecutive `\n`) → collapsed to a single `\n`. Preserves
  *    rough document structure while defeating context-window-eviction attacks
  *    that push trailing content past the visible scroll.
+ *
+ * **Idempotence loop (≤4 iterations).** A single pass is vulnerable to
+ * attack-char interleaving: an attacker can construct
+ * `(49 spaces + ZWSP) × N` where each ZWSP is in the Unicode-attack class
+ * and each 49-space run is below the 50+ threshold. Single-pass: ZWSPs are
+ * removed individually, 49-space runs are preserved verbatim, and the
+ * concatenated output is a 49×N-character whitespace run that survived the
+ * 50+ rule. The loop re-runs sanitise until the output stabilises (`next ===
+ * curr`) or the cap fires; in practice 2 iterations close the
+ * interleaving class. Each iteration is O(n) so worst-case work is bounded.
  *
  * Normal short whitespace (single `\t`, `\n`, `\r`, runs below threshold) is
  * preserved to maintain response formatting.
@@ -124,37 +146,38 @@ export function sanitizeDescription(input: string | null | undefined): string {
  */
 export function sanitizeResponse(input: string | null | undefined): string {
     if (input == null) return "";
-    return input.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
-        // Newline-padding attack: collapse 20+ `\n` to one (preserves rough
-        // document structure for prettified JSON / multi-line text).
-        if (match.charCodeAt(0) === 0x0a) return "\n";
-        // Visual-space-padding attack: collapse 50+ space-class chars to one
-        // ASCII space (JSON-safe). ASCII space is U+0020; anything else in the
-        // whitespace-padding class normalises to a single ASCII space.
-        if (isWhitespacePaddingMatch(match)) return " ";
-        // Unicode control/invisible char — remove entirely.
-        return "";
-    });
+    let curr = input;
+    for (let i = 0; i < SANITIZE_FIXED_POINT_MAX_ITERATIONS; i++) {
+        const next = curr.replace(RESPONSE_SANITIZE_PATTERN, (match) => {
+            // Newline-padding attack: collapse 20+ `\n` to one (preserves rough
+            // document structure for prettified JSON / multi-line text).
+            if (match.charCodeAt(0) === 0x0a) return "\n";
+            // Visual-space-padding attack: collapse 50+ space-class chars to one
+            // ASCII space (JSON-safe). ASCII space is U+0020; anything else in
+            // the whitespace-padding class normalises to a single ASCII space.
+            if (isWhitespacePaddingMatch(match)) return " ";
+            // Unicode control/invisible char — remove entirely.
+            return "";
+        });
+        if (next === curr) return next;
+        curr = next;
+    }
+    return curr;
 }
 
 /**
  * Internal: classify a `RESPONSE_SANITIZE_PATTERN` match as whitespace-padding
- * (vs Unicode-invisible attack). Whitespace runs share a known starter set
- * (ASCII space, tab, NBSP, en/em-spaces, NARROW NO-BREAK, MEDIUM MATHEMATICAL,
- * IDEOGRAPHIC). Anything else is a Unicode invisible and is removed entirely.
+ * (vs Unicode-invisible attack).
+ *
+ * Membership is derived from {@link WHITESPACE_PADDING_CODEPOINTS} so the
+ * classifier and the regex source-of-truth (`WHITESPACE_PADDING_CLASS`)
+ * cannot silently desync. Adding a new whitespace class is one edit there.
  */
 function isWhitespacePaddingMatch(match: string): boolean {
     const cp = match.codePointAt(0);
     if (cp === undefined) return false;
-    // U+0020 SPACE, U+0009 TAB, U+00A0 NBSP
-    if (cp === 0x20 || cp === 0x09 || cp === 0xa0) return true;
-    // U+2000–U+200A en/em-space family
-    if (cp >= 0x2000 && cp <= 0x200a) return true;
-    // U+202F NARROW NO-BREAK SPACE, U+205F MEDIUM MATHEMATICAL SPACE
-    if (cp === 0x202f || cp === 0x205f) return true;
-    // U+3000 IDEOGRAPHIC SPACE
-    if (cp === 0x3000) return true;
-    return false;
+    if (WS_PADDING_DISCRETE_SET.has(cp)) return true;
+    return WHITESPACE_PADDING_CODEPOINTS.ranges.some(([lo, hi]) => cp >= lo && cp <= hi);
 }
 
 /**

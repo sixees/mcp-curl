@@ -107,7 +107,7 @@ declare function sanitizeDescription(input: string | null | undefined): string;
 /**
  * Sanitize HTTP response content before returning to LLM.
  *
- * Single-pass sanitization:
+ * Per-pass sanitization:
  * 1. Unicode attack vectors (bidi overrides, zero-width chars, Tags block,
  *    Variation Selectors Supplement / "Sneaky Bits", Braille blank, Arabic
  *    letter mark, Mongolian invisibles, Hangul fillers, …) → removed
@@ -118,6 +118,16 @@ declare function sanitizeDescription(input: string | null | undefined): string;
  * 3. Newline runs (20+ consecutive `\n`) → collapsed to a single `\n`. Preserves
  *    rough document structure while defeating context-window-eviction attacks
  *    that push trailing content past the visible scroll.
+ *
+ * **Idempotence loop (≤4 iterations).** A single pass is vulnerable to
+ * attack-char interleaving: an attacker can construct
+ * `(49 spaces + ZWSP) × N` where each ZWSP is in the Unicode-attack class
+ * and each 49-space run is below the 50+ threshold. Single-pass: ZWSPs are
+ * removed individually, 49-space runs are preserved verbatim, and the
+ * concatenated output is a 49×N-character whitespace run that survived the
+ * 50+ rule. The loop re-runs sanitise until the output stabilises (`next ===
+ * curr`) or the cap fires; in practice 2 iterations close the
+ * interleaving class. Each iteration is O(n) so worst-case work is bounded.
  *
  * Normal short whitespace (single `\t`, `\n`, `\r`, runs below threshold) is
  * preserved to maintain response formatting.

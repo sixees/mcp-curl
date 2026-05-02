@@ -421,6 +421,53 @@ describe("sanitizeResponse — Unicode invisibles added in PR-7 / B7-sub-2", () 
     });
 });
 
+describe("sanitizeResponse — review-pass P2 idempotence (round 2)", () => {
+    // Bypass before the idempotence loop: an attacker constructs
+    // `(49 spaces + ZWSP) × N` where each ZWSP (U+200B) is in the Unicode-
+    // attack class and each 49-space run is below the 50+ threshold.
+    // Single-pass sanitiser: ZWSPs are removed individually, each 49-space
+    // run is preserved verbatim, output is `(49 spaces × N)` — a long
+    // contiguous whitespace run that survived the 50+ rule. Idempotence
+    // loop re-runs sanitise until output stabilises so the post-collapse
+    // whitespace run gets caught on the second pass.
+
+    it("collapses 49-space + ZWSP × N interleaved padding (whitespace-padding bypass)", () => {
+        const seg = " ".repeat(49) + "​"; // 49 spaces + ZWSP
+        const input = seg.repeat(20) + " ".repeat(49); // 1029 total visible-space chars
+        const out = sanitizeResponse(input);
+        // After a single pass: 49 × 21 = 1029 spaces survive (above 50,
+        // so the second pass collapses).
+        // After the idempotence loop: must have no 50+ run of spaces.
+        expect(out).not.toMatch(/ {50,}/);
+    });
+
+    it("collapses tab + ZWSP interleaved padding", () => {
+        // 49 tabs + ZWSP, repeated.
+        const seg = "\t".repeat(49) + "​";
+        const input = seg.repeat(15) + "\t".repeat(49);
+        const out = sanitizeResponse(input);
+        // No 50+ visible-space run after idempotence.
+        expect(out).not.toMatch(/[ \t ]{50,}/u);
+    });
+
+    it("converges within iteration cap on adversarial nested interleaving", () => {
+        // Nested interleaving (alternating attack chars between
+        // sub-threshold runs) — 4 iterations is more than enough.
+        const seg = " ".repeat(45) + "​" + " ".repeat(45) + "﻿";
+        const input = seg.repeat(50);
+        const out = sanitizeResponse(input);
+        expect(out).not.toMatch(/ {50,}/);
+        // Output must not contain any of the attack chars either.
+        expect(out).not.toContain("​");
+        expect(out).not.toContain("﻿");
+    });
+
+    it("idempotent on already-clean input (no extra passes wasted)", () => {
+        const input = "perfectly clean input with normal whitespace";
+        expect(sanitizeResponse(input)).toBe(input);
+    });
+});
+
 describe("detectInjectionPattern", () => {
     it("returns false for clean text", () => {
         expect(detectInjectionPattern("The weather is nice today")).toBe(false);

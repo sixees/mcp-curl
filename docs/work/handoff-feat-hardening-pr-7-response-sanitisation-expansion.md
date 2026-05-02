@@ -406,3 +406,89 @@ feat(response): widen sanitiser + ReDoS-hardened HTML/markdown stripping (PR-7 /
 | File (removed) | Title | Summary | Resolved by | Date |
 |----------------|-------|---------|-------------|------|
 | _none — input was a plan section, not a `docs/todos/` file_ | — | — | — | — |
+
+---
+
+## Code Review — 2026-05-02
+
+### Review Summary
+- **Reviewer:** automated multi-agent review (security-sentinel, code-simplicity-reviewer, typescript-reviewer)
+- **Findings:** 🔴 P1: 6 | 🟡 P2: 8 | 🔵 P3: 7
+- **All P1 + relevant P2 fixed in commit `[pending]`.** Tests: 815 → 875 passing (net **+60**).
+
+### Handoff Assessment
+The original handoff was honest about most trade-offs (image-inside-link
+nesting, named-entity-decode false positives, reference-style markdown,
+256 KB cap) but **rationalised one real exploitable bypass** as a benign
+trade-off: the 256 KB strip-path cap can be evaded by Unicode-padding
+inflation. An attacker pads with ~150 KB of U+200B (3 bytes UTF-8 each →
+450 KB), pushing the body above the cap; sanitiser collapses padding;
+LLM sees a 60-byte response with intact `<script>`. The handoff framed
+this as "the sanitiser is regex-bounded so the LLM never sees attack-
+class bytes" — true for the bytes but missed that `<script>` blocks ARE
+the attack class for prompt injection.
+
+The other non-disclosed gaps were the malformed-closer / unclosed
+`<script>` body leak (P1-A), the dangerous-scheme whitespace bypass
+(P1-F), and the markdown-content-type skip (P1-D — handoff mentioned
+markdown CAN contain raw HTML but called it a "reasonable scope choice"
+without acknowledging it as a real bypass).
+
+### Key Findings & Resolutions
+
+| ID | Sev | Category | Description | Resolution |
+|----|-----|----------|-------------|-----------|
+| P1-A | 🔴 | Security | Malformed `</script>` closer (whitespace before `script`, newline, no closer at all) leaks script body | Replaced balanced `(?:(?!<\/?tag\b)[\s\S])*?<\/tag\s*>` pattern with open-to-closer-or-EOF lazy form `<tag\b[^>]*>[\s\S]*?(?:<\/\s*tag\b[^>]*>\|$)` — handles malformed/unclosed blocks linear-time. Orphan-tag cleanup pass dropped (subsumed). |
+| P1-B | 🔴 | Security | 256 KB cap evaded by Unicode-padding inflation (attacker pads with U+200B → strip skips → sanitise collapses padding → LLM sees compact body with intact `<script>`) | Pipeline reordered: **sanitise BEFORE strip** so the byte-cap is checked against post-sanitise size. Detection still runs on original via `sanitizeAndDetect`'s S4 ordering. |
+| P1-C | 🔴 | Security | `decodeNumericHtmlEntities` accepts surrogate halves (0xD800–0xDFFF) → emits malformed UTF-16 → downstream substitution / parser crashes / homoglyph confusion | Tightened range guard to `cp >= 0 && cp <= 0x10FFFF && (cp < 0xD800 \|\| cp > 0xDFFF)`; `Number.isFinite` → `Number.isInteger`. |
+| P1-D | 🔴 | Security | `text/markdown` content-type skipped `<script>`/`<style>` strip — markdown allows raw HTML and every mainstream renderer passes it through | Added `isMarkdownContentType` to the strip branch in `processResponse`. |
+| P1-E | 🔴 | Security | Markdown URL pattern `[^\s)]` rejected title-syntax `(url "title")` and Wikipedia-style URLs containing `)` | Widened URL char class to `[^)\n]`; added optional `\s*` after `\(` for CommonMark `[label]( url )` shape. |
+| P1-F | 🔴 | Security | Dangerous-scheme regex bypassed by whitespace after the colon (`javascript: alert(1)`) and leading whitespace before the scheme | Same widening as P1-E applied to the dangerous-scheme pattern. |
+| P2-A | 🟡 | Security | Sanitiser whitespace-padding bypass via attack-char interleaving: `(49 spaces + ZWSP) × N` had each ZWSP removed individually and each 49-space run preserved → output 1029 contiguous spaces | Idempotence loop in `sanitizeResponse` (cap = 4); 2 iterations close the interleaving class. |
+| P2-B | 🟡 | SRP | `processor.ts` doubled to 290+ lines; strip subsystem (~140 LOC of patterns/helpers/tunables/doc) was foreign matter inside an orchestration file (PR-6b precedent: extracted post-processor.ts) | Extracted `src/lib/response/strip-blocks.ts` with `stripBlocksFixedPoint`, `stripHtmlComments`, `stripMarkdownBeacons` exports + co-located `strip-blocks.test.ts`. `processor.ts` back to ~150 lines, orchestration story restored. |
+| P2-D | 🟡 | TypeScript | `unicode-attack-ranges` exports public/internal status was ambiguous (not in barrel, no `@internal` tag) | Added module-level `@internal` doc comment with explicit "not re-exported" + pointer to public primitives. |
+| P2-F | 🟡 | DRY | `decodeNumericHtmlEntities` had two near-identical `.replace()` passes (hex / decimal) | Collapsed to single regex with hex/decimal alternation; one full-body scan instead of two per fixed-point iteration. |
+| P2-G | 🟡 | TypeScript | `isWhitespacePaddingMatch` and `WHITESPACE_PADDING_CLASS` were parallel definitions in different files — silent desync risk | Single source of truth: `WHITESPACE_PADDING_CODEPOINTS` (discrete + ranges) in `unicode-attack-ranges.ts`; `WHITESPACE_PADDING_CLASS` derived from it via a formatter; `isWhitespacePaddingMatch` consumes it directly. |
+| P2-H | 🟡 | TypeScript | No runtime type guard at `processResponse` entry — JS callers (custom-tool hooks) could pass non-string and trigger an unhelpful `TypeError` deep in `Buffer.byteLength` | Added `if (typeof response !== "string") throw new TypeError(...)` at entry. |
+
+### Decisions explicitly NOT made / consciously deferred
+| Finding | Decision | Reason |
+|---------|----------|--------|
+| P2-C — flatten `unicode-attack-ranges.ts` named-class structure | **Rejected** | The named-class structure DOES earn its keep now that P2-G derives the whitespace classifier from it — the 17 attack-class constants serve as anchor points for the doc-comment taxonomy (per range Reference / per class Why). Reviewer's "no consumers" critique is valid for the previous ceremonial form; not for the post-P2-G derivation form. |
+| P2-E — orphan-tag union (4 patterns → 1) | **Skipped** | The orphan-tag pass was dropped entirely as part of P1-A — the new open-to-closer-or-EOF strip pattern subsumes it. Nothing left to deduplicate. |
+| P3-A — markdown image/link `(!?)` capture | **Rejected** | I tried this in an early pass; it broke the image-inside-link nesting case (greedy label consumed the inner `[`, treating the inner `]…)` as a link). Two-pattern shape with `(?<!!)` lookbehind preserves the image-vs-link distinction in nested cases. Documented inline in `strip-blocks.ts`. |
+| P3-B — reference-style markdown links | **Deferred** | Already disclosed in handoff Known Issues; out of scope for this round. |
+| P3-C — image-inside-link outer URL strip | **Deferred** | Same reason; documented trade-off. |
+| P3-E — numeric-entity false positives on legitimate `<pre>&#x3c;…&#x3e;</pre>` code samples | **Deferred** | Reviewer flagged this as content-integrity not security. The risk direction we care about (missing an attack) is the safer default. Documented in the doc-comment on `decodeNumericHtmlEntities`. |
+
+### Verified Claims
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| Tests pass (815/7 baseline) | ✓ | Confirmed; now 875/7 after review fixes |
+| Build clean | ✓ | `npm run build` passes |
+| ReDoS-hardened (1 MB wall-clock < 100 ms) | ✓ | Re-verified after pattern change to lazy + alternation form; new pattern is also linear-time per match |
+| Self-healing payload neutralised | partial | OLD pattern + orphan strip left a residue claim was wrong; NEW pattern + fixed-point loop genuinely neutralises (regression test in `strip-blocks.test.ts`) |
+| 256 KB cap is "the sanitiser is regex-bounded so the LLM never sees attack-class bytes" | **NO** | Cap evaded by U+200B padding inflation. Pipeline reordered (P1-B fix). |
+| Markdown content-type get correct stripping | partial-NO | Markdown DID skip script/style strip per the handoff's own pipeline-wiring note. P1-D fixed. |
+
+### Outstanding Todos
+<!-- Todos created during this review — see docs/todos/ for full content -->
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — review fixes implemented in-place; no follow-up todo files needed_ | — | — | — |
+
+### Blockers
+None — all P1 fixed; relevant P2 fixed; deferred items are deliberately scoped trade-offs. Clear to merge after a reviewer sanity-check on the new `strip-blocks.ts` module.
+
+### Files Modified (review pass)
+- `src/lib/response/strip-blocks.ts` (NEW — 220 lines, extracted strip subsystem with P1-A/C/E/F fixes)
+- `src/lib/response/strip-blocks.test.ts` (NEW — 36 cases of direct strip-primitive coverage)
+- `src/lib/response/processor.ts` (rewritten — 165 lines, pipeline reorder + markdown branch + type guard)
+- `src/lib/response/processor.test.ts` (+22 cases for review-pass P1 regression)
+- `src/lib/utils/sanitize.ts` (idempotence loop + derive `isWhitespacePaddingMatch` from shared codepoint table)
+- `src/lib/utils/sanitize.test.ts` (+4 cases for whitespace-interleaving bypass regression)
+- `src/lib/utils/unicode-attack-ranges.ts` (`@internal` JSDoc + new `WHITESPACE_PADDING_CODEPOINTS` source-of-truth + derived `WHITESPACE_PADDING_CLASS`)
+
+### Tests / build
+- `npm test`: 875/875 passing (7 skipped) — was 815/7 before review fixes, **net +60 regression tests**.
+- `npm run build`: clean.
