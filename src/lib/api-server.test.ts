@@ -145,4 +145,47 @@ describe("createApiServerSync", () => {
 
         expect(server.getConfig().authToken).toBe("test-token");
     });
+
+    it("re-validates caller-supplied schema (PR-6a review fix — closes the bypass)", () => {
+        // A consumer constructing an ApiSchema by hand (or by casting a
+        // Record<string, unknown>) must not be able to skip the sanitiser.
+        // The factory now runs validateApiSchema() on the supplied schema,
+        // so bidi/zero-width bytes are stripped before tools are registered.
+        const schema = loadApiSchemaFromString(SAMPLE_YAML);
+        const poisoned = structuredClone(schema);
+        poisoned.endpoints[0].title = "evil‮title";
+        poisoned.endpoints[0].description = "desc‮hidden";
+        const server = createApiServerSync(poisoned);
+        // Inspect the actually-registered tool metadata (not just the
+        // server config — the bypass leaks via tool advertisement, not
+        // baseUrl/headers).
+        const tools = server.getRegisteredCustomTools();
+        const weather = tools.find((t) => t.name === "get_weather");
+        expect(weather).toBeDefined();
+        expect(weather!.meta.title).not.toMatch(/[‮]/);
+        expect(weather!.meta.description).not.toMatch(/[‮]/);
+    });
+
+    it("rejects caller-supplied schema with sanitised-to-empty title", () => {
+        // A title of pure invisibles sanitises to "", which fails z.string().min(1).
+        const schema = loadApiSchemaFromString(SAMPLE_YAML);
+        const poisoned = structuredClone(schema);
+        poisoned.endpoints[0].title = "​​​";
+        expect(() => createApiServerSync(poisoned)).toThrow();
+    });
+});
+
+describe("createApiServer (caller-supplied schema)", () => {
+    it("re-validates a schema passed via { schema } (closes the bypass)", async () => {
+        const schema = loadApiSchemaFromString(SAMPLE_YAML);
+        const poisoned = structuredClone(schema);
+        poisoned.endpoints[0].title = "title‮hidden";
+        poisoned.endpoints[0].description = "desc‮hidden";
+        const server = await createApiServer({ schema: poisoned });
+        const tools = server.getRegisteredCustomTools();
+        const weather = tools.find((t) => t.name === "get_weather");
+        expect(weather).toBeDefined();
+        expect(weather!.meta.title).not.toMatch(/[‮]/);
+        expect(weather!.meta.description).not.toMatch(/[‮]/);
+    });
 });

@@ -3,6 +3,7 @@
 
 import { McpCurlServer } from "./extensible/mcp-curl-server.js";
 import { loadApiSchema, loadApiSchemaFromString } from "./schema/loader.js";
+import { validateApiSchema } from "./schema/validator.js";
 import { generateToolDefinitions, getMethodAnnotations } from "./schema/generator.js";
 import type { GeneratorConfig } from "./schema/generator.js";
 import type { McpCurlConfig } from "./types/public.js";
@@ -177,7 +178,13 @@ export async function createApiServer(
     let schema: ApiSchema;
 
     if (options.schema) {
-        schema = options.schema;
+        // Re-run the validator on caller-supplied schemas. The plain
+        // `ApiSchema` type can be constructed/cast without ever passing
+        // through `ApiSchemaValidator`, so without this call the runtime
+        // sanitisation invariant (PR-6a / B9) would have a public bypass —
+        // bidi/zero-width bytes in the supplied schema would flow into MCP
+        // tool advertisement unchecked.
+        schema = validateApiSchema(options.schema);
     } else if (options.definitionPath) {
         schema = await loadApiSchema(options.definitionPath);
     } else if (options.definitionContent) {
@@ -207,8 +214,12 @@ export function createApiServerSync(
     schema: ApiSchema,
     options: ApiServerOptionsBase = {}
 ): McpCurlServer {
+    // Re-validate caller-supplied schema — see the matching note in
+    // createApiServer(). Without this, an `ApiSchema` constructed by hand
+    // (or cast from a `Record<string, unknown>`) bypasses the sanitiser.
+    const validated = validateApiSchema(schema);
     const server = new McpCurlServer();
-    configureServerFromSchema(server, schema, options);
+    configureServerFromSchema(server, validated, options);
 
     return server;
 }

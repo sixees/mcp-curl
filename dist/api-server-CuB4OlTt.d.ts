@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-C4tc86Qe.js';
+import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-BHg7B5H-.js';
 
 /**
  * Configuration options for McpCurlServer.
@@ -316,6 +316,25 @@ declare class McpCurlServer {
      * @returns MCP server or null
      */
     getMcpServer(): McpServer | null;
+    /**
+     * Inspect the registered custom tools (read-only). Returns the tool name
+     * and metadata for each registered tool, omitting handler closures so
+     * callers cannot accidentally invoke them.
+     *
+     * Useful for tests that need to assert what was registered (and what its
+     * advertised title/description look like) without starting the server.
+     *
+     * Returned entries are frozen — including `meta` and `meta.annotations` —
+     * so a caller cannot mutate them and indirectly change tool registrations
+     * after the fact (the same `meta` reference was forwarded to
+     * `server.registerTool` during start). `meta.inputSchema` is intentionally
+     * shared by reference: Zod schema instances rely on internal mutable state
+     * and freezing would break them; treat it as read-only by convention.
+     */
+    getRegisteredCustomTools(): ReadonlyArray<{
+        readonly name: string;
+        readonly meta: Readonly<CustomToolMeta>;
+    }>;
     /**
      * Check if the server has been started.
      *

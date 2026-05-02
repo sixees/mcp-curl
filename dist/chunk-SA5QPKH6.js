@@ -64,7 +64,7 @@ var ApiDefaultsSchema = z.object({
   timeout: z.number().int().min(1).max(300).optional(),
   headers: z.record(z.string(), z.string()).optional()
 }).optional();
-var ApiSchemaValidator = z.object({
+var RawApiSchema = z.object({
   apiVersion: z.literal("1.0"),
   api: ApiInfoSchema,
   auth: AuthConfigSchema,
@@ -73,6 +73,118 @@ var ApiSchemaValidator = z.object({
     message: "At least one endpoint must be defined"
   })
 });
+function asObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function sanitiseStringField(obj, key) {
+  const v = obj[key];
+  if (typeof v === "string") obj[key] = sanitizeDescription(v);
+}
+function sanitiseRawSchema(value) {
+  if (!asObject(value)) return value;
+  let root;
+  try {
+    root = structuredClone(value);
+  } catch {
+    return value;
+  }
+  const api = asObject(root.api);
+  if (api) {
+    sanitiseStringField(api, "title");
+    sanitiseStringField(api, "description");
+  }
+  const auth = asObject(root.auth);
+  if (auth) {
+    const apiKey = asObject(auth.apiKey);
+    if (apiKey) sanitiseStringField(apiKey, "envVar");
+    const bearer = asObject(auth.bearer);
+    if (bearer) sanitiseStringField(bearer, "envVar");
+  }
+  if (Array.isArray(root.endpoints)) {
+    for (const item of root.endpoints) {
+      const ep = asObject(item);
+      if (!ep) continue;
+      sanitiseStringField(ep, "id");
+      sanitiseStringField(ep, "path");
+      sanitiseStringField(ep, "title");
+      sanitiseStringField(ep, "description");
+      if (Array.isArray(ep.parameters)) {
+        for (const p of ep.parameters) {
+          const param = asObject(p);
+          if (param) sanitiseStringField(param, "description");
+        }
+      }
+      const response = asObject(ep.response);
+      if (response && Array.isArray(response.filterPresets)) {
+        for (const p of response.filterPresets) {
+          const preset = asObject(p);
+          if (preset) {
+            sanitiseStringField(preset, "name");
+            sanitiseStringField(preset, "description");
+          }
+        }
+      }
+    }
+  }
+  return root;
+}
+function reportDuplicateEndpointIds(schema, ctx) {
+  const seen = /* @__PURE__ */ new Set();
+  schema.endpoints.forEach((endpoint, index) => {
+    if (seen.has(endpoint.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate endpoint ID: ${endpoint.id}`,
+        path: ["endpoints", index, "id"]
+      });
+    }
+    seen.add(endpoint.id);
+  });
+}
+function reportUndefinedPathParams(schema, ctx) {
+  schema.endpoints.forEach((endpoint, index) => {
+    const pathParams = endpoint.path.match(/\{([^}]+)\}/g) || [];
+    const definedPathParams = new Set(
+      (endpoint.parameters ?? []).filter((p) => p.in === "path").map((p) => p.name)
+    );
+    for (const pathParam of pathParams) {
+      const paramName = pathParam.slice(1, -1);
+      if (!definedPathParams.has(paramName)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Path parameter {${paramName}} in endpoint "${endpoint.id}" is not defined in parameters`,
+          path: ["endpoints", index, "path"]
+        });
+      }
+    }
+  });
+}
+function reportDuplicatePresetNames(schema, ctx) {
+  schema.endpoints.forEach((endpoint, endpointIndex) => {
+    const presets = endpoint.response?.filterPresets;
+    if (!presets || presets.length < 2) return;
+    const seen = /* @__PURE__ */ new Set();
+    presets.forEach((preset, presetIndex) => {
+      if (seen.has(preset.name)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Endpoint "${endpoint.id}" has duplicate filter preset names after sanitization: "${preset.name}"`,
+          path: ["endpoints", endpointIndex, "response", "filterPresets", presetIndex, "name"]
+        });
+      }
+      seen.add(preset.name);
+    });
+  });
+}
+var ApiSchemaValidator = z.preprocess(
+  sanitiseRawSchema,
+  RawApiSchema.transform((schema, ctx) => {
+    reportDuplicateEndpointIds(schema, ctx);
+    reportUndefinedPathParams(schema, ctx);
+    reportDuplicatePresetNames(schema, ctx);
+    return schema;
+  })
+);
 var ApiSchemaValidationError = class extends Error {
   constructor(message, issues) {
     super(message);
@@ -92,31 +204,6 @@ function validateApiSchema(data) {
 ${messages.join("\n")}`,
       result.error.issues
     );
-  }
-  const endpointIds = /* @__PURE__ */ new Set();
-  for (const endpoint of result.data.endpoints) {
-    if (endpointIds.has(endpoint.id)) {
-      throw new ApiSchemaValidationError(
-        `Duplicate endpoint ID: ${endpoint.id}`,
-        []
-      );
-    }
-    endpointIds.add(endpoint.id);
-  }
-  for (const endpoint of result.data.endpoints) {
-    const pathParams = endpoint.path.match(/\{([^}]+)\}/g) || [];
-    const definedPathParams = new Set(
-      (endpoint.parameters || []).filter((p) => p.in === "path").map((p) => p.name)
-    );
-    for (const pathParam of pathParams) {
-      const paramName = pathParam.slice(1, -1);
-      if (!definedPathParams.has(paramName)) {
-        throw new ApiSchemaValidationError(
-          `Path parameter {${paramName}} in endpoint "${endpoint.id}" is not defined in parameters`,
-          []
-        );
-      }
-    }
   }
   return result.data;
 }
@@ -187,7 +274,7 @@ function generateInputSchema(endpoint) {
   for (const param of endpoint.parameters ?? []) {
     let schema = createParamSchema(param);
     if (param.description) {
-      schema = schema.describe(sanitizeDescription(param.description));
+      schema = schema.describe(param.description);
     }
     if (!param.required) {
       schema = schema.optional();
@@ -195,13 +282,7 @@ function generateInputSchema(endpoint) {
     shape[param.name] = schema;
   }
   if (endpoint.response?.filterPresets?.length) {
-    const presetNames = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name));
-    const uniqueNames = new Set(presetNames);
-    if (uniqueNames.size !== presetNames.length) {
-      throw new Error(
-        `Endpoint "${endpoint.id}" has duplicate filter preset names after sanitization`
-      );
-    }
+    const presetNames = endpoint.response.filterPresets.map((p) => p.name);
     shape.filter_preset = buildStringEnum(presetNames).optional().describe("Apply a predefined response filter");
   }
   return z2.object(shape);
@@ -264,8 +345,7 @@ function getAuthConfig(auth, override) {
   }
   if (auth.apiKey) {
     const value = override?.[auth.apiKey.envVar] ?? process.env[auth.apiKey.envVar];
-    const isRequired = auth.apiKey.required !== false;
-    if (!value && isRequired) {
+    if (!value && auth.apiKey.required) {
       throw new AuthenticationError(
         `Missing required environment variable: ${auth.apiKey.envVar}`
       );
@@ -280,8 +360,7 @@ function getAuthConfig(auth, override) {
   }
   if (auth.bearer) {
     const value = override?.[auth.bearer.envVar] ?? process.env[auth.bearer.envVar];
-    const isRequired = auth.bearer.required !== false;
-    if (!value && isRequired) {
+    if (!value && auth.bearer.required) {
       throw new AuthenticationError(
         `Missing required environment variable: ${auth.bearer.envVar}`
       );
@@ -334,12 +413,12 @@ function resolveJqFilter(endpoint, params) {
   const presetName = params.filter_preset;
   if (presetName && endpoint.response?.filterPresets) {
     const preset = endpoint.response.filterPresets.find(
-      (p) => sanitizeDescription(p.name) === presetName
+      (p) => p.name === presetName
     );
     if (preset) {
       return preset.jqFilter;
     }
-    const available = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name)).join(", ");
+    const available = endpoint.response.filterPresets.map((p) => p.name).join(", ");
     throw new Error(
       `Unknown filter preset "${presetName}". Available presets: ${available}`
     );
@@ -428,17 +507,19 @@ function getMethodAnnotations(method) {
     openWorldHint: true
   };
 }
+function renderJqFilterForDisplay(jqFilter) {
+  return sanitizeDescription(jqFilter);
+}
 function buildToolDescription(endpoint) {
-  const parts = [sanitizeDescription(endpoint.description)];
+  const parts = [endpoint.description];
   if (endpoint.response?.filterPresets?.length) {
     parts.push("");
     parts.push("Available filter presets:");
     for (const preset of endpoint.response.filterPresets) {
-      const presetName = sanitizeDescription(preset.name);
       if (preset.description) {
-        parts.push(`  - ${presetName}: ${sanitizeDescription(preset.description)}`);
+        parts.push(`  - ${preset.name}: ${preset.description}`);
       } else {
-        parts.push(`  - ${presetName}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
+        parts.push(`  - ${preset.name}: applies filter "${renderJqFilterForDisplay(preset.jqFilter)}"`);
       }
     }
   }
@@ -451,7 +532,7 @@ function registerEndpointTools(server, schema, config) {
     server.registerTool(
       endpoint.id,
       {
-        title: sanitizeDescription(endpoint.title),
+        title: endpoint.title,
         description: buildToolDescription(endpoint),
         inputSchema,
         annotations: getMethodAnnotations(endpoint.method)
@@ -463,7 +544,7 @@ function registerEndpointTools(server, schema, config) {
 function generateToolDefinitions(schema, config) {
   return schema.endpoints.map((endpoint) => ({
     id: endpoint.id,
-    title: sanitizeDescription(endpoint.title),
+    title: endpoint.title,
     description: buildToolDescription(endpoint),
     method: endpoint.method,
     inputSchema: generateInputSchema(endpoint),

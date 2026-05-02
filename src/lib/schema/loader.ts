@@ -1,5 +1,13 @@
 // src/lib/schema/loader.ts
 // YAML file loading and parsing for API schema definitions
+//
+// Sanitisation note: this module does NOT walk the parsed YAML to sanitise
+// description fields. The sole sanitisation chokepoint is the
+// `z.preprocess()` step on `ApiSchemaValidator` (see validator.ts), which
+// fires before any Zod check — including for direct `ApiSchemaValidator
+// .parse(rawObj)` callers and for `validateApiSchema(rawObj)`. Adding a
+// loader-side walker here would duplicate the field-set knowledge and miss
+// those direct entry points.
 
 import { readFile } from "fs/promises";
 import yaml from "js-yaml";

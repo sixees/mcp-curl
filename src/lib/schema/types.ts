@@ -21,15 +21,17 @@ export interface AuthConfig {
         name: string;
         /** Environment variable name containing the API key */
         envVar: string;
-        /** Whether auth is required (default: true) */
-        required?: boolean;
+        /** Whether auth is required. Validator applies `default(true)` so the
+         * runtime value is always a boolean. */
+        required: boolean;
     };
     /** Bearer token authentication */
     bearer?: {
         /** Environment variable name containing the bearer token */
         envVar: string;
-        /** Whether auth is required (default: true) */
-        required?: boolean;
+        /** Whether auth is required. Validator applies `default(true)` so the
+         * runtime value is always a boolean. */
+        required: boolean;
     };
 }
 
@@ -53,8 +55,9 @@ export interface EndpointParameter {
     in: ParameterLocation;
     /** Parameter type for validation */
     type: ParameterType;
-    /** Whether the parameter is required (default: false) */
-    required?: boolean;
+    /** Whether the parameter is required. Validator applies `default(false)`
+     * so the runtime value is always a boolean. */
+    required: boolean;
     /** Description for LLM context */
     description?: string;
     /** Default value if not provided */

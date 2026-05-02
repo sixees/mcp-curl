@@ -1,12 +1,28 @@
-import { b as ApiSchema } from '../../generator-C4tc86Qe.js';
-export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, l as getMethodAnnotations, r as registerEndpointTools } from '../../generator-C4tc86Qe.js';
+import { b as ApiSchema } from '../../generator-BHg7B5H-.js';
+export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, l as getMethodAnnotations, r as registerEndpointTools } from '../../generator-BHg7B5H-.js';
 import { ZodIssue, z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
  * Complete API schema validator.
+ *
+ * **Runtime sanitisation invariant (PR-6a / B9):** the raw input is sanitised
+ * by `z.preprocess(sanitiseRawSchemaInPlace, …)` BEFORE any Zod check fires.
+ * Every public entry point that produces a parsed `ApiSchema` — including the
+ * directly-re-exported `ApiSchemaValidator.parse()` — therefore yields a
+ * sanitised result, and Zod's own error messages quote sanitised values.
+ *
+ * **Cross-field checks** (duplicate endpoint IDs, undefined path params,
+ * duplicate filter-preset names after sanitisation) live inside the schema's
+ * `.transform()` step so direct `.parse()` callers get them too. They are
+ * surfaced via `ctx.addIssue` so the parse fails with a normal Zod error
+ * (translated to `ApiSchemaValidationError` by `validateApiSchema()`).
+ *
+ * Downstream consumers MUST NOT re-sanitise — sanitation is the validator's
+ * job. The TypeScript type does NOT carry this invariant; it is a runtime
+ * property documented here.
  */
-declare const ApiSchemaValidator: z.ZodObject<{
+declare const ApiSchemaValidator: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodPipe<z.ZodObject<{
     apiVersion: z.ZodLiteral<"1.0">;
     api: z.ZodObject<{
         name: z.ZodString;
@@ -76,7 +92,105 @@ declare const ApiSchemaValidator: z.ZodObject<{
             }, z.core.$strip>>>;
         }, z.core.$strip>>;
     }, z.core.$strip>>;
-}, z.core.$strip>;
+}, z.core.$strip>, z.ZodTransform<{
+    apiVersion: "1.0";
+    api: {
+        name: string;
+        title: string;
+        description: string;
+        version: string;
+        baseUrl: string;
+    };
+    endpoints: {
+        id: string;
+        path: string;
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+        title: string;
+        description: string;
+        parameters?: {
+            name: string;
+            in: "path" | "body" | "query" | "header";
+            type: "string" | "number" | "boolean" | "integer";
+            required: boolean;
+            description?: string | undefined;
+            default?: string | number | boolean | undefined;
+            enum?: (string | number)[] | undefined;
+        }[] | undefined;
+        response?: {
+            jqFilter?: string | undefined;
+            filterPresets?: {
+                name: string;
+                jqFilter: string;
+                description?: string | undefined;
+            }[] | undefined;
+        } | undefined;
+    }[];
+    auth?: {
+        apiKey?: {
+            type: "query" | "header";
+            name: string;
+            envVar: string;
+            required: boolean;
+        } | undefined;
+        bearer?: {
+            envVar: string;
+            required: boolean;
+        } | undefined;
+    } | undefined;
+    defaults?: {
+        timeout?: number | undefined;
+        headers?: Record<string, string> | undefined;
+    } | undefined;
+}, {
+    apiVersion: "1.0";
+    api: {
+        name: string;
+        title: string;
+        description: string;
+        version: string;
+        baseUrl: string;
+    };
+    endpoints: {
+        id: string;
+        path: string;
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+        title: string;
+        description: string;
+        parameters?: {
+            name: string;
+            in: "path" | "body" | "query" | "header";
+            type: "string" | "number" | "boolean" | "integer";
+            required: boolean;
+            description?: string | undefined;
+            default?: string | number | boolean | undefined;
+            enum?: (string | number)[] | undefined;
+        }[] | undefined;
+        response?: {
+            jqFilter?: string | undefined;
+            filterPresets?: {
+                name: string;
+                jqFilter: string;
+                description?: string | undefined;
+            }[] | undefined;
+        } | undefined;
+    }[];
+    auth?: {
+        apiKey?: {
+            type: "query" | "header";
+            name: string;
+            envVar: string;
+            required: boolean;
+        } | undefined;
+        bearer?: {
+            envVar: string;
+            required: boolean;
+        } | undefined;
+    } | undefined;
+    defaults?: {
+        timeout?: number | undefined;
+        headers?: Record<string, string> | undefined;
+    } | undefined;
+}>>>;
 /**
  * Validation error with detailed information.
  */
@@ -86,10 +200,13 @@ declare class ApiSchemaValidationError extends Error {
 }
 /**
  * Validate parsed YAML against the API schema.
- * Returns a typed ApiSchema on success, throws on validation failure.
+ *
+ * Thin error-shape adapter: defers all sanitisation and cross-field checks to
+ * `ApiSchemaValidator`. Returns a typed, sanitised `ApiSchema` on success;
+ * throws `ApiSchemaValidationError` on failure.
  *
  * @param data - Parsed YAML data (unknown type)
- * @returns Validated ApiSchema
+ * @returns Validated, sanitised ApiSchema
  * @throws ApiSchemaValidationError if validation fails
  */
 declare function validateApiSchema(data: unknown): ApiSchema;

@@ -923,20 +923,28 @@ function sanitizeNode(field, depth, visited) {
 }
 function sanitizeOwnDescription(field) {
   const existing = z3.globalRegistry.get(field);
-  const desc = existing?.description;
-  if (typeof desc !== "string" || desc.length === 0) return;
+  if (!existing) return;
+  const desc = existing.description;
+  if (typeof desc !== "string") return;
+  if (desc.length === 0) {
+    removeDescriptionEntry(field, existing);
+    return;
+  }
   const sanitised = sanitizeDescription(desc);
   if (sanitised === desc) return;
   if (sanitised.length === 0) {
-    const { description: _omit, ...rest } = existing;
-    if (Object.keys(rest).length === 0) {
-      z3.globalRegistry.remove(field);
-    } else {
-      z3.globalRegistry.add(field, rest);
-    }
+    removeDescriptionEntry(field, existing);
     return;
   }
   z3.globalRegistry.add(field, { ...existing, description: sanitised });
+}
+function removeDescriptionEntry(field, existing) {
+  const { description: _omit, ...rest } = existing;
+  if (Object.keys(rest).length === 0) {
+    z3.globalRegistry.remove(field);
+  } else {
+    z3.globalRegistry.add(field, rest);
+  }
 }
 
 // src/lib/extensible/mcp-curl-server.ts
@@ -1188,6 +1196,34 @@ var McpCurlServer = class {
    */
   getMcpServer() {
     return this._server;
+  }
+  /**
+   * Inspect the registered custom tools (read-only). Returns the tool name
+   * and metadata for each registered tool, omitting handler closures so
+   * callers cannot accidentally invoke them.
+   *
+   * Useful for tests that need to assert what was registered (and what its
+   * advertised title/description look like) without starting the server.
+   *
+   * Returned entries are frozen — including `meta` and `meta.annotations` —
+   * so a caller cannot mutate them and indirectly change tool registrations
+   * after the fact (the same `meta` reference was forwarded to
+   * `server.registerTool` during start). `meta.inputSchema` is intentionally
+   * shared by reference: Zod schema instances rely on internal mutable state
+   * and freezing would break them; treat it as read-only by convention.
+   */
+  getRegisteredCustomTools() {
+    return this._customTools.map(
+      ({ name, meta }) => Object.freeze({
+        name,
+        meta: Object.freeze({
+          title: meta.title,
+          description: meta.description,
+          inputSchema: meta.inputSchema,
+          annotations: meta.annotations ? Object.freeze({ ...meta.annotations }) : void 0
+        })
+      })
+    );
   }
   /**
    * Check if the server has been started.

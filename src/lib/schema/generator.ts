@@ -1,5 +1,18 @@
 // src/lib/schema/generator.ts
-// Generates MCP tools from API schema endpoint definitions
+// Generates MCP tools from API schema endpoint definitions.
+//
+// **Sanitisation contract (PR-6a / B9).** Schemas reaching this module are
+// pre-sanitised by the `z.preprocess()` step on `ApiSchemaValidator` in
+// `src/lib/schema/validator.ts`. Every user-facing string field is already
+// stripped of bidi/zero-width/Tags-block characters before reaching here.
+// Do **not** re-sanitise.
+//
+// The single named exception is `renderJqFilterForDisplay()` below: the
+// validator deliberately leaves `preset.jqFilter` raw so the engine
+// receives the author's filter unchanged; only the human-readable copy
+// interpolated into the tool description is cleaned. A test
+// (`generator.ts has at most one sanitizeDescription call`) guards the
+// boundary against drift.
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -57,7 +70,7 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         let schema: z.ZodTypeAny = createParamSchema(param);
 
         if (param.description) {
-            schema = schema.describe(sanitizeDescription(param.description));
+            schema = schema.describe(param.description);
         }
 
         if (!param.required) {
@@ -67,17 +80,8 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         shape[param.name] = schema;
     }
 
-    // Add optional filter_preset parameter if presets exist.
-    // Sanitize preset names so the enum values are consistent with the description display
-    // and resolveJqFilter lookup — prevents bidi/zero-width chars in schema-presented values.
     if (endpoint.response?.filterPresets?.length) {
-        const presetNames = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name));
-        const uniqueNames = new Set(presetNames);
-        if (uniqueNames.size !== presetNames.length) {
-            throw new Error(
-                `Endpoint "${endpoint.id}" has duplicate filter preset names after sanitization`
-            );
-        }
+        const presetNames = endpoint.response.filterPresets.map((p) => p.name);
         shape.filter_preset = buildStringEnum(presetNames)
             .optional()
             .describe("Apply a predefined response filter");
@@ -197,9 +201,8 @@ export function getAuthConfig(
     // Handle API key auth
     if (auth.apiKey) {
         const value = override?.[auth.apiKey.envVar] ?? process.env[auth.apiKey.envVar];
-        const isRequired = auth.apiKey.required !== false;
 
-        if (!value && isRequired) {
+        if (!value && auth.apiKey.required) {
             throw new AuthenticationError(
                 `Missing required environment variable: ${auth.apiKey.envVar}`
             );
@@ -217,9 +220,8 @@ export function getAuthConfig(
     // Handle bearer token auth
     if (auth.bearer) {
         const value = override?.[auth.bearer.envVar] ?? process.env[auth.bearer.envVar];
-        const isRequired = auth.bearer.required !== false;
 
-        if (!value && isRequired) {
+        if (!value && auth.bearer.required) {
             throw new AuthenticationError(
                 `Missing required environment variable: ${auth.bearer.envVar}`
             );
@@ -309,17 +311,15 @@ function resolveJqFilter(
     // Check for filter preset selection
     const presetName = params.filter_preset as string | undefined;
     if (presetName && endpoint.response?.filterPresets) {
-        // Compare sanitized names — the enum was built from sanitized names so the
-        // LLM-supplied value is always a sanitized string, not the raw YAML value.
         const preset = endpoint.response.filterPresets.find(
-            (p) => sanitizeDescription(p.name) === presetName
+            (p) => p.name === presetName
         );
         if (preset) {
             return preset.jqFilter;
         }
         // Preset explicitly requested but not found - throw error
         const available = endpoint.response.filterPresets
-            .map((p) => sanitizeDescription(p.name))
+            .map((p) => p.name)
             .join(", ");
         throw new Error(
             `Unknown filter preset "${presetName}". Available presets: ${available}`
@@ -456,21 +456,30 @@ export function getMethodAnnotations(method: HttpMethod) {
 }
 
 /**
+ * Render a `preset.jqFilter` for interpolation into LLM-visible description
+ * text. The validator deliberately leaves `jqFilter` raw so the engine
+ * receives the author's filter unchanged; this helper is the single point
+ * where the human-readable copy gets cleaned, keeping the trust boundary
+ * documented by structure rather than by per-callsite comments.
+ */
+function renderJqFilterForDisplay(jqFilter: string): string {
+    return sanitizeDescription(jqFilter);
+}
+
+/**
  * Build tool description including parameter docs and filter presets.
  */
 function buildToolDescription(endpoint: EndpointDefinition): string {
-    const parts: string[] = [sanitizeDescription(endpoint.description)];
+    const parts: string[] = [endpoint.description];
 
-    // Document filter presets if available
     if (endpoint.response?.filterPresets?.length) {
         parts.push("");
         parts.push("Available filter presets:");
         for (const preset of endpoint.response.filterPresets) {
-            const presetName = sanitizeDescription(preset.name);
             if (preset.description) {
-                parts.push(`  - ${presetName}: ${sanitizeDescription(preset.description)}`);
+                parts.push(`  - ${preset.name}: ${preset.description}`);
             } else {
-                parts.push(`  - ${presetName}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
+                parts.push(`  - ${preset.name}: applies filter "${renderJqFilterForDisplay(preset.jqFilter)}"`);
             }
         }
     }
@@ -497,7 +506,7 @@ export function registerEndpointTools(
         server.registerTool(
             endpoint.id,
             {
-                title: sanitizeDescription(endpoint.title),
+                title: endpoint.title,
                 description: buildToolDescription(endpoint),
                 inputSchema,
                 annotations: getMethodAnnotations(endpoint.method),
@@ -527,7 +536,7 @@ export function generateToolDefinitions(
 }> {
     return schema.endpoints.map((endpoint) => ({
         id: endpoint.id,
-        title: sanitizeDescription(endpoint.title),
+        title: endpoint.title,
         description: buildToolDescription(endpoint),
         method: endpoint.method,
         inputSchema: generateInputSchema(endpoint),

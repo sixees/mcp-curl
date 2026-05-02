@@ -881,14 +881,14 @@ If sanitisation lives only inside `validateApiSchema()`, the `ApiSchemaValidator
 
 **Acceptance criteria.**
 
-- [ ] `ApiSchemaValidator` has a `.transform()` step that runs `sanitizeApiSchemaInPlace()` on the parsed object.
-- [ ] All public entry points that produce a parsed `ApiSchema` (`loadApiSchema`, `loadApiSchemaFromString`, `validateApiSchema`, **and the re-exported `ApiSchemaValidator.parse()` path**) yield pre-sanitised schemas.
-- [ ] `loadApiSchema` / `loadApiSchemaFromString` pre-sanitise raw YAML strings before invoking `ApiSchemaValidator.parse()` — Zod error messages on malformed YAML cannot echo attacker-controlled description content.
-- [ ] **YAML pipeline integration test (#020):** a YAML schema with `baseUrl: data:...` is rejected through `loadApiSchemaFromString`, `validateApiSchema(rawObj)`, and `ApiSchemaValidator.parse(rawObj)` (defence-in-depth gate against the URL invariant being silently broken when the `.transform()` mutates the schema).
-- [ ] `generator.ts` has no remaining `sanitizeDescription()` calls.
-- [ ] A top-of-file comment in `generator.ts` documents the contract.
-- [ ] Duplicate filter-preset detection moved into the `.transform()` step.
-- [ ] Existing `loader.test.ts`, `validator.test.ts`, `generator.test.ts` all pass.
+- [x] `ApiSchemaValidator` runs a `z.preprocess(sanitiseRawSchema, …)` step that produces a sanitised deep clone of the raw input *before* any Zod validation fires. (The pre-review draft used a `.transform()` step on the parsed object; review feedback consolidated it into a single `z.preprocess` chokepoint.)
+- [x] All public entry points that produce a parsed `ApiSchema` — `loadApiSchema`, `loadApiSchemaFromString`, `validateApiSchema`, **and the re-exported `ApiSchemaValidator.parse()` path** — yield pre-sanitised schemas via the same `z.preprocess` invocation. The factory `createApiServer({ schema })` / `createApiServerSync(schema)` re-runs `validateApiSchema()` so caller-supplied schemas cannot bypass the sanitiser.
+- [x] Loader functions (`loadApiSchema`, `loadApiSchemaFromString`) deliberately do **not** walk parsed YAML — sanitisation lives only on the validator. Because `z.preprocess` runs before Zod issue-message generation, attacker-controlled bidi/zero-width bytes can never appear in a Zod error message regardless of the entry point.
+- [x] **YAML pipeline integration test (#020):** a schema with `baseUrl: data:...` is rejected through `loadApiSchemaFromString`, `validateApiSchema(rawObj)`, AND `ApiSchemaValidator.parse(rawObj)` — defence-in-depth gate that the URL invariant survives the new preprocess pipeline.
+- [x] `generator.ts` has no remaining redundant `sanitizeDescription()` calls. The single surviving call is encapsulated in the named helper `renderJqFilterForDisplay()` — `jqFilter` is deliberately left raw by the validator so the engine receives the author's filter unchanged; sanitisation at the display-time interpolation site is documented in the top-of-file block. A drift-resistance test asserts `generator.ts` contains at most one `sanitizeDescription(` call site.
+- [x] A top-of-file comment in `generator.ts` documents the trust contract.
+- [x] All cross-field validation (duplicate endpoint IDs, undefined path parameters, duplicate filter-preset names after sanitisation) lives inside the schema's `.transform((schema, ctx) => …)` step via `ctx.addIssue`, so direct `ApiSchemaValidator.parse()` callers receive the same checks. `validateApiSchema()` is now a thin error-shape adapter.
+- [x] `schema.test.ts` (loader/validator/generator merged) plus the new `PR-6a sanitisation invariant` and `review-fix coverage` describe blocks all pass — full suite 684/684 after review fixes.
 
 **Research Insights (added 2026-05-01).**
 
