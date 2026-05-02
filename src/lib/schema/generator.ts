@@ -2,16 +2,17 @@
 // Generates MCP tools from API schema endpoint definitions.
 //
 // **Sanitisation contract (PR-6a / B9).** Schemas reaching this module are
-// pre-sanitised by `ApiSchemaValidator`'s `.transform()` step in
-// `src/lib/schema/validator.ts`. Every user-facing string field
-// (api.title/description, endpoint.title/description,
-// parameter.description, filterPresets[*].name/description) is already
+// pre-sanitised by the `z.preprocess()` step on `ApiSchemaValidator` in
+// `src/lib/schema/validator.ts`. Every user-facing string field is already
 // stripped of bidi/zero-width/Tags-block characters before reaching here.
-// Do **not** re-sanitise — the validator owns that invariant. The single
-// remaining `sanitizeDescription()` call below targets `preset.jqFilter`,
-// which the validator deliberately leaves untouched (jq syntax is the
-// authoritative form passed to the engine; the sanitised copy is only
-// interpolated into the human-readable tool description).
+// Do **not** re-sanitise.
+//
+// The single named exception is `renderJqFilterForDisplay()` below: the
+// validator deliberately leaves `preset.jqFilter` raw so the engine
+// receives the author's filter unchanged; only the human-readable copy
+// interpolated into the tool description is cleaned. A test
+// (`generator.ts has at most one sanitizeDescription call`) guards the
+// boundary against drift.
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -69,7 +70,6 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         let schema: z.ZodTypeAny = createParamSchema(param);
 
         if (param.description) {
-            // pre-sanitised by validateApiSchema()
             schema = schema.describe(param.description);
         }
 
@@ -80,11 +80,6 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         shape[param.name] = schema;
     }
 
-    // Add optional filter_preset parameter if presets exist.
-    // Preset names are pre-sanitised by validateApiSchema(); duplicate-after-
-    // sanitise collisions are also caught at validation time, so the enum here
-    // is guaranteed unique on any schema that reached this point through the
-    // public validator.
     if (endpoint.response?.filterPresets?.length) {
         const presetNames = endpoint.response.filterPresets.map((p) => p.name);
         shape.filter_preset = buildStringEnum(presetNames)
@@ -318,9 +313,6 @@ function resolveJqFilter(
     // Check for filter preset selection
     const presetName = params.filter_preset as string | undefined;
     if (presetName && endpoint.response?.filterPresets) {
-        // Preset names are pre-sanitised by validateApiSchema(); the enum the
-        // LLM sees was built from those same names, so a direct equality check
-        // is correct.
         const preset = endpoint.response.filterPresets.find(
             (p) => p.name === presetName
         );
@@ -466,13 +458,20 @@ export function getMethodAnnotations(method: HttpMethod) {
 }
 
 /**
+ * Render a `preset.jqFilter` for interpolation into LLM-visible description
+ * text. The validator deliberately leaves `jqFilter` raw so the engine
+ * receives the author's filter unchanged; this helper is the single point
+ * where the human-readable copy gets cleaned, keeping the trust boundary
+ * documented by structure rather than by per-callsite comments.
+ */
+function renderJqFilterForDisplay(jqFilter: string): string {
+    return sanitizeDescription(jqFilter);
+}
+
+/**
  * Build tool description including parameter docs and filter presets.
  */
 function buildToolDescription(endpoint: EndpointDefinition): string {
-    // endpoint.description / preset.name / preset.description are pre-sanitised
-    // by validateApiSchema(). preset.jqFilter is NOT sanitised at validation
-    // time — the engine receives the raw filter — but when interpolated into
-    // human-readable description text it must be cleaned.
     const parts: string[] = [endpoint.description];
 
     if (endpoint.response?.filterPresets?.length) {
@@ -482,7 +481,7 @@ function buildToolDescription(endpoint: EndpointDefinition): string {
             if (preset.description) {
                 parts.push(`  - ${preset.name}: ${preset.description}`);
             } else {
-                parts.push(`  - ${preset.name}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
+                parts.push(`  - ${preset.name}: applies filter "${renderJqFilterForDisplay(preset.jqFilter)}"`);
             }
         }
     }
@@ -509,7 +508,6 @@ export function registerEndpointTools(
         server.registerTool(
             endpoint.id,
             {
-                // pre-sanitised by validateApiSchema()
                 title: endpoint.title,
                 description: buildToolDescription(endpoint),
                 inputSchema,
@@ -540,7 +538,6 @@ export function generateToolDefinitions(
 }> {
     return schema.endpoints.map((endpoint) => ({
         id: endpoint.id,
-        // pre-sanitised by validateApiSchema()
         title: endpoint.title,
         description: buildToolDescription(endpoint),
         method: endpoint.method,

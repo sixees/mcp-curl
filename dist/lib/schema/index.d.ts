@@ -1,23 +1,28 @@
-import { b as ApiSchema } from '../../generator-C4tc86Qe.js';
-export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, l as getMethodAnnotations, r as registerEndpointTools } from '../../generator-C4tc86Qe.js';
+import { b as ApiSchema } from '../../generator-BHg7B5H-.js';
+export { A as ApiDefaults, a as ApiInfo, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, l as getMethodAnnotations, r as registerEndpointTools } from '../../generator-BHg7B5H-.js';
 import { ZodIssue, z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
  * Complete API schema validator.
  *
- * **Sanitisation contract (PR-6a / B9):** the schema runs `sanitizeDescription()`
- * on every user-facing string field via a `.transform()` step before returning.
- * Consumers MUST NOT re-sanitise downstream — the type carries the invariant.
- * The public re-export means even consumers who bypass `validateApiSchema()` and
- * call `ApiSchemaValidator.parse(rawObject)` directly receive a sanitised result.
+ * **Runtime sanitisation invariant (PR-6a / B9):** the raw input is sanitised
+ * by `z.preprocess(sanitiseRawSchemaInPlace, …)` BEFORE any Zod check fires.
+ * Every public entry point that produces a parsed `ApiSchema` — including the
+ * directly-re-exported `ApiSchemaValidator.parse()` — therefore yields a
+ * sanitised result, and Zod's own error messages quote sanitised values.
  *
- * The same `.transform()` step also reports filter-preset name collisions that
- * emerge only after sanitisation — `seen` is keyed on the post-sanitise name,
- * so e.g. `"Summary"` colliding with `"​Summary"` is surfaced as a
- * validation error rather than silently dispatching the wrong jq filter.
+ * **Cross-field checks** (duplicate endpoint IDs, undefined path params,
+ * duplicate filter-preset names after sanitisation) live inside the schema's
+ * `.transform()` step so direct `.parse()` callers get them too. They are
+ * surfaced via `ctx.addIssue` so the parse fails with a normal Zod error
+ * (translated to `ApiSchemaValidationError` by `validateApiSchema()`).
+ *
+ * Downstream consumers MUST NOT re-sanitise — sanitation is the validator's
+ * job. The TypeScript type does NOT carry this invariant; it is a runtime
+ * property documented here.
  */
-declare const ApiSchemaValidator: z.ZodPipe<z.ZodObject<{
+declare const ApiSchemaValidator: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodPipe<z.ZodObject<{
     apiVersion: z.ZodLiteral<"1.0">;
     api: z.ZodObject<{
         name: z.ZodString;
@@ -185,7 +190,7 @@ declare const ApiSchemaValidator: z.ZodPipe<z.ZodObject<{
         timeout?: number | undefined;
         headers?: Record<string, string> | undefined;
     } | undefined;
-}>>;
+}>>>;
 /**
  * Validation error with detailed information.
  */
@@ -195,11 +200,10 @@ declare class ApiSchemaValidationError extends Error {
 }
 /**
  * Validate parsed YAML against the API schema.
- * Returns a typed, sanitised `ApiSchema` on success, throws on validation failure.
  *
- * Sanitisation runs inside `ApiSchemaValidator`'s `.transform()` step, so
- * every entry point — including the public `ApiSchemaValidator.parse()` —
- * yields a pre-sanitised schema (PR-6a / B9 invariant).
+ * Thin error-shape adapter: defers all sanitisation and cross-field checks to
+ * `ApiSchemaValidator`. Returns a typed, sanitised `ApiSchema` on success;
+ * throws `ApiSchemaValidationError` on failure.
  *
  * @param data - Parsed YAML data (unknown type)
  * @returns Validated, sanitised ApiSchema

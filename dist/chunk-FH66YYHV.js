@@ -73,30 +73,79 @@ var RawApiSchema = z.object({
     message: "At least one endpoint must be defined"
   })
 });
-function sanitizeApiSchemaInPlace(schema) {
-  schema.api.title = sanitizeDescription(schema.api.title);
-  schema.api.description = sanitizeDescription(schema.api.description);
-  for (const endpoint of schema.endpoints) {
-    endpoint.title = sanitizeDescription(endpoint.title);
-    endpoint.description = sanitizeDescription(endpoint.description);
-    if (endpoint.parameters) {
-      for (const parameter of endpoint.parameters) {
-        if (parameter.description !== void 0) {
-          parameter.description = sanitizeDescription(parameter.description);
+function asObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function sanitiseStringField(obj, key) {
+  const v = obj[key];
+  if (typeof v === "string") obj[key] = sanitizeDescription(v);
+}
+function sanitiseRawSchemaInPlace(value) {
+  const root = asObject(value);
+  if (!root) return value;
+  const api = asObject(root.api);
+  if (api) {
+    sanitiseStringField(api, "title");
+    sanitiseStringField(api, "description");
+  }
+  if (Array.isArray(root.endpoints)) {
+    for (const item of root.endpoints) {
+      const ep = asObject(item);
+      if (!ep) continue;
+      sanitiseStringField(ep, "id");
+      sanitiseStringField(ep, "path");
+      sanitiseStringField(ep, "title");
+      sanitiseStringField(ep, "description");
+      if (Array.isArray(ep.parameters)) {
+        for (const p of ep.parameters) {
+          const param = asObject(p);
+          if (param) sanitiseStringField(param, "description");
         }
       }
-    }
-    const presets = endpoint.response?.filterPresets;
-    if (presets) {
-      for (const preset of presets) {
-        preset.name = sanitizeDescription(preset.name);
-        if (preset.description !== void 0) {
-          preset.description = sanitizeDescription(preset.description);
+      const response = asObject(ep.response);
+      if (response && Array.isArray(response.filterPresets)) {
+        for (const p of response.filterPresets) {
+          const preset = asObject(p);
+          if (preset) {
+            sanitiseStringField(preset, "name");
+            sanitiseStringField(preset, "description");
+          }
         }
       }
     }
   }
-  return schema;
+  return value;
+}
+function reportDuplicateEndpointIds(schema, ctx) {
+  const seen = /* @__PURE__ */ new Set();
+  schema.endpoints.forEach((endpoint, index) => {
+    if (seen.has(endpoint.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate endpoint ID: ${endpoint.id}`,
+        path: ["endpoints", index, "id"]
+      });
+    }
+    seen.add(endpoint.id);
+  });
+}
+function reportUndefinedPathParams(schema, ctx) {
+  schema.endpoints.forEach((endpoint, index) => {
+    const pathParams = endpoint.path.match(/\{([^}]+)\}/g) || [];
+    const definedPathParams = new Set(
+      (endpoint.parameters ?? []).filter((p) => p.in === "path").map((p) => p.name)
+    );
+    for (const pathParam of pathParams) {
+      const paramName = pathParam.slice(1, -1);
+      if (!definedPathParams.has(paramName)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Path parameter {${paramName}} in endpoint "${endpoint.id}" is not defined in parameters`,
+          path: ["endpoints", index, "path"]
+        });
+      }
+    }
+  });
 }
 function reportDuplicatePresetNames(schema, ctx) {
   schema.endpoints.forEach((endpoint, endpointIndex) => {
@@ -115,11 +164,15 @@ function reportDuplicatePresetNames(schema, ctx) {
     });
   });
 }
-var ApiSchemaValidator = RawApiSchema.transform((schema, ctx) => {
-  sanitizeApiSchemaInPlace(schema);
-  reportDuplicatePresetNames(schema, ctx);
-  return schema;
-});
+var ApiSchemaValidator = z.preprocess(
+  sanitiseRawSchemaInPlace,
+  RawApiSchema.transform((schema, ctx) => {
+    reportDuplicateEndpointIds(schema, ctx);
+    reportUndefinedPathParams(schema, ctx);
+    reportDuplicatePresetNames(schema, ctx);
+    return schema;
+  })
+);
 var ApiSchemaValidationError = class extends Error {
   constructor(message, issues) {
     super(message);
@@ -139,31 +192,6 @@ function validateApiSchema(data) {
 ${messages.join("\n")}`,
       result.error.issues
     );
-  }
-  const endpointIds = /* @__PURE__ */ new Set();
-  for (const endpoint of result.data.endpoints) {
-    if (endpointIds.has(endpoint.id)) {
-      throw new ApiSchemaValidationError(
-        `Duplicate endpoint ID: ${endpoint.id}`,
-        []
-      );
-    }
-    endpointIds.add(endpoint.id);
-  }
-  for (const endpoint of result.data.endpoints) {
-    const pathParams = endpoint.path.match(/\{([^}]+)\}/g) || [];
-    const definedPathParams = new Set(
-      (endpoint.parameters || []).filter((p) => p.in === "path").map((p) => p.name)
-    );
-    for (const pathParam of pathParams) {
-      const paramName = pathParam.slice(1, -1);
-      if (!definedPathParams.has(paramName)) {
-        throw new ApiSchemaValidationError(
-          `Path parameter {${paramName}} in endpoint "${endpoint.id}" is not defined in parameters`,
-          []
-        );
-      }
-    }
   }
   return result.data;
 }
@@ -195,51 +223,6 @@ function parseYaml(content) {
     );
   }
 }
-function sanitizeRawYamlDescriptions(parsed) {
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return parsed;
-  }
-  const root = parsed;
-  const api = root.api;
-  if (api && typeof api === "object" && !Array.isArray(api)) {
-    const apiObj = api;
-    if (typeof apiObj.title === "string") apiObj.title = sanitizeDescription(apiObj.title);
-    if (typeof apiObj.description === "string") apiObj.description = sanitizeDescription(apiObj.description);
-  }
-  const endpoints = root.endpoints;
-  if (Array.isArray(endpoints)) {
-    for (const endpoint of endpoints) {
-      if (!endpoint || typeof endpoint !== "object") continue;
-      const ep = endpoint;
-      if (typeof ep.title === "string") ep.title = sanitizeDescription(ep.title);
-      if (typeof ep.description === "string") ep.description = sanitizeDescription(ep.description);
-      if (Array.isArray(ep.parameters)) {
-        for (const parameter of ep.parameters) {
-          if (!parameter || typeof parameter !== "object") continue;
-          const param = parameter;
-          if (typeof param.description === "string") {
-            param.description = sanitizeDescription(param.description);
-          }
-        }
-      }
-      const response = ep.response;
-      if (response && typeof response === "object" && !Array.isArray(response)) {
-        const presets = response.filterPresets;
-        if (Array.isArray(presets)) {
-          for (const preset of presets) {
-            if (!preset || typeof preset !== "object") continue;
-            const p = preset;
-            if (typeof p.name === "string") p.name = sanitizeDescription(p.name);
-            if (typeof p.description === "string") {
-              p.description = sanitizeDescription(p.description);
-            }
-          }
-        }
-      }
-    }
-  }
-  return parsed;
-}
 async function loadApiSchema(definitionPath) {
   let content;
   try {
@@ -256,14 +239,14 @@ async function loadApiSchema(definitionPath) {
       `API schema file is empty: ${definitionPath}`
     );
   }
-  return validateApiSchema(sanitizeRawYamlDescriptions(parsed));
+  return validateApiSchema(parsed);
 }
 function loadApiSchemaFromString(yamlContent) {
   const parsed = parseYaml(yamlContent);
   if (parsed === null || parsed === void 0) {
     throw new ApiSchemaLoadError("API schema content is empty");
   }
-  return validateApiSchema(sanitizeRawYamlDescriptions(parsed));
+  return validateApiSchema(parsed);
 }
 
 // src/lib/schema/generator.ts
@@ -514,6 +497,9 @@ function getMethodAnnotations(method) {
     openWorldHint: true
   };
 }
+function renderJqFilterForDisplay(jqFilter) {
+  return sanitizeDescription(jqFilter);
+}
 function buildToolDescription(endpoint) {
   const parts = [endpoint.description];
   if (endpoint.response?.filterPresets?.length) {
@@ -523,7 +509,7 @@ function buildToolDescription(endpoint) {
       if (preset.description) {
         parts.push(`  - ${preset.name}: ${preset.description}`);
       } else {
-        parts.push(`  - ${preset.name}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
+        parts.push(`  - ${preset.name}: applies filter "${renderJqFilterForDisplay(preset.jqFilter)}"`);
       }
     }
   }
@@ -536,7 +522,6 @@ function registerEndpointTools(server, schema, config) {
     server.registerTool(
       endpoint.id,
       {
-        // pre-sanitised by validateApiSchema()
         title: endpoint.title,
         description: buildToolDescription(endpoint),
         inputSchema,
@@ -549,7 +534,6 @@ function registerEndpointTools(server, schema, config) {
 function generateToolDefinitions(schema, config) {
   return schema.endpoints.map((endpoint) => ({
     id: endpoint.id,
-    // pre-sanitised by validateApiSchema()
     title: endpoint.title,
     description: buildToolDescription(endpoint),
     method: endpoint.method,

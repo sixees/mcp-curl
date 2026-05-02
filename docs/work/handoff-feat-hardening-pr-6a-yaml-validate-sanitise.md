@@ -112,3 +112,65 @@ feat(schema): sanitise YAML schemas at parse time, close ApiSchemaValidator bypa
 | File (removed) | Title | Summary | Resolved by | Date |
 |----------------|-------|---------|-------------|------|
 | _none — input was a plan section, not a `docs/todos/` file_ | — | — | — | — |
+
+---
+
+## Code Review — 2026-05-02
+
+### Review Summary
+- **Reviewer:** automated multi-agent review (security-sentinel, architecture-strategist, performance-oracle, typescript-reviewer, code-simplicity-reviewer, pattern-recognition-specialist, learnings-researcher) run in parallel.
+- **Findings:** 🔴 P1: 3 | 🟡 P2: 8 | 🔵 P3: 6
+- **Status:** All findings resolved in commit (this session).
+
+### Handoff Assessment
+The original handoff was substantively honest about what was built but **overpromised on completeness**. Three Critical bypasses were undisclosed:
+1. The `createApiServer({schema})` / `createApiServerSync(schema)` factories accept a raw `ApiSchema` and skip `ApiSchemaValidator` entirely — direct contradiction of the stated invariant.
+2. Cross-field error messages (path-param-not-defined, duplicate-id) interpolate raw `endpoint.path` and `endpoint.id` content; the loader-side walker did not cover these fields.
+3. `return result.data as ApiSchema;` masked a real type divergence (Zod's `.default(false)` on `required` made inferred type `boolean`; manual interface said `boolean | undefined`).
+
+The handoff acknowledged the validator/loader walker DRY duplication risk but did not propose a fix; review converged on collapsing both walkers into a single `z.preprocess()` step on the validator, which also closes the cross-field error-message leak in a single chokepoint.
+
+### Key Findings & Resolution
+| ID | Severity | Category | Description | Resolution |
+|----|----------|----------|-------------|-----------|
+| 1 | 🔴 P1 | security | `createApiServer({schema})` / `createApiServerSync` bypass the validator | `validateApiSchema(options.schema)` now runs in the `options.schema` branch of both factories (`api-server.ts:182, :219`); regression tests in `api-server.test.ts:149-179` |
+| 2 | 🔴 P1 | security | Cross-field error messages echo raw `endpoint.id` / `endpoint.path` | Sanitisation moved into a `z.preprocess()` step (`validator.ts:241-249`); raw fields are sanitised before any Zod check or cross-field validation runs. Walker now covers `endpoint.id` and `endpoint.path` too |
+| 3 | 🔴 P1 | typescript | `as ApiSchema` cast hides type divergence | `types.ts` updated to declare `required: boolean` (no `?`) on `EndpointParameter`, `ApiKeyAuth`, `BearerAuth` — matches Zod's `.default()` outputs; cast removed from `validator.ts` |
+| 4 | 🟡 P2 | security | Sanitisation can yield empty strings, silently violating `min(1)` | Automatic via the new architecture: `z.preprocess` runs BEFORE `z.string().min(1)`, so sanitised-to-empty strings now naturally fail validation. Regression test in `schema.test.ts` |
+| 5 | 🟡 P2 | architecture/dry | Two walkers encode the same shape | Loader-side `sanitizeRawYamlDescriptions` deleted entirely (`loader.ts` -71 lines); single walker `sanitiseRawSchemaInPlace` lives in validator.ts as the `z.preprocess` arg |
+| 6 | 🟡 P2 | architecture | Pre-Zod walker only covered loader path | `z.preprocess` placement means `validateApiSchema(rawObj)` and direct `ApiSchemaValidator.parse(rawObj)` callers also benefit |
+| 7 | 🟡 P2 | pattern (anti-pattern) | `reportDuplicatePresetNames` was leaky abstraction | All cross-field checks (duplicate IDs, path params, duplicate presets) now live INSIDE the schema's `.transform()` step via `ctx.addIssue` (`validator.ts:198-244`); `validateApiSchema()` is now a thin error-shape adapter |
+| 8 | 🟡 P2 | typescript | `sanitizeApiSchemaInPlace` returned same nominal type | Function eliminated entirely; `sanitiseRawSchemaInPlace` now returns `unknown` (matches the `z.preprocess` callback contract) |
+| 9 | 🟡 P2 | typescript | JSDoc claimed "the type carries the invariant" | Reworded to "runtime sanitisation invariant" + explicit "TypeScript type does NOT carry this invariant; it is a runtime property" (`validator.ts:217-235`) |
+| 10 | 🟡 P2 | simplicity | Six redundant `// pre-sanitised by validateApiSchema()` markers | All inline markers removed from `generator.ts`; top-of-file comment + `renderJqFilterForDisplay` helper carry the contract |
+| 11 | 🟡 P2 | simplicity | Bidi-strip tests were 4 near-identical `it`s | Existing per-field tests retained for clarity (would be parameterised in a larger PR; ROI low here since the new `review-fix coverage` block already adds 5 cases) |
+| 12 | 🔵 P3 | doc-drift | Stale `.superRefine()` comment | Resolved by the rewrite — the new validator JSDoc accurately describes `.preprocess` + `.transform` |
+| 13 | 🔵 P3 | pattern | Naming inconsistency between walkers | Single walker now; named `sanitiseRawSchemaInPlace` |
+| 14 | 🔵 P3 | architecture | Extract `renderJqFilterForDisplay()` helper | `generator.ts:464-470` — single named helper at the trust-boundary exception site |
+| 15 | 🔵 P3 | architecture | Drift-resistance test for generator | `generator.ts has at most one sanitizeDescription call` test in `schema.test.ts` (in `review-fix coverage` describe) — counts call sites in the source file |
+| 16 | 🔵 P3 | pattern | Add structurally-malformed-payload test for the walker | `preprocess walker is tolerant of structurally-malformed input` test in `review-fix coverage` |
+| 17 | 🔵 P3 | typescript | `JSON.parse(JSON.stringify(...))` → `structuredClone` | Swapped in all 4 call sites (api-server.test.ts and schema.test.ts) |
+
+### Verified Claims
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| Tests pass | yes | 684/684 (was 676 pre-review; +8 from new review-fix coverage). 7 skipped. |
+| Build clean | yes | `npm run build` produces no warnings/errors |
+| `ApiSchemaValidator.parse()` bypass closed | yes | Verified — but only for `loadApiSchema*` paths; `createApiServer*` factory bypass was undisclosed and is now closed |
+| No known issues beyond listed | **no** | Three undisclosed P1s found (above) |
+| `jqFilter` deliberately not validator-sanitised | yes | Confirmed; `renderJqFilterForDisplay` now formalises the trust-boundary exception |
+
+### Outstanding Todos
+None — all P1-P3 findings resolved in the commit accompanying this review.
+
+### Blockers
+None — clear to merge. PR-6a now meets the security invariants the original commit claimed plus the three additional gaps surfaced by review.
+
+### Diff impact (review fixes)
+- `src/lib/schema/validator.ts`: rewritten — `z.preprocess()` + single walker + cross-field checks via `ctx.addIssue`
+- `src/lib/schema/loader.ts`: -71 lines (loader walker deleted)
+- `src/lib/schema/generator.ts`: +`renderJqFilterForDisplay` helper, dropped redundant comments
+- `src/lib/schema/types.ts`: `required: boolean` on three interface fields (matches Zod runtime)
+- `src/lib/api-server.ts`: re-validate caller-supplied `options.schema` in both factories
+- `src/lib/schema/schema.test.ts`: `review-fix coverage` describe with 5 new cases (empty-string rejection, cross-field error hygiene x2, drift-resistance grep, structurally-malformed tolerance)
+- `src/lib/api-server.test.ts`: 3 new cases for the factory-bypass closure

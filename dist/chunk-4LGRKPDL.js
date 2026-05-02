@@ -5,8 +5,9 @@ import {
   generateToolDefinitions,
   getMethodAnnotations,
   loadApiSchema,
-  loadApiSchemaFromString
-} from "./chunk-LPWTH3Q5.js";
+  loadApiSchemaFromString,
+  validateApiSchema
+} from "./chunk-FH66YYHV.js";
 
 // src/lib/api-server.ts
 function configureServerFromSchema(server, schema, options) {
@@ -56,7 +57,7 @@ function configureServerFromSchema(server, schema, options) {
 async function createApiServer(options) {
   let schema;
   if (options.schema) {
-    schema = options.schema;
+    schema = validateApiSchema(options.schema);
   } else if (options.definitionPath) {
     schema = await loadApiSchema(options.definitionPath);
   } else if (options.definitionContent) {
@@ -71,8 +72,9 @@ async function createApiServer(options) {
   return server;
 }
 function createApiServerSync(schema, options = {}) {
+  const validated = validateApiSchema(schema);
   const server = new McpCurlServer();
-  configureServerFromSchema(server, schema, options);
+  configureServerFromSchema(server, validated, options);
   return server;
 }
 

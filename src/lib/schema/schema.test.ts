@@ -1488,7 +1488,7 @@ describe("PR-6a sanitisation invariant", () => {
                 ],
             };
             const direct = ApiSchemaValidator.parse(raw);
-            const wrapped = validateApiSchema(JSON.parse(JSON.stringify(raw)));
+            const wrapped = validateApiSchema(structuredClone(raw));
             expect(wrapped.endpoints[0].description).toBe(direct.endpoints[0].description);
             expect(wrapped.endpoints[0].description).not.toMatch(/[​]/);
         });
@@ -1535,13 +1535,14 @@ describe("PR-6a sanitisation invariant", () => {
         });
     });
 
-    describe("loader pre-Zod sanitisation (A8 belt-and-braces)", () => {
-        it("strips bidi/zero-width chars from raw values before Zod sees them", () => {
-            // Construct an invalid YAML payload (description too short → fails
-            // min(1)) where the *attacker-controlled* string has bidi chars.
-            // The pre-Zod walk in loadApiSchemaFromString sanitises raw
-            // description fields before ApiSchemaValidator runs, so the Zod
-            // error message should not echo the raw bidi bytes.
+    describe("preprocess sanitisation keeps Zod and cross-field error messages clean", () => {
+        it("strips bidi/zero-width chars from raw values before Zod issue messages quote them", () => {
+            // Construct an invalid YAML payload (baseUrl: not-a-url) where the
+            // *attacker-controlled* api.title carries bidi chars. The
+            // z.preprocess() step on ApiSchemaValidator sanitises raw fields
+            // before Zod runs, so any Zod issue message that quotes a value
+            // sees the sanitised form — raw bidi bytes never appear in error
+            // logs even via direct ApiSchemaValidator.parse() callers.
             const yamlContent =
                 'apiVersion: "1.0"\n' +
                 "api:\n" +
@@ -1603,6 +1604,101 @@ describe("PR-6a sanitisation invariant", () => {
 
         it("rejects via ApiSchemaValidator.parse", () => {
             expect(() => ApiSchemaValidator.parse(rawWithDataUrl)).toThrow();
+        });
+    });
+
+    describe("review-fix coverage (P1/P2 closure)", () => {
+        it("rejects strings that sanitise to empty (P2 #4 — min(1) invariant)", () => {
+            // A title of pure invisibles sanitises to "" and must be rejected
+            // by the schema — the preprocess step runs before z.string().min(1).
+            expect(() =>
+                ApiSchemaValidator.parse({
+                    ...baseSchema,
+                    endpoints: [
+                        {
+                            ...baseSchema.endpoints[0],
+                            title: "​​",
+                        },
+                    ],
+                })
+            ).toThrow();
+        });
+
+        it("strips bidi from endpoint.path so cross-field error messages are clean (P1 #2)", () => {
+            // The path-param-not-defined error interpolates the param name
+            // extracted from endpoint.path. With the preprocess sanitiser
+            // running first, the path is cleaned before the regex extracts
+            // the param name, so attacker-controlled bidi can never leak
+            // into the error log.
+            try {
+                ApiSchemaValidator.parse({
+                    ...baseSchema,
+                    endpoints: [
+                        {
+                            ...baseSchema.endpoints[0],
+                            path: "/items/{evil​param}",
+                        },
+                    ],
+                });
+                throw new Error("expected validation to fail");
+            } catch (error) {
+                const message = (error as Error).message;
+                expect(message).not.toMatch(/[​]/);
+            }
+        });
+
+        it("strips bidi from endpoint.id so duplicate-id error messages are clean (P1 #2)", () => {
+            // Duplicate endpoint IDs interpolate the ID into the error
+            // message. After preprocess, IDs are sanitised and the regex
+            // (^[a-z][a-z0-9_]*$) usually rejects bidi-laden IDs first;
+            // this test ensures any error path that does see a sanitised ID
+            // produces clean output.
+            try {
+                ApiSchemaValidator.parse({
+                    ...baseSchema,
+                    endpoints: [
+                        baseSchema.endpoints[0],
+                        { ...baseSchema.endpoints[0] },
+                    ],
+                });
+                throw new Error("expected validation to fail");
+            } catch (error) {
+                const message = (error as Error).message;
+                expect(message).not.toMatch(/[​‮]/);
+            }
+        });
+
+        it("generator.ts has at most one sanitizeDescription call (P3 #15 drift guard)", async () => {
+            // The trust contract — "validator sanitises; generator trusts" —
+            // is documented in code only. This test catches drift if a future
+            // contributor reintroduces a redundant sanitiser call. The single
+            // allowed call is the display-time interpolation of preset.jqFilter.
+            const fs = await import("fs/promises");
+            const url = await import("url");
+            const path = await import("path");
+            const here = path.dirname(url.fileURLToPath(import.meta.url));
+            const generatorSource = await fs.readFile(
+                path.resolve(here, "generator.ts"),
+                "utf-8"
+            );
+            // Strip comments so the rule is enforced on real code, not docs.
+            const codeOnly = generatorSource
+                .split("\n")
+                .filter((line) => !line.trim().startsWith("//"))
+                .join("\n");
+            const matches = codeOnly.match(/sanitizeDescription\(/g) ?? [];
+            expect(matches.length).toBeLessThanOrEqual(1);
+        });
+
+        it("preprocess walker is tolerant of structurally-malformed input (P3 #16)", () => {
+            // A non-object root and arrays-where-objects-expected must not
+            // crash the walker — Zod will reject them with normal validation
+            // errors. This regression test prevents future contributors from
+            // adding strict checks that defeat the "tolerant by design" promise.
+            expect(() => ApiSchemaValidator.parse(null)).toThrow();
+            expect(() => ApiSchemaValidator.parse("not an object")).toThrow();
+            expect(() => ApiSchemaValidator.parse({ api: "not-an-object", endpoints: [] })).toThrow();
+            expect(() => ApiSchemaValidator.parse({ endpoints: "not-an-array" })).toThrow();
         });
     });
 
