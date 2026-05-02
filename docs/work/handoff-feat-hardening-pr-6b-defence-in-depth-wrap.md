@@ -226,3 +226,36 @@ feat(response): defence-in-depth wrap on YAML/custom-tool/hook output (PR-6b / B
 ### Tests / build
 - `npm test`: 742/742 passing (7 skipped) — was 738 after round-1, +4 net (2 prototype-chain regression + 2 null-content-item regression)
 - `npm run build`: clean
+
+---
+
+## Review Comments Addressed — 2026-05-02 (PR #29 round 3)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `result.isError` short-circuit bypassed sanitise/detect entirely — a buggy or hostile custom tool / YAML handler / hook short-circuit could emit `{isError:true, content:[{text: <attacker bytes>}]}` and skip the defence-in-depth pass | @coderabbitai | **P2 — Fix needed** | Removed the `isError` early-return. Sanitise + detect now always run on every text part regardless of `isError`. The spotlighting step is the only thing gated off for errors (no UUID, no sentinels — error text is a status message about the call, not external content the LLM should treat as untrusted with sentinel boundaries). Added a regression test that asserts injection-detection logs fire on error text containing a malicious phrase, and rewrote the existing isError test to assert sanitise still runs (bidi/zero-width chars stripped from error text). |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| `if (result.isError) return tag(result)` — error results pass through with no sanitise / no detect / no spotlight, on the assumption that error text is internally generated | Drop the isError short-circuit; always run sanitise + detect; gate ONLY the spotlighting UUID on `!result.isError`. Errors are sanitised + detected like any other content, but do NOT receive sentinel boundaries (error text is a status message, not external content). | The original assumption ("error text is internally generated") only holds for built-in tools. Custom tool handlers, YAML handlers calling external APIs, and hook short-circuits can all emit error content that mirrors or includes attacker-controlled bytes. The regression closes the bypass without losing the "no sentinels on errors" semantic. | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was an inline PR thread, not a `docs/todos/` file_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — round-3 thread addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/response/post-processor.ts` (drop `isError` short-circuit; gate `requestId` generation on `enableSpotlighting && !result.isError`)
+- `src/lib/response/post-processor.test.ts` (rewrote `isError results pass through unchanged but are tagged` to assert sanitise still runs; added `logs an injection-detection event on error text containing a malicious phrase` regression test; updated frozen-isError test to assert sanitised content rather than reference equality)
+- `docs/work/handoff-feat-hardening-pr-6b-defence-in-depth-wrap.md` (this section)
+
+### Tests / build
+- `npm test`: 743/743 passing (7 skipped) — was 742 after round-2, +1 net regression test (the rewritten isError test still counts as one; the new injection-detection-on-error test is the +1)
+- `npm run build`: clean

@@ -1883,9 +1883,8 @@ function createWrapper(config) {
     if (result === null || typeof result !== "object") return result;
     if (isWrappedResult(result)) return result;
     try {
-      if (result.isError) return tag(result);
       if (!Array.isArray(result.content)) return tag(result);
-      const requestId = config.enableSpotlighting ? randomUUID2() : void 0;
+      const requestId = config.enableSpotlighting && !result.isError ? randomUUID2() : void 0;
       const newContent = result.content.map(
         (part) => processTextPart(part, hostname, requestId)
       );

@@ -209,12 +209,6 @@ export function createWrapper(
         if (isWrappedResult(result)) return result;
 
         try {
-            // Errors pass through unchanged — error text is internally
-            // generated, doesn't carry external content, and re-running
-            // detection would only produce noise. Tag so a downstream wrap is
-            // still a no-op.
-            if (result.isError) return tag(result);
-
             // Defensive: the SDK's CallToolResult has `content` as an array,
             // but a custom-tool author could return a malformed shape. Tag
             // and pass through rather than throw — a malformed result is the
@@ -223,8 +217,15 @@ export function createWrapper(
 
             // Per-message UUID (A11): one UUID per wrap call, shared by every
             // text part of this result. Generated only when spotlighting is
-            // enabled to avoid the entropy draw on the no-op path.
-            const requestId = config.enableSpotlighting ? randomUUID() : undefined;
+            // enabled AND this is not an error result — error text is a
+            // status message about the call, not external content the LLM
+            // should treat as untrusted with sentinel boundaries. Sanitise +
+            // detect still run on errors below: a buggy or hostile custom
+            // tool / YAML handler / hook short-circuit could otherwise emit
+            // `{ isError: true, content: [{ text: <attacker bytes> }] }`
+            // and bypass the defence-in-depth pass entirely.
+            const requestId =
+                config.enableSpotlighting && !result.isError ? randomUUID() : undefined;
 
             const newContent = result.content.map((part) =>
                 processTextPart(part, hostname, requestId)
