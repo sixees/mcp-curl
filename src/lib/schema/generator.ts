@@ -1,5 +1,17 @@
 // src/lib/schema/generator.ts
-// Generates MCP tools from API schema endpoint definitions
+// Generates MCP tools from API schema endpoint definitions.
+//
+// **Sanitisation contract (PR-6a / B9).** Schemas reaching this module are
+// pre-sanitised by `ApiSchemaValidator`'s `.transform()` step in
+// `src/lib/schema/validator.ts`. Every user-facing string field
+// (api.title/description, endpoint.title/description,
+// parameter.description, filterPresets[*].name/description) is already
+// stripped of bidi/zero-width/Tags-block characters before reaching here.
+// Do **not** re-sanitise — the validator owns that invariant. The single
+// remaining `sanitizeDescription()` call below targets `preset.jqFilter`,
+// which the validator deliberately leaves untouched (jq syntax is the
+// authoritative form passed to the engine; the sanitised copy is only
+// interpolated into the human-readable tool description).
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -57,7 +69,8 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
         let schema: z.ZodTypeAny = createParamSchema(param);
 
         if (param.description) {
-            schema = schema.describe(sanitizeDescription(param.description));
+            // pre-sanitised by validateApiSchema()
+            schema = schema.describe(param.description);
         }
 
         if (!param.required) {
@@ -68,16 +81,12 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
     }
 
     // Add optional filter_preset parameter if presets exist.
-    // Sanitize preset names so the enum values are consistent with the description display
-    // and resolveJqFilter lookup — prevents bidi/zero-width chars in schema-presented values.
+    // Preset names are pre-sanitised by validateApiSchema(); duplicate-after-
+    // sanitise collisions are also caught at validation time, so the enum here
+    // is guaranteed unique on any schema that reached this point through the
+    // public validator.
     if (endpoint.response?.filterPresets?.length) {
-        const presetNames = endpoint.response.filterPresets.map((p) => sanitizeDescription(p.name));
-        const uniqueNames = new Set(presetNames);
-        if (uniqueNames.size !== presetNames.length) {
-            throw new Error(
-                `Endpoint "${endpoint.id}" has duplicate filter preset names after sanitization`
-            );
-        }
+        const presetNames = endpoint.response.filterPresets.map((p) => p.name);
         shape.filter_preset = buildStringEnum(presetNames)
             .optional()
             .describe("Apply a predefined response filter");
@@ -309,17 +318,18 @@ function resolveJqFilter(
     // Check for filter preset selection
     const presetName = params.filter_preset as string | undefined;
     if (presetName && endpoint.response?.filterPresets) {
-        // Compare sanitized names — the enum was built from sanitized names so the
-        // LLM-supplied value is always a sanitized string, not the raw YAML value.
+        // Preset names are pre-sanitised by validateApiSchema(); the enum the
+        // LLM sees was built from those same names, so a direct equality check
+        // is correct.
         const preset = endpoint.response.filterPresets.find(
-            (p) => sanitizeDescription(p.name) === presetName
+            (p) => p.name === presetName
         );
         if (preset) {
             return preset.jqFilter;
         }
         // Preset explicitly requested but not found - throw error
         const available = endpoint.response.filterPresets
-            .map((p) => sanitizeDescription(p.name))
+            .map((p) => p.name)
             .join(", ");
         throw new Error(
             `Unknown filter preset "${presetName}". Available presets: ${available}`
@@ -459,18 +469,20 @@ export function getMethodAnnotations(method: HttpMethod) {
  * Build tool description including parameter docs and filter presets.
  */
 function buildToolDescription(endpoint: EndpointDefinition): string {
-    const parts: string[] = [sanitizeDescription(endpoint.description)];
+    // endpoint.description / preset.name / preset.description are pre-sanitised
+    // by validateApiSchema(). preset.jqFilter is NOT sanitised at validation
+    // time — the engine receives the raw filter — but when interpolated into
+    // human-readable description text it must be cleaned.
+    const parts: string[] = [endpoint.description];
 
-    // Document filter presets if available
     if (endpoint.response?.filterPresets?.length) {
         parts.push("");
         parts.push("Available filter presets:");
         for (const preset of endpoint.response.filterPresets) {
-            const presetName = sanitizeDescription(preset.name);
             if (preset.description) {
-                parts.push(`  - ${presetName}: ${sanitizeDescription(preset.description)}`);
+                parts.push(`  - ${preset.name}: ${preset.description}`);
             } else {
-                parts.push(`  - ${presetName}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
+                parts.push(`  - ${preset.name}: applies filter "${sanitizeDescription(preset.jqFilter)}"`);
             }
         }
     }
@@ -497,7 +509,8 @@ export function registerEndpointTools(
         server.registerTool(
             endpoint.id,
             {
-                title: sanitizeDescription(endpoint.title),
+                // pre-sanitised by validateApiSchema()
+                title: endpoint.title,
                 description: buildToolDescription(endpoint),
                 inputSchema,
                 annotations: getMethodAnnotations(endpoint.method),
@@ -527,7 +540,8 @@ export function generateToolDefinitions(
 }> {
     return schema.endpoints.map((endpoint) => ({
         id: endpoint.id,
-        title: sanitizeDescription(endpoint.title),
+        // pre-sanitised by validateApiSchema()
+        title: endpoint.title,
         description: buildToolDescription(endpoint),
         method: endpoint.method,
         inputSchema: generateInputSchema(endpoint),

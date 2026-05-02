@@ -5,8 +5,19 @@ import '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
  * Complete API schema validator.
+ *
+ * **Sanitisation contract (PR-6a / B9):** the schema runs `sanitizeDescription()`
+ * on every user-facing string field via a `.transform()` step before returning.
+ * Consumers MUST NOT re-sanitise downstream — the type carries the invariant.
+ * The public re-export means even consumers who bypass `validateApiSchema()` and
+ * call `ApiSchemaValidator.parse(rawObject)` directly receive a sanitised result.
+ *
+ * The same `.transform()` step also reports filter-preset name collisions that
+ * emerge only after sanitisation — `seen` is keyed on the post-sanitise name,
+ * so e.g. `"Summary"` colliding with `"​Summary"` is surfaced as a
+ * validation error rather than silently dispatching the wrong jq filter.
  */
-declare const ApiSchemaValidator: z.ZodObject<{
+declare const ApiSchemaValidator: z.ZodPipe<z.ZodObject<{
     apiVersion: z.ZodLiteral<"1.0">;
     api: z.ZodObject<{
         name: z.ZodString;
@@ -76,7 +87,105 @@ declare const ApiSchemaValidator: z.ZodObject<{
             }, z.core.$strip>>>;
         }, z.core.$strip>>;
     }, z.core.$strip>>;
-}, z.core.$strip>;
+}, z.core.$strip>, z.ZodTransform<{
+    apiVersion: "1.0";
+    api: {
+        name: string;
+        title: string;
+        description: string;
+        version: string;
+        baseUrl: string;
+    };
+    endpoints: {
+        id: string;
+        path: string;
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+        title: string;
+        description: string;
+        parameters?: {
+            name: string;
+            in: "path" | "body" | "query" | "header";
+            type: "string" | "number" | "boolean" | "integer";
+            required: boolean;
+            description?: string | undefined;
+            default?: string | number | boolean | undefined;
+            enum?: (string | number)[] | undefined;
+        }[] | undefined;
+        response?: {
+            jqFilter?: string | undefined;
+            filterPresets?: {
+                name: string;
+                jqFilter: string;
+                description?: string | undefined;
+            }[] | undefined;
+        } | undefined;
+    }[];
+    auth?: {
+        apiKey?: {
+            type: "query" | "header";
+            name: string;
+            envVar: string;
+            required: boolean;
+        } | undefined;
+        bearer?: {
+            envVar: string;
+            required: boolean;
+        } | undefined;
+    } | undefined;
+    defaults?: {
+        timeout?: number | undefined;
+        headers?: Record<string, string> | undefined;
+    } | undefined;
+}, {
+    apiVersion: "1.0";
+    api: {
+        name: string;
+        title: string;
+        description: string;
+        version: string;
+        baseUrl: string;
+    };
+    endpoints: {
+        id: string;
+        path: string;
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+        title: string;
+        description: string;
+        parameters?: {
+            name: string;
+            in: "path" | "body" | "query" | "header";
+            type: "string" | "number" | "boolean" | "integer";
+            required: boolean;
+            description?: string | undefined;
+            default?: string | number | boolean | undefined;
+            enum?: (string | number)[] | undefined;
+        }[] | undefined;
+        response?: {
+            jqFilter?: string | undefined;
+            filterPresets?: {
+                name: string;
+                jqFilter: string;
+                description?: string | undefined;
+            }[] | undefined;
+        } | undefined;
+    }[];
+    auth?: {
+        apiKey?: {
+            type: "query" | "header";
+            name: string;
+            envVar: string;
+            required: boolean;
+        } | undefined;
+        bearer?: {
+            envVar: string;
+            required: boolean;
+        } | undefined;
+    } | undefined;
+    defaults?: {
+        timeout?: number | undefined;
+        headers?: Record<string, string> | undefined;
+    } | undefined;
+}>>;
 /**
  * Validation error with detailed information.
  */
@@ -86,10 +195,14 @@ declare class ApiSchemaValidationError extends Error {
 }
 /**
  * Validate parsed YAML against the API schema.
- * Returns a typed ApiSchema on success, throws on validation failure.
+ * Returns a typed, sanitised `ApiSchema` on success, throws on validation failure.
+ *
+ * Sanitisation runs inside `ApiSchemaValidator`'s `.transform()` step, so
+ * every entry point — including the public `ApiSchemaValidator.parse()` —
+ * yields a pre-sanitised schema (PR-6a / B9 invariant).
  *
  * @param data - Parsed YAML data (unknown type)
- * @returns Validated ApiSchema
+ * @returns Validated, sanitised ApiSchema
  * @throws ApiSchemaValidationError if validation fails
  */
 declare function validateApiSchema(data: unknown): ApiSchema;

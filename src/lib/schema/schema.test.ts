@@ -5,8 +5,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, unlink, mkdir, rmdir } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import { z } from "zod";
 import {
     validateApiSchema,
+    ApiSchemaValidator,
     ApiSchemaValidationError,
     loadApiSchema,
     loadApiSchemaFromString,
@@ -543,10 +545,14 @@ describe("generateInputSchema", () => {
         expect(schema.safeParse({ filter_preset: "invalid" }).success).toBe(false);
     });
 
-    it("throws when two preset names collide after sanitization", () => {
-        // "\u200BSummary" → leading zero-width space replaced with space → " Summary" → trimmed → "Summary"
-        // "Summary" → "Summary". Both sanitize to the same string — collision must be caught at schema
-        // construction time rather than silently applying the wrong filter at runtime.
+    it("preserves manually-constructed (validator-bypassed) preset names verbatim", () => {
+        // PR-6a / B9 boundary contract: schemas reaching the generator are
+        // assumed pre-sanitised by ApiSchemaValidator, so the generator does
+        // not re-sanitise. When a consumer bypasses the validator and feeds
+        // raw values directly, the generator preserves them as-is. Duplicate-
+        // after-sanitisation detection is now a validator-level concern — see
+        // the validator-side test
+        // "rejects duplicate filter preset names after sanitisation".
         const endpoint: EndpointDefinition = {
             id: "test",
             path: "/test",
@@ -556,13 +562,15 @@ describe("generateInputSchema", () => {
             response: {
                 filterPresets: [
                     { name: "Summary", jqFilter: ".a" },
-                    { name: "\u200BSummary", jqFilter: ".b" }, // leading zero-width space → trimmed → "Summary"
+                    { name: "\u200BSummary", jqFilter: ".b" },
                 ],
             },
         };
-        expect(() => generateInputSchema(endpoint)).toThrow(
-            /duplicate filter preset names after sanitization/
-        );
+        // Does NOT throw — generator now trusts pre-sanitised input.
+        const schema = generateInputSchema(endpoint);
+        // The raw (unsanitised) values reach the enum unchanged.
+        expect(schema.safeParse({ filter_preset: "​Summary" }).success).toBe(true);
+        expect(schema.safeParse({ filter_preset: "Summary" }).success).toBe(true);
     });
 
     it("handles single-element filter preset with z.literal()", () => {
@@ -1245,7 +1253,12 @@ describe("generateToolDefinitions", () => {
         expect(tools[0].description).toContain('raw: applies filter "."');
     });
 
-    it("strips Unicode bidi overrides and zero-width characters from descriptions", () => {
+    it("preserves bidi/zero-width chars when generator is called with validator-bypassed schema", () => {
+        // PR-6a / B9 boundary: the generator no longer re-sanitises. When a
+        // consumer constructs an ApiSchema by hand and skips ApiSchemaValidator,
+        // the unsafe characters survive — documenting in code that sanitisation
+        // is the validator's job, not the generator's. The validator-side path
+        // is covered by the "ApiSchemaValidator sanitisation" suite.
         const schema: ApiSchema = {
             ...baseSchema,
             endpoints: [
@@ -1270,9 +1283,9 @@ describe("generateToolDefinitions", () => {
         };
 
         const tools = generateToolDefinitions(schema);
-        expect(tools[0].description).toContain("safe: normal hidden text end");
-        // Verify no bidi/zero-width chars remain
-        expect(tools[0].description).not.toMatch(/[\u202E\u200B\u0085]/);
+        // Generator passes preset.description through verbatim — chars survive.
+        expect(tools[0].description).toContain("safe: normal\u202Ehidden\u200Btext\u0085end");
+        expect(tools[0].description).toMatch(/[\u202E\u200B\u0085]/);
     });
 
     it("strips control characters from jqFilter in fallback description", () => {
@@ -1335,5 +1348,292 @@ describe("generateToolDefinitions", () => {
             }),
             expect.objectContaining({ allowLocalhost: undefined })
         );
+    });
+});
+
+// --- PR-6a / B9 sanitisation invariant ---
+//
+// These tests cover the trust-boundary contract introduced in PR-6a:
+//   ApiSchemaValidator runs sanitizeDescription() on every user-facing string
+//   field via a .transform() step, so every public entry point that produces
+//   a parsed ApiSchema (loadApiSchema, loadApiSchemaFromString,
+//   validateApiSchema, AND ApiSchemaValidator.parse() directly) yields a
+//   pre-sanitised schema. The downstream generator does NOT re-sanitise.
+
+describe("PR-6a sanitisation invariant", () => {
+    const baseSchema = {
+        apiVersion: "1.0" as const,
+        api: {
+            name: "test-api",
+            title: "Test API",
+            description: "A test API",
+            version: "1.0",
+            baseUrl: "https://api.example.com",
+        },
+        endpoints: [
+            {
+                id: "get_data",
+                path: "/data",
+                method: "GET" as const,
+                title: "Get Data",
+                description: "Fetch data",
+            },
+        ],
+    };
+
+    describe("ApiSchemaValidator.parse() (raw-validator-bypass path — S1)", () => {
+        it("strips bidi/zero-width chars from endpoint.description", () => {
+            const parsed = ApiSchemaValidator.parse({
+                ...baseSchema,
+                endpoints: [
+                    {
+                        ...baseSchema.endpoints[0],
+                        // U+200B zero-width space + U+202E bidi override
+                        description: "before​‮after",
+                    },
+                ],
+            });
+            expect(parsed.endpoints[0].description).not.toMatch(/[​‮]/);
+        });
+
+        it("strips bidi/zero-width chars from api.title and api.description", () => {
+            const parsed = ApiSchemaValidator.parse({
+                ...baseSchema,
+                api: {
+                    ...baseSchema.api,
+                    title: "Title​x",
+                    description: "Desc‮y",
+                },
+            });
+            expect(parsed.api.title).not.toMatch(/[​]/);
+            expect(parsed.api.description).not.toMatch(/[‮]/);
+        });
+
+        it("strips bidi/zero-width chars from parameter.description", () => {
+            const parsed = ApiSchemaValidator.parse({
+                ...baseSchema,
+                endpoints: [
+                    {
+                        ...baseSchema.endpoints[0],
+                        parameters: [
+                            {
+                                name: "q",
+                                in: "query",
+                                type: "string",
+                                description: "Query​string",
+                            },
+                        ],
+                    },
+                ],
+            });
+            expect(parsed.endpoints[0].parameters?.[0].description).not.toMatch(/[​]/);
+        });
+
+        it("strips bidi/zero-width chars from filterPresets[*].name and description", () => {
+            const parsed = ApiSchemaValidator.parse({
+                ...baseSchema,
+                endpoints: [
+                    {
+                        ...baseSchema.endpoints[0],
+                        response: {
+                            filterPresets: [
+                                {
+                                    name: "safe​one",
+                                    jqFilter: ".a",
+                                    description: "a‮b",
+                                },
+                            ],
+                        },
+                    },
+                ],
+            });
+            const preset = parsed.endpoints[0].response?.filterPresets?.[0];
+            expect(preset?.name).not.toMatch(/[​]/);
+            expect(preset?.description).not.toMatch(/[‮]/);
+        });
+
+        it("rejects duplicate filter preset names after sanitisation", () => {
+            // "Summary" and "​Summary" both sanitise to "Summary" — the
+            // .superRefine() step inside ApiSchemaValidator must catch the
+            // collision and surface it as a validation error rather than let
+            // the generator silently pick the wrong jq filter at runtime.
+            expect(() =>
+                ApiSchemaValidator.parse({
+                    ...baseSchema,
+                    endpoints: [
+                        {
+                            ...baseSchema.endpoints[0],
+                            response: {
+                                filterPresets: [
+                                    { name: "Summary", jqFilter: ".a" },
+                                    { name: "​Summary", jqFilter: ".b" },
+                                ],
+                            },
+                        },
+                    ],
+                })
+            ).toThrow();
+        });
+    });
+
+    describe("validateApiSchema() (wrapper parity)", () => {
+        it("yields the same sanitised output as ApiSchemaValidator.parse()", () => {
+            const raw = {
+                ...baseSchema,
+                endpoints: [
+                    {
+                        ...baseSchema.endpoints[0],
+                        description: "x​y",
+                    },
+                ],
+            };
+            const direct = ApiSchemaValidator.parse(raw);
+            const wrapped = validateApiSchema(JSON.parse(JSON.stringify(raw)));
+            expect(wrapped.endpoints[0].description).toBe(direct.endpoints[0].description);
+            expect(wrapped.endpoints[0].description).not.toMatch(/[​]/);
+        });
+
+        it("surfaces duplicate filter-preset names as ApiSchemaValidationError", () => {
+            expect(() =>
+                validateApiSchema({
+                    ...baseSchema,
+                    endpoints: [
+                        {
+                            ...baseSchema.endpoints[0],
+                            response: {
+                                filterPresets: [
+                                    { name: "Summary", jqFilter: ".a" },
+                                    { name: "​Summary", jqFilter: ".b" },
+                                ],
+                            },
+                        },
+                    ],
+                })
+            ).toThrow(ApiSchemaValidationError);
+        });
+    });
+
+    describe("loadApiSchemaFromString() (round-trip)", () => {
+        it("strips bidi/zero-width chars from endpoint.description in YAML", () => {
+            // Inline YAML with a literal U+200B in the description field.
+            const yamlContent =
+                'apiVersion: "1.0"\n' +
+                "api:\n" +
+                "  name: test-api\n" +
+                "  title: Test API\n" +
+                "  description: A test API\n" +
+                '  version: "1.0"\n' +
+                "  baseUrl: https://api.example.com\n" +
+                "endpoints:\n" +
+                "  - id: get_data\n" +
+                "    path: /data\n" +
+                "    method: GET\n" +
+                "    title: Get Data\n" +
+                "    description: \"before​after\"\n";
+            const result = loadApiSchemaFromString(yamlContent);
+            expect(result.endpoints[0].description).not.toMatch(/[​]/);
+        });
+    });
+
+    describe("loader pre-Zod sanitisation (A8 belt-and-braces)", () => {
+        it("strips bidi/zero-width chars from raw values before Zod sees them", () => {
+            // Construct an invalid YAML payload (description too short → fails
+            // min(1)) where the *attacker-controlled* string has bidi chars.
+            // The pre-Zod walk in loadApiSchemaFromString sanitises raw
+            // description fields before ApiSchemaValidator runs, so the Zod
+            // error message should not echo the raw bidi bytes.
+            const yamlContent =
+                'apiVersion: "1.0"\n' +
+                "api:\n" +
+                "  name: test-api\n" +
+                "  title: \"hostile‮title\"\n" +
+                "  description: A test API\n" +
+                '  version: "1.0"\n' +
+                "  baseUrl: not-a-url\n" + // triggers a Zod validation error
+                "endpoints:\n" +
+                "  - id: get_data\n" +
+                "    path: /data\n" +
+                "    method: GET\n" +
+                "    title: Get Data\n" +
+                "    description: Fetch\n";
+            try {
+                loadApiSchemaFromString(yamlContent);
+                throw new Error("expected validation to fail");
+            } catch (error) {
+                expect(error).toBeInstanceOf(ApiSchemaValidationError);
+                const err = error as ApiSchemaValidationError;
+                // The error message may quote the api.title field somewhere;
+                // the key invariant is that the raw bidi byte never appears.
+                expect(err.message).not.toMatch(/[‮]/);
+            }
+        });
+    });
+
+    describe("integration #020: data: baseUrl rejection through every entry point", () => {
+        const yamlWithDataUrl =
+            'apiVersion: "1.0"\n' +
+            "api:\n" +
+            "  name: test-api\n" +
+            "  title: Test API\n" +
+            "  description: A test API\n" +
+            '  version: "1.0"\n' +
+            "  baseUrl: data:text/plain,evil\n" +
+            "endpoints:\n" +
+            "  - id: get_data\n" +
+            "    path: /data\n" +
+            "    method: GET\n" +
+            "    title: Get Data\n" +
+            "    description: Fetch\n";
+        const rawWithDataUrl = {
+            ...baseSchema,
+            api: { ...baseSchema.api, baseUrl: "data:text/plain,evil" },
+        };
+
+        it("rejects via loadApiSchemaFromString", () => {
+            expect(() => loadApiSchemaFromString(yamlWithDataUrl)).toThrow(
+                ApiSchemaValidationError
+            );
+        });
+
+        it("rejects via validateApiSchema", () => {
+            expect(() => validateApiSchema(rawWithDataUrl)).toThrow(
+                ApiSchemaValidationError
+            );
+        });
+
+        it("rejects via ApiSchemaValidator.parse", () => {
+            expect(() => ApiSchemaValidator.parse(rawWithDataUrl)).toThrow();
+        });
+    });
+
+    describe("generator boundary: bypassing the validator skips sanitisation", () => {
+        it("generateInputSchema preserves param.description verbatim when passed an unsanitised endpoint", () => {
+            // Documents in code: validator sanitises; generator trusts. A
+            // consumer who manually constructs an EndpointDefinition skipping
+            // ApiSchemaValidator gets the description through verbatim.
+            const endpoint = {
+                id: "test",
+                path: "/test",
+                method: "GET" as const,
+                title: "Test",
+                description: "Test endpoint",
+                parameters: [
+                    {
+                        name: "q",
+                        in: "query" as const,
+                        type: "string" as const,
+                        description: "raw​desc",
+                    },
+                ],
+            };
+            const schema = generateInputSchema(endpoint);
+            // Read the description through the public Zod-to-JSON-Schema
+            // projection — this is what an MCP client actually sees, and it
+            // travels through the optional() wrapper without hidden state.
+            const json = z.toJSONSchema(schema) as {
+                properties?: Record<string, { description?: string }>;
+            };
+            expect(json.properties?.q?.description).toBe("raw​desc");
+        });
     });
 });

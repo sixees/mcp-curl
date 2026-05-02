@@ -4,6 +4,7 @@
 import { readFile } from "fs/promises";
 import yaml from "js-yaml";
 import { validateApiSchema } from "./validator.js";
+import { sanitizeDescription } from "../utils/index.js";
 import type { ApiSchema } from "./types.js";
 
 /**
@@ -49,6 +50,72 @@ function parseYaml(content: string): unknown {
 }
 
 /**
+ * Pre-Zod sanitisation of every user-facing description string in a parsed
+ * YAML object (PR-6a / B9 — A8 belt-and-braces).
+ *
+ * `ApiSchemaValidator`'s `.transform()` step is the authoritative sanitiser,
+ * but a malformed payload may produce Zod issue messages that *quote* the raw
+ * (attacker-controlled) values *before* `.transform()` runs. Pre-walking the
+ * raw object here keeps those error messages clean while leaving the schema's
+ * sanitiser as the load-bearing invariant.
+ *
+ * Tolerant by design: any unexpected shape (non-object, missing keys, wrong
+ * types) is left untouched — Zod will reject it with a normal validation error
+ * downstream.
+ */
+function sanitizeRawYamlDescriptions(parsed: unknown): unknown {
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return parsed;
+    }
+
+    const root = parsed as Record<string, unknown>;
+    const api = root.api;
+    if (api && typeof api === "object" && !Array.isArray(api)) {
+        const apiObj = api as Record<string, unknown>;
+        if (typeof apiObj.title === "string") apiObj.title = sanitizeDescription(apiObj.title);
+        if (typeof apiObj.description === "string") apiObj.description = sanitizeDescription(apiObj.description);
+    }
+
+    const endpoints = root.endpoints;
+    if (Array.isArray(endpoints)) {
+        for (const endpoint of endpoints) {
+            if (!endpoint || typeof endpoint !== "object") continue;
+            const ep = endpoint as Record<string, unknown>;
+
+            if (typeof ep.title === "string") ep.title = sanitizeDescription(ep.title);
+            if (typeof ep.description === "string") ep.description = sanitizeDescription(ep.description);
+
+            if (Array.isArray(ep.parameters)) {
+                for (const parameter of ep.parameters) {
+                    if (!parameter || typeof parameter !== "object") continue;
+                    const param = parameter as Record<string, unknown>;
+                    if (typeof param.description === "string") {
+                        param.description = sanitizeDescription(param.description);
+                    }
+                }
+            }
+
+            const response = ep.response;
+            if (response && typeof response === "object" && !Array.isArray(response)) {
+                const presets = (response as Record<string, unknown>).filterPresets;
+                if (Array.isArray(presets)) {
+                    for (const preset of presets) {
+                        if (!preset || typeof preset !== "object") continue;
+                        const p = preset as Record<string, unknown>;
+                        if (typeof p.name === "string") p.name = sanitizeDescription(p.name);
+                        if (typeof p.description === "string") {
+                            p.description = sanitizeDescription(p.description);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return parsed;
+}
+
+/**
  * Load and validate an API schema from a YAML file.
  *
  * SECURITY: This function reads from the filesystem. Ensure definitionPath
@@ -80,7 +147,7 @@ export async function loadApiSchema(definitionPath: string): Promise<ApiSchema> 
         );
     }
 
-    return validateApiSchema(parsed);
+    return validateApiSchema(sanitizeRawYamlDescriptions(parsed));
 }
 
 /**
@@ -99,5 +166,5 @@ export function loadApiSchemaFromString(yamlContent: string): ApiSchema {
         throw new ApiSchemaLoadError("API schema content is empty");
     }
 
-    return validateApiSchema(parsed);
+    return validateApiSchema(sanitizeRawYamlDescriptions(parsed));
 }

@@ -881,14 +881,14 @@ If sanitisation lives only inside `validateApiSchema()`, the `ApiSchemaValidator
 
 **Acceptance criteria.**
 
-- [ ] `ApiSchemaValidator` has a `.transform()` step that runs `sanitizeApiSchemaInPlace()` on the parsed object.
-- [ ] All public entry points that produce a parsed `ApiSchema` (`loadApiSchema`, `loadApiSchemaFromString`, `validateApiSchema`, **and the re-exported `ApiSchemaValidator.parse()` path**) yield pre-sanitised schemas.
-- [ ] `loadApiSchema` / `loadApiSchemaFromString` pre-sanitise raw YAML strings before invoking `ApiSchemaValidator.parse()` — Zod error messages on malformed YAML cannot echo attacker-controlled description content.
-- [ ] **YAML pipeline integration test (#020):** a YAML schema with `baseUrl: data:...` is rejected through `loadApiSchemaFromString`, `validateApiSchema(rawObj)`, and `ApiSchemaValidator.parse(rawObj)` (defence-in-depth gate against the URL invariant being silently broken when the `.transform()` mutates the schema).
-- [ ] `generator.ts` has no remaining `sanitizeDescription()` calls.
-- [ ] A top-of-file comment in `generator.ts` documents the contract.
-- [ ] Duplicate filter-preset detection moved into the `.transform()` step.
-- [ ] Existing `loader.test.ts`, `validator.test.ts`, `generator.test.ts` all pass.
+- [x] `ApiSchemaValidator` has a `.transform()` step that runs `sanitizeApiSchemaInPlace()` on the parsed object.
+- [x] All public entry points that produce a parsed `ApiSchema` (`loadApiSchema`, `loadApiSchemaFromString`, `validateApiSchema`, **and the re-exported `ApiSchemaValidator.parse()` path**) yield pre-sanitised schemas.
+- [x] `loadApiSchema` / `loadApiSchemaFromString` pre-sanitise raw YAML strings before invoking `ApiSchemaValidator.parse()` — Zod error messages on malformed YAML cannot echo attacker-controlled description content.
+- [x] **YAML pipeline integration test (#020):** a YAML schema with `baseUrl: data:...` is rejected through `loadApiSchemaFromString`, `validateApiSchema(rawObj)`, and `ApiSchemaValidator.parse(rawObj)` (defence-in-depth gate against the URL invariant being silently broken when the `.transform()` mutates the schema).
+- [x] `generator.ts` has no remaining redundant `sanitizeDescription()` calls. *(One non-redundant call survives on `preset.jqFilter` — the validator deliberately leaves jqFilter raw so the engine receives the author's filter unchanged; sanitisation at the display-time interpolation site is documented in the top-of-file comment block.)*
+- [x] A top-of-file comment in `generator.ts` documents the contract.
+- [x] Duplicate filter-preset detection moved into the `.transform()` step (combined with sanitisation in a single `transform((s, ctx) => …)` so the duplicate check sees post-sanitise names).
+- [x] Existing `schema.test.ts` (loader/validator/generator merged) plus 14 new PR-6a tests all pass — full suite 676/676.
 
 **Research Insights (added 2026-05-01).**
 
