@@ -242,6 +242,45 @@ describe("createWrapper — error handling", () => {
     });
 });
 
+describe("createWrapper — frozen / non-extensible inputs (fail-open)", () => {
+    it("does not throw when wrapping a frozen isError result", () => {
+        // tag() uses Object.defineProperty which throws on frozen objects.
+        // The wrap must catch internally and pass the result through —
+        // defence-in-depth must never propagate exceptions to the handler.
+        const wrap = createWrapper({});
+        const frozen = Object.freeze({
+            content: [{ type: "text", text: "boom" }],
+            isError: true,
+        });
+        expect(() => wrap(frozen, "host.com")).not.toThrow();
+        // The result is still returned; idempotence tag was silently dropped
+        // (frozen targets refuse defineProperty).
+        const out = wrap(frozen, "host.com");
+        expect(out).toBe(frozen);
+    });
+
+    it("does not throw when wrapping a frozen non-array-content result", () => {
+        const wrap = createWrapper({});
+        const frozen = Object.freeze({ content: "not an array" });
+        expect(() => wrap(frozen, "host.com")).not.toThrow();
+    });
+
+    it("does not throw when sanitiser fails on a frozen result (catch-path safety)", () => {
+        const wrap = createWrapper({ enableSpotlighting: true });
+        // Make sanitizeAndDetect throw to force the catch path.
+        const spy = vi.spyOn(detectionLogger, "sanitizeAndDetect")
+            .mockImplementation(() => {
+                throw new Error("simulated");
+            });
+        const frozen = Object.freeze({
+            content: [{ type: "text", text: "x" }],
+            isError: false,
+        });
+        expect(() => wrap(frozen, "host.com")).not.toThrow();
+        spy.mockRestore();
+    });
+});
+
 describe("createWrapper — content-shape edge cases", () => {
     it("non-array content is passed through tagged (no throw)", () => {
         const wrap = createWrapper({ enableSpotlighting: true });

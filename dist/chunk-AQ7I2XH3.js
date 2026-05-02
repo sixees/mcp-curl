@@ -1096,6 +1096,22 @@ function logWrapError(label, error) {
   const errorName = error instanceof Error && typeof error.name === "string" && error.name.length > 0 ? error.name : "UnknownError";
   console.error(`[wrap-error] [${safeLabel}] ${errorName}`);
 }
+function cleanupWrapErrorMap() {
+  const now = Date.now();
+  for (const [key, timestamp] of lastErrorMap) {
+    if (now - timestamp >= THROTTLE_WINDOW_MS2) {
+      lastErrorMap.delete(key);
+    }
+  }
+}
+function startWrapErrorCleanup() {
+  const interval = setInterval(cleanupWrapErrorMap, THROTTLE_WINDOW_MS2);
+  interval.unref();
+  return interval;
+}
+function stopWrapErrorCleanup(interval) {
+  clearInterval(interval);
+}
 
 // src/lib/execution/command-executor.ts
 import { spawn } from "child_process";
@@ -1834,19 +1850,22 @@ async function processResponse(response, options) {
 
 // src/lib/response/post-processor.ts
 import { randomUUID as randomUUID2 } from "crypto";
-var WRAPPED = /* @__PURE__ */ Symbol.for("mcp-curl.wrapped");
+var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
 function isWrappedResult(result) {
   if (result === null || typeof result !== "object") return false;
   return result[WRAPPED] === true;
 }
 function tag(result) {
   if (result[WRAPPED] === true) return result;
-  Object.defineProperty(result, WRAPPED, {
-    value: true,
-    enumerable: false,
-    configurable: true,
-    writable: false
-  });
+  try {
+    Object.defineProperty(result, WRAPPED, {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: false
+    });
+  } catch {
+  }
   return result;
 }
 function processTextPart(part, hostname, requestId) {
@@ -2068,6 +2087,8 @@ export {
   sanitizeAndDetect,
   startInjectionCleanup,
   stopInjectionCleanup,
+  startWrapErrorCleanup,
+  stopWrapErrorCleanup,
   resolveOutputDir,
   validateOutputDir,
   CurlExecuteSchema,

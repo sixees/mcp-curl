@@ -50,7 +50,19 @@ import { sanitizeAndDetect } from "../security/detection-logger.js";
 import { logWrapError } from "../security/wrap-error-logger.js";
 import { applySpotlighting } from "../utils/sanitize.js";
 
-const WRAPPED = Symbol.for("mcp-curl.wrapped");
+// Module-private symbol — deliberately NOT `Symbol.for()`. The global symbol
+// registry is reachable from any code path that runs in this realm, including
+// custom-tool handlers registered by library consumers. With `Symbol.for()` a
+// hostile (or careless) custom tool could synthesise the same key and tag its
+// own returned result, causing the registration wrap to short-circuit and
+// reach the LLM with no sanitise / no detect / no spotlight. Using a
+// module-private symbol means the only way to set the tag is to call `tag()`
+// inside this module, which only happens after the wrap pipeline has run (or
+// after a fail-open catch). The trade-off — that the tag does not survive
+// across module duplication (HMR, dual ESM/CJS resolution) — is acceptable
+// because the tag is a per-process performance optimisation; if it's lost,
+// the wrap re-runs and is semantically idempotent.
+const WRAPPED = Symbol("mcp-curl.wrapped");
 
 /**
  * Server-scope config bound once at wrapper creation.
@@ -65,19 +77,30 @@ export interface WrapperConfig {
 
 /**
  * Minimal shape compatible with both the internal `ToolResult` (single-element
- * text tuple) and the SDK's `CallToolResult` (multi-part array). Typed
- * permissively so callers can pass either without casts; the wrap returns the
- * same `T` it received.
+ * text tuple) and the SDK's `CallToolResult` (multi-part array).
+ *
+ * `text?: string` (not `unknown`) — the runtime guard inside `processTextPart`
+ * already enforces the string check, so the type can be tight; downstream
+ * consumers no longer need a redundant `typeof === "string"` check.
  */
 export interface WrappableContentPart {
     type: string;
-    text?: unknown;
+    text?: string;
     [key: string]: unknown;
 }
 
+/**
+ * `_meta` and `structuredContent` are explicitly enumerated to lock the
+ * contract that the wrap preserves these SDK 1.x fields by reference. Without
+ * them the index signature alone would also carry them through, but a future
+ * refactor that switches from spread to explicit field copying would silently
+ * drop them. Naming them protects the SDK shape.
+ */
 export interface WrappableResult {
-    content?: WrappableContentPart[] | unknown;
+    content?: WrappableContentPart[];
     isError?: boolean;
+    _meta?: { [k: string]: unknown };
+    structuredContent?: { [k: string]: unknown };
     [key: string]: unknown;
 }
 
@@ -95,15 +118,28 @@ export function isWrappedResult(result: unknown): boolean {
 /**
  * Mark a result as wrapped. Non-enumerable so spreads, JSON serialisation, and
  * shallow inspection do not see the tag.
+ *
+ * `Object.defineProperty` throws on non-extensible results (frozen, sealed,
+ * or Proxy-blocked). Defence-in-depth must never propagate exceptions to the
+ * handler boundary, so we swallow the defineProperty failure here. The
+ * trade-off: a downstream wrap on the same frozen result will re-run the
+ * pipeline. That is semantically harmless because `sanitizeResponse` is
+ * idempotent on already-sanitised text and `applySpotlighting` short-circuits
+ * on already-wrapped envelopes — the worst case is one extra O(n) pass over
+ * the body, never a correctness issue.
  */
 function tag<T extends object>(result: T): T {
     if ((result as { [WRAPPED]?: unknown })[WRAPPED] === true) return result;
-    Object.defineProperty(result, WRAPPED, {
-        value: true,
-        enumerable: false,
-        configurable: true,
-        writable: false,
-    });
+    try {
+        Object.defineProperty(result, WRAPPED, {
+            value: true,
+            enumerable: false,
+            configurable: true,
+            writable: false,
+        });
+    } catch {
+        // Non-extensible target — see doc comment above. Pass through.
+    }
     return result;
 }
 
@@ -163,9 +199,14 @@ export function createWrapper(
             // enabled to avoid the entropy draw on the no-op path.
             const requestId = config.enableSpotlighting ? randomUUID() : undefined;
 
-            const newContent = (result.content as WrappableContentPart[]).map((part) =>
+            const newContent = result.content.map((part) =>
                 processTextPart(part, hostname, requestId)
             );
+            // Spread + content replacement preserves every other field
+            // (`_meta`, `structuredContent`, etc.) by reference. The cast is
+            // load-bearing here because TypeScript widens `T & { content: … }`
+            // back to `WrappableResult` through the index signature; the spread
+            // shape matches `T` structurally at runtime.
             return tag({ ...result, content: newContent } as T);
         } catch (err) {
             // Defence-in-depth must never propagate exceptions to the handler

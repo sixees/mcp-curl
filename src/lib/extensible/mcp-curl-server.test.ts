@@ -952,29 +952,36 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         expect(result.content[0].text).toMatch(/---EXTERNAL-CONTENT-END-[0-9a-f-]{36}---$/);
     });
 
-    it("does not double-wrap a result the user pre-tagged with the WRAPPED symbol (idempotence)", async () => {
-        const WRAPPED = Symbol.for("mcp-curl.wrapped");
+    it("a forged Symbol.for(\"mcp-curl.wrapped\") tag does NOT bypass the wrap (security closure)", async () => {
+        // Defence-in-depth: the WRAPPED symbol is module-private, so any
+        // attempt by a custom-tool author to pre-tag their result with
+        // `Symbol.for(\"mcp-curl.wrapped\")` cannot match the wrap's own
+        // symbol and therefore cannot short-circuit the sanitise/detect/
+        // spotlight pipeline. This test asserts the security closure: even
+        // when the handler returns a result tagged with the global-registry
+        // symbol, the wrap still fires and the bidi chars are stripped.
+        const FORGED = Symbol.for("mcp-curl.wrapped");
         const wrapped = await startWithCustomTool(
-            "pre_tagged",
+            "forged_tag",
             async () => {
                 const result = {
                     content: [{ type: "text", text: "raw‮bytes​" }],
                     isError: false,
                 };
-                Object.defineProperty(result, WRAPPED, {
+                Object.defineProperty(result, FORGED, {
                     value: true,
                     enumerable: false,
                 });
                 return result;
             },
-            { enableSpotlighting: true }
+            { enableSpotlighting: false }
         );
 
         const result = (await wrapped({}, { sessionId: undefined })) as {
             content: { text: string }[];
         };
-        // Pre-tagged result short-circuits — bidi chars survive unchanged.
-        expect(result.content[0].text).toBe("raw‮bytes​");
+        // Forged tag is ignored — wrap runs, bidi/zero-width chars are stripped.
+        expect(result.content[0].text).toBe("rawbytes");
     });
 
     it("error results pass through unchanged (no spotlight, no double-tag)", async () => {

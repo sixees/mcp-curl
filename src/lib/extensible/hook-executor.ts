@@ -13,13 +13,32 @@ import type { WrappableResult } from "../response/post-processor.js";
 
 /**
  * Per-call wrap closure injected by the caller (built in `tool-wrapper.ts`
- * via `createWrapper(config)`). Routing the short-circuit return value through
- * this closure closes the bypass flagged by S2: a `beforeRequest` hook that
- * returns a `CallToolResult` skipped wrap entirely before PR-6b. The wrap is
- * idempotent (Symbol-tag short-circuit), so callers that re-wrap downstream
- * see no double-processing.
+ * via `createWrapper(config)`). The hook-executor calls this once at the
+ * pipeline exit (after `afterResponse` hooks run, or when a hook
+ * short-circuits) so that:
+ *
+ *   1. The S2 bypass is closed — a `beforeRequest` hook that returns a
+ *      `CallToolResult` no longer skips wrap.
+ *   2. The hostname passed to wrap is derived from the **final** `ctx.params`
+ *      after every `beforeRequest` hook has had its turn. A hook that
+ *      rewrites `params.url` (e.g. routing through a proxy) was previously
+ *      ignored — the wrap saw the original URL and the per-host throttle
+ *      mis-attributed the event.
+ *
+ * The wrap is idempotent (Symbol-tag short-circuit), so the caller may still
+ * pass results through additional wrap layers without double-processing.
  */
 type WrapFn = <T extends WrappableResult>(result: T, hostname: string) => T;
+
+/**
+ * Per-call hostname extractor — receives the final (post-hook) params and
+ * returns the label to use for the wrap's per-call throttle. For
+ * curl_execute the extractor reads `params.url`; for jq_query (no URL) the
+ * extractor is a constant returning the static label. Centralising the
+ * extraction here means the hook-executor never has to know the tool's
+ * shape and the outer caller never has to recompute hostname after hooks.
+ */
+type HostnameExtractor<T> = (params: T) => string;
 
 /**
  * Execute a tool with before/after/error hooks.
@@ -55,7 +74,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
     sessionId: string | undefined,
     executor: (p: T, extra: { sessionId?: string; allowLocalhost?: boolean }) => Promise<ToolResult>,
     wrap: WrapFn,
-    hostname: string
+    hostnameOf: HostnameExtractor<T>
 ): Promise<ToolResult> {
     // Create mutable context for hooks
     const ctx: HookContext<T> = {
@@ -76,12 +95,14 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
                 // bypasses the cURL pipeline (and therefore `processor.ts`'s
                 // sanitise+detect pass). Route the synthesised result through
                 // the same wrap the executor's return value would hit, so the
-                // LLM never receives unsanitised hook output.
+                // LLM never receives unsanitised hook output. Hostname comes
+                // from the post-mutation params so a proxy-rewriting hook is
+                // attributed to the rewritten host, not the original.
                 const shortCircuitResult: ToolResult = {
                     content: [{ type: "text", text: result.response }],
                     isError: result.isError,
                 };
-                return wrap(shortCircuitResult, hostname) as ToolResult;
+                return wrap(shortCircuitResult, hostnameOf(ctx.params));
             }
 
             // Merge params if provided
@@ -106,7 +127,12 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
             });
         }
 
-        return response;
+        // PR-6b: wrap fires at the pipeline exit so the hostname reflects
+        // the final (post-hook) params. The wrap is idempotent on
+        // already-wrapped results (e.g. when the inner curl pipeline already
+        // sanitised), so the caller may still pass the result through outer
+        // wraps without double-processing.
+        return wrap(response, hostnameOf(ctx.params));
     } catch (error) {
         // Run onError hooks sequentially
         // Preserve non-Error thrown values by wrapping them

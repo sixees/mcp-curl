@@ -29,11 +29,13 @@ import {
   sanitizeDescription,
   startInjectionCleanup,
   startRateLimitCleanup,
+  startWrapErrorCleanup,
   stopInjectionCleanup,
   stopRateLimitCleanup,
+  stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-NCR5EM33.js";
+} from "./chunk-AQ7I2XH3.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -722,7 +724,7 @@ function registerAllCapabilities(server) {
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 // src/lib/extensible/hook-executor.ts
-async function executeWithHooks(tool, params, config, hooks, sessionId, executor, wrap, hostname) {
+async function executeWithHooks(tool, params, config, hooks, sessionId, executor, wrap, hostnameOf) {
   const ctx = {
     tool,
     params: { ...params },
@@ -737,7 +739,7 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
           content: [{ type: "text", text: result.response }],
           isError: result.isError
         };
-        return wrap(shortCircuitResult, hostname);
+        return wrap(shortCircuitResult, hostnameOf(ctx.params));
       }
       if ("params" in result && result.params) {
         ctx.params = { ...ctx.params, ...result.params };
@@ -754,7 +756,7 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
         isError: !!response.isError
       });
     }
-    return response;
+    return wrap(response, hostnameOf(ctx.params));
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     for (const hook of hooks.onError) {
@@ -813,7 +815,7 @@ function registerCurlToolWithHooks(server, options) {
       };
     }
     const transformedParams = applyConfigTransformsCurl(params, config);
-    const result = await executeWithHooks(
+    return await executeWithHooks(
       "curl_execute",
       transformedParams,
       config,
@@ -821,9 +823,8 @@ function registerCurlToolWithHooks(server, options) {
       extra.sessionId,
       executor,
       wrap,
-      safeHostname(transformedParams.url)
+      (p) => safeHostname(p.url)
     );
-    return wrap(result, safeHostname(transformedParams.url));
   };
   server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, handler);
 }
@@ -838,7 +839,7 @@ function registerJqToolWithHooks(server, options) {
       };
     }
     const transformedParams = applyConfigTransformsJq(params, config);
-    const result = await executeWithHooks(
+    return await executeWithHooks(
       "jq_query",
       transformedParams,
       config,
@@ -846,9 +847,8 @@ function registerJqToolWithHooks(server, options) {
       extra.sessionId,
       executor,
       wrap,
-      JQ_QUERY_HOSTNAME_LABEL
+      () => JQ_QUERY_HOSTNAME_LABEL
     );
-    return wrap(result, JQ_QUERY_HOSTNAME_LABEL);
   };
   server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
@@ -983,6 +983,7 @@ var McpCurlServer = class {
   _sessionManager = null;
   _rateLimitInterval = null;
   _injectionCleanupInterval = null;
+  _wrapErrorCleanupInterval = null;
   _utilities = null;
   /**
    * Configure server options.
@@ -1254,6 +1255,7 @@ var McpCurlServer = class {
       await cleanupOrphanedTempDirs();
       this._rateLimitInterval = startRateLimitCleanup();
       this._injectionCleanupInterval = startInjectionCleanup();
+      this._wrapErrorCleanupInterval = startWrapErrorCleanup();
       this._server = this.createConfiguredServer();
       if (transport === "http") {
         await this.startHttp(httpAuthToken);
@@ -1286,6 +1288,10 @@ var McpCurlServer = class {
       if (this._injectionCleanupInterval) {
         stopInjectionCleanup(this._injectionCleanupInterval);
         this._injectionCleanupInterval = null;
+      }
+      if (this._wrapErrorCleanupInterval) {
+        stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
+        this._wrapErrorCleanupInterval = null;
       }
       this._server = null;
       this._started = false;
@@ -1354,6 +1360,9 @@ var McpCurlServer = class {
     if (this._injectionCleanupInterval) {
       stopInjectionCleanup(this._injectionCleanupInterval);
     }
+    if (this._wrapErrorCleanupInterval) {
+      stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
+    }
     try {
       await cleanupTempDir();
     } catch (error) {
@@ -1364,6 +1373,7 @@ var McpCurlServer = class {
       this._utilities = null;
       this._rateLimitInterval = null;
       this._injectionCleanupInterval = null;
+      this._wrapErrorCleanupInterval = null;
       this._sessionManager = null;
     }
   }
@@ -1402,10 +1412,10 @@ var McpCurlServer = class {
     });
     const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
     for (const { name, meta, handler } of this._customTools) {
-      const wrappedHandler = (async (...args) => {
-        const result = await handler(...args);
+      const wrappedHandler = async (params, extra) => {
+        const result = await handler(params, extra);
         return wrap(result, CUSTOM_TOOL_HOSTNAME_LABEL);
-      });
+      };
       server.registerTool(name, meta, wrappedHandler);
     }
   }

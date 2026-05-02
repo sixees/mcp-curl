@@ -143,3 +143,51 @@ feat(response): defence-in-depth wrap on YAML/custom-tool/hook output (PR-6b / B
 | File (removed) | Title | Summary | Resolved by | Date |
 |----------------|-------|---------|-------------|------|
 | _none — input was a plan section, not a `docs/todos/` file_ | — | — | — | — |
+
+---
+
+## Review Comments Addressed — 2026-05-02 (PR #29 round 1)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `Symbol.for("mcp-curl.wrapped")` is publicly forgeable — any custom-tool author can pre-tag a result and bypass the wrap | self-review (security-sentinel) | **P1 — Fix needed** | Switched to module-private `Symbol("mcp-curl.wrapped")`. Test in `mcp-curl-server.test.ts` rewritten as a positive security closure: a forged `Symbol.for(...)` tag is now ignored and the wrap fires normally. |
+| Catch-path `tag(result)` can re-throw on frozen results, breaking fail-open | @chatgpt-codex-connector + @coderabbitai (duplicate) | **P1 — Fix needed** | Moved the try/catch *into* `tag()` itself so every call site is safe. Added 3 regression tests in `post-processor.test.ts` covering frozen `isError`, frozen non-array-content, and sanitiser-throws-on-frozen scenarios. |
+| `enableSpotlighting` set before `...options.generatorConfig` spread — caller can override server invariant | @coderabbitai | **P2 — Fix needed** | Moved `enableSpotlighting` AFTER the spread in `api-server.ts`; now server-level is authoritative. |
+| `(...args: unknown[]) => ... as typeof handler` cast cascade in `registerToolsOnServer` | @gemini-code-assist | **P2 — Fix needed** | Replaced with `const wrappedHandler: typeof handler = async (params, extra) => {...}`. Removed unused `WrappableResult` import. |
+| Hostname computed before `executeWithHooks` — `beforeRequest` hooks rewriting `params.url` were ignored | @chatgpt-codex-connector | **P2 — Fix needed** | Refactored `executeWithHooks` to take a `hostnameOf: (params) => string` extractor and call wrap at the pipeline exit using `hostnameOf(ctx.params)`. The wrap now sees the post-hook URL for both the short-circuit and the post-execution paths. Removed redundant outer wrap call from `tool-wrapper.ts` (wrap now fires once inside `executeWithHooks`). |
+| `startWrapErrorCleanup` exported but not wired into `McpCurlServer` lifecycle | @coderabbitai | **P2 — Fix needed** | Added `_wrapErrorCleanupInterval` field, started in `start()`, stopped in both the rollback path and `shutdown()`. Mirrors the existing `injectionCleanupInterval` pattern. Removes the known-issue from the original handoff. |
+| Suggestion to `Object.freeze(tag({...}))` for Readonly contract | @gemini-code-assist | **False positive (partial)** | The literal suggestion would break the wrap (`tag()` uses `Object.defineProperty`, which throws on frozen targets). Underlying concern (cast cascade) addressed by tightening `WrappableResult` instead: `text?: string` (was `unknown`), `content?: WrappableContentPart[]` (was `\| unknown`), and explicit `_meta` / `structuredContent` fields to lock the SDK 1.x preservation contract. With these tighter types the `as ToolResult` casts in `hook-executor.ts` are gone (verified by build). |
+| JSDoc example `Ig​nore previous instructions` is misleading — that case is no longer detected | @coderabbitai | **P3 — Fix needed** | Rewrote the `sanitizeAndDetect` JSDoc: removed the misleading example, added explicit acknowledgement of the lost-signal class, and pointed to UTS #39 skeleton folding as the deferred future work that closes it. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| `Symbol.for("mcp-curl.wrapped")` — global registry for cross-realm idempotence | Module-private `Symbol("mcp-curl.wrapped")` | The cross-realm property was a security liability, not a feature: any code in this realm could synthesise the same key and bypass the wrap. Module-private symbol means `tag()` is the only way the WRAPPED bit is ever set. The trade-off (no idempotence across module duplication) is acceptable because the wrap is semantically idempotent on already-sanitised text — a re-run is one extra O(n) pass at worst, never a correctness issue. | self-review (security-sentinel) |
+| Catch-path emits `logWrapError` then calls `tag(result)` directly | `tag()` itself swallows `Object.defineProperty` failures internally | A single guard inside `tag()` covers every call site (success path, isError pass-through, non-array-content pass-through, catch path) without per-site try/catch noise. | @chatgpt-codex-connector + @coderabbitai |
+| `executeWithHooks` takes a static `hostname: string` | `executeWithHooks` takes a `hostnameOf: (params) => string` extractor and computes hostname at the wrap boundary using `ctx.params` | Hostname must reflect the **final** params after `beforeRequest` hooks have had their turn — a hook that rewrites `params.url` (proxy routing, retry-with-backoff to a different host) was previously misattributed. The extractor pattern centralises hostname logic in the executor and lets each tool define its own (`safeHostname(p.url)` for curl_execute, constant for jq_query). | @chatgpt-codex-connector |
+| `WrappableResult.content?: WrappableContentPart[] \| unknown`; `text?: unknown` | `content?: WrappableContentPart[]`; `text?: string`; explicit `_meta?` / `structuredContent?` | The `\| unknown` and `unknown` text were over-defensive — the runtime guards already enforced the narrower shapes. Tightening removes the `as ToolResult` casts entirely (verified by build) and locks the SDK 1.x `_meta`/`structuredContent` preservation in the type system. | @gemini-code-assist (partial) + self-review (typescript-reviewer) |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was inline PR threads, not `docs/todos/` files_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — all 8 PR threads addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/response/post-processor.ts` (Symbol private, tag try/catch internal, WrappableResult tightened)
+- `src/lib/response/post-processor.test.ts` (+3 frozen-input fail-open regression tests; total 24)
+- `src/lib/security/detection-logger.ts` (JSDoc rewrite)
+- `src/lib/extensible/hook-executor.ts` (HostnameExtractor signature; wrap at pipeline exit; cast removal)
+- `src/lib/extensible/tool-wrapper.ts` (drops outer wrap; uses hostnameOf extractor)
+- `src/lib/extensible/mcp-curl-server.ts` (typed wrappedHandler; wrap-error cleanup lifecycle wiring)
+- `src/lib/extensible/mcp-curl-server.test.ts` (security-closure rewrite of forged-tag test)
+- `src/lib/api-server.ts` (`enableSpotlighting` after generatorConfig spread)
+
+### Tests / build
+- `npm test`: 738/738 passing (7 skipped) — was 735 pre-fix, +3 frozen-result fail-open regression tests
+- `npm run build`: clean — three `as ToolResult` casts in `hook-executor.ts` removed without TypeScript errors

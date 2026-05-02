@@ -116,7 +116,11 @@ export function registerCurlToolWithHooks(
             };
         }
         const transformedParams = applyConfigTransformsCurl(params, config);
-        const result = await executeWithHooks(
+        // hostnameOf reads the final params at the wrap boundary inside the
+        // hook-executor — `safeHostname` runs once with the post-hook URL,
+        // never the stale pre-hook URL. The wrap itself is idempotent so a
+        // downstream caller can still re-wrap without double-processing.
+        return await executeWithHooks(
             "curl_execute",
             transformedParams,
             config,
@@ -124,9 +128,8 @@ export function registerCurlToolWithHooks(
             extra.sessionId,
             executor,
             wrap,
-            safeHostname(transformedParams.url)
+            (p) => safeHostname(p.url)
         );
-        return wrap(result, safeHostname(transformedParams.url)) as ToolResult;
     };
 
     // Register using the canonical meta object to preserve type inference
@@ -154,7 +157,7 @@ export function registerJqToolWithHooks(
             };
         }
         const transformedParams = applyConfigTransformsJq(params, config);
-        const result = await executeWithHooks(
+        return await executeWithHooks(
             "jq_query",
             transformedParams,
             config,
@@ -162,9 +165,8 @@ export function registerJqToolWithHooks(
             extra.sessionId,
             executor,
             wrap,
-            JQ_QUERY_HOSTNAME_LABEL
+            () => JQ_QUERY_HOSTNAME_LABEL
         );
-        return wrap(result, JQ_QUERY_HOSTNAME_LABEL) as ToolResult;
     };
 
     // Register using the canonical meta object to preserve type inference

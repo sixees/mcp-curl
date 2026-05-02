@@ -203,6 +203,7 @@ declare class McpCurlServer {
     private _sessionManager;
     private _rateLimitInterval;
     private _injectionCleanupInterval;
+    private _wrapErrorCleanupInterval;
     private _utilities;
     /**
      * Configure server options.

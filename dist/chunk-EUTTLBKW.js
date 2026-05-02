@@ -1,13 +1,13 @@
 import {
   McpCurlServer
-} from "./chunk-GTMWAC4C.js";
+} from "./chunk-F2IMNZ4A.js";
 import {
   generateToolDefinitions,
   getMethodAnnotations,
   loadApiSchema,
   loadApiSchemaFromString,
   validateApiSchema
-} from "./chunk-P4IXHCDK.js";
+} from "./chunk-PCWGCASC.js";
 
 // src/lib/api-server.ts
 function configureServerFromSchema(server, schema, options) {
@@ -38,11 +38,12 @@ function configureServerFromSchema(server, schema, options) {
     allowLocalhost: mergedConfig.allowLocalhost,
     defaultUserAgent: mergedConfig.defaultUserAgent,
     defaultReferer: mergedConfig.defaultReferer,
-    // PR-6b: propagate the spotlighting flag so YAML-driven tools wrap
-    // their text responses with the same defence-in-depth pipeline
-    // applied to curl_execute / jq_query.
-    enableSpotlighting: mergedConfig.enableSpotlighting,
-    ...options.generatorConfig
+    ...options.generatorConfig,
+    // PR-6b: server-level enableSpotlighting is authoritative across all
+    // tool paths and must NOT be overridable via options.generatorConfig.
+    // Set after the spread so the asymmetry it closes (built-in tools
+    // spotlight; YAML tools opt out via generatorConfig) cannot reappear.
+    enableSpotlighting: mergedConfig.enableSpotlighting
   };
   const toolDefs = generateToolDefinitions(schema, generatorConfig);
   for (const toolDef of toolDefs) {
