@@ -1198,6 +1198,17 @@ var McpCurlServer = class {
     return this._server;
   }
   /**
+   * Inspect the registered custom tools (read-only). Returns the tool name
+   * and metadata for each registered tool, omitting handler closures so
+   * callers cannot accidentally invoke them.
+   *
+   * Useful for tests that need to assert what was registered (and what its
+   * advertised title/description look like) without starting the server.
+   */
+  getRegisteredCustomTools() {
+    return this._customTools.map(({ name, meta }) => ({ name, meta }));
+  }
+  /**
    * Check if the server has been started.
    *
    * @returns true if started

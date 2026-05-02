@@ -1,7 +1,7 @@
 import {
   createApiServer,
   createApiServerSync
-} from "../chunk-4LGRKPDL.js";
+} from "../chunk-5ZEF6XJE.js";
 import {
   McpCurlServer,
   createInstanceUtilities,
@@ -9,8 +9,8 @@ import {
   executeJqQuery,
   registerAllPrompts,
   registerAllResources
-} from "../chunk-CTY74E4W.js";
-import "../chunk-FH66YYHV.js";
+} from "../chunk-N72GD4O4.js";
+import "../chunk-CTJNLVS7.js";
 import {
   CurlExecuteSchema,
   JqQuerySchema,

@@ -174,3 +174,44 @@ None — clear to merge. PR-6a now meets the security invariants the original co
 - `src/lib/api-server.ts`: re-validate caller-supplied `options.schema` in both factories
 - `src/lib/schema/schema.test.ts`: `review-fix coverage` describe with 5 new cases (empty-string rejection, cross-field error hygiene x2, drift-resistance grep, structurally-malformed tolerance)
 - `src/lib/api-server.test.ts`: 3 new cases for the factory-bypass closure
+
+---
+
+## Review Comments Addressed — 2026-05-02 (PR #28 round 2)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `sanitiseRawSchemaInPlace` mutates input — violates pure-function/structuredClone style guide rules | @gemini-code-assist | Fix needed | Renamed to `sanitiseRawSchema`, switched to `structuredClone`-based deep clone. Pure function; defends against `__proto__` payloads. |
+| Rename call site in `z.preprocess(...)` | @gemini-code-assist | Fix needed | Updated call site to `sanitiseRawSchema`. Paired with the rename above. |
+| Plan B9 acceptance criteria still describe loader-side walker + `.transform()` sanitiser, no longer matches shipped impl | @coderabbitai | Fix needed | Rewrote the 8 acceptance bullets to describe `z.preprocess`, the cross-field-checks-in-transform pattern, and the `createApiServer` re-validation. |
+| api-server.test.ts assertions only inspect `getConfig()`, not registered tool metadata — vacuous for the bypass-closure test | @coderabbitai | Fix needed | Added a public read-only `getRegisteredCustomTools()` accessor on `McpCurlServer`, updated both bypass-closure tests to assert against `tool.meta.title` and `tool.meta.description` directly. |
+| Duplicate-id test injects no hostile chars — assertion vacuous | @coderabbitai | Fix needed | Both endpoint ids now carry an edge-positioned U+200B (leading on one, trailing on the other). Sanitiser trims them both to `"get_data"`, regex passes, duplicate check fires, message is asserted to read `Duplicate endpoint ID: get_data` (clean). Note: interior ZWSPs become spaces and would fail the regex first; edge-positioned was the only viable shape. |
+| Preprocess walker skips `auth.apiKey.envVar` and `auth.bearer.envVar` — these get echoed in `Authentication error: Missing required environment variable: …` returned to the LLM | @coderabbitai | Fix needed | Walker now sanitises `root.auth.apiKey.envVar` and `root.auth.bearer.envVar`. JSDoc updated to enumerate the new fields. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| In-place mutation of the raw-input object inside `z.preprocess` | `structuredClone`-based deep-clone-then-mutate, return clone | Repository style guide rules 26 (pure functions) and 52 (structuredClone defends against prototype pollution); also keeps caller's input unchanged across multiple `.parse()` calls | @gemini-code-assist |
+| Walker covers `endpoint.id`, `endpoint.path`, descriptions, preset names — but not `auth.*.envVar` | Walker also covers `root.auth.apiKey.envVar` and `root.auth.bearer.envVar` | `envVar` is interpolated into the LLM-visible auth-error response in `generator.ts:createToolHandler` — without sanitisation it's an unsanitised attacker-controlled string outside the new invariant | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — input was a PR review, not a `docs/todos/` file_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — all six review threads addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/schema/validator.ts` (sanitiser rename + structuredClone + auth.envVar coverage)
+- `src/lib/extensible/mcp-curl-server.ts` (+`getRegisteredCustomTools()` read-only accessor)
+- `src/lib/api-server.test.ts` (assert against tool metadata, not config)
+- `src/lib/schema/schema.test.ts` (duplicate-id test now actually exercises sanitisation)
+- `docs/plans/2026-04-30-chore-pre-bigwork-hardening-plan.md` (B9 acceptance criteria aligned with shipped code)
+
+### Tests / build
+- `npm test`: 684/684 passing (7 skipped)
+- `npm run build`: clean

@@ -152,12 +152,18 @@ describe("createApiServerSync", () => {
         // The factory now runs validateApiSchema() on the supplied schema,
         // so bidi/zero-width bytes are stripped before tools are registered.
         const schema = loadApiSchemaFromString(SAMPLE_YAML);
-        // Defeat the type by casting and re-poisoning a string field.
         const poisoned = structuredClone(schema);
         poisoned.endpoints[0].title = "evil‮title";
+        poisoned.endpoints[0].description = "desc‮hidden";
         const server = createApiServerSync(poisoned);
-        // The factory should have stripped U+202E by this point.
-        expect(JSON.stringify(server.getConfig())).not.toMatch(/[‮]/);
+        // Inspect the actually-registered tool metadata (not just the
+        // server config — the bypass leaks via tool advertisement, not
+        // baseUrl/headers).
+        const tools = server.getRegisteredCustomTools();
+        const weather = tools.find((t) => t.name === "get_weather");
+        expect(weather).toBeDefined();
+        expect(weather!.meta.title).not.toMatch(/[‮]/);
+        expect(weather!.meta.description).not.toMatch(/[‮]/);
     });
 
     it("rejects caller-supplied schema with sanitised-to-empty title", () => {
@@ -173,8 +179,13 @@ describe("createApiServer (caller-supplied schema)", () => {
     it("re-validates a schema passed via { schema } (closes the bypass)", async () => {
         const schema = loadApiSchemaFromString(SAMPLE_YAML);
         const poisoned = structuredClone(schema);
+        poisoned.endpoints[0].title = "title‮hidden";
         poisoned.endpoints[0].description = "desc‮hidden";
         const server = await createApiServer({ schema: poisoned });
-        expect(JSON.stringify(server.getConfig())).not.toMatch(/[‮]/);
+        const tools = server.getRegisteredCustomTools();
+        const weather = tools.find((t) => t.name === "get_weather");
+        expect(weather).toBeDefined();
+        expect(weather!.meta.title).not.toMatch(/[‮]/);
+        expect(weather!.meta.description).not.toMatch(/[‮]/);
     });
 });

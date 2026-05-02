@@ -125,35 +125,57 @@ function sanitiseStringField(obj: Record<string, unknown>, key: string): void {
 }
 
 /**
- * Single tolerant walker that mutates the raw YAML/object input in place,
- * sanitising every user-facing string field (the SAME field set the
- * downstream MCP tool generator advertises to the LLM, plus `endpoint.id` /
- * `endpoint.path` so cross-field error messages can never echo raw bytes).
+ * Single tolerant walker that produces a deep clone of the raw input with
+ * every user-facing string field sanitised. Returns the clone — the caller's
+ * object is left untouched.
  *
- * Used as the function arg to `z.preprocess(sanitiseRawSchemaInPlace, ...)`,
- * so it runs BEFORE any Zod validation. This means:
+ * Used as the function arg to `z.preprocess(sanitiseRawSchema, ...)`, so it
+ * runs BEFORE any Zod validation. This means:
  *   - Zod's `min(1)` rejects strings that sanitise to `""`.
  *   - Zod issue messages quote the sanitised value, not raw attacker bytes.
  *   - Cross-field error messages (path-param-not-defined, etc.) see clean
  *     interpolated values.
  *
+ * **Pure / clone-based.** `structuredClone` strips the prototype, defeating
+ * `__proto__: {polluted: true}` payloads and obeying the project style guide
+ * (rules 26 — pure functions / 52 — structured clone for untrusted data). The
+ * clone is also what Zod ends up validating, so a caller who calls
+ * `validateApiSchema(input)` and then re-uses `input` sees the original bytes
+ * unchanged.
+ *
  * **Tolerant by design:** any unexpected shape (non-object, missing keys,
  * wrong types) is left untouched — Zod will reject it with a normal
- * validation error downstream.
+ * validation error downstream. The walker covers the SAME field set the
+ * downstream MCP tool generator advertises to the LLM, plus `endpoint.id` /
+ * `endpoint.path` (so cross-field error messages cannot echo raw bytes) and
+ * `auth.apiKey.envVar` / `auth.bearer.envVar` (interpolated into the
+ * `Missing required environment variable: …` message that
+ * `generator.ts:createToolHandler` returns to the LLM on auth failure).
  *
  * **NOT sanitised:** `parameter.name` (used as object keys in input schemas
  * and as URL parameter names — sanitising could change client semantics) and
  * `preset.jqFilter` (engine receives the raw filter; the human-readable
  * interpolation in `generator.ts` sanitises at display time).
  */
-function sanitiseRawSchemaInPlace(value: unknown): unknown {
-    const root = asObject(value);
-    if (!root) return value;
+function sanitiseRawSchema(value: unknown): unknown {
+    if (!asObject(value)) return value;
+
+    // Deep clone first so callers' objects are never mutated and
+    // attacker-controlled `__proto__` keys are stripped.
+    const root = structuredClone(value) as Record<string, unknown>;
 
     const api = asObject(root.api);
     if (api) {
         sanitiseStringField(api, "title");
         sanitiseStringField(api, "description");
+    }
+
+    const auth = asObject(root.auth);
+    if (auth) {
+        const apiKey = asObject(auth.apiKey);
+        if (apiKey) sanitiseStringField(apiKey, "envVar");
+        const bearer = asObject(auth.bearer);
+        if (bearer) sanitiseStringField(bearer, "envVar");
     }
 
     if (Array.isArray(root.endpoints)) {
@@ -185,7 +207,7 @@ function sanitiseRawSchemaInPlace(value: unknown): unknown {
         }
     }
 
-    return value;
+    return root;
 }
 
 // --- Cross-field checks: live inside the schema so direct .parse() callers benefit ---
@@ -270,7 +292,7 @@ function reportDuplicatePresetNames(schema: ParsedSchema, ctx: z.RefinementCtx):
  * property documented here.
  */
 export const ApiSchemaValidator = z.preprocess(
-    sanitiseRawSchemaInPlace,
+    sanitiseRawSchema,
     RawApiSchema.transform((schema, ctx) => {
         reportDuplicateEndpointIds(schema, ctx);
         reportUndefinedPathParams(schema, ctx);

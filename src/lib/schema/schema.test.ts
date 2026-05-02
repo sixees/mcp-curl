@@ -1648,22 +1648,27 @@ describe("PR-6a sanitisation invariant", () => {
         });
 
         it("strips bidi from endpoint.id so duplicate-id error messages are clean (P1 #2)", () => {
-            // Duplicate endpoint IDs interpolate the ID into the error
-            // message. After preprocess, IDs are sanitised and the regex
-            // (^[a-z][a-z0-9_]*$) usually rejects bidi-laden IDs first;
-            // this test ensures any error path that does see a sanitised ID
-            // produces clean output.
+            // sanitizeDescription replaces matched control chars with a
+            // single space, then trims edges. An *interior* ZWSP leaves an
+            // interior space (would fail the id regex). To reach the
+            // duplicate-id branch — which is what we want to verify produces
+            // a clean message — put the bidi at the edges of the id so it
+            // collapses to nothing after trim. Both endpoints then have id
+            // "get_data" post-sanitise, the regex passes, and the duplicate
+            // check inside `.transform()` fires. The error message must
+            // therefore quote the SANITISED id (no bidi).
             try {
                 ApiSchemaValidator.parse({
                     ...baseSchema,
                     endpoints: [
-                        baseSchema.endpoints[0],
-                        { ...baseSchema.endpoints[0] },
+                        { ...baseSchema.endpoints[0], id: "​get_data" },
+                        { ...baseSchema.endpoints[0], id: "get_data​" },
                     ],
                 });
                 throw new Error("expected validation to fail");
             } catch (error) {
                 const message = (error as Error).message;
+                expect(message).toMatch(/Duplicate endpoint ID: get_data/);
                 expect(message).not.toMatch(/[​‮]/);
             }
         });

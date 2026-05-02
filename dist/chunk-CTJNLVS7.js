@@ -80,13 +80,20 @@ function sanitiseStringField(obj, key) {
   const v = obj[key];
   if (typeof v === "string") obj[key] = sanitizeDescription(v);
 }
-function sanitiseRawSchemaInPlace(value) {
-  const root = asObject(value);
-  if (!root) return value;
+function sanitiseRawSchema(value) {
+  if (!asObject(value)) return value;
+  const root = structuredClone(value);
   const api = asObject(root.api);
   if (api) {
     sanitiseStringField(api, "title");
     sanitiseStringField(api, "description");
+  }
+  const auth = asObject(root.auth);
+  if (auth) {
+    const apiKey = asObject(auth.apiKey);
+    if (apiKey) sanitiseStringField(apiKey, "envVar");
+    const bearer = asObject(auth.bearer);
+    if (bearer) sanitiseStringField(bearer, "envVar");
   }
   if (Array.isArray(root.endpoints)) {
     for (const item of root.endpoints) {
@@ -114,7 +121,7 @@ function sanitiseRawSchemaInPlace(value) {
       }
     }
   }
-  return value;
+  return root;
 }
 function reportDuplicateEndpointIds(schema, ctx) {
   const seen = /* @__PURE__ */ new Set();
@@ -165,7 +172,7 @@ function reportDuplicatePresetNames(schema, ctx) {
   });
 }
 var ApiSchemaValidator = z.preprocess(
-  sanitiseRawSchemaInPlace,
+  sanitiseRawSchema,
   RawApiSchema.transform((schema, ctx) => {
     reportDuplicateEndpointIds(schema, ctx);
     reportUndefinedPathParams(schema, ctx);
