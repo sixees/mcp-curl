@@ -597,3 +597,79 @@ Walking every finding from the 3 review agents (security-sentinel, code-simplici
 ### Tests / build
 - `npm test`: 884/884 passing (7 skipped) — unchanged from PR-#30-round-1 (doc-comment-only change).
 - `npm run build`: clean.
+
+---
+
+## Code Review — 2026-05-02 (round 3)
+
+### Review Summary
+- **Reviewer:** automated multi-agent review (security-sentinel, code-simplicity-reviewer, typescript-reviewer)
+- **Findings:** 🔴 P1: 2 (real exploitable bypasses) | 🟡 P2: 8 | 🔵 P3: 6
+- **All P1 fixed; all reviewer-flagged P2 fixed; high-leverage P3 done.** Tests: 884 → **922 passing** (net **+38**).
+
+### Handoff Assessment
+The previous handoff's "no security blockers remain" assertion was **incorrect**. Two real P1 bypasses surfaced:
+
+1. **Content-Type tampering bypass (P1-1):** an attacker setting `Content-Type: text/plain` (or empty / undefined) on an HTML body skipped the entire markup-strip path. One header-byte change disabled the defence.
+2. **Image-inside-dangerous-link nesting (P1-2):** `[![safe-img](https://x.com)](javascript:alert(1))` left `javascript:` in the LLM-visible output. The inner `]` of `[image removed]` blocks the dangerous-scheme-link pattern's label class from spanning to the outer URL; the previous test for this case explicitly accepted the leak as "OK because sanitiser cleans it" — wrong, sanitiser doesn't strip schemes.
+
+The previous review pass's claim "Step 5 doesn't re-detect because Step 2 already detected on original" was **partially false**: Step 2 detection runs on the ENTITY-ENCODED original, so phrases like `&#x69;gnore previous instructions` slip past. Step 3's entity decoder unmasks them. Step 5 (was `sanitizeResponse`) silenced the log signal.
+
+### Key Findings & Resolutions
+
+| ID | Sev | Source | Description | Resolution |
+|----|-----|--------|-------------|-----------|
+| P1-1 | 🔴 | security-sentinel | Content-Type tampering: HTML body with `text/plain` / empty / undefined CT bypasses strip | Added `looksLikeMarkupShape()` content-sniffer + `isPlainTextLikeContentType()` gate in `content-type.ts`. `processResponse` now strips when CT is plain-text-ish AND first 1 KB looks like markup (`<!doctype`, `<html`, `<svg`, `<script`, `<style`, `<iframe`, `<?xml`, generic `<tagname>`). JSON not sniffed (would risk breaking valid JSON containing `<script>` in strings). 11 regression tests. |
+| P1-2 | 🔴 | security-sentinel | `[![safe-img](http)](javascript:foo)` outer URL leaks (inner `]` blocks dangerous-link pattern) | Added `MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN` post-pass with `(?<=\])` lookbehind in `strip-blocks.ts`. Strips residual `(scheme:…)` URLs sitting at markdown-link boundaries, false-positive-safe (legit prose like "the `(javascript:foo)` scheme" preserved). 5 regression tests covering all 4 dangerous schemes. |
+| P2-1 | 🟡 | security-sentinel | Step 5 used `sanitizeResponse` (no detection) — entity-encoded injection phrases silenced the log | Step 5 now calls `sanitizeAndDetect`. Per-host throttle (60 s window) prevents double-counting. 2 regression tests asserting `[injection-defense]` log fires on `&#x69;gnore previous instructions`. |
+| P2-2 | 🟡 | security-sentinel + typescript-reviewer | Non-string `contentType` raises unguarded `TypeError` deep in `parseMimeType.split` | Hardened `parseMimeType` signature to accept `unknown` with runtime `typeof !== "string"` guard; non-string inputs normalise to `""`. 4 regression tests in `content-type.test.ts`, 2 in `processor.test.ts`. |
+| P2-3 | 🟡 | security-sentinel | `\n × 19 + ws + \n × 19` bypass: each newline run below 20+ threshold, but concatenated whitespace surface enormous | Pattern extended: `(?:\n[ \t\xa0]?){20,}` accepts at most one inline-whitespace char (space / tab / NBSP) between newlines. Non-whitespace interrupters are intentionally NOT covered (would require a counting/density rule); documented as a known limit. 5 regression tests. |
+| P2 (clarity) | 🟡 | simplicity + ts | Step-numbering collision (line 130 said "Step 5: jq filter" but Step 5 was now re-sanitise) | Renumbered: 1 size-guard, 2 sanitise+detect, 3 markup strip, 4 markdown beacons, 5 re-sanitise+detect, 6 jq filter, 7 size check. JSDoc preamble + inline comments now agree. |
+| P2 (clarity) | 🟡 | simplicity | `if (isMarkup \|\| isMarkdown)` predicate duplicated across Step 3 and Step 5 | Folded Steps 3, 4, 5 into a single nested `if (needsStripPath) { … }` block with `needsStripPath = isMarkup \|\| isMarkdown \|\| sniffedAsMarkup`. Single source of truth for the strip-path gate. |
+| P2 (TS) | 🟡 | typescript-reviewer | `WHITESPACE_PADDING_CODEPOINTS.discrete` `as const` narrowed to literal union — `.includes(cp: number)` would error in strict mode | Widened type signature to `{ discrete: readonly number[]; ranges: readonly (readonly [number, number])[] }`. Source-of-truth property preserved (one edit per new codepoint). |
+
+### Decisions explicitly NOT made / deferred
+| Finding | Decision | Reason |
+|---------|----------|--------|
+| Reference-style markdown links / autolinks / bare URLs (P3-2 from security-sentinel) | **Deferred** | Out-of-scope for this round; documented in Known Issues. Add if a real signal surfaces. |
+| HTML-attribute scheme strip (`<a href="javascript:…">`) (P3-3) | **Deferred** | Parser-level concern; regex-based attribute extraction is a separate hardening surface. |
+| Raise `STRIP_PATH_MAX_BYTES` to 1 MB or higher (P3-1) | **Deferred** | Perf-budget framework lands in PR-9; raising the cap requires bench coverage to justify. The cap is a circuit-breaker, not a content gate — sanitiser still runs above it. |
+| Combined `<(script\|style)>` regex with backref (`F7` from simplicity) | **Deferred** | Marginal perf win; existing two-replace form is more obviously linear-time. Reconsider if perf benchmarks find a hotspot. |
+| 4→2 unified markdown patterns (`F1` from simplicity) | **Rejected** | Unifying URL bodies via alternation across http(s) and dangerous schemes loses the per-class JSDoc separation. The current 4-pattern + residual-cleanup form mirrors the security-class taxonomy clearly. |
+
+### Verified Claims
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| All previous-round P1 fixed | ✓ | Re-verified, but TWO new P1s found this round |
+| ReDoS resistance | ✓ | New patterns (residual + sniffer) are linear-time per match |
+| Test coverage complete | partial-NO | 10 documented test gaps from this round; 5 closed in regression tests, 5 explicitly deferred |
+| "No security blockers remain" | **NO** | P1-1 and P1-2 were real exploitable bypasses; both fixed in this round |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — round-3 fixes implemented in-place; no follow-up todo files needed_ | — | — | — |
+
+### Blockers
+None — both round-3 P1 fixed; relevant P2 fixed; deferred items are documented trade-offs. Clear to merge after a reviewer sanity-check on the new sniffer + residual-pass logic.
+
+### Files Modified (round-3 review pass)
+- `src/lib/utils/content-type.ts` (`parseMimeType` accepts `unknown`; new `isPlainTextLikeContentType`, `looksLikeMarkupShape`)
+- `src/lib/utils/content-type.test.ts` (+22 cases for new helpers + parseMimeType guard)
+- `src/lib/utils/index.ts` (barrel re-export of new helpers)
+- `src/lib/utils/sanitize.ts` (newline interleaving pattern; cross-reference to STRIP cap)
+- `src/lib/utils/sanitize.test.ts` (+5 newline interleaving regression tests)
+- `src/lib/utils/unicode-attack-ranges.ts` (widened type signatures from `as const` to `readonly number[]`)
+- `src/lib/response/processor.ts` (pipeline restructure: nested branch, sniffer integration, Step 5 → sanitizeAndDetect, step renumbering)
+- `src/lib/response/processor.test.ts` (+10 cases: sniffer, Step 5 detection, non-string contentType)
+- `src/lib/response/strip-blocks.ts` (`MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN` + post-pass; doc cross-references)
+- `src/lib/response/strip-blocks.test.ts` (+5 residual cleanup regression tests)
+
+### Tests / build
+- `npm test`: 922/922 passing (7 skipped) — was 884 after the round-2 doc commit, **net +38 regression tests**.
+- `npm run build`: clean.
+
+### Reviewer assessment
+Round 3 was the most productive of the three so far. Two P1 bypasses (content-type tampering, image-inside-link with dangerous outer scheme) had survived two prior review passes — both invisible to the existing test suite. Codex / Gemini's earlier round-1 finding (post-strip detection silencing) was a partial fix; the real gap was that detection on the original-text was missing entity-encoded forms entirely. This round closes that loop AND closes the lookalike-CT bypass that was a one-byte attack against the entire strip subsystem.
+
+The handoff's claim "no security blockers remain" was demonstrably wrong — the security-sentinel reviewer's test probes (78 of them) found the bypasses in minutes. **Lesson:** the test suite must cover content-type tampering, lookbehind-blocking nesting, and entity-encoded detection paths going forward; these are now permanent regression tests.

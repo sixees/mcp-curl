@@ -84,7 +84,7 @@ var WS_PADDING_DISCRETE_SET = new Set(
 );
 var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
 var DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
-var WHITESPACE_PADDING_PATTERN = `[${WHITESPACE_PADDING_CLASS}]{50,}|\\n{20,}`;
+var WHITESPACE_PADDING_PATTERN = `[${WHITESPACE_PADDING_CLASS}]{50,}|(?:\\n[ \\t\\xa0]?){20,}`;
 var RESPONSE_SANITIZE_PATTERN = new RegExp(
   `[${UNICODE_ATTACK_RANGES}]+|${WHITESPACE_PADDING_PATTERN}`,
   "gu"
@@ -211,7 +211,7 @@ function createConfigError(configName, value, reason) {
 
 // src/lib/utils/content-type.ts
 function parseMimeType(contentType) {
-  if (!contentType) return "";
+  if (typeof contentType !== "string" || !contentType) return "";
   return contentType.split(";")[0].trim().toLowerCase();
 }
 var BINARY_MIME_PREFIXES = [
@@ -274,6 +274,15 @@ function isMarkdownContentType(contentType) {
   if (MARKDOWN_MIME_EXACT.has(mime)) return true;
   return MARKDOWN_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
 }
+function isPlainTextLikeContentType(contentType) {
+  const mime = parseMimeType(contentType);
+  return mime === "" || mime === "text/plain";
+}
+function looksLikeMarkupShape(content) {
+  const head = content.slice(0, 1024);
+  return MARKUP_SHAPE_PATTERN.test(head);
+}
+var MARKUP_SHAPE_PATTERN = /<(?:!doctype\b|html\b|svg\b|script\b|style\b|iframe\b|\?xml\b|[a-z][a-z0-9-]{0,16}[\s>/])/i;
 
 // src/lib/security/detection-logger.ts
 var THROTTLE_WINDOW_MS = 6e4;
@@ -1868,6 +1877,7 @@ var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]
 var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]{1,2048}\)/g;
 var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
 var MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN = /(?<!!)\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
+var MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN = /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
 function decodeNumericHtmlEntities(input) {
   return input.replace(/&#(x[0-9a-f]+|\d+);?/gi, (_, body) => {
     const cp = body[0] === "x" || body[0] === "X" ? Number.parseInt(body.slice(1), 16) : Number.parseInt(body, 10);
@@ -1892,7 +1902,7 @@ function stripHtmlComments(input) {
   return input.replace(HTML_COMMENT_PATTERN, "");
 }
 function stripMarkdownBeacons(input) {
-  return input.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, "[link removed]").replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]");
+  return input.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, "[link removed]").replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]").replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "");
 }
 
 // src/lib/response/processor.ts
@@ -1913,15 +1923,15 @@ async function processResponse(response, options) {
   const isMarkdown = isMarkdownContentType(options.contentType);
   if (isText) {
     content = sanitizeAndDetect(content, hostname);
-    if (isMarkup || isMarkdown) {
+    const sniffedAsMarkup = isPlainTextLikeContentType(options.contentType) && looksLikeMarkupShape(content);
+    const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
+    if (needsStripPath) {
       content = stripHtmlComments(content);
       content = stripBlocksFixedPoint(content);
-    }
-    if (isMarkdown) {
-      content = stripMarkdownBeacons(content);
-    }
-    if (isMarkup || isMarkdown) {
-      content = sanitizeResponse(content);
+      if (isMarkdown) {
+        content = stripMarkdownBeacons(content);
+      }
+      content = sanitizeAndDetect(content, hostname);
     }
   }
   if (options.jqFilter) {

@@ -139,8 +139,21 @@ export const UNICODE_ATTACK_RANGES =
  *
  *   - `discrete`: codepoints with no neighbouring class-members.
  *   - `ranges`: contiguous ranges as `[lo, hi]` inclusive tuples.
+ *
+ * **Type signatures use `readonly number[]` rather than `as const` literal
+ * unions** so consumers can call `.includes(cp)` / `.has(cp)` against
+ * runtime `cp: number` values without TS narrowing the parameter to a
+ * literal union and erroring. The `as const` form was a footgun: a future
+ * maintainer reaching for `discrete.includes(cp)` got
+ * `error TS2345: Argument of type 'number' is not assignable to parameter
+ * of type '32 | 9 | 160 | 8239 | 8287 | 12288'`. Widened types preserve
+ * the source-of-truth property (one edit per new codepoint) without the
+ * literal-union friction.
  */
-export const WHITESPACE_PADDING_CODEPOINTS = {
+export const WHITESPACE_PADDING_CODEPOINTS: {
+    readonly discrete: readonly number[];
+    readonly ranges: readonly (readonly [number, number])[];
+} = {
     discrete: [
         0x0020, // SPACE
         0x0009, // TAB
@@ -148,11 +161,11 @@ export const WHITESPACE_PADDING_CODEPOINTS = {
         0x202f, // NARROW NO-BREAK SPACE
         0x205f, // MEDIUM MATHEMATICAL SPACE
         0x3000, // IDEOGRAPHIC SPACE
-    ] as const,
+    ],
     ranges: [
         [0x2000, 0x200a], // EN/EM-space family
-    ] as const,
-} as const;
+    ],
+};
 
 /**
  * **@internal** Format a codepoint as a `\u{…}` regex-class atom, picking the

@@ -28,7 +28,21 @@ const DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
 // formatting. 49-char runs are functionally equivalent for hiding content;
 // this is an accepted tolerance, not a bug — lowering the threshold raises
 // false-positive risk on legitimate code blocks and ASCII art.
-const WHITESPACE_PADDING_PATTERN = `[${WHITESPACE_PADDING_CLASS}]{50,}|\\n{20,}`;
+//
+// **Newline rule includes single inline-whitespace interrupters.** A naive
+// `\n{20,}` rule is defeated by `(\n × 19 + ws + \n × 19)` payloads where
+// each individual newline run is below threshold but the concatenated
+// whitespace surface is enormous. The pattern `(?:\n[ \t\xa0]?){20,}`
+// accepts at most one ASCII space, tab, or NBSP between consecutive
+// newlines so an interspersed inline-whitespace char doesn't reset the
+// run. Non-whitespace interrupters (e.g. a literal `.` between
+// newline groups) are NOT covered — pattern-matching detection in
+// Step 2 still fires on the surrounding payload bytes and the LLM-
+// visible structural change from `.\n.\n.\n...` is its own giveaway;
+// catching that class would require a counting/density rule beyond
+// what a single regex express cleanly.
+const WHITESPACE_PADDING_PATTERN =
+    `[${WHITESPACE_PADDING_CLASS}]{50,}|(?:\\n[ \\t\\xa0]?){20,}`;
 
 // NOT exported — same stateful reasoning.
 // Single-pass: Unicode attack chars + 50+-run whitespace padding (across the
@@ -90,7 +104,15 @@ export function sanitizeDescription(input: string | null | undefined): string {
     return input.replace(DESC_CONTROL_CHARS, " ").trim();
 }
 
-/** Idempotence cap for {@link sanitizeResponse}. See JSDoc there. */
+/**
+ * Idempotence cap for {@link sanitizeResponse}. See JSDoc there.
+ *
+ * **Sister cap:** `response/strip-blocks.ts → STRIP_FIXED_POINT_MAX_ITERATIONS`
+ * (also 4) protects the script/style strip's fixed-point loop. The two
+ * caps are intentionally independent — different attack classes (sanitiser
+ * interleaving vs strip-block self-healing) — but convention is they
+ * share a value.
+ */
 const SANITIZE_FIXED_POINT_MAX_ITERATIONS = 4;
 
 /**

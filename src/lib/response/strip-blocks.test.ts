@@ -253,4 +253,52 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
     it("preserves text with no links/images", () => {
         expect(stripMarkdownBeacons("just a paragraph")).toBe("just a paragraph");
     });
+
+    describe("residual dangerous-scheme cleanup (round-3 P1-2)", () => {
+        // The image-inside-dangerous-link nesting case:
+        // `[![safe-img](http://x)](javascript:foo)`. The inner `]` of the
+        // image strip's `[image removed]` replacement blocks the
+        // dangerous-link pattern's `[^\]\n]` label class from spanning to
+        // the outer `]`. The post-pass with `(?<=\])` lookbehind catches
+        // the residual `(javascript:…)`.
+
+        it("strips javascript: URL from outer link of image-inside-link nesting", () => {
+            const out = stripMarkdownBeacons(
+                "[![alt](https://safe.example/img.png)](javascript:alert(1))"
+            );
+            expect(out).not.toContain("javascript:");
+            expect(out).not.toContain("alert(1");
+        });
+
+        it("strips data: URL from outer link of image-inside-link nesting", () => {
+            const out = stripMarkdownBeacons(
+                "[![alt](https://safe.example/x.png)](data:text/html,steal())"
+            );
+            expect(out).not.toContain("data:");
+            expect(out).not.toContain("steal");
+        });
+
+        it("strips vbscript: URL from outer link of image-inside-link nesting", () => {
+            const out = stripMarkdownBeacons(
+                "[![alt](https://safe.example/x.png)](vbscript:msgbox)"
+            );
+            expect(out).not.toContain("vbscript:");
+        });
+
+        it("strips file: URL from outer link of image-inside-link nesting", () => {
+            const out = stripMarkdownBeacons(
+                "[![alt](https://safe.example/x.png)](file:///etc/passwd)"
+            );
+            expect(out).not.toContain("file:");
+            expect(out).not.toContain("etc/passwd");
+        });
+
+        it("does NOT strip legit `(javascript:)` mention in plain prose (lookbehind anchored on `]`)", () => {
+            // The post-pass requires a preceding `]` so prose like
+            // "the (javascript:) URL scheme" is preserved. Only contexts
+            // that look like markdown-link URL portions get stripped.
+            const text = "Discussion of the (javascript:foo) URL scheme.";
+            expect(stripMarkdownBeacons(text)).toBe(text);
+        });
+    });
 });

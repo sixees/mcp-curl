@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
     isBinaryContentType,
     isMarkdownContentType,
+    isPlainTextLikeContentType,
+    looksLikeMarkupShape,
     parseMimeType,
     supportsMarkupComments,
 } from "./content-type.js";
@@ -214,5 +216,100 @@ describe("isMarkdownContentType (PR-7 / B8)", () => {
         // contain the substring would mis-fire.
         expect(isMarkdownContentType("text/markdownish")).toBe(false);
         expect(isMarkdownContentType("application/markdown-extra")).toBe(false);
+    });
+});
+
+describe("parseMimeType — non-string runtime guard (round-3 P2-2)", () => {
+    it("returns empty string for a number contentType (defends JS-caller path)", () => {
+        expect(parseMimeType(42 as unknown as string)).toBe("");
+    });
+
+    it("returns empty string for an object contentType", () => {
+        expect(parseMimeType({} as unknown as string)).toBe("");
+    });
+
+    it("returns empty string for an array contentType", () => {
+        expect(parseMimeType([] as unknown as string)).toBe("");
+    });
+
+    it("returns empty string for boolean contentType", () => {
+        expect(parseMimeType(true as unknown as string)).toBe("");
+    });
+});
+
+describe("isPlainTextLikeContentType (round-3 P1-1 sniffer gate)", () => {
+    it("returns true for undefined", () => {
+        expect(isPlainTextLikeContentType(undefined)).toBe(true);
+    });
+
+    it("returns true for empty string", () => {
+        expect(isPlainTextLikeContentType("")).toBe(true);
+    });
+
+    it("returns true for text/plain (with or without parameters)", () => {
+        expect(isPlainTextLikeContentType("text/plain")).toBe(true);
+        expect(isPlainTextLikeContentType("text/plain; charset=utf-8")).toBe(true);
+    });
+
+    it("returns false for structured types", () => {
+        expect(isPlainTextLikeContentType("application/json")).toBe(false);
+        expect(isPlainTextLikeContentType("text/html")).toBe(false);
+        expect(isPlainTextLikeContentType("text/markdown")).toBe(false);
+        expect(isPlainTextLikeContentType("application/xml")).toBe(false);
+        expect(isPlainTextLikeContentType("image/png")).toBe(false);
+    });
+});
+
+describe("looksLikeMarkupShape (round-3 P1-1 sniffer)", () => {
+    it("matches a body starting with <!doctype", () => {
+        expect(looksLikeMarkupShape("<!doctype html><html>...</html>")).toBe(true);
+    });
+
+    it("matches a body starting with <html", () => {
+        expect(looksLikeMarkupShape("<html><body>x</body></html>")).toBe(true);
+    });
+
+    it("matches a body starting with <script", () => {
+        expect(looksLikeMarkupShape("<script>alert(1)</script>")).toBe(true);
+    });
+
+    it("matches a body starting with <svg", () => {
+        expect(looksLikeMarkupShape("<svg><circle/></svg>")).toBe(true);
+    });
+
+    it("matches a body starting with <iframe", () => {
+        expect(looksLikeMarkupShape("<iframe src=evil>")).toBe(true);
+    });
+
+    it("matches a body starting with <?xml", () => {
+        expect(looksLikeMarkupShape('<?xml version="1.0"?><root/>')).toBe(true);
+    });
+
+    it("matches a generic <tagname> opener", () => {
+        expect(looksLikeMarkupShape("<p>hello</p>")).toBe(true);
+        expect(looksLikeMarkupShape("<x-component>...</x-component>")).toBe(true);
+    });
+
+    it("matches when markup appears WITHIN the first 1 KB", () => {
+        const padded = "leading text. ".repeat(20) + "<script>alert(1)</script>";
+        expect(looksLikeMarkupShape(padded)).toBe(true);
+    });
+
+    it("does NOT match prose mentioning `<`", () => {
+        // Plain arithmetic / prose with `<` shouldn't trip the detector.
+        expect(looksLikeMarkupShape("the value is < 5")).toBe(false);
+        expect(looksLikeMarkupShape("a < b but b > c")).toBe(false);
+    });
+
+    it("does NOT match plain JSON", () => {
+        expect(looksLikeMarkupShape('{"key": "value"}')).toBe(false);
+    });
+
+    it("does NOT match markup buried beyond the first 1 KB (bounded scan)", () => {
+        // Scan is bounded to first 1024 chars to bound cost on adversarial
+        // bodies. Markup buried after 1 KB of prose is missed — that's
+        // intentional; the sanitiser still runs on the full body.
+        const buried = "x".repeat(1100) + "<script>alert(1)</script>";
+        expect(looksLikeMarkupShape(buried)).toBe(false);
     });
 });

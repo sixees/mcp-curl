@@ -13,8 +13,9 @@ import {
 import {
     isBinaryContentType,
     isMarkdownContentType,
+    isPlainTextLikeContentType,
+    looksLikeMarkupShape,
     safeHostname,
-    sanitizeResponse,
     supportsMarkupComments,
 } from "../utils/index.js";
 import { sanitizeAndDetect } from "../security/index.js";
@@ -35,17 +36,29 @@ import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.j
  *    inflation: an attacker can't pad with U+200B to push the body above
  *    the cap because sanitiser collapses padding before the strip path
  *    is gated on byte-length.
- * 3. **Strip HTML comments + script/style blocks** (markup content types
- *    AND markdown — markdown allows raw HTML and is rendered by every
- *    mainstream renderer with `<script>` passing through). The strip
- *    path is ReDoS-hardened: open-to-closer-or-EOF lazy-match patterns
- *    handle malformed and unclosed closers, fixed-point iteration cap of
- *    4 handles self-healing payloads, numeric-entity decode unmasks
- *    `&#x3c;script&#x3e;` smuggling.
- * 4. **Strip markdown beacons** (image / link / dangerous-scheme).
- * 5. Apply jq_filter if provided AND response is JSON. Re-sanitise after
+ * 3. **Strip HTML comments + script/style blocks** (markup content types,
+ *    markdown content types, OR plain-text-shaped responses whose body
+ *    sniffs as markup — closes the `Content-Type: text/plain` tampering
+ *    bypass where an attacker serves HTML with the wrong header). The
+ *    strip path is ReDoS-hardened: open-to-closer-or-EOF lazy-match
+ *    patterns handle malformed and unclosed closers, fixed-point
+ *    iteration cap of 4 handles self-healing payloads, numeric-entity
+ *    decode unmasks `&#x3c;script&#x3e;` smuggling.
+ * 4. **Strip markdown beacons** (image / link / dangerous-scheme +
+ *    residual cleanup for nested image-inside-dangerous-link cases).
+ * 5. **Re-sanitise + detect** post-strip (`sanitizeAndDetect`, NOT plain
+ *    sanitiseResponse). The strip path's numeric-entity decoder unmasks
+ *    `&#x69;gnore previous instructions` into a real injection phrase
+ *    that the original-text Step 2 detection couldn't see (it saw the
+ *    entity-encoded form). The re-detection here closes the silenced-
+ *    log gap; throttling prevents same-hostname noise.
+ * 6. Apply jq_filter if provided AND response is JSON. Re-sanitise after
  *    filter (JSON.parse may decode escapes into real attack chars).
- * 6. Check size against `maxResultSize`; auto-save to file if exceeded.
+ * 7. Check size against `maxResultSize`; auto-save to file if exceeded.
+ *    NOTE: post-pipeline byte length is NOT guaranteed monotone-shrinking
+ *    — markdown beacon replacement substitutes `[link removed]` (14
+ *    bytes) which can be longer than a minimal source like `[a](http://x)`.
+ *    The post-pipeline size check is therefore required, not redundant.
  *
  * @param response - Response content to process; runtime-checked to be a
  *                   string (the type system enforces this for TS callers,
@@ -74,15 +87,14 @@ export async function processResponse(
 
     let content = response;
 
-    // Resolve hostname once for injection detection logging (used in steps 2–4)
+    // Resolve hostname once for injection detection logging.
     const hostname = safeHostname(options.url);
 
-    // Compute once — content-type classification is reused in steps 2–4 below.
+    // Compute content-type classification once.
     const isText = !isBinaryContentType(options.contentType);
     const isMarkup = supportsMarkupComments(options.contentType);
     const isMarkdown = isMarkdownContentType(options.contentType);
 
-    // Steps 2-5: Sanitize, detect, strip, then re-sanitise (text only)
     if (isText) {
         // Step 2 — sanitise + detect FIRST so the strip path's 256 KB cap
         // is checked against post-sanitise size. An attacker padding the
@@ -96,38 +108,48 @@ export async function processResponse(
         // post-strip surface.
         content = sanitizeAndDetect(content, hostname);
 
-        // Step 3 — strip markup comments + script/style blocks. Fires on
-        // markup-comment content types (HTML / XHTML / generic XML / SVG /
-        // *+xml) AND on markdown, which allows raw HTML inline blocks
-        // that every mainstream renderer (GitHub, GitLab, MkDocs, Hugo)
-        // passes straight through. Without the markdown branch, a
-        // `Content-Type: text/markdown` body containing `<script>` would
-        // reach the LLM intact.
-        if (isMarkup || isMarkdown) {
+        // Content-type sniffing: an attacker controlling the response
+        // server can serve HTML body with `Content-Type: text/plain` (or
+        // empty / undefined) to bypass the markup-strip path. Sniff the
+        // post-sanitise body's first ~1 KB for markup shape and treat it
+        // as markup if the declared type is plain-text-ish AND the body
+        // looks like HTML/SVG/XML. Structured types (JSON, CSV, …) are
+        // NOT sniffed — sniffing JSON would risk breaking valid JSON
+        // bodies that legitimately contain `<script>` in a string field.
+        const sniffedAsMarkup =
+            isPlainTextLikeContentType(options.contentType) &&
+            looksLikeMarkupShape(content);
+        const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
+
+        // Steps 3-5 — strip + re-sanitise (only when the body needs it).
+        // The single nested branch keeps the strip-path predicate as one
+        // source of truth — Steps 3, 4, and 5 share the gate.
+        if (needsStripPath) {
+            // Step 3 — markup comments + script/style blocks. Fires on
+            // any markup-shaped body (declared OR sniffed).
             content = stripHtmlComments(content);
             content = stripBlocksFixedPoint(content);
-        }
 
-        // Step 4 — markdown beacons. Image / link / dangerous-scheme.
-        if (isMarkdown) {
-            content = stripMarkdownBeacons(content);
-        }
+            // Step 4 — markdown beacons. Image / link / dangerous-scheme +
+            // residual cleanup. Only fires for declared markdown — sniffed-
+            // markup bodies (probably HTML mis-typed as text/plain) don't
+            // need the markdown-specific patterns.
+            if (isMarkdown) {
+                content = stripMarkdownBeacons(content);
+            }
 
-        // Step 5 — re-sanitise IF the strip path ran. The strip path's
-        // numeric-entity decoder unmasks `&#x200B;` / `&#x202E;` / etc.
-        // into real Unicode-attack chars AFTER the step-2 sanitise
-        // already passed, so without this final pass those decoded
-        // invisibles reach the LLM. We skip the re-detection log on this
-        // pass (already fired in step 2) by calling `sanitizeResponse`
-        // directly — observability has already logged what the attacker
-        // sent on the original; logging again on the post-strip surface
-        // would just double-count for the same hostname.
-        if (isMarkup || isMarkdown) {
-            content = sanitizeResponse(content);
+            // Step 5 — re-sanitise + detect. The strip path's numeric-
+            // entity decoder unmasks `&#x69;gnore previous instructions`
+            // into a real injection phrase AFTER the original-text Step 2
+            // detection passed (it saw the entity-encoded form and missed).
+            // Using sanitizeAndDetect here (not bare sanitizeResponse)
+            // closes the silenced-log gap; per-host throttling (60 s
+            // window) prevents double-counting.
+            content = sanitizeAndDetect(content, hostname);
         }
     }
 
-    // Step 5: Apply jq filter if provided AND response is JSON
+    // Step 6: Apply jq filter if provided AND response is JSON
     if (options.jqFilter) {
         const isJson = isJsonContentType(options.contentType);
         const trimmed = content.trim();
@@ -168,11 +190,10 @@ export async function processResponse(
         }
     }
 
-    // Step 6: Determine max size
+    // Step 7: Determine max size and decide save-to-file
     const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const contentBytes = Buffer.byteLength(content, "utf8");
 
-    // Check if we need to save to file
     const shouldSave = options.saveToFile || contentBytes > maxSize;
 
     if (shouldSave) {

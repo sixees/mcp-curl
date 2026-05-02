@@ -468,6 +468,50 @@ describe("sanitizeResponse — review-pass P2 idempotence (round 2)", () => {
     });
 });
 
+describe("sanitizeResponse — newline interleaving with inline whitespace (round-3 P2-3)", () => {
+    // The naive `\n{20,}` rule is defeated by `(\n × 19 + ws + \n × 19)`
+    // payloads: each newline run is below threshold, but the
+    // concatenated whitespace surface is enormous. Pattern
+    // `(?:\n[ \t\xa0]?){20,}` accepts at most one inline-whitespace
+    // char between newlines so the run isn't reset by interspersed
+    // ASCII space, tab, or NBSP.
+
+    it("collapses 20× (newline + space) interleaving", () => {
+        const seg = "\n ";
+        const input = `before${seg.repeat(20)}after`;
+        const out = sanitizeResponse(input);
+        expect(out).toMatch(/^before\nafter$/);
+    });
+
+    it("collapses 20× (newline + tab) interleaving", () => {
+        const seg = "\n\t";
+        const input = `before${seg.repeat(20)}after`;
+        const out = sanitizeResponse(input);
+        expect(out).toMatch(/^before\nafter$/);
+    });
+
+    it("collapses 20× (newline + NBSP) interleaving", () => {
+        const seg = "\n ";
+        const input = `before${seg.repeat(20)}after`;
+        const out = sanitizeResponse(input);
+        expect(out).toMatch(/^before\nafter$/);
+    });
+
+    it("collapses (\\n × 19 + space + \\n × 19) — original bypass case", () => {
+        const padding = "\n".repeat(19) + " " + "\n".repeat(19);
+        const input = `before${padding}after`;
+        const out = sanitizeResponse(input);
+        // No 20+ contiguous newlines should remain after collapse.
+        expect(out).not.toMatch(/\n{20,}/);
+    });
+
+    it("preserves a small (3-newline) run with single tab interrupter", () => {
+        // Below threshold — should not collapse legitimate prose.
+        const input = "line1\n\t\nline2\n\t\nline3";
+        expect(sanitizeResponse(input)).toBe(input);
+    });
+});
+
 describe("detectInjectionPattern", () => {
     it("returns false for clean text", () => {
         expect(detectInjectionPattern("The weather is nice today")).toBe(false);

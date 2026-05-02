@@ -20,6 +20,13 @@
  *
  * The pipeline orders sanitise BEFORE strip so visible-space-padding
  * inflation can't push the strip target above this cap (PR-7 round 2).
+ *
+ * **Deliberately smaller than `LIMITS.DEFAULT_MAX_RESULT_SIZE` (500 KB).**
+ * Bodies in the 256 KB–500 KB range are returned inline without strip-pass
+ * processing — defence-in-depth, not a sandbox; the always-on sanitiser
+ * (no size cap) is the primary defence and runs unconditionally on the
+ * full body. The strip cap is therefore a circuit-breaker for the ReDoS-
+ * adjacent fixed-point loop, not a content-size policy.
  */
 const STRIP_PATH_MAX_BYTES = 256 * 1024;
 
@@ -30,6 +37,11 @@ const STRIP_PATH_MAX_BYTES = 256 * 1024;
  * guarantee termination on contrived nesting. The loop exits early when
  * the strip passes converge (`next === curr`) — 4 is the soft termination
  * guarantee, not a theoretical max nesting depth.
+ *
+ * **Sister cap:** `sanitize.ts → SANITIZE_FIXED_POINT_MAX_ITERATIONS`
+ * (also 4) protects the sanitiser's interleaving fixed-point loop. The
+ * two caps are intentionally independent — different attack classes —
+ * but convention is they share a value.
  */
 const STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
 
@@ -150,6 +162,29 @@ const MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN =
     /(?<!!)\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
 
 /**
+ * Residual dangerous-scheme cleanup pattern. Strips `(scheme:…)` URL
+ * portions that survive the standard label-aware passes — specifically
+ * the image-inside-dangerous-link nesting case
+ * `[![alt](https://safe/img.png)](javascript:alert(1))`:
+ *
+ *   - `MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN` cannot match the OUTER
+ *     because the inner `]` (closer of the `![alt]` image label) ends
+ *     the outer pattern's `[^\]\n]` label class before reaching the
+ *     outer `)`.
+ *   - `MARKDOWN_EXTERNAL_IMAGE_PATTERN` THEN replaces the inner image
+ *     with `[image removed]`, leaving residue `[[image removed]](javascript:...)`.
+ *   - `MARKDOWN_EXTERNAL_LINK_PATTERN` doesn't match — URL is `javascript:`,
+ *     not http(s).
+ *
+ * After-pass: lookbehind `(?<=\])` requires the URL to be preceded by a
+ * `]` (i.e., it MUST sit at a markdown-link boundary), bounding false-
+ * positive risk on legitimate prose mentioning `(javascript:foo)`. The
+ * URL char class `[^)\n]{0,4096}` mirrors the standard pattern bounds.
+ */
+const MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN =
+    /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
+
+/**
  * Decode numeric HTML entities (`&#xNN;` / `&#NNN;`) so payloads like
  * `&#x3c;script&#x3e;` cannot smuggle past the strip patterns. Decoded
  * once per fixed-point iteration entry.
@@ -247,11 +282,19 @@ export function stripHtmlComments(input: string): string {
  *      image-shaped payload.
  *   3. External http(s) image beacons → `[image removed]`.
  *   4. External http(s) links → `[link removed]`.
+ *   5. Residual dangerous-scheme cleanup. Catches the
+ *      `[![safe-img](http://x)](javascript:foo)` nesting case where the
+ *      inner `]` of `[image removed]` (placed by step 3) blocks step 2's
+ *      label class from reaching the outer `(javascript:…)`. The
+ *      `(?<=\])` lookbehind constrains the strip to markdown-link-
+ *      shaped contexts so legitimate prose like "the `javascript:` URL
+ *      scheme" survives unscathed.
  */
 export function stripMarkdownBeacons(input: string): string {
     return input
         .replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, "[image removed]")
         .replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, "[link removed]")
         .replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, "[image removed]")
-        .replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]");
+        .replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]")
+        .replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "");
 }
