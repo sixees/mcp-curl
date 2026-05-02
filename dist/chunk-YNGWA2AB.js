@@ -1853,10 +1853,10 @@ import { randomUUID as randomUUID2 } from "crypto";
 var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
 function isWrappedResult(result) {
   if (result === null || typeof result !== "object") return false;
-  return result[WRAPPED] === true;
+  return Object.hasOwn(result, WRAPPED) && result[WRAPPED] === true;
 }
 function tag(result) {
-  if (result[WRAPPED] === true) return result;
+  if (Object.hasOwn(result, WRAPPED)) return result;
   try {
     Object.defineProperty(result, WRAPPED, {
       value: true,
@@ -1869,12 +1869,14 @@ function tag(result) {
   return result;
 }
 function processTextPart(part, hostname, requestId) {
-  if (part.type !== "text" || typeof part.text !== "string") {
-    return part;
+  if (part === null || typeof part !== "object") return part;
+  const contentPart = part;
+  if (contentPart.type !== "text" || typeof contentPart.text !== "string") {
+    return contentPart;
   }
-  const sanitised = sanitizeAndDetect(part.text, hostname);
+  const sanitised = sanitizeAndDetect(contentPart.text, hostname);
   const finalText = requestId ? applySpotlighting(sanitised, requestId) : sanitised;
-  return { ...part, text: finalText };
+  return { ...contentPart, text: finalText };
 }
 function createWrapper(config) {
   return function wrap(result, hostname) {

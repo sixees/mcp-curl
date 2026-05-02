@@ -24,12 +24,20 @@
 //    that erase the very byte sequences the detector looks for; running
 //    detection first preserves the log signal.
 //
-// 3. **Idempotence via `Symbol.for("mcp-curl.wrapped")`.** A `CallToolResult`
-//    that has already passed through wrap carries a non-enumerable symbol
-//    tag. Subsequent wrap calls short-circuit and return the result
+// 3. **Idempotence via a module-private `Symbol("mcp-curl.wrapped")`.** A
+//    `CallToolResult` that has already passed through wrap carries a
+//    non-enumerable symbol tag. Subsequent wrap calls short-circuit (using
+//    an own-property check via `Object.hasOwn` so an inherited tag from a
+//    wrapped prototype cannot bypass processing) and return the result
 //    unchanged. This lets the YAML path (which wraps inside
 //    `createToolHandler` *and* again at custom-tool registration) avoid
 //    double-sanitising or double-spotlighting the same response.
+//
+//    The symbol is **not** `Symbol.for(...)` — that would put it in the
+//    global registry and let any custom-tool author synthesise the same
+//    key and pre-tag a result to bypass sanitise/detect/spotlight.
+//    Module-private means `tag()` in this file is the only path by which
+//    the WRAPPED bit is ever set.
 //
 // 4. **Fail-open with observability.** The wrap body is enclosed in a
 //    try/catch. On any internal error (regex pathological-backtracking
@@ -107,12 +115,22 @@ export interface WrappableResult {
 /**
  * Read-only check: has this result been wrapped already?
  *
+ * Uses `Object.hasOwn` rather than a direct `result[WRAPPED]` read because
+ * symbol-keyed property access traverses the prototype chain. An object
+ * whose prototype was wrapped at some earlier point would inherit the tag
+ * and bypass the wrap on its own (un-processed) content. Restricting to own
+ * properties means the only way the tag is set is via `tag()` in this
+ * module after the pipeline has run.
+ *
  * Exported for tests; production callers should rely on the wrap's own
  * short-circuit rather than branching on the tag.
  */
 export function isWrappedResult(result: unknown): boolean {
     if (result === null || typeof result !== "object") return false;
-    return (result as { [WRAPPED]?: unknown })[WRAPPED] === true;
+    return (
+        Object.hasOwn(result, WRAPPED) &&
+        (result as { [WRAPPED]?: unknown })[WRAPPED] === true
+    );
 }
 
 /**
@@ -129,7 +147,10 @@ export function isWrappedResult(result: unknown): boolean {
  * the body, never a correctness issue.
  */
 function tag<T extends object>(result: T): T {
-    if ((result as { [WRAPPED]?: unknown })[WRAPPED] === true) return result;
+    // Own-property check (not prototype-chain): same reasoning as
+    // `isWrappedResult` — an inherited tag must not short-circuit a real
+    // pipeline run on the descendant.
+    if (Object.hasOwn(result, WRAPPED)) return result;
     try {
         Object.defineProperty(result, WRAPPED, {
             value: true,
@@ -144,16 +165,22 @@ function tag<T extends object>(result: T): T {
 }
 
 function processTextPart(
-    part: WrappableContentPart,
+    part: unknown,
     hostname: string,
     requestId: string | undefined
-): WrappableContentPart {
-    if (part.type !== "text" || typeof part.text !== "string") {
-        return part;
+): unknown {
+    // Defensive: a single null/undefined or non-object content entry must
+    // not throw out of `.map()` and abort the wrap for the entire result.
+    // Non-text parts (and malformed entries) pass through unchanged so the
+    // valid text parts still get sanitise + detect + spotlight.
+    if (part === null || typeof part !== "object") return part;
+    const contentPart = part as WrappableContentPart;
+    if (contentPart.type !== "text" || typeof contentPart.text !== "string") {
+        return contentPart;
     }
-    const sanitised = sanitizeAndDetect(part.text, hostname);
+    const sanitised = sanitizeAndDetect(contentPart.text, hostname);
     const finalText = requestId ? applySpotlighting(sanitised, requestId) : sanitised;
-    return { ...part, text: finalText };
+    return { ...contentPart, text: finalText };
 }
 
 /**

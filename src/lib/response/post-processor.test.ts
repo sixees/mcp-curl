@@ -281,6 +281,80 @@ describe("createWrapper — frozen / non-extensible inputs (fail-open)", () => {
     });
 });
 
+describe("createWrapper — own-property tag check (PR #29 round-2 hardening)", () => {
+    it("does NOT short-circuit when WRAPPED is inherited via the prototype chain", () => {
+        // Symbol-keyed property access traverses the prototype chain. Without
+        // an own-property check, an object whose prototype was wrapped earlier
+        // would inherit the tag and skip its own (un-processed) text.
+        const wrap = createWrapper({});
+        const wrappedParent = wrap(
+            { content: [{ type: "text", text: "parent" }] },
+            "host.com"
+        );
+        // Construct a fresh result whose prototype IS the wrapped parent.
+        // The child has its own content (un-processed) and inherits the tag.
+        const child: { content: { type: string; text: string }[] } = Object.create(
+            wrappedParent
+        ) as { content: { type: string; text: string }[] };
+        child.content = [{ type: "text", text: "child‮bytes​" }];
+        // The wrap must NOT see the inherited tag — it must process the child.
+        const out = wrap(child, "host.com");
+        expect((out.content as { text: string }[])[0].text).toBe("childbytes");
+    });
+
+    it("isWrappedResult is false for inherited WRAPPED tags", () => {
+        const wrap = createWrapper({});
+        const wrappedParent = wrap(
+            { content: [{ type: "text", text: "x" }] },
+            "host.com"
+        );
+        expect(isWrappedResult(wrappedParent)).toBe(true);
+
+        const child = Object.create(wrappedParent) as object;
+        // Child does not have its own WRAPPED property.
+        expect(isWrappedResult(child)).toBe(false);
+    });
+});
+
+describe("createWrapper — null/undefined content items (PR #29 round-2 hardening)", () => {
+    it("does not abort the entire wrap when one content item is null", () => {
+        const wrap = createWrapper({});
+        const out = wrap(
+            {
+                content: [
+                    { type: "text", text: "before‮bytes" },
+                    null as unknown as { type: string; text: string },
+                    { type: "text", text: "after​bytes" },
+                ],
+            },
+            "host.com"
+        );
+        const parts = out.content as Array<{ type?: string; text?: string } | null>;
+        expect(parts).toHaveLength(3);
+        // First and third text parts ARE sanitised — the null in the middle
+        // does NOT cause processTextPart to throw and abort the whole wrap.
+        expect(parts[0]).toEqual({ type: "text", text: "beforebytes" });
+        expect(parts[1]).toBeNull();
+        expect(parts[2]).toEqual({ type: "text", text: "afterbytes" });
+    });
+
+    it("does not abort the entire wrap when one content item is undefined", () => {
+        const wrap = createWrapper({});
+        const out = wrap(
+            {
+                content: [
+                    undefined as unknown as { type: string; text: string },
+                    { type: "text", text: "ok‮text" },
+                ],
+            },
+            "host.com"
+        );
+        const parts = out.content as Array<{ type?: string; text?: string } | undefined>;
+        expect(parts[0]).toBeUndefined();
+        expect(parts[1]).toEqual({ type: "text", text: "oktext" });
+    });
+});
+
 describe("createWrapper — content-shape edge cases", () => {
     it("non-array content is passed through tagged (no throw)", () => {
         const wrap = createWrapper({ enableSpotlighting: true });
