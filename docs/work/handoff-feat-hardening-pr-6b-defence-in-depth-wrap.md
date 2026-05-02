@@ -259,3 +259,36 @@ feat(response): defence-in-depth wrap on YAML/custom-tool/hook output (PR-6b / B
 ### Tests / build
 - `npm test`: 743/743 passing (7 skipped) — was 742 after round-2, +1 net regression test (the rewritten isError test still counts as one; the new injection-detection-on-error test is the +1)
 - `npm run build`: clean
+
+---
+
+## Review Comments Addressed — 2026-05-02 (PR #29 round 4)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| `Object.hasOwn(result, WRAPPED)` in `isWrappedResult` and `tag` is not wrapped in try/catch — a Proxy whose `getOwnPropertyDescriptor` (or `get`) trap throws breaks fail-open at line 209 (`isWrappedResult` call sits BEFORE the wrap's outer try/catch) and again at line 245 (catch fallback's `tag(result)` call) | @coderabbitai | **P2 — Fix needed** | Extracted a private `hasOwnWrappedTag(result)` helper that wraps both the `Object.hasOwn` probe AND the symbol-keyed value read in try/catch, returning `false` on error. Both `isWrappedResult` and `tag()`'s fast-path now route through the helper, so a hostile Proxy cannot break the documented fail-open contract. Added 4 regression tests in `post-processor.test.ts`: `isWrappedResult` returns `false` on a throwing-trap Proxy; the wrap entry-path probe doesn't throw; the catch fallback's `tag()` call doesn't throw on a throwing-trap Proxy (forced via sanitiser-fails mock); the `get`-trap-on-symbol case (descriptor reports tag exists, but reading the value throws) is also contained. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| `Object.hasOwn(result, WRAPPED)` called bare in `isWrappedResult` and `tag()` | Routed through `hasOwnWrappedTag()`, a private helper that try/catches both the descriptor probe and the symbol-keyed value read | A custom-tool author can return a Proxy with arbitrary trap behaviour, including a throwing `getOwnPropertyDescriptor` or `get` trap. The wrap's documented fail-open contract ("Defence-in-depth must never propagate exceptions to the handler boundary") was violated for that input — at the `isWrappedResult(result)` call before the outer try/catch, and again at `tag(result)` inside the catch fallback. The helper is a one-line containment that costs nothing for non-Proxy inputs. | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was an inline PR thread, not a `docs/todos/` file_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — round-4 thread addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/response/post-processor.ts` (extract `hasOwnWrappedTag` helper; route `isWrappedResult` and `tag()` fast-path through it; doc-comments updated)
+- `src/lib/response/post-processor.test.ts` (+4 hostile-Proxy regression tests in new describe block)
+- `docs/work/handoff-feat-hardening-pr-6b-defence-in-depth-wrap.md` (this section)
+
+### Tests / build
+- `npm test`: 747/747 passing (7 skipped) — was 743 after round-3, +4 net (Proxy fail-open regression tests)
+- `npm run build`: clean

@@ -113,6 +113,31 @@ export interface WrappableResult {
 }
 
 /**
+ * Safe own-property probe for the WRAPPED tag.
+ *
+ * `Object.hasOwn` triggers the target's `getOwnPropertyDescriptor` trap on a
+ * Proxy. A hostile or buggy custom-tool author can return a Proxy whose trap
+ * throws, which would propagate out of `isWrappedResult` / `tag` and break the
+ * documented fail-open contract — the wrap must never throw at the handler
+ * boundary. Wrapping the probe in try/catch keeps the failure contained: an
+ * un-probable result is treated as untagged, so the wrap pipeline runs
+ * normally and the outer try/catch handles any subsequent failure.
+ *
+ * Also reads the symbol value defensively — accessing `result[WRAPPED]` on a
+ * Proxy invokes the `get` trap, which can also throw.
+ */
+function hasOwnWrappedTag(result: object): boolean {
+    try {
+        return (
+            Object.hasOwn(result, WRAPPED) &&
+            (result as { [WRAPPED]?: unknown })[WRAPPED] === true
+        );
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Read-only check: has this result been wrapped already?
  *
  * Uses `Object.hasOwn` rather than a direct `result[WRAPPED]` read because
@@ -122,15 +147,15 @@ export interface WrappableResult {
  * properties means the only way the tag is set is via `tag()` in this
  * module after the pipeline has run.
  *
+ * The probe itself is wrapped in try/catch via `hasOwnWrappedTag` so a
+ * hostile Proxy with a throwing trap cannot break fail-open.
+ *
  * Exported for tests; production callers should rely on the wrap's own
  * short-circuit rather than branching on the tag.
  */
 export function isWrappedResult(result: unknown): boolean {
     if (result === null || typeof result !== "object") return false;
-    return (
-        Object.hasOwn(result, WRAPPED) &&
-        (result as { [WRAPPED]?: unknown })[WRAPPED] === true
-    );
+    return hasOwnWrappedTag(result);
 }
 
 /**
@@ -145,12 +170,16 @@ export function isWrappedResult(result: unknown): boolean {
  * idempotent on already-sanitised text and `applySpotlighting` short-circuits
  * on already-wrapped envelopes — the worst case is one extra O(n) pass over
  * the body, never a correctness issue.
+ *
+ * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
+ * Proxy whose `getOwnPropertyDescriptor` / `get` trap throws cannot break
+ * the catch-fallback path that calls `tag(result)`.
  */
 function tag<T extends object>(result: T): T {
     // Own-property check (not prototype-chain): same reasoning as
     // `isWrappedResult` — an inherited tag must not short-circuit a real
     // pipeline run on the descendant.
-    if (Object.hasOwn(result, WRAPPED)) return result;
+    if (hasOwnWrappedTag(result)) return result;
     try {
         Object.defineProperty(result, WRAPPED, {
             value: true,
@@ -159,7 +188,8 @@ function tag<T extends object>(result: T): T {
             writable: false,
         });
     } catch {
-        // Non-extensible target — see doc comment above. Pass through.
+        // Non-extensible target or throwing Proxy trap — see doc comment
+        // above. Pass through.
     }
     return result;
 }

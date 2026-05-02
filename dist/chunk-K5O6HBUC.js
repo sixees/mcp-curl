@@ -1851,12 +1851,19 @@ async function processResponse(response, options) {
 // src/lib/response/post-processor.ts
 import { randomUUID as randomUUID2 } from "crypto";
 var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
+function hasOwnWrappedTag(result) {
+  try {
+    return Object.hasOwn(result, WRAPPED) && result[WRAPPED] === true;
+  } catch {
+    return false;
+  }
+}
 function isWrappedResult(result) {
   if (result === null || typeof result !== "object") return false;
-  return Object.hasOwn(result, WRAPPED) && result[WRAPPED] === true;
+  return hasOwnWrappedTag(result);
 }
 function tag(result) {
-  if (Object.hasOwn(result, WRAPPED)) return result;
+  if (hasOwnWrappedTag(result)) return result;
   try {
     Object.defineProperty(result, WRAPPED, {
       value: true,

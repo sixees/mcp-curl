@@ -468,3 +468,90 @@ describe("createWrapper — spread loses tag (regression guard)", () => {
         expect(isWrappedResult(second)).toBe(true);
     });
 });
+
+describe("createWrapper — hostile Proxy probe (PR #29 round-4 hardening)", () => {
+    // A Proxy whose getOwnPropertyDescriptor / get traps throw will cause a
+    // bare Object.hasOwn(result, WRAPPED) call to throw. Defence-in-depth must
+    // never propagate exceptions to the handler boundary, so the tag probe
+    // itself is contained in try/catch.
+
+    it("isWrappedResult returns false for a Proxy whose getOwnPropertyDescriptor throws", () => {
+        const hostile = new Proxy(
+            { content: [{ type: "text", text: "x" }] },
+            {
+                getOwnPropertyDescriptor() {
+                    throw new Error("trap-boom");
+                },
+            }
+        );
+        expect(() => isWrappedResult(hostile)).not.toThrow();
+        expect(isWrappedResult(hostile)).toBe(false);
+    });
+
+    it("wrap does not throw when entry-path probe is on a hostile Proxy (line 209)", () => {
+        // This Proxy's probe throws, but the `Array.isArray(result.content)`
+        // call inside the try block reads through the `get` trap (default —
+        // returns the underlying value), so the wrap reaches the inner
+        // pipeline and the caught error in the outer catch goes through
+        // tag(result) — which must also not throw.
+        const wrap = createWrapper({});
+        const hostile = new Proxy(
+            { content: [{ type: "text", text: "hello" }] },
+            {
+                getOwnPropertyDescriptor() {
+                    throw new Error("trap-boom");
+                },
+            }
+        );
+        expect(() => wrap(hostile, "host.com")).not.toThrow();
+    });
+
+    it("catch fallback tag(result) does not throw on a Proxy with a throwing trap", () => {
+        // Force the inner pipeline to throw, then verify the catch's tag()
+        // call is also safe on a Proxy whose getOwnPropertyDescriptor throws.
+        const wrap = createWrapper({ enableSpotlighting: true });
+        const spy = vi.spyOn(detectionLogger, "sanitizeAndDetect")
+            .mockImplementation(() => {
+                throw new Error("simulated-sanitiser-failure");
+            });
+        const hostile = new Proxy(
+            { content: [{ type: "text", text: "x" }] },
+            {
+                getOwnPropertyDescriptor() {
+                    throw new Error("trap-boom");
+                },
+            }
+        );
+        expect(() => wrap(hostile, "host.com")).not.toThrow();
+        spy.mockRestore();
+    });
+
+    it("wrap does not throw when the get trap on the WRAPPED symbol throws", () => {
+        // hasOwn returns true (the trap allows it), but reading the value
+        // throws. The defensive read inside hasOwnWrappedTag must contain it.
+        const wrap = createWrapper({});
+        const target: Record<string | symbol, unknown> = {
+            content: [{ type: "text", text: "x" }],
+        };
+        const hostile = new Proxy(target, {
+            get(t, prop, recv) {
+                if (typeof prop === "symbol") {
+                    throw new Error("symbol-get-boom");
+                }
+                return Reflect.get(t, prop, recv);
+            },
+            getOwnPropertyDescriptor(t, prop) {
+                if (typeof prop === "symbol") {
+                    return {
+                        value: true,
+                        enumerable: false,
+                        configurable: true,
+                        writable: false,
+                    };
+                }
+                return Reflect.getOwnPropertyDescriptor(t, prop);
+            },
+        });
+        expect(() => wrap(hostile, "host.com")).not.toThrow();
+    });
+});
