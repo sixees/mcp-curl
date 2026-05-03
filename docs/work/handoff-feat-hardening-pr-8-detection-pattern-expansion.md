@@ -311,15 +311,22 @@ as deferred-with-rationale, not as bypass classes left open.
 
 ## Testing summary
 
+> **Initial handoff snapshot.** This block records the test state at
+> the original PR-8 commit. Subsequent review rounds revised the
+> totals — see §Code Review (round-1 review-pass: 960 → 969) and
+> §Review Comments Addressed round-3 (969 → 972). The latest state
+> is 972 passing / 7 skipped / 0 failed.
+
 - **Tests added:** 13 new `it` blocks in `sanitize.test.ts` (5 NFKC,
   4 widened bounds, 4 synonym + benign-negative).
 - **Existing tests modified:** 1 (the `still detects within bounded
   window` case — 25-char gap was below the new threshold and is now
   100-char to remain a true negative).
-- **Total tests now:** 960 passing, 7 skipped (was 875/7 at PR-7
-  merge; the +85 net comes from PR-7's review-pass additions plus
-  PR-8's 13 new cases — full delta verified by re-running before
-  and after the PR-8 commit).
+- **Total tests at PR-8 initial commit:** 960 passing, 7 skipped (was
+  875/7 at PR-7 merge; the +85 net comes from PR-7's review-pass
+  additions plus PR-8's 13 new cases — full delta verified by
+  re-running before and after the PR-8 commit). Subsequent review
+  rounds: 969 (round-1 review-pass), 972 (round-3).
 - **Build:** `npm run build` clean, no TypeScript errors. `dist/`
   artefacts updated and committed per repo convention (PR-7
   precedent in commit `ea26373`).
@@ -629,3 +636,42 @@ None — no documented decisions reversed. The Finding 2 rewording preserves bot
 
 - `npm test`: **972 passed | 7 skipped | 0 failed** (was 969/7 before round-3; net +3 from the documented-FP-class test cases).
 - `npm run build`: clean.
+
+---
+
+## Review Comments Addressed — 2026-05-03 (round 4)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Testing summary at lines 314–323 says "Total tests now: 960 passing", but later round sections record 969 and then 972. The handoff presents multiple conflicting "now" values. | @coderabbitai (AI) | Fix needed (docs) | Labelled the §Testing summary block as the **initial handoff snapshot** with a leading blockquote pointing forward to the round-1 (969) and round-3 (972) consolidations. Renamed "Total tests now" → "Total tests at PR-8 initial commit" and added a trailing reference to the post-round totals. The latest state (972) is now navigable from any reading position. |
+| Stability contract sentence at `sanitize.ts:293` still says the matcher returns true when "the (already sanitised) content matches", contradicting the round-3 `@param` rewrite that documents both call shapes (sanitizeAndDetect on original / direct on pre-sanitised). | @coderabbitai (AI) | Fix needed (docs) | Reworded the Stability contract sentence: "the (already sanitised) content" → "the provided input (either the original text via sanitizeAndDetect or pre-sanitised text via direct call)". Now consistent with the `@param` description and the round-3 body paragraph that presents both shapes. |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none_ | — | — | — | — |
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none_ | — | — | — |
+
+### Files Modified
+
+- `docs/work/handoff-feat-hardening-pr-8-detection-pattern-expansion.md` — initial-handoff-snapshot label on §Testing summary + this round-4 entry.
+- `src/lib/utils/sanitize.ts` — Stability contract sentence reworded to match the round-3 `@param` rewrite.
+
+### Reviewer Breakdown (round 4)
+
+- 2 incoming review threads this round (entered unresolved); both from AI reviewer (@coderabbitai), 0 from humans.
+- 2 actionable fixes applied (100% applicable rate — both findings caught real internal contradictions left over from round-1/round-3 layered edits).
+- 0 false positives, 0 deferred, 0 escalated to user, 0 conflicts with documented decisions.
+- 0 threads still unresolved at end of round.

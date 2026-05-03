@@ -290,13 +290,14 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * see the comment on `INJECTION_PATTERNS` above for the deferral
  * rationale.
  *
- * **Stability contract:** the *intent* — return `true` when the (already
- * sanitised) content matches a known prompt-injection signal, and never
- * mutate the bytes flowing through `sanitizeResponse` — is stable. The
- * specific pattern set and the specific normalisation algorithm
- * (currently NFKC) are **implementation**: the pattern set will expand
- * as new attack phrasings emerge, and the normaliser may swap to UTS
- * #39 skeleton-folding once the gap-trigger surfaces. The
+ * **Stability contract:** the *intent* — return `true` when the
+ * provided input (either the original text via `sanitizeAndDetect` or
+ * pre-sanitised text via direct call) matches a known prompt-injection
+ * signal, and never mutate the bytes flowing through `sanitizeResponse`
+ * — is stable. The specific pattern set and the specific normalisation
+ * algorithm (currently NFKC) are **implementation**: the pattern set
+ * will expand as new attack phrasings emerge, and the normaliser may
+ * swap to UTS #39 skeleton-folding once the gap-trigger surfaces. The
  * no-content-mutation invariant is locked by an executable test
  * (`sanitize.test.ts > does NOT mutate input`). Tests that assert on
  * which strings do or do not match should target known categories
