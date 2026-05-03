@@ -538,7 +538,45 @@ None. The `bypass\s+(your|all|the)\s+(...)` shape was retained. The reviewer's c
 
 ### Reviewer Breakdown
 
-- 1 unresolved thread, 1 from AI reviewer (@gemini-code-assist).
-- 0 actionable fixes applied (0% applicable rate — this round was 1-for-1 false positive against a documented decision).
+- 1 incoming review thread this round (entered unresolved); 1 from AI reviewer (@gemini-code-assist), 0 from humans.
+- 0 actionable fixes applied (0% applicable rate — the round was 1-for-1 false positive against a documented decision).
 - 1 false positive resolved with reproducible-evidence reply (100%).
 - 0 deferred, 0 escalated to user, 0 conflicts with documented decisions left open.
+- 0 threads still unresolved at end of round.
+
+---
+
+## Review Comments Addressed — 2026-05-03 (round 2)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Reviewer Breakdown line 541 read "1 unresolved thread" but the surrounding lines reported the thread as resolved with no conflicts left open — internally contradictory wording. | @coderabbitai (AI) | Fix needed (docs) | Reworded the round-1 Reviewer Breakdown section: "1 unresolved thread" → "1 incoming review thread this round (entered unresolved)"; added an explicit "0 threads still unresolved at end of round" line so the in-round count and the end-state count are independently visible and consistent. |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none_ | — | — | — | — |
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none_ | — | — | — |
+
+### Files Modified
+
+- `docs/work/handoff-feat-hardening-pr-8-detection-pattern-expansion.md` — Reviewer Breakdown wording fix + this round-2 entry (handoff-only change; no source-code edits).
+
+### Reviewer Breakdown (round 2)
+
+- 1 incoming review thread this round (entered unresolved); 1 from AI reviewer (@coderabbitai), 0 from humans.
+- 1 actionable fix applied (100% applicable rate — round-2 finding caught a real handoff-doc contradiction left over from round-1 work).
+- 0 false positives, 0 deferred, 0 escalated to user, 0 conflicts with documented decisions.
+- 0 threads still unresolved at end of round.
