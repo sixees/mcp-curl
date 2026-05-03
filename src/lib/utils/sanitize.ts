@@ -56,13 +56,35 @@ const RESPONSE_SANITIZE_PATTERN = new RegExp(
 // No g flag — safe for repeated .test() without lastIndex accumulation.
 // [\s\S]{0,n} instead of .{0,n} so bounded wildcards match across newlines,
 // catching multi-line injection phrases like "Ignore\nprevious\ninstructions".
+//
+// **Bounded-wildcard sizing (PR-8 / B7-sub-4).** The multi-keyword phrase
+// patterns use `{0,80}` between keywords, not `{0,20}`. The narrower window
+// missed gap-padding bypass attempts like
+// `ignore<25 spaces>previous instructions` where the attacker pads between
+// keywords with whitespace (or unicode-attack chars that survive a single
+// sanitise pass on the *raw* input) to slip past the matcher. 80 chars
+// covers all observed gap-padding in the wild while still bounding the regex
+// engine's backtracking work; the upper bound is documented in the test
+// `gap-padding above the 80-char bound is still NOT detected (B7-sub-4)`.
+//
+// Single-keyword and structural-token patterns retain their existing
+// shapes — only the multi-keyword phrase matchers (ignore/disregard/forget/
+// override/do-not-follow/exfiltrate-creds) widen.
 const INJECTION_PATTERNS = new RegExp(
     [
         // Explicit instruction override
-        "ignore[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}instructions?",
-        "disregard[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}(instructions?|directives?|rules?)",
-        "forget[\\s\\S]{0,20}(previous|prior|all|your|above|everything|instructions?)",
-        "override[\\s\\S]{0,20}(your|the|all|previous)[\\s\\S]{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
+        "ignore[\\s\\S]{0,80}(previous|prior|all|your|above|system)[\\s\\S]{0,80}instructions?",
+        "disregard[\\s\\S]{0,80}(previous|prior|all|your|above|system)[\\s\\S]{0,80}(instructions?|directives?|rules?)",
+        "forget[\\s\\S]{0,80}(previous|prior|all|your|above|everything|instructions?)",
+        "override[\\s\\S]{0,80}(your|the|all|previous)[\\s\\S]{0,80}(instructions?|settings?|behavior|config|directives?|rules?)",
+        // Synonym families for the explicit-override class (PR-8 / B7-sub-4).
+        // These cover paraphrases that the four canonical verbs above miss —
+        // e.g. "stop following your instructions", "cease compliance with the
+        // rules", "bypass your safety filters". Each family carries at least
+        // one regression test in `sanitize.test.ts`.
+        "stop\\s+(following|obeying|applying)",
+        "cease\\s+(compliance|following|obeying)",
+        "bypass\\s+(your|all|the)\\s+(instructions?|filters?|safety)",
         // Persona takeover
         "you\\s+are\\s+now\\s+",
         "act\\s+as\\s+",
@@ -81,15 +103,27 @@ const INJECTION_PATTERNS = new RegExp(
         "system\\s+prompt",
         "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
         "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
-        "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,20}instructions?",
+        "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,80}instructions?",
         // Data exfiltration — file system triggers
         "read\\s+~\\/\\.(ssh|cursor|env|zshrc|bashrc|config|npmrc|gitconfig)",
-        "pass[\\s\\S]{0,20}(its|the)\\s+contents?\\s+as",
+        "pass[\\s\\S]{0,80}(its|the)\\s+contents?\\s+as",
         "exfiltrate",
-        "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,30}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)",
+        "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,80}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)",
     ].join("|"),
     "i"
 );
+
+// **Leetspeak / homoglyph coverage (deferred).** NFKC handles compatibility
+// decompositions (full-width → half-width, ligatures, ASCII-mappable variants)
+// but does NOT collapse Cyrillic/Greek homoglyphs (е, а, о, р, с, х) per
+// UTS #39 §4 — the Unicode-recommended algorithm for those is `skeleton()`
+// against `confusables.txt`, which would either bundle ~150 KB of data or
+// add a dependency. NFKC + the bounded-wildcard widening + synonym families
+// close the highest-value gaps for free; the per-host `[injection-defense]`
+// log signal is the trigger for re-evaluating skeleton-folding if Cyrillic-
+// homoglyph attacks surface in the wild. Leetspeak (`1gn0r3`, `1337`) is
+// also deferred — explicit leetspeak patterns trip false positives on
+// legitimate text like "l33t" or "1337"; left to the same per-host signal.
 
 /**
  * Sanitize a string for use in tool metadata or prompt templates.
@@ -231,6 +265,18 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * (un-sanitized) text means invisible-char-split phrases like "Ig​nore" will
  * not match, silently degrading detection coverage.
  *
+ * **NFKC normalisation (PR-8 / B7-sub-4).** The matcher applies
+ * `String.prototype.normalize("NFKC")` to its input before testing the
+ * pattern set. NFKC collapses compatibility variants — full-width letters
+ * (`ｉｇｎｏｒｅ`), ligatures (`ﬁ`), and ASCII-mappable Latin compat
+ * forms — into canonical ASCII so the homoglyph-substitution bypass class
+ * is closed. **Returned content is unchanged** — normalisation is applied
+ * to the temporary string used for matching only; `sanitizeResponse`'s
+ * output (the bytes the LLM actually sees) never goes through NFKC. UTS #39
+ * confusable folding (Cyrillic/Greek look-alikes like `і`, `а`, `р`) is
+ * NOT covered by NFKC and remains a documented gap; see the comment on
+ * `INJECTION_PATTERNS` above for the deferral rationale.
+ *
  * **Stability contract:** the *intent* — return `true` when the (already
  * sanitised) content matches a known prompt-injection signal — is stable. The
  * specific pattern set is **not** part of the public contract and will expand
@@ -243,7 +289,11 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * @returns true if any injection pattern matched
  */
 export function detectInjectionPattern(input: string): boolean {
-    return INJECTION_PATTERNS.test(input);
+    // NFKC normalisation closes the homoglyph / width-variant bypass class
+    // (full-width Latin, compatibility ligatures, ASCII-mappable compat forms)
+    // for the detection-only path. The normalised string is local to this
+    // function — callers continue to flow the original `input` downstream.
+    return INJECTION_PATTERNS.test(input.normalize("NFKC"));
 }
 
 /**

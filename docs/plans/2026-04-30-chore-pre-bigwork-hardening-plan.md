@@ -1147,11 +1147,11 @@ Update `INJECTION_PATTERNS` to widen `{0,20}` → `{0,80}` for multi-keyword phr
 
 **Acceptance criteria.**
 
-- [ ] `detectInjectionPattern()` NFKC-normalises before matching.
-- [ ] Bounded wildcards widened to `{0,80}` on multi-keyword phrase patterns.
-- [ ] At least 3 new synonym families covered.
-- [ ] Each addition has a passing regression test demonstrating prior-version miss.
-- [ ] No content sent to the LLM is changed by this PR (audit: only `INJECTION_PATTERNS.test()` and the surrounding log call should be touched).
+- [x] `detectInjectionPattern()` NFKC-normalises before matching.
+- [x] Bounded wildcards widened to `{0,80}` on multi-keyword phrase patterns.
+- [x] At least 3 new synonym families covered.
+- [x] Each addition has a passing regression test demonstrating prior-version miss.
+- [x] No content sent to the LLM is changed by this PR (audit: only `INJECTION_PATTERNS.test()` and the surrounding log call should be touched).
 
 **Research Insights (added 2026-05-01).**
 

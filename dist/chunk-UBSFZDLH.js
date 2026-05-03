@@ -134,10 +134,18 @@ var RESPONSE_SANITIZE_PATTERN = new RegExp(
 var INJECTION_PATTERNS = new RegExp(
   [
     // Explicit instruction override
-    "ignore[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}instructions?",
-    "disregard[\\s\\S]{0,20}(previous|prior|all|your|above|system)[\\s\\S]{0,20}(instructions?|directives?|rules?)",
-    "forget[\\s\\S]{0,20}(previous|prior|all|your|above|everything|instructions?)",
-    "override[\\s\\S]{0,20}(your|the|all|previous)[\\s\\S]{0,20}(instructions?|settings?|behavior|config|directives?|rules?)",
+    "ignore[\\s\\S]{0,80}(previous|prior|all|your|above|system)[\\s\\S]{0,80}instructions?",
+    "disregard[\\s\\S]{0,80}(previous|prior|all|your|above|system)[\\s\\S]{0,80}(instructions?|directives?|rules?)",
+    "forget[\\s\\S]{0,80}(previous|prior|all|your|above|everything|instructions?)",
+    "override[\\s\\S]{0,80}(your|the|all|previous)[\\s\\S]{0,80}(instructions?|settings?|behavior|config|directives?|rules?)",
+    // Synonym families for the explicit-override class (PR-8 / B7-sub-4).
+    // These cover paraphrases that the four canonical verbs above miss —
+    // e.g. "stop following your instructions", "cease compliance with the
+    // rules", "bypass your safety filters". Each family carries at least
+    // one regression test in `sanitize.test.ts`.
+    "stop\\s+(following|obeying|applying)",
+    "cease\\s+(compliance|following|obeying)",
+    "bypass\\s+(your|all|the)\\s+(instructions?|filters?|safety)",
     // Persona takeover
     "you\\s+are\\s+now\\s+",
     "act\\s+as\\s+",
@@ -156,12 +164,12 @@ var INJECTION_PATTERNS = new RegExp(
     "system\\s+prompt",
     "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
     "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
-    "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,20}instructions?",
+    "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,80}instructions?",
     // Data exfiltration — file system triggers
     "read\\s+~\\/\\.(ssh|cursor|env|zshrc|bashrc|config|npmrc|gitconfig)",
-    "pass[\\s\\S]{0,20}(its|the)\\s+contents?\\s+as",
+    "pass[\\s\\S]{0,80}(its|the)\\s+contents?\\s+as",
     "exfiltrate",
-    "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,30}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)"
+    "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,80}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)"
   ].join("|"),
   "i"
 );
@@ -191,7 +199,7 @@ function isWhitespacePaddingMatch(match) {
   return WHITESPACE_PADDING_CODEPOINTS.ranges.some(([lo, hi]) => cp >= lo && cp <= hi);
 }
 function detectInjectionPattern(input) {
-  return INJECTION_PATTERNS.test(input);
+  return INJECTION_PATTERNS.test(input.normalize("NFKC"));
 }
 var SPOTLIGHT_SENTINEL_PREFIX = "---EXTERNAL-CONTENT-BEGIN-";
 var SPOTLIGHT_REQUEST_ID_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;

@@ -185,6 +185,18 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  * (un-sanitized) text means invisible-char-split phrases like "Ig​nore" will
  * not match, silently degrading detection coverage.
  *
+ * **NFKC normalisation (PR-8 / B7-sub-4).** The matcher applies
+ * `String.prototype.normalize("NFKC")` to its input before testing the
+ * pattern set. NFKC collapses compatibility variants — full-width letters
+ * (`ｉｇｎｏｒｅ`), ligatures (`ﬁ`), and ASCII-mappable Latin compat
+ * forms — into canonical ASCII so the homoglyph-substitution bypass class
+ * is closed. **Returned content is unchanged** — normalisation is applied
+ * to the temporary string used for matching only; `sanitizeResponse`'s
+ * output (the bytes the LLM actually sees) never goes through NFKC. UTS #39
+ * confusable folding (Cyrillic/Greek look-alikes like `і`, `а`, `р`) is
+ * NOT covered by NFKC and remains a documented gap; see the comment on
+ * `INJECTION_PATTERNS` above for the deferral rationale.
+ *
  * **Stability contract:** the *intent* — return `true` when the (already
  * sanitised) content matches a known prompt-injection signal — is stable. The
  * specific pattern set is **not** part of the public contract and will expand
