@@ -180,20 +180,60 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  *     return sanitized;
  *
  * Prefer the `sanitizeAndDetect(text, label)` composer (re-exported from the
- * public barrel) over hand-wiring the primitives — it locks the
- * sanitize → detect → log ordering invariant. Calling this matcher on raw
- * (un-sanitized) text means invisible-char-split phrases like "Ig​nore" will
- * not match, silently degrading detection coverage.
+ * public barrel) over hand-wiring the primitives — it locks the project's
+ * canonical detect-then-sanitise ordering: detection runs on the **original**
+ * text (so signals the sanitiser would later strip — e.g. the
+ * U+2026-prefixed payloads PR-7 added to the attack-range — still fire the
+ * per-host log) and sanitisation produces the bytes the LLM actually sees
+ * (see PR-6b S4 in `detection-logger.ts → sanitizeAndDetect`). Calling this
+ * matcher directly on **already-sanitised** text trades that signal-
+ * preservation for invisible-char-split coverage instead: phrases like
+ * "Ig​nore" (zero-width space splitting `ignore`) collapse to `Ignore`
+ * after sanitisation and become detectable. Both call shapes are
+ * legitimate; pick based on which class you care about preserving.
  *
- * **Stability contract:** the *intent* — return `true` when the (already
- * sanitised) content matches a known prompt-injection signal — is stable. The
- * specific pattern set is **not** part of the public contract and will expand
- * over time as new attack phrasings emerge. Tests that assert on which strings
- * do or do not match should target known categories (e.g. instruction-override
- * phrases) rather than exact wording, and callers must continue to honour the
- * "observability only" rule regardless of which patterns are in play.
+ * **Normalisation (PR-8 / B7-sub-4).** The matcher normalises its input
+ * before testing the pattern set, currently via
+ * `String.prototype.normalize("NFKC")`. NFKC collapses compatibility
+ * variants — full-width letters (`ｉｇｎｏｒｅ`), ligatures (`ﬁ`), and
+ * ASCII-mappable Latin compat forms — into canonical ASCII so the
+ * homoglyph-substitution bypass class is closed. **Returned content is
+ * unchanged** — normalisation is applied to a transient string used for
+ * matching only; `sanitizeResponse`'s output (the bytes the LLM actually
+ * sees) never goes through it. NFKC can expand input length under
+ * compatibility decomposition (e.g. `ﬃ` → `ffi`, ~3× worst case); the
+ * transient is bounded by the upstream `LIMITS.MAX_RESPONSE_SIZE`
+ * (10 MB) cap and collected immediately after `.test()` returns, so the
+ * memory footprint stays well inside `MAX_TOTAL_RESPONSE_MEMORY`
+ * (100 MB). UTS #39 confusable folding (Cyrillic/Greek look-alikes like
+ * `і`, `а`, `р`) is NOT covered by NFKC and remains a documented gap;
+ * see the comment on `INJECTION_PATTERNS` above for the deferral
+ * rationale.
  *
- * @param input - Content to scan (must already be passed through `sanitizeResponse`)
+ * **Stability contract:** the *intent* — return `true` when the
+ * provided input (either the original text via `sanitizeAndDetect` or
+ * pre-sanitised text via direct call) matches a known prompt-injection
+ * signal, and never mutate the bytes flowing through `sanitizeResponse`
+ * — is stable. The specific pattern set and the specific normalisation
+ * algorithm (currently NFKC) are **implementation**: the pattern set
+ * will expand as new attack phrasings emerge, and the normaliser may
+ * swap to UTS #39 skeleton-folding once the gap-trigger surfaces. The
+ * no-content-mutation invariant is locked by an executable test
+ * (`sanitize.test.ts > does NOT mutate input`). Tests that assert on
+ * which strings do or do not match should target known categories
+ * (e.g. instruction-override phrases) rather than exact wording, and
+ * callers must continue to honour the "observability only" rule
+ * regardless of which patterns are in play.
+ *
+ * @param input - Content to scan. When called via `sanitizeAndDetect`
+ *   (the canonical production path), detection runs on the **original**
+ *   text before sanitisation — preserving signals like Unicode-attack
+ *   payloads that the sanitiser would otherwise strip. When called
+ *   directly, passing content already through `sanitizeResponse` improves
+ *   coverage of invisible-char-split phrases (e.g. `Ig`+ZWSP+`nore` →
+ *   `Ignore`), at the cost of the pre-sanitise signal class. Both shapes
+ *   are valid; pick based on which class you care about. See PR-6b S4
+ *   in `detection-logger.ts` for the ordering rationale.
  * @returns true if any injection pattern matched
  */
 declare function detectInjectionPattern(input: string): boolean;
