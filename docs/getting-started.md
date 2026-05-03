@@ -115,6 +115,9 @@ const server = new McpCurlServer()
             "X-Client": "my-mcp-server",
         },
 
+        // User-Agent / Referer for every request (empty string disables)
+        defaultUserAgent: "my-mcp-server/1.0",
+
         // Default timeout in seconds
         defaultTimeout: 60,
 
@@ -123,6 +126,10 @@ const server = new McpCurlServer()
 
         // Allow localhost requests (blocked by default for security)
         allowLocalhost: false,
+
+        // Wrap text content parts in per-message sentinel envelopes
+        // (defence-in-depth; sanitise + injection-detect always run)
+        enableSpotlighting: true,
     });
 ```
 

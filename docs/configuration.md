@@ -15,24 +15,30 @@ interface McpCurlConfig {
     port?: number;
     host?: string;
     authToken?: string;
-    allowedOrigins?: string[];
+    allowedOrigins?: readonly string[];
+    defaultUserAgent?: string;
+    defaultReferer?: string;
+    enableSpotlighting?: boolean;
 }
 ```
 
 ## Configuration Options
 
-| Option           | Type                     | Default     | Description                                           |
-|------------------|--------------------------|-------------|-------------------------------------------------------|
-| `baseUrl`        | `string`                 | none        | Base URL prepended to relative URLs in `curl_execute` |
-| `defaultHeaders` | `Record<string, string>` | none        | Headers added to all `curl_execute` requests          |
-| `defaultTimeout` | `number`                 | 30          | Default timeout in seconds (1-300)                    |
-| `outputDir`      | `string`                 | system temp | Directory for saved responses                         |
-| `maxResultSize`  | `number`                 | 500000      | Max bytes before auto-saving to file (max 1MB)        |
-| `allowLocalhost` | `boolean`                | false       | Allow localhost requests (blocked by default)         |
-| `port`           | `number`                 | 3000        | HTTP transport port                                   |
-| `host`           | `string`                 | "127.0.0.1" | HTTP transport bind address                           |
-| `authToken`      | `string`                 | none        | Bearer token for HTTP transport authentication        |
-| `allowedOrigins` | `string[]`               | localhost   | Allowed origins for HTTP Origin header validation     |
+| Option               | Type                     | Default     | Description                                                              |
+|----------------------|--------------------------|-------------|--------------------------------------------------------------------------|
+| `baseUrl`            | `string`                 | none        | Base URL prepended to relative URLs in `curl_execute`                    |
+| `defaultHeaders`     | `Record<string, string>` | none        | Headers added to all `curl_execute` requests                             |
+| `defaultTimeout`     | `number`                 | 30          | Default timeout in seconds (1-300)                                       |
+| `outputDir`          | `string`                 | system temp | Directory for saved responses                                            |
+| `maxResultSize`      | `number`                 | 500000      | Max bytes before auto-saving to file (max 1MB)                           |
+| `allowLocalhost`     | `boolean`                | false       | Allow localhost requests (blocked by default)                            |
+| `port`               | `number`                 | 3000        | HTTP transport port                                                      |
+| `host`               | `string`                 | "127.0.0.1" | HTTP transport bind address                                              |
+| `authToken`          | `string`                 | none        | Bearer token for HTTP transport authentication (printable ASCII, ≤ 4096) |
+| `allowedOrigins`     | `readonly string[]`      | localhost   | Allowed origins for HTTP Origin header validation                        |
+| `defaultUserAgent`   | `string`                 | none        | User-Agent for all requests; empty string disables                       |
+| `defaultReferer`     | `string`                 | none        | Referer for all requests; empty string disables                          |
+| `enableSpotlighting` | `boolean`                | false       | Wrap response text in per-message sentinel envelopes (defence-in-depth)  |
 
 ## Detailed Options
 
@@ -144,7 +150,23 @@ Require bearer token authentication for HTTP transport:
 configure({authToken: process.env.MCP_AUTH_TOKEN})
 ```
 
-Clients must include the configured token in the `Authorization: Bearer <token>` header.
+Clients must include the configured token in the `Authorization: Bearer <token>`
+header. The scheme is matched case-insensitively per RFC 6750 §2.1; the token
+itself is compared with `crypto.timingSafeEqual` to avoid timing-side-channel
+leaks.
+
+The token is validated at HTTP transport startup:
+
+- **Length** — rejected if longer than `4096` characters (covers RSA-256 JWTs,
+  OIDC ID tokens, and most JWE tokens; above this is almost certainly a paste
+  error).
+- **Charset** — must be printable ASCII only (`0x20–0x7E`). CRLF, NUL, high-bit
+  control bytes, and any non-ASCII codepoints are rejected.
+
+A startup rejection throws synchronously **before** the HTTP server binds, so
+the operator sees the error immediately and the bad token never reaches the
+auth-middleware closure. The token value is **never** echoed in error messages
+or logs — operators see `[length=N]` or `[redacted]` markers instead.
 
 Can also be set via `MCP_AUTH_TOKEN` environment variable.
 
@@ -160,18 +182,73 @@ configure({allowedOrigins: ["https://myapp.example.com", "https://admin.example.
 By default, only localhost origins are allowed. Setting this replaces the defaults entirely. Can also be set via
 `MCP_CURL_ALLOWED_ORIGINS` (comma-separated).
 
+### defaultUserAgent
+
+Override the User-Agent header sent on every `curl_execute` request. An empty
+string disables the header entirely.
+
+```typescript
+.
+configure({defaultUserAgent: "MyApp/1.0 (+https://example.com)"})
+```
+
+Can also be set via `MCP_CURL_USER_AGENT` environment variable.
+
+### defaultReferer
+
+Override the Referer header sent on every `curl_execute` request. An empty
+string disables the header entirely.
+
+```typescript
+.
+configure({defaultReferer: "https://example.com/"})
+```
+
+Can also be set via `MCP_CURL_REFERER` environment variable.
+
+### enableSpotlighting
+
+Wrap text content parts of every tool response in a per-message sentinel
+envelope so the LLM treats the body as untrusted data rather than instructions.
+Defaults to `false`.
+
+```typescript
+.
+configure({enableSpotlighting: true})
+```
+
+The envelope uses opaque, UUID-keyed begin/end sentinels generated fresh on
+every wrap call (one UUID per response, shared by every text part). Spotlighting
+is always combined with the always-on **defence-in-depth wrap** that runs over
+every tool result emitted by the server (`curl_execute`, `jq_query`, YAML
+endpoints, custom tools, and `beforeRequest` short-circuit returns). The wrap
+runs three steps in fixed order on each text part:
+
+1. **Detect** injection patterns against the **original** text and emit a
+   throttled `[injection-defense] [host]` log line.
+2. **Sanitise** Unicode attack chars and collapse whitespace runs.
+3. **Spotlight** the sanitised text using a per-message UUID — only when this
+   flag is `true`.
+
+Steps 1 and 2 always run regardless of this flag. The wrap is idempotent (same
+result wrapped twice is a no-op) and fail-open (an internal exception returns
+the original result and logs `[wrap-error] [host]`), so defence-in-depth never
+breaks the handler boundary.
+
 ## Environment Variables
 
 Configuration can be set via environment variables (config takes precedence):
 
-| Variable                   | Config Equivalent |
-|----------------------------|-------------------|
-| `MCP_CURL_OUTPUT_DIR`      | `outputDir`       |
-| `MCP_CURL_ALLOW_LOCALHOST` | `allowLocalhost`  |
-| `PORT`                     | `port`            |
-| `MCP_AUTH_TOKEN`           | `authToken`       |
-| `MCP_CURL_HOST`            | `host`            |
-| `MCP_CURL_ALLOWED_ORIGINS` | `allowedOrigins`  |
+| Variable                   | Config Equivalent  |
+|----------------------------|--------------------|
+| `MCP_CURL_OUTPUT_DIR`      | `outputDir`        |
+| `MCP_CURL_ALLOW_LOCALHOST` | `allowLocalhost`   |
+| `PORT`                     | `port`             |
+| `MCP_AUTH_TOKEN`           | `authToken`        |
+| `MCP_CURL_HOST`            | `host`             |
+| `MCP_CURL_ALLOWED_ORIGINS` | `allowedOrigins`   |
+| `MCP_CURL_USER_AGENT`      | `defaultUserAgent` |
+| `MCP_CURL_REFERER`         | `defaultReferer`   |
 
 ## Configuration Precedence
 
@@ -198,8 +275,9 @@ const server = new McpCurlServer()
         baseUrl: "https://api.example.com/v1",
         defaultHeaders: {
             "Accept": "application/json",
-            "User-Agent": "MyApp/1.0",
         },
+        defaultUserAgent: "MyApp/1.0",
+        defaultReferer: "https://example.com/",
         defaultTimeout: 60,
         outputDir: "./responses",
         maxResultSize: 1_000_000,
@@ -208,6 +286,7 @@ const server = new McpCurlServer()
         host: "127.0.0.1",
         allowedOrigins: ["https://myapp.example.com"],
         authToken: process.env.MCP_AUTH_TOKEN,
+        enableSpotlighting: true,
     });
 
 await server.start("http");

@@ -214,6 +214,16 @@ server.beforeRequest((ctx) => {
 });
 ```
 
+**Short-circuit responses are routed through the same defence-in-depth wrap as
+real tool output.** The `response` string is wrapped into
+`{ content: [{ type: "text", text: response }], isError }` and then
+sanitised + injection-detected (and spotlighted, when `enableSpotlighting` is
+on) before being returned to the client. A hook that returns
+attacker-controlled bytes from an upstream cache cannot bypass the trust
+boundary — the wrap closes that path. Hostname for the throttled
+`[injection-defense]` log line is extracted from the post-mutation
+`ctx.params` so a proxy-rewriting hook is attributed to the rewritten host.
+
 ### Request Validation
 
 Reject requests that don't meet criteria:

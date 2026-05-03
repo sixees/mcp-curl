@@ -240,11 +240,31 @@ symmetric.
 ## Composing the Full Defence
 
 The two sections above describe the input and output halves of the trust
-boundary. Most custom tools that fetch external content will want both
-applied in the same place. A higher-level `wrapWithDefence(handler)`
-composer that bundles input validation, output sanitisation, detection,
-and spotlighting is planned for a follow-up release; until then, compose
-the primitives directly per the recommended snippets above.
+boundary. **For tools registered via `server.registerCustomTool()`, the
+output half is already applied for you** — every value the handler returns is
+routed through the same internal post-processor wrap that defends
+`curl_execute`, `jq_query`, and YAML-driven endpoints. The wrap runs
+**detect → sanitise → optional spotlight** on each text content part:
+
+1. `sanitizeAndDetect()` runs on the **original** text, emits the throttled
+   `[injection-defense] [host]` log on a match, and returns the sanitised text.
+2. If `config.enableSpotlighting === true` and the result is not an error, the
+   sanitised text is wrapped in a per-message UUID-keyed sentinel envelope.
+
+Idempotence is enforced via a module-private symbol tag, so a handler that
+pre-sanitises (or pre-spotlights via `applySpotlighting`) won't double-process.
+The wrap is fail-open: an internal exception returns the original result and
+emits a throttled `[wrap-error] [host]` log.
+
+If you're building a **non-MCP** pipeline (e.g. a plain HTTP service backed by
+the same library) and need to replicate the defence outside the MCP handler
+boundary, compose the public primitives directly per the snippets above —
+`sanitizeAndDetect(text, label)` is the recommended composer (it locks the
+detect-on-original ordering); pair it with `applySpotlighting(sanitised,
+randomUUID())` if your protocol has the equivalent of a per-message trust
+boundary. The internal `createWrapper` factory is **not** exported on purpose:
+its `CallToolResult` shape is coupled to the MCP SDK and would be a stability
+hazard for callers building their own response shapes.
 
 ## Using Instance Utilities
 

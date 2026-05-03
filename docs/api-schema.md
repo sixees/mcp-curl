@@ -326,6 +326,30 @@ Common validation errors:
 | `Duplicate endpoint ID: get_user`  | Two endpoints with same `id`                       |
 | `Invalid parameter location`       | `in` not one of path/query/header/body             |
 | `Path parameter not in path`       | Parameter with `in: path` but not in path template |
+| `Base URL must use http or https`  | `api.baseUrl` uses `data:`, `javascript:`, `file:`, `ftp:`, … |
+| Duplicate filter preset name       | Two presets in one endpoint share a `name`         |
+
+### Pre-sanitisation invariant
+
+Every public entry point that produces a parsed `ApiSchema` —
+`loadApiSchema()`, `loadApiSchemaFromString()`, `validateApiSchema()`, **and**
+the directly-re-exported `ApiSchemaValidator.parse()` — runs the input through
+a single `z.preprocess()` step that sanitises every user-facing string field
+**before** Zod validation fires. Three consequences:
+
+1. Attacker-controlled bidi/zero-width bytes in YAML descriptions never reach
+   the LLM and never appear in Zod error messages.
+2. A description consisting entirely of invisible characters reduces to `""`
+   and is rejected by the standard `z.string().min(1)` check — no separate
+   empty-string rule is needed.
+3. Cross-field checks (duplicate endpoint IDs, undefined path-parameter
+   references, duplicate filter-preset names after sanitisation) live inside
+   the validator's `.transform()` step, so direct `ApiSchemaValidator.parse()`
+   callers receive the same checks `validateApiSchema()` does.
+
+Downstream consumers (the tool generator, custom-tool registration) **must
+not** re-sanitise — sanitisation is the validator's job. The TypeScript type
+does not carry this invariant; it is a runtime property of the validator.
 
 ## Best Practices
 
