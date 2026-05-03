@@ -151,15 +151,18 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
         expect(out).toBe(body);
     });
 
-    it("ReDoS regression: pathological 200 KB body completes well under 100 ms", () => {
+    it("ReDoS regression: pathological 200 KB body completes within CI-tolerant 2 s", () => {
         // Nested-near-script payload (`<script>` followed by 200 KB of
         // `<` chars with no closer). Lazy + alternation form is linear-
-        // time per match. The 256 KB cap is not engaged here.
+        // time per match. The 256 KB cap is not engaged here. The 2 s
+        // bound is a CI-tolerant safety check — catastrophic backtracking
+        // would not complete at all within the test timeout. Strict perf
+        // targets belong in a benchmark suite, not unit tests.
         const body = "<script>" + "<".repeat(200 * 1024);
         const start = Date.now();
         stripBlocksFixedPoint(body);
         const elapsedMs = Date.now() - start;
-        expect(elapsedMs).toBeLessThan(100);
+        expect(elapsedMs).toBeLessThan(2000);
     });
 });
 
@@ -299,6 +302,42 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
             // that look like markdown-link URL portions get stripped.
             const text = "Discussion of the (javascript:foo) URL scheme.";
             expect(stripMarkdownBeacons(text)).toBe(text);
+        });
+    });
+
+    describe("padded label / URL bypass (round-3 follow-up)", () => {
+        // CodeRabbit flagged that `{0,256}` label cap and `{1,2048}` URL
+        // cap were a load-bearing bypass: an attacker padding a label to
+        // 257+ chars or a URL beyond 2048 chars defeated all four
+        // enforcement patterns. Caps lifted to unbounded (`*`/`+`)
+        // because the negative-character class `[^\]\n]` is linear-time
+        // per attempt and the upstream `STRIP_PATH_MAX_BYTES` cap bounds
+        // total cost.
+
+        it("strips an external link with a 1024-char label", () => {
+            const longLabel = "a".repeat(1024);
+            const md = `[${longLabel}](https://tracker.example.com/x)`;
+            expect(stripMarkdownBeacons(md)).toBe("[link removed]");
+        });
+
+        it("strips an external image with a 4096-char alt text", () => {
+            const longAlt = "z".repeat(4096);
+            const md = `![${longAlt}](https://tracker.example.com/p.gif)`;
+            expect(stripMarkdownBeacons(md)).toBe("[image removed]");
+        });
+
+        it("strips a dangerous-scheme link with a 4096-char URL", () => {
+            const longUrl = "x".repeat(4096);
+            const md = `[click](javascript:alert(${longUrl}))`;
+            const out = stripMarkdownBeacons(md);
+            expect(out).not.toContain("javascript:");
+            expect(out).toContain("[link removed]");
+        });
+
+        it("strips an http link with an 8192-char URL", () => {
+            const longUrl = "x".repeat(8192);
+            const md = `[click](https://tracker.example.com/${longUrl})`;
+            expect(stripMarkdownBeacons(md)).toBe("[link removed]");
         });
     });
 });

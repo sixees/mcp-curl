@@ -1873,11 +1873,11 @@ var STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
 var HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
 var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?(?:<\/\s*script\b[^>]*>|$)/gi;
 var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?(?:<\/\s*style\b[^>]*>|$)/gi;
-var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]{1,2048}\)/g;
-var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]{1,2048}\)/g;
-var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
-var MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN = /(?<!!)\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
-var MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN = /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
+var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
+var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
+var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+var MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN = /(?<!!)\[[^\]\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+var MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN = /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
 function decodeNumericHtmlEntities(input) {
   return input.replace(/&#(x[0-9a-f]+|\d+);?/gi, (_, body) => {
     const cp = body[0] === "x" || body[0] === "X" ? Number.parseInt(body.slice(1), 16) : Number.parseInt(body, 10);
@@ -1957,9 +1957,7 @@ async function processResponse(response, options) {
       throw error;
     }
     content = applyJqFilterToParsed(parsedData, options.jqFilter);
-    if (isText) {
-      content = sanitizeAndDetect(content, hostname);
-    }
+    content = sanitizeAndDetect(content, hostname);
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
   const contentBytes = Buffer.byteLength(content, "utf8");

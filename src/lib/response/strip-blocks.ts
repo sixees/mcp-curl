@@ -111,18 +111,22 @@ const STYLE_BLOCK_PATTERN =
 
 /**
  * Markdown image / link beacon patterns. Both:
- *   - Cap the alt/label length at 256 chars — defeats catastrophic
- *     backtracking on adversarial mismatched-bracket input.
- *   - Cap the URL length at 2048 chars (well above legitimate
- *     distribution).
+ *   - Use `[^\]\n]*` (unbounded) for the alt/label portion. Earlier
+ *     revisions capped at 256 chars to "defeat catastrophic backtracking"
+ *     — but the negative-character class `[^\]\n]` is linear-time per
+ *     attempt regardless of length (no nested quantifier, no ReDoS
+ *     class). The 256-char cap was a load-bearing **bypass**: an
+ *     attacker padding a label past 256 chars defeated all four enforce-
+ *     ment patterns. Removing the cap closes that bypass; runaway
+ *     matches are bounded by the upstream `STRIP_PATH_MAX_BYTES` cap
+ *     and the `\n` exclusion (which keeps a label from spanning blocks).
+ *   - Use `[^)\n]+` (unbounded) for the URL portion. Same analysis —
+ *     bounded character class is linear-time; the previous 2048-char
+ *     cap was the same bypass class for over-cap URLs. The `\n`
+ *     exclusion bounds runaway matches across blocks; the upstream
+ *     `STRIP_PATH_MAX_BYTES` cap bounds total cost.
  *   - Allow optional whitespace after the opening paren so CommonMark's
  *     `[label]( url )` shape matches.
- *   - Use `[^)\n]` for the URL portion (vs older `[^\s)]`) so URLs
- *     containing whitespace (markdown title-syntax `(url "title")`) and
- *     URLs containing a balanced `(` (Wikipedia-style links like
- *     `Foo_(bar)`) at least partially match — `[^)\n]` greedy stops at
- *     the first `)`, so a URL with internal `)` matches up to that
- *     point. The newline exclusion bounds runaway matches across blocks.
  *   - Require an http(s) scheme — non-http schemes are handled by
  *     {@link MARKDOWN_DANGEROUS_SCHEME_PATTERN} below. Same-origin or
  *     relative URLs (no scheme) are deliberately preserved.
@@ -138,9 +142,9 @@ const STYLE_BLOCK_PATTERN =
  * versions support negative lookbehind.
  */
 const MARKDOWN_EXTERNAL_IMAGE_PATTERN =
-    /!\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]{1,2048}\)/g;
+    /!\[[^\]\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
 const MARKDOWN_EXTERNAL_LINK_PATTERN =
-    /(?<!!)\[[^\]\n]{0,256}\]\(\s*https?:\/\/[^)\n]{1,2048}\)/g;
+    /(?<!!)\[[^\]\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
 
 /**
  * Dangerous-scheme blocklist for markdown URLs (S5). Strips links and
@@ -157,9 +161,9 @@ const MARKDOWN_EXTERNAL_LINK_PATTERN =
  *     {@link MARKDOWN_EXTERNAL_IMAGE_PATTERN}.
  */
 const MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN =
-    /!\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
+    /!\[[^\]\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
 const MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN =
-    /(?<!!)\[[^\]\n]{0,256}\]\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
+    /(?<!!)\[[^\]\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
 
 /**
  * Residual dangerous-scheme cleanup pattern. Strips `(scheme:…)` URL
@@ -182,7 +186,7 @@ const MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN =
  * URL char class `[^)\n]{0,4096}` mirrors the standard pattern bounds.
  */
 const MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN =
-    /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]{0,4096}\)/gi;
+    /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
 
 /**
  * Decode numeric HTML entities (`&#xNN;` / `&#NNN;`) so payloads like

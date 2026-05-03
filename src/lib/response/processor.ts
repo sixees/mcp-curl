@@ -185,9 +185,13 @@ export async function processResponse(
         // Re-sanitize and re-detect after filter: JSON.parse decodes Unicode escapes in string
         // values (e.g. {"cmd":"Ig​nore..."} → zero-width space in jq output), so attack
         // chars that were invisible in the raw text become real characters in the filtered result.
-        if (isText) {
-            content = sanitizeAndDetect(content, hostname);
-        }
+        //
+        // Runs UNCONDITIONALLY — the previous `if (isText)` gate let an
+        // attacker bypass post-jq sanitisation by labelling JSON as
+        // `application/octet-stream` (binary). If we got this far jq
+        // produced a textual filter result; binary-labelled-but-actually-
+        // JSON bodies must be sanitised on output.
+        content = sanitizeAndDetect(content, hostname);
     }
 
     // Step 7: Determine max size and decide save-to-file

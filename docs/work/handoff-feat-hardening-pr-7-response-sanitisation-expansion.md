@@ -328,10 +328,12 @@ silently shipping a behaviour change.
 
 ## Commit history
 
-Will appear after commit. Planned single commit:
+Initial PR-7 work landed in a single commit; subsequent review rounds
+produced separate fixup commits. See `git log main..HEAD` for the full
+history. The first commit:
 
-```
-feat(response): widen sanitiser + ReDoS-hardened HTML/markdown stripping (PR-7 / B7-sub-1-3 + B8)
+```text
+b088738 feat(response): widen sanitiser + ReDoS-hardened HTML/markdown stripping (PR-7 / B7-sub-1-3 + B8)
 ```
 
 ## Review context
@@ -414,7 +416,7 @@ feat(response): widen sanitiser + ReDoS-hardened HTML/markdown stripping (PR-7 /
 ### Review Summary
 - **Reviewer:** automated multi-agent review (security-sentinel, code-simplicity-reviewer, typescript-reviewer)
 - **Findings:** 🔴 P1: 6 | 🟡 P2: 8 | 🔵 P3: 7
-- **All P1 + relevant P2 fixed in commit `[pending]`.** Tests: 815 → 875 passing (net **+60**).
+- **All P1 + relevant P2 fixed in commit `4a76ea4`.** Tests: 815 → 875 passing (net **+60**).
 
 ### Handoff Assessment
 The original handoff was honest about most trade-offs (image-inside-link
@@ -673,3 +675,47 @@ None — both round-3 P1 fixed; relevant P2 fixed; deferred items are documented
 Round 3 was the most productive of the three so far. Two P1 bypasses (content-type tampering, image-inside-link with dangerous outer scheme) had survived two prior review passes — both invisible to the existing test suite. Codex / Gemini's earlier round-1 finding (post-strip detection silencing) was a partial fix; the real gap was that detection on the original-text was missing entity-encoded forms entirely. This round closes that loop AND closes the lookalike-CT bypass that was a one-byte attack against the entire strip subsystem.
 
 The handoff's claim "no security blockers remain" was demonstrably wrong — the security-sentinel reviewer's test probes (78 of them) found the bypasses in minutes. **Lesson:** the test suite must cover content-type tampering, lookbehind-blocking nesting, and entity-encoded detection paths going forward; these are now permanent regression tests.
+
+---
+
+## Review Comments Addressed — 2026-05-03 (PR #30 round 2)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Hard `{0,256}` label / `{1,2048}` URL caps in markdown beacon patterns are a load-bearing bypass — pad past the cap to skip enforcement | @coderabbitai | **P2 — Fix needed** | Lifted caps to unbounded (`*` for label, `+`/`*` for URL). Negative-character class `[^\]\n]` is linear-time per attempt regardless of length; upstream `STRIP_PATH_MAX_BYTES` cap bounds total cost. 4 regression tests covering 1024-char label, 4096-char alt text, 4096-char dangerous URL, 8192-char http URL. |
+| Post-jq `sanitizeAndDetect` gated on `isText` — JSON labelled `application/octet-stream` bypasses sanitise/detect after jq filter | @coderabbitai | **P2 — Fix needed (real bypass)** | Removed the `if (isText)` gate. `sanitizeAndDetect` now runs unconditionally after jq — if we got that far, jq produced text regardless of declared CT. 2 regression tests covering binary-labelled JSON with ZWSP and injection phrase. |
+| 100ms wall-clock threshold flaky on CI (processor.test.ts:385) | @coderabbitai | **P2 — Fix needed** | Widened to 2000ms with comment explaining the bound is CI-tolerant; catastrophic backtracking would not complete at all. |
+| Same in strip-blocks.test.ts:163 | @coderabbitai | **P2 — Fix needed (duplicate)** | Same fix. |
+| Test name "does NOT strip" contradicts the assertion (strips when leading markup opener present) | @coderabbitai | **P3 — Fix needed (clarity)** | Renamed to "strips `<script>` from text/plain when markup appears within the sniff window". Comments updated to match. |
+| Stale "Will appear after commit" / `[pending]` placeholders in handoff | @coderabbitai | **P3 — Doc** | Replaced with actual first-commit SHA and pointer to `git log main..HEAD`. Round-2 commit reference also corrected. |
+| NBSP test labelled "newline + NBSP" used ASCII space in source | @coderabbitai | **P3 — Test correctness** | Rewrote with explicit `"\n "` escape so the test unambiguously exercises NBSP. (The previous source actually contained the NBSP byte but rendered as space in editors — the explicit escape is unambiguous.) |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| Hard caps `{0,256}` label / `{1,2048}` URL on markdown patterns "to defeat catastrophic backtracking" | Unbounded `[^\]\n]*` label / `[^)\n]+` URL; cost bounded by upstream `STRIP_PATH_MAX_BYTES` and the `\n` exclusion | The negative-character class is already linear-time per attempt — the caps were not load-bearing for ReDoS but WERE load-bearing for the bypass class. Removing them closes the bypass without introducing ReDoS. | @coderabbitai |
+| Post-jq sanitise gated on `isText` | Always sanitise+detect after jq | jq operates on JSON regardless of declared CT (bin-labelled JSON still parses); skipping sanitise on the filter output is the bypass. | @coderabbitai |
+| 100ms wall-clock perf threshold in unit tests | 2000ms CI-tolerant safety bound | The point is to catch catastrophic backtracking (would never complete in test timeout) not to assert microsecond performance. Strict perf belongs in benchmarks. | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was inline PR threads, not `docs/todos/` files_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — all 7 round-2 PR threads addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/response/strip-blocks.ts` (markdown patterns: caps removed)
+- `src/lib/response/strip-blocks.test.ts` (+4 padded-label/URL bypass regression tests; widened ReDoS timing threshold to 2 s)
+- `src/lib/response/processor.ts` (drop `if (isText)` gate on post-jq sanitise)
+- `src/lib/response/processor.test.ts` (+2 binary-CT post-jq regression tests; widened ReDoS timing threshold to 2 s; renamed "does NOT strip" test to match actual assertion)
+- `src/lib/utils/sanitize.test.ts` (NBSP test uses explicit ` ` escape)
+- `docs/work/handoff-feat-hardening-pr-7-response-sanitisation-expansion.md` (this section + stale-placeholder fix)
+
+### Tests / build
+- `npm test`: 928/928 passing (7 skipped) — was 922 after round-3, **net +6 regression tests**.
+- `npm run build`: clean.

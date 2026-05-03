@@ -491,7 +491,9 @@ describe("sanitizeResponse — newline interleaving with inline whitespace (roun
     });
 
     it("collapses 20× (newline + NBSP) interleaving", () => {
-        const seg = "\n ";
+        // NBSP is U+00A0 — uses the explicit escape so the test actually
+        // exercises the NBSP branch of the sanitiser, not ASCII space.
+        const seg = "\n\u00A0";
         const input = `before${seg.repeat(20)}after`;
         const out = sanitizeResponse(input);
         expect(out).toMatch(/^before\nafter$/);
