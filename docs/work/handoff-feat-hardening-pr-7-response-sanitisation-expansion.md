@@ -719,3 +719,49 @@ The handoff's claim "no security blockers remain" was demonstrably wrong — the
 ### Tests / build
 - `npm test`: 928/928 passing (7 skipped) — was 922 after round-3, **net +6 regression tests**.
 - `npm run build`: clean.
+
+---
+
+## Review Comments Addressed — 2026-05-03 (PR #30 round 3 — CodeRabbit)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Binary MIME labels disable the entire sanitization/strip pipeline — `if (isText)` at the top of Step 2 lets `Content-Type: image/png` skip sanitise, detect, AND strip on a string body | @coderabbitai | **P2 — Fix needed (real bypass)** | Restructured `processResponse`: `sanitizeAndDetect` now runs UNCONDITIONALLY on every string body (before any content-type gate). Steps 3-5 (strip path) gated on (a) text-shape declared CT OR (b) sniffer fires — with the sniff window broadened to include binary CTs (`image/*`, `application/octet-stream`, etc.) plus plain-text-like CTs. Structured types (JSON) still excluded from sniffing. 11 regression tests inverted from "binary CT skips sanitise" to "binary CT sanitised + bypass closed"; 3 new tests for binary-CT-with-markup-sniffer. |
+| 256 KB cap inside `stripBlocksFixedPoint` does NOT cover `stripMarkdownBeacons` — the four global replaces still scan the full body after round-2 removed label/URL caps | @coderabbitai | **P2 — Fix needed** | Exported `STRIP_PATH_MAX_BYTES` from `strip-blocks.ts` (`@internal`) and added a unified outer-level byte-cap gate in `processor.ts` that skips ALL of Steps 3-5 (script/style strip + markdown beacons + re-sanitise) when the post-sanitise body exceeds the cap. Sanitiser still runs on the full body regardless. 2 regression tests covering markdown bodies above and just below the cap. |
+| Literal invisible chars in test fixtures (sanitize.test.ts:435/446/456 + assertions) are hard to audit and prone to editor normalisation | @coderabbitai | **P3 — Test correctness** | Replaced all literal ZWSP / BOM with explicit `​` / `﻿` escapes via Python script. Test semantics unchanged; auditability improved. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| `if (isText)` gates sanitise+detect AND strip path together | sanitise+detect ALWAYS runs on every string body; only strip path is content-type-gated | Binary CTs are attacker-controllable; gating sanitise on them was a one-byte bypass against the entire pipeline. The body arriving at `processResponse` is always a string (curl captures stdout as UTF-8); sanitising it is safe — only ever removes attack-class codepoints and collapses padding, both no-ops on legitimate binary previews. | @coderabbitai |
+| Sniff window = plain-text-like CTs only | Sniff window = plain-text-like OR binary CTs | Binary CTs are the attacker's most permissive choice for tampering; the round-3 sniffer only covering plain-text-like missed this class entirely. Structured types (JSON) remain exempt to avoid mangling JSON containing `<script>` in string fields. | @coderabbitai |
+| `STRIP_PATH_MAX_BYTES` enforced inside `stripBlocksFixedPoint` only | Same cap enforced at the outer-level `if (needsStripPath && !exceedsStripCap)` gate, covering `stripMarkdownBeacons` too | After round-2 removed the label/URL caps inside markdown patterns, the four global replaces in `stripMarkdownBeacons` were unbounded against body size. The outer cap is now a true upper bound for the entire strip path's cost. | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was inline PR threads, not `docs/todos/` files_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — all 3 round-3 PR threads addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/response/strip-blocks.ts` (export `STRIP_PATH_MAX_BYTES` with `@internal` JSDoc + cross-reference)
+- `src/lib/response/processor.ts` (sanitiseAndDetect always runs; sniff window includes binary CTs; outer-level byte cap covers strip path)
+- `src/lib/response/processor.test.ts` (11 binary-CT tests inverted to lock in bypass closure; 5 new tests covering binary-CT markup sniff and unified byte cap)
+- `src/lib/utils/sanitize.test.ts` (literal invisibles → explicit `​` / `﻿` escapes)
+
+### Tests / build
+- `npm test`: 933/933 passing (7 skipped) — was 928 after round-2, **net +5 regression tests**.
+- `npm run build`: clean.
+
+### Reviewer assessment
+CodeRabbit's third pass found two more genuine security regressions and one test-correctness issue. Both bypasses are the same Content-Type-tampering class as round-3 P1-1 — but at different boundaries:
+- **Round 3 P1-1**: text/plain CT bypassed the strip path
+- **Round 3-CR-r2 P2-5**: binary CT (after jq) bypassed post-jq sanitise
+- **Round 3-CR-r3 P2-1**: binary CT bypassed the ENTIRE pipeline (including the original Step 2 sanitise+detect)
+
+The progression shows reviewing in waves catches successive layers — the fixes for one round expose the next-tier gap. The current fix decouples sanitise+detect from content-type entirely; this is a more durable structural change than gating tweaks.

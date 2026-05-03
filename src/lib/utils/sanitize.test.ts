@@ -432,7 +432,7 @@ describe("sanitizeResponse — review-pass P2 idempotence (round 2)", () => {
     // whitespace run gets caught on the second pass.
 
     it("collapses 49-space + ZWSP × N interleaved padding (whitespace-padding bypass)", () => {
-        const seg = " ".repeat(49) + "​"; // 49 spaces + ZWSP
+        const seg = " ".repeat(49) + "\u200B"; // 49 spaces + ZWSP
         const input = seg.repeat(20) + " ".repeat(49); // 1029 total visible-space chars
         const out = sanitizeResponse(input);
         // After a single pass: 49 × 21 = 1029 spaces survive (above 50,
@@ -443,7 +443,7 @@ describe("sanitizeResponse — review-pass P2 idempotence (round 2)", () => {
 
     it("collapses tab + ZWSP interleaved padding", () => {
         // 49 tabs + ZWSP, repeated.
-        const seg = "\t".repeat(49) + "​";
+        const seg = "\t".repeat(49) + "\u200B";
         const input = seg.repeat(15) + "\t".repeat(49);
         const out = sanitizeResponse(input);
         // No 50+ visible-space run after idempotence.
@@ -453,13 +453,13 @@ describe("sanitizeResponse — review-pass P2 idempotence (round 2)", () => {
     it("converges within iteration cap on adversarial nested interleaving", () => {
         // Nested interleaving (alternating attack chars between
         // sub-threshold runs) — 4 iterations is more than enough.
-        const seg = " ".repeat(45) + "​" + " ".repeat(45) + "﻿";
+        const seg = " ".repeat(45) + "\u200B" + " ".repeat(45) + "\uFEFF";
         const input = seg.repeat(50);
         const out = sanitizeResponse(input);
         expect(out).not.toMatch(/ {50,}/);
         // Output must not contain any of the attack chars either.
-        expect(out).not.toContain("​");
-        expect(out).not.toContain("﻿");
+        expect(out).not.toContain("\u200B");
+        expect(out).not.toContain("\uFEFF");
     });
 
     it("idempotent on already-clean input (no extra passes wasted)", () => {

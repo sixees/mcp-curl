@@ -6,6 +6,7 @@ import { applyJqFilterToParsed } from "../jq/index.js";
 import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
 import {
+    STRIP_PATH_MAX_BYTES,
     stripBlocksFixedPoint,
     stripHtmlComments,
     stripMarkdownBeacons,
@@ -91,62 +92,77 @@ export async function processResponse(
     const hostname = safeHostname(options.url);
 
     // Compute content-type classification once.
-    const isText = !isBinaryContentType(options.contentType);
     const isMarkup = supportsMarkupComments(options.contentType);
     const isMarkdown = isMarkdownContentType(options.contentType);
 
-    if (isText) {
-        // Step 2 — sanitise + detect FIRST so the strip path's 256 KB cap
-        // is checked against post-sanitise size. An attacker padding the
-        // body with U+200B (3 UTF-8 bytes each) to inflate a small payload
-        // above the cap would otherwise bypass the strip and feed the LLM
-        // an intact `<script>` block; sanitising first collapses the
-        // padding so the strip target is the real (small) payload.
-        // sanitizeAndDetect itself runs detection on the **original** input
-        // (PR-6b S4) before the sanitiser strips anything, so injection
-        // log signals on whatever the attacker sent — not on the
-        // post-strip surface.
-        content = sanitizeAndDetect(content, hostname);
+    // Step 2 — sanitise + detect, ALWAYS for any string body.
+    //
+    // Earlier revisions gated this on `isText = !isBinaryContentType(CT)` —
+    // but the gate was attacker-controllable: setting `Content-Type:
+    // image/png` on an HTML body disabled the entire pipeline. The body
+    // arriving at `processResponse` is always a string (curl captured
+    // stdout as UTF-8, with replacement chars where bytes don't decode);
+    // sanitising it can only ever remove attack-class codepoints and
+    // collapse padding, both of which are no-ops on legitimate binary
+    // previews. Always running sanitise+detect closes the bypass.
+    //
+    // sanitizeAndDetect runs detection on the **original** input
+    // (PR-6b S4) before the sanitiser strips anything, so injection
+    // log signals on whatever the attacker sent — not on the post-
+    // strip surface.
+    content = sanitizeAndDetect(content, hostname);
 
-        // Content-type sniffing: an attacker controlling the response
-        // server can serve HTML body with `Content-Type: text/plain` (or
-        // empty / undefined) to bypass the markup-strip path. Sniff the
-        // post-sanitise body's first ~1 KB for markup shape and treat it
-        // as markup if the declared type is plain-text-ish AND the body
-        // looks like HTML/SVG/XML. Structured types (JSON, CSV, …) are
-        // NOT sniffed — sniffing JSON would risk breaking valid JSON
-        // bodies that legitimately contain `<script>` in a string field.
-        const sniffedAsMarkup =
-            isPlainTextLikeContentType(options.contentType) &&
-            looksLikeMarkupShape(content);
-        const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
+    // Content-type sniffing: an attacker controlling the response server
+    // can serve HTML body with `Content-Type: text/plain`, `image/png`,
+    // `application/octet-stream`, or any unrecognised value to bypass
+    // the markup-strip path. Sniff the post-sanitise body's first ~1 KB
+    // for markup shape when the declared type is plain-text-like OR
+    // binary OR unknown — i.e., any CT that doesn't already indicate a
+    // structured text grammar. Structured text types (JSON, CSV, …) are
+    // NOT sniffed: sniffing JSON would risk breaking valid JSON bodies
+    // that legitimately contain `<script>` in a string field.
+    const sniffWindow =
+        isPlainTextLikeContentType(options.contentType) ||
+        isBinaryContentType(options.contentType);
+    const sniffedAsMarkup = sniffWindow && looksLikeMarkupShape(content);
+    const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
 
-        // Steps 3-5 — strip + re-sanitise (only when the body needs it).
-        // The single nested branch keeps the strip-path predicate as one
-        // source of truth — Steps 3, 4, and 5 share the gate.
-        if (needsStripPath) {
-            // Step 3 — markup comments + script/style blocks. Fires on
-            // any markup-shaped body (declared OR sniffed).
-            content = stripHtmlComments(content);
-            content = stripBlocksFixedPoint(content);
+    // Outer-level byte cap. Inside `stripBlocksFixedPoint` the same cap
+    // returns the input unchanged on adversarial bodies, but
+    // `stripMarkdownBeacons` runs four global replaces on the full body
+    // and would otherwise scan multi-MB inputs after round-2 lifted the
+    // label/URL caps inside the markdown patterns. Gating Steps 3-5 on
+    // this single check keeps the cap a true upper bound for the entire
+    // strip path's cost.
+    const exceedsStripCap =
+        Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
 
-            // Step 4 — markdown beacons. Image / link / dangerous-scheme +
-            // residual cleanup. Only fires for declared markdown — sniffed-
-            // markup bodies (probably HTML mis-typed as text/plain) don't
-            // need the markdown-specific patterns.
-            if (isMarkdown) {
-                content = stripMarkdownBeacons(content);
-            }
+    // Steps 3-5 — strip + re-sanitise (only when the body needs it AND
+    // is below the strip-path cap). The single nested branch keeps the
+    // strip-path predicate as one source of truth — Steps 3, 4, and 5
+    // share the gate.
+    if (needsStripPath && !exceedsStripCap) {
+        // Step 3 — markup comments + script/style blocks. Fires on any
+        // markup-shaped body (declared OR sniffed).
+        content = stripHtmlComments(content);
+        content = stripBlocksFixedPoint(content);
 
-            // Step 5 — re-sanitise + detect. The strip path's numeric-
-            // entity decoder unmasks `&#x69;gnore previous instructions`
-            // into a real injection phrase AFTER the original-text Step 2
-            // detection passed (it saw the entity-encoded form and missed).
-            // Using sanitizeAndDetect here (not bare sanitizeResponse)
-            // closes the silenced-log gap; per-host throttling (60 s
-            // window) prevents double-counting.
-            content = sanitizeAndDetect(content, hostname);
+        // Step 4 — markdown beacons. Image / link / dangerous-scheme +
+        // residual cleanup. Only fires for declared markdown — sniffed-
+        // markup bodies (probably HTML mis-typed as text/plain) don't
+        // need the markdown-specific patterns.
+        if (isMarkdown) {
+            content = stripMarkdownBeacons(content);
         }
+
+        // Step 5 — re-sanitise + detect. The strip path's numeric-entity
+        // decoder unmasks `&#x69;gnore previous instructions` into a real
+        // injection phrase AFTER the original-text Step 2 detection
+        // passed (it saw the entity-encoded form and missed). Using
+        // sanitizeAndDetect here (not bare sanitizeResponse) closes the
+        // silenced-log gap; per-host throttling (60 s window) prevents
+        // double-counting.
+        content = sanitizeAndDetect(content, hostname);
     }
 
     // Step 6: Apply jq filter if provided AND response is JSON

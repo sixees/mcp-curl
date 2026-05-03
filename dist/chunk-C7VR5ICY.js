@@ -1918,21 +1918,20 @@ async function processResponse(response, options) {
   }
   let content = response;
   const hostname = safeHostname(options.url);
-  const isText = !isBinaryContentType(options.contentType);
   const isMarkup = supportsMarkupComments(options.contentType);
   const isMarkdown = isMarkdownContentType(options.contentType);
-  if (isText) {
-    content = sanitizeAndDetect(content, hostname);
-    const sniffedAsMarkup = isPlainTextLikeContentType(options.contentType) && looksLikeMarkupShape(content);
-    const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
-    if (needsStripPath) {
-      content = stripHtmlComments(content);
-      content = stripBlocksFixedPoint(content);
-      if (isMarkdown) {
-        content = stripMarkdownBeacons(content);
-      }
-      content = sanitizeAndDetect(content, hostname);
+  content = sanitizeAndDetect(content, hostname);
+  const sniffWindow = isPlainTextLikeContentType(options.contentType) || isBinaryContentType(options.contentType);
+  const sniffedAsMarkup = sniffWindow && looksLikeMarkupShape(content);
+  const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
+  const exceedsStripCap = Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
+  if (needsStripPath && !exceedsStripCap) {
+    content = stripHtmlComments(content);
+    content = stripBlocksFixedPoint(content);
+    if (isMarkdown) {
+      content = stripMarkdownBeacons(content);
     }
+    content = sanitizeAndDetect(content, hostname);
   }
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);

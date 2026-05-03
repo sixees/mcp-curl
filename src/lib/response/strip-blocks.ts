@@ -27,8 +27,15 @@
  * (no size cap) is the primary defence and runs unconditionally on the
  * full body. The strip cap is therefore a circuit-breaker for the ReDoS-
  * adjacent fixed-point loop, not a content-size policy.
+ *
+ * **Exported `@internal`** so the caller (`processor.ts`) can gate the
+ * full strip path (Steps 3, 4, 5 — including `stripMarkdownBeacons`) on
+ * the same cap. Round-2 lifted the label/URL caps inside the markdown
+ * patterns; without an outer-level gate the unbounded replaces could
+ * scan multi-MB bodies and the cap inside `stripBlocksFixedPoint` would
+ * not bound `stripMarkdownBeacons`'s cost.
  */
-const STRIP_PATH_MAX_BYTES = 256 * 1024;
+export const STRIP_PATH_MAX_BYTES = 256 * 1024;
 
 /**
  * Fixed-point iteration cap. Self-healing payloads like
