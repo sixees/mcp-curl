@@ -505,3 +505,40 @@ the typescript reviewer (it spot-checked filesystem + tests) — the
 ### Blockers
 
 **None.** All P1+P2 actionable findings resolved; actionable P3 items (P3-A wall-clock budget, P3-B JSDoc addendum) also resolved. Non-actionable P3 items (informational confirmations) noted in the §Decisions explicitly NOT made table.
+
+---
+
+## Review Comments Addressed — 2026-05-03
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| Suggested using `INJECTION_PHRASE_GAP` between keywords in the `bypass` synonym family for consistency with the wider multi-keyword patterns (`override...instructions` etc.) | @gemini-code-assist (AI) | False positive | Reply posted with empirical trace showing the suggested pattern introduces two false positives on legitimate prose (`"the bypass section in your manual instructions"`, `"we cover bypass procedures in your safety briefing"`) plus a zero-gap over-match (`"bypassyourinstructions"`) because `INJECTION_PHRASE_GAP = [\s\S]{0,80}` allows zero-or-more of any character. Decision conflict with handoff §Decisions explicitly NOT made → P3-D, which already rejected broadening the `bypass` matcher for the same over-match class. Thread resolved. |
+
+### Decisions Revised
+
+None. The `bypass\s+(your|all|the)\s+(...)` shape was retained. The reviewer's consistency observation is fair — synonym families do shape-differ from the longer multi-keyword matchers — but the suggested specific change reintroduces a known false-positive class. The asymmetry (`\s+` for short multi-word phrases per `act\s+as\s+`, `roleplay\s+as`, … convention; `INJECTION_PHRASE_GAP` for adversarially-constructed long phrases) is intentional and documented inline.
+
+### Resolved Todos
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none_ | — | — | — | — |
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none_ | — | — | — |
+
+### Files Modified
+
+- `docs/work/handoff-feat-hardening-pr-8-detection-pattern-expansion.md` — appended this Review Comments Addressed section (handoff-only change; no source-code edits in this round).
+
+### Reviewer Breakdown
+
+- 1 unresolved thread, 1 from AI reviewer (@gemini-code-assist).
+- 0 actionable fixes applied (0% applicable rate — this round was 1-for-1 false positive against a documented decision).
+- 1 false positive resolved with reproducible-evidence reply (100%).
+- 0 deferred, 0 escalated to user, 0 conflicts with documented decisions left open.
