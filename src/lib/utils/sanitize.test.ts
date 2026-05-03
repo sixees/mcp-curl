@@ -749,6 +749,26 @@ describe("detectInjectionPattern — synonym variants (PR-8 / B7-sub-4)", () => 
     ])("does NOT over-trigger on benign use: %s", (input) => {
         expect(detectInjectionPattern(input)).toBe(false);
     });
+
+    // Documented false-positive class — `stop\s+applying` matches
+    // legitimate ops/safety phrasing where `applying` precedes a benign
+    // object (configuration update, brakes, a patch). Detection is
+    // observability-only (never an enforcement gate) so this surfaces as
+    // log noise rather than incorrect refusals; master plan §Risks
+    // explicitly acknowledges this trade-off ("false-positive injection
+    // alerts on legitimate content"). Locked here with `toBe(true)`
+    // (mirrors the Cyrillic-homoglyph `toBe(false)` deferred-gap pattern
+    // above): a future PR that narrows `stop\s+(following|obeying|applying)`
+    // — e.g. by requiring an instruction-class object word in the same
+    // shape `bypass\s+(your|all|the)\s+(...)` uses — will trip these
+    // assertions and update implementation + test together.
+    it.each([
+        ["stop applying this configuration update"],  // legitimate ops usage
+        ["stop applying the brakes"],                  // legitimate driving usage
+        ["stop applying this patch"],                  // legitimate vcs/devops usage
+    ])("documented FP class — `stop applying` over-triggers on benign object: %s", (input) => {
+        expect(detectInjectionPattern(input)).toBe(true);
+    });
 });
 
 describe("detectInjectionPattern — wall-clock ReDoS budget (PR-8 / B7-sub-4)", () => {

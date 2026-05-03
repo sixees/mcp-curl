@@ -145,6 +145,16 @@ var INJECTION_PATTERNS = new RegExp(
     // ("stop following your instructions", "cease compliance with the
     // rules", "bypass your safety filters"). Each family carries at
     // least one regression test in `sanitize.test.ts`.
+    //
+    // **Known false-positive class** — `stop\s+applying` over-triggers
+    // on legitimate ops/safety phrasing ("stop applying this patch",
+    // "stop applying the brakes"). Detection is observability-only so
+    // the cost is log noise, not blocked content; per master plan
+    // §Risks. Locked by the `documented FP class` test in
+    // `sanitize.test.ts` so a future narrowing PR (e.g. requiring an
+    // instruction-class object word in the same shape
+    // `bypass\s+(your|all|the)\s+(...)` uses) updates implementation
+    // and tests together.
     "stop\\s+(following|obeying|applying)",
     "cease\\s+(compliance|following|obeying)",
     "bypass\\s+(your|all|the)\\s+(instructions?|filters?|safety)",

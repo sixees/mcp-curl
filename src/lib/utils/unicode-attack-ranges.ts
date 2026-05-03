@@ -7,10 +7,23 @@
 // callers should compose with the public `sanitizeResponse` /
 // `sanitizeAndDetect` primitives instead — those are the stable contract.
 //
-// Single source of truth for the Unicode codepoint ranges used by the
-// description and response sanitisers. Stored as named string fragments so
-// each consumer builds its own RegExp instance — RegExp objects with the
-// `g` flag are stateful and must not be shared across call sites.
+// Single source of truth for two adjacent concerns, both consumed only by
+// `src/lib/utils/sanitize.ts`:
+//
+//   1. **Unicode codepoint ranges** used by the description and response
+//      sanitisers (`UNICODE_ATTACK_RANGES`, `WHITESPACE_PADDING_*`).
+//   2. **Injection-pattern detection tunables**
+//      (`INJECTION_PHRASE_GAP_MAX`, `INJECTION_PHRASE_GAP`) used to size the
+//      bounded wildcards inside `INJECTION_PATTERNS`. Co-located here for the
+//      same reason the Unicode fragments are: a single place to tune
+//      sanitiser/detector behaviour with a single import path. If a future
+//      iteration grows the detection-tunable set materially, lifting it to a
+//      dedicated `src/lib/config/detection.ts` is the natural next step (per
+//      the repo `config/` convention used by `limits.ts`).
+//
+// Stored as named string fragments / number constants so each consumer
+// builds its own RegExp instance — RegExp objects with the `g` flag are
+// stateful and must not be shared across call sites.
 //
 // Each block is a `\u…` / `\u{…}` character-class fragment (no surrounding
 // brackets) suitable for splicing into `[…]` inside a `new RegExp(..., "gu")`

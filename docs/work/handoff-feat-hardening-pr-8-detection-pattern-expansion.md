@@ -580,3 +580,52 @@ None.
 - 1 actionable fix applied (100% applicable rate — round-2 finding caught a real handoff-doc contradiction left over from round-1 work).
 - 0 false positives, 0 deferred, 0 escalated to user, 0 conflicts with documented decisions.
 - 0 threads still unresolved at end of round.
+
+---
+
+## Review Comments Addressed — 2026-05-03 (round 3)
+
+User-supplied findings (presented inline, not via PR-31 thread API). Three findings, all actionable.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| 🟡 Mild SRP — `unicode-attack-ranges.ts` header comment claims the file is "Unicode codepoint ranges" only, but P1-A added `INJECTION_PHRASE_GAP_MAX` / `INJECTION_PHRASE_GAP` (detection-pattern tunables, not character classes). | @user (human) | Fix needed (docs) | Reworded the file header to acknowledge the dual scope (Unicode ranges + detection tunables). Kept co-located per the user's explicit "current placement works and avoids a one-constant file" guidance, but flagged the natural lift point: a dedicated `src/lib/config/detection.ts` module (matching the repo `config/limits.ts` convention) when the detection-tunable set grows materially. |
+| 🟡 `@param` JSDoc on `detectInjectionPattern` says input "must already be passed through `sanitizeResponse`", but PR-6b's S4 ordering has the production path (`sanitizeAndDetect`) call the matcher on the **original** un-sanitised text by design. JSDoc body line about invisible-char-split phrases also subtly misleading. | @user (human) | Fix needed (docs) | Rewrote the `@param` to describe both legitimate call shapes — `sanitizeAndDetect` (canonical, signal-preserving on original) and direct (invisible-char-split coverage on already-sanitised). Reworded the body paragraph (lines 252–256) so it presents the trade-off symmetrically rather than implying direct-on-raw is "silently degrading". Cross-referenced PR-6b S4 in `detection-logger.ts`. |
+| 🔵 Known FP class — `stop\s+applying` over-triggers on legitimate ops phrasing (`stop applying this patch`, `stop applying the brakes`). Detection is observability-only, so this is log noise rather than incorrect refusals; user explicitly said "acceptable for the current scope" but wanted the FP class documented. | @user (human) | Documentation (lock + defer) | Added `documented FP class` it.each block in `sanitize.test.ts` asserting `expect(...).toBe(true)` for three benign-but-matching phrases. Mirrors the Cyrillic-homoglyph `expect(...).toBe(false)` deferred-gap precedent — both lock a known gap visibly so a future narrowing PR (e.g. requiring an instruction-class object word in the same shape `bypass\s+(your\|all\|the)\s+(...)` uses) trips the assertions and updates implementation + test together. Trade-off also documented in the synonym-family inline comment in `sanitize.ts`. |
+
+### Decisions Revised
+
+None — no documented decisions reversed. The Finding 2 rewording preserves both call shapes as legitimate (matches PR-6b S4 ordering plus the original PR-1 P2-3 misuse-prevention examples).
+
+### Resolved Todos
+
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none_ | — | — | — | — |
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — Finding 3 deferred via in-test documentation lock per the user's explicit "next round should add" framing; no separate todo file needed since the `documented FP class` test is the entry point for the future narrowing PR_ | — | — | — |
+
+### Files Modified
+
+- `src/lib/utils/unicode-attack-ranges.ts` — header comment expanded to document dual scope (Finding 1).
+- `src/lib/utils/sanitize.ts` — `detectInjectionPattern` JSDoc body + `@param` reworded for PR-6b S4 ordering symmetry (Finding 2); synonym-family inline comment now documents the `stop applying` known-FP class with cross-reference to the lock test (Finding 3).
+- `src/lib/utils/sanitize.test.ts` — new `documented FP class — \`stop applying\` over-triggers on benign object` it.each block (Finding 3); 3 new test cases assert `toBe(true)` on benign ops phrasing.
+- `docs/work/handoff-feat-hardening-pr-8-detection-pattern-expansion.md` — this round-3 record.
+
+### Reviewer Breakdown (round 3)
+
+- 3 findings this round; all from a human reviewer (@user).
+- 3 actionable fixes applied (100% applicable rate — all findings caught real documentation/coverage gaps).
+- 0 false positives, 0 deferred-without-action (Finding 3's deferral landed an explicit lock test rather than a silent gap), 0 escalated, 0 conflicts with documented decisions.
+- 0 threads still unresolved at end of round.
+
+### Tests / build (post-round-3)
+
+- `npm test`: **972 passed | 7 skipped | 0 failed** (was 969/7 before round-3; net +3 from the documented-FP-class test cases).
+- `npm run build`: clean.

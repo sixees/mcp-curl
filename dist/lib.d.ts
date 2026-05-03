@@ -180,10 +180,17 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  *     return sanitized;
  *
  * Prefer the `sanitizeAndDetect(text, label)` composer (re-exported from the
- * public barrel) over hand-wiring the primitives — it locks the
- * sanitize → detect → log ordering invariant. Calling this matcher on raw
- * (un-sanitized) text means invisible-char-split phrases like "Ig​nore" will
- * not match, silently degrading detection coverage.
+ * public barrel) over hand-wiring the primitives — it locks the project's
+ * canonical detect-then-sanitise ordering: detection runs on the **original**
+ * text (so signals the sanitiser would later strip — e.g. the
+ * U+2026-prefixed payloads PR-7 added to the attack-range — still fire the
+ * per-host log) and sanitisation produces the bytes the LLM actually sees
+ * (see PR-6b S4 in `detection-logger.ts → sanitizeAndDetect`). Calling this
+ * matcher directly on **already-sanitised** text trades that signal-
+ * preservation for invisible-char-split coverage instead: phrases like
+ * "Ig​nore" (zero-width space splitting `ignore`) collapse to `Ignore`
+ * after sanitisation and become detectable. Both call shapes are
+ * legitimate; pick based on which class you care about preserving.
  *
  * **Normalisation (PR-8 / B7-sub-4).** The matcher normalises its input
  * before testing the pattern set, currently via
@@ -217,7 +224,15 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  * callers must continue to honour the "observability only" rule
  * regardless of which patterns are in play.
  *
- * @param input - Content to scan (must already be passed through `sanitizeResponse`)
+ * @param input - Content to scan. When called via `sanitizeAndDetect`
+ *   (the canonical production path), detection runs on the **original**
+ *   text before sanitisation — preserving signals like Unicode-attack
+ *   payloads that the sanitiser would otherwise strip. When called
+ *   directly, passing content already through `sanitizeResponse` improves
+ *   coverage of invisible-char-split phrases (e.g. `Ig`+ZWSP+`nore` →
+ *   `Ignore`), at the cost of the pre-sanitise signal class. Both shapes
+ *   are valid; pick based on which class you care about. See PR-6b S4
+ *   in `detection-logger.ts` for the ordering rationale.
  * @returns true if any injection pattern matched
  */
 declare function detectInjectionPattern(input: string): boolean;
