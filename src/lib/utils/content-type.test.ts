@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { isBinaryContentType, parseMimeType, supportsMarkupComments } from "./content-type.js";
+import {
+    isBinaryContentType,
+    isMarkdownContentType,
+    isSniffableContentType,
+    parseMimeType,
+    supportsMarkupComments,
+} from "./content-type.js";
 
 describe("parseMimeType", () => {
     it("returns empty string for undefined", () => {
@@ -165,5 +171,129 @@ describe("supportsMarkupComments", () => {
         expect(supportsMarkupComments("text/css")).toBe(false);
         expect(supportsMarkupComments("application/javascript")).toBe(false);
         expect(supportsMarkupComments("image/png")).toBe(false);
+    });
+});
+
+describe("isMarkdownContentType (PR-7 / B8)", () => {
+    it("returns false for undefined/empty", () => {
+        expect(isMarkdownContentType(undefined)).toBe(false);
+        expect(isMarkdownContentType("")).toBe(false);
+    });
+
+    it("returns true for canonical text/markdown (RFC 7763)", () => {
+        expect(isMarkdownContentType("text/markdown")).toBe(true);
+        expect(isMarkdownContentType("text/markdown; charset=utf-8")).toBe(true);
+    });
+
+    it("returns true for legacy text/x-markdown", () => {
+        expect(isMarkdownContentType("text/x-markdown")).toBe(true);
+    });
+
+    it("returns true for any +markdown structured-syntax suffix", () => {
+        expect(isMarkdownContentType("application/vnd.custom+markdown")).toBe(true);
+    });
+
+    it("is case-insensitive", () => {
+        expect(isMarkdownContentType("TEXT/MARKDOWN")).toBe(true);
+        expect(isMarkdownContentType("Text/X-Markdown")).toBe(true);
+    });
+
+    it("strips parameters before classifying", () => {
+        expect(isMarkdownContentType("text/markdown; variant=GFM")).toBe(true);
+    });
+
+    it("returns false for adjacent text content types", () => {
+        expect(isMarkdownContentType("text/html")).toBe(false);
+        expect(isMarkdownContentType("text/plain")).toBe(false);
+        expect(isMarkdownContentType("application/json")).toBe(false);
+        expect(isMarkdownContentType("image/png")).toBe(false);
+    });
+
+    it("does not match the bare 'markdown' word inside an unrelated MIME", () => {
+        // The structured-syntax suffix MUST be `+markdown`, not the word
+        // anywhere in the type — otherwise vendor MIMEs that happen to
+        // contain the substring would mis-fire.
+        expect(isMarkdownContentType("text/markdownish")).toBe(false);
+        expect(isMarkdownContentType("application/markdown-extra")).toBe(false);
+    });
+});
+
+describe("parseMimeType — non-string runtime guard (round-3 P2-2)", () => {
+    it("returns empty string for a number contentType (defends JS-caller path)", () => {
+        expect(parseMimeType(42 as unknown as string)).toBe("");
+    });
+
+    it("returns empty string for an object contentType", () => {
+        expect(parseMimeType({} as unknown as string)).toBe("");
+    });
+
+    it("returns empty string for an array contentType", () => {
+        expect(parseMimeType([] as unknown as string)).toBe("");
+    });
+
+    it("returns empty string for boolean contentType", () => {
+        expect(parseMimeType(true as unknown as string)).toBe("");
+    });
+});
+
+describe("isSniffableContentType (round-3-CR-r4 P2 broadening)", () => {
+    // Replaces the earlier `isPlainTextLikeContentType` predicate which
+    // returned true ONLY for `text/plain` / empty / undefined — that
+    // narrower predicate let `text/csv`, `text/javascript`,
+    // `application/yaml` etc. silently bypass the sniff window. The new
+    // predicate covers ANY CT where mis-labelled markup is plausible.
+
+    it("returns true for undefined", () => {
+        expect(isSniffableContentType(undefined)).toBe(true);
+    });
+
+    it("returns true for empty string", () => {
+        expect(isSniffableContentType("")).toBe(true);
+    });
+
+    it("returns true for text/plain (with or without parameters)", () => {
+        expect(isSniffableContentType("text/plain")).toBe(true);
+        expect(isSniffableContentType("text/plain; charset=utf-8")).toBe(true);
+    });
+
+    it("returns true for non-markup text/* subtypes — closes round-3-CR-r4 bypass class", () => {
+        // text/csv, text/javascript, text/yaml, text/x-sh — none of these
+        // are declared markup/markdown, none have JSON-like string-field
+        // semantics. An attacker can serve HTML body with any of these
+        // CTs to tamper the strip path; the sniffer now fires.
+        expect(isSniffableContentType("text/csv")).toBe(true);
+        expect(isSniffableContentType("text/javascript")).toBe(true);
+        expect(isSniffableContentType("text/yaml")).toBe(true);
+        expect(isSniffableContentType("text/x-sh")).toBe(true);
+    });
+
+    it("returns true for binary content types (image/* application/octet-stream …)", () => {
+        expect(isSniffableContentType("image/png")).toBe(true);
+        expect(isSniffableContentType("application/octet-stream")).toBe(true);
+        expect(isSniffableContentType("application/wasm")).toBe(true);
+    });
+
+    it("returns FALSE for declared markup types (already strip-handled)", () => {
+        expect(isSniffableContentType("text/html")).toBe(false);
+        expect(isSniffableContentType("text/xml")).toBe(false);
+        expect(isSniffableContentType("application/xml")).toBe(false);
+        expect(isSniffableContentType("application/xhtml+xml")).toBe(false);
+        expect(isSniffableContentType("image/svg+xml")).toBe(false);
+        expect(isSniffableContentType("application/atom+xml")).toBe(false);
+    });
+
+    it("returns FALSE for declared markdown types (already strip-handled)", () => {
+        expect(isSniffableContentType("text/markdown")).toBe(false);
+        expect(isSniffableContentType("text/x-markdown")).toBe(false);
+        expect(isSniffableContentType("application/vnd.custom+markdown")).toBe(false);
+    });
+
+    it("returns FALSE for application/json (legitimate <script> in string fields)", () => {
+        // The intentional exemption: JSON bodies can contain `<script>`
+        // inside string values; sniffing would risk breaking the
+        // document. The strip path is best-effort defence-in-depth, not
+        // a sandbox.
+        expect(isSniffableContentType("application/json")).toBe(false);
+        expect(isSniffableContentType("application/json; charset=utf-8")).toBe(false);
     });
 });

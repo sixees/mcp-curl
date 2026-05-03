@@ -227,6 +227,293 @@ describe("sanitizeResponse", () => {
     });
 });
 
+describe("sanitizeResponse — extended whitespace-padding class (PR-7 / B7-sub-1)", () => {
+    // The sanitizer used to only collapse runs of ASCII space (U+0020). PR-7
+    // widens the rule to the full visual-space class (tabs, NBSP, en/em-spaces,
+    // NARROW NO-BREAK, MEDIUM MATHEMATICAL, IDEOGRAPHIC) at the same 50+
+    // threshold AND adds a 20+ newline run rule. Each new behaviour gets a
+    // bypass-demonstration test.
+
+    it("collapses 50 consecutive tabs to a single space", () => {
+        const tabs50 = "\t".repeat(50);
+        expect(sanitizeResponse(`before${tabs50}after`)).toBe("before after");
+    });
+
+    it("preserves 49 tabs (below threshold)", () => {
+        const tabs49 = "\t".repeat(49);
+        expect(sanitizeResponse(`before${tabs49}after`)).toBe(`before${tabs49}after`);
+    });
+
+    it("collapses 50 NBSP (U+00A0) runs to a single space", () => {
+        const nbsp50 = " ".repeat(50);
+        expect(sanitizeResponse(`before${nbsp50}after`)).toBe("before after");
+    });
+
+    it("preserves 49 NBSPs (below threshold) as actual NBSPs (legitimate typography)", () => {
+        const nbsp49 = " ".repeat(49);
+        const out = sanitizeResponse(`before${nbsp49}after`);
+        expect(out).toBe(`before${nbsp49}after`);
+        expect(out).toContain(" ");
+    });
+
+    it("collapses 50 EM SPACE (U+2003) runs to a single space", () => {
+        const em50 = " ".repeat(50);
+        expect(sanitizeResponse(`before${em50}after`)).toBe("before after");
+    });
+
+    it("collapses 50 EN SPACE (U+2002) runs", () => {
+        const en50 = " ".repeat(50);
+        expect(sanitizeResponse(`a${en50}b`)).toBe("a b");
+    });
+
+    it("collapses 50 IDEOGRAPHIC SPACE (U+3000) runs to a single space", () => {
+        const ideo50 = "　".repeat(50);
+        expect(sanitizeResponse(`x${ideo50}y`)).toBe("x y");
+    });
+
+    it("collapses 50 NARROW NO-BREAK SPACE (U+202F) runs", () => {
+        const narrow50 = " ".repeat(50);
+        expect(sanitizeResponse(`a${narrow50}b`)).toBe("a b");
+    });
+
+    it("collapses 50 MEDIUM MATHEMATICAL SPACE (U+205F) runs", () => {
+        const medium50 = " ".repeat(50);
+        expect(sanitizeResponse(`x${medium50}y`)).toBe("x y");
+    });
+
+    it("collapses a mixed 60-char run of ASCII space + tab + NBSP", () => {
+        // 20 ASCII + 20 tab + 20 NBSP = 60 chars, all in the visual-space
+        // class — single run, single collapse.
+        const mixed = " ".repeat(20) + "\t".repeat(20) + " ".repeat(20);
+        expect(sanitizeResponse(`a${mixed}b`)).toBe("a b");
+    });
+
+    it("collapses 30 ASCII + 30 tabs as a single 60-char visual-space run", () => {
+        const mixed = " ".repeat(30) + "\t".repeat(30);
+        expect(sanitizeResponse(`a${mixed}b`)).toBe("a b");
+    });
+
+    it("preserves a single tab (legitimate formatting)", () => {
+        expect(sanitizeResponse("key\tvalue")).toBe("key\tvalue");
+    });
+
+    it("preserves a single NBSP (legitimate typography)", () => {
+        expect(sanitizeResponse("Mr. Smith")).toBe("Mr. Smith");
+    });
+});
+
+describe("sanitizeResponse — newline-run collapse (PR-7 / B7-sub-1)", () => {
+    it("preserves 19 consecutive newlines (below threshold)", () => {
+        const nl19 = "\n".repeat(19);
+        expect(sanitizeResponse(`a${nl19}b`)).toBe(`a${nl19}b`);
+    });
+
+    it("collapses exactly 20 consecutive newlines to a single newline", () => {
+        const nl20 = "\n".repeat(20);
+        expect(sanitizeResponse(`a${nl20}b`)).toBe("a\nb");
+    });
+
+    it("collapses 100 newlines to a single newline (defeats context-eviction attacks)", () => {
+        const nl100 = "\n".repeat(100);
+        expect(sanitizeResponse(`a${nl100}b`)).toBe("a\nb");
+    });
+
+    it("preserves JSON validity when long newline runs hide trailing JSON content", () => {
+        // 50 newlines between a JSON value and a trailing key — must collapse
+        // to a single \n to keep the document parseable.
+        const nl50 = "\n".repeat(50);
+        const json = `{${nl50}"k":"v"}`;
+        const out = sanitizeResponse(json);
+        expect(() => JSON.parse(out)).not.toThrow();
+        expect(JSON.parse(out)).toEqual({ k: "v" });
+    });
+
+    it("does not collapse a single newline (legitimate line break)", () => {
+        expect(sanitizeResponse("line1\nline2")).toBe("line1\nline2");
+    });
+
+    it("collapses newline runs and visual-space runs independently", () => {
+        // 50-space run AND 30-newline run in the same input — both collapse,
+        // each to its own representative character.
+        const padding = " ".repeat(50);
+        const newlines = "\n".repeat(30);
+        expect(sanitizeResponse(`a${padding}b${newlines}c`)).toBe("a b\nc");
+    });
+});
+
+describe("sanitizeResponse — Unicode invisibles added in PR-7 / B7-sub-2", () => {
+    // The 8 missing ranges (U+061C, U+115F, U+1160, U+180B-U+180E, U+2800,
+    // U+3164, U+E0100-U+E01EF) added to UNICODE_ATTACK_RANGES. Each is a
+    // documented 2025-2026 prompt-injection vector.
+
+    it("removes U+061C ARABIC LETTER MARK (bidi control)", () => {
+        // Same hiding properties as U+202E but routinely missed by sanitisers.
+        expect(sanitizeResponse("data؜value")).toBe("datavalue");
+    });
+
+    it("removes U+115F HANGUL CHOSEONG FILLER", () => {
+        expect(sanitizeResponse("aᅟb")).toBe("ab");
+    });
+
+    it("removes U+1160 HANGUL JUNGSEONG FILLER", () => {
+        expect(sanitizeResponse("aᅠb")).toBe("ab");
+    });
+
+    it("removes U+180B MONGOLIAN FREE VARIATION SELECTOR ONE (Sneaky Bits class)", () => {
+        expect(sanitizeResponse("Ig᠋nore")).toBe("Ignore");
+    });
+
+    it("removes U+180C MONGOLIAN FREE VARIATION SELECTOR TWO", () => {
+        expect(sanitizeResponse("a᠌b")).toBe("ab");
+    });
+
+    it("removes U+180D MONGOLIAN FREE VARIATION SELECTOR THREE", () => {
+        expect(sanitizeResponse("a᠍b")).toBe("ab");
+    });
+
+    it("removes U+180E MONGOLIAN VOWEL SEPARATOR", () => {
+        expect(sanitizeResponse("a᠎b")).toBe("ab");
+    });
+
+    it("removes U+2062 INVISIBLE TIMES (regression — already in word-joiner range)", () => {
+        // Documented separately so a future regression cannot drop it by
+        // narrowing the U+2060-U+2064 family range.
+        expect(sanitizeResponse("a⁢b")).toBe("ab");
+    });
+
+    it("removes U+2064 INVISIBLE PLUS (regression — already in word-joiner range)", () => {
+        expect(sanitizeResponse("a⁤b")).toBe("ab");
+    });
+
+    it("removes U+2800 BRAILLE PATTERN BLANK", () => {
+        // Renders as space in some Braille fonts but is a single Braille
+        // codepoint; tokenisation is inconsistent across MCP clients.
+        expect(sanitizeResponse("data⠀value")).toBe("datavalue");
+    });
+
+    it("removes U+3164 HANGUL FILLER (zero-width-renderable)", () => {
+        expect(sanitizeResponse("dataㅤvalue")).toBe("datavalue");
+    });
+
+    it("removes U+FE0F VARIATION SELECTOR-16 (basic plane regression)", () => {
+        expect(sanitizeResponse("A️B")).toBe("AB");
+    });
+
+    it("removes U+E0100 VARIATION SELECTOR-17 (Sneaky Bits supplement)", () => {
+        // Plan / Research insight: U+E0100-U+E01EF was NOT in the previous
+        // U+E0000-U+E007F range. Sneaky Bits payloads encoded in this band
+        // would survive the old sanitiser; the regression test locks the fix.
+        expect(sanitizeResponse("X\u{E0100}Y")).toBe("XY");
+    });
+
+    it("removes U+E0101 VARIATION SELECTOR-18", () => {
+        expect(sanitizeResponse("X\u{E0101}Y")).toBe("XY");
+    });
+
+    it("removes U+E01EF VARIATION SELECTOR-256 (upper bound of supplement)", () => {
+        expect(sanitizeResponse("X\u{E01EF}Y")).toBe("XY");
+    });
+
+    it("removes U+E0041 TAGS LATIN CAPITAL LETTER A (lower TAGS block regression)", () => {
+        // Confirms the lower TAGS range U+E0000-U+E007F still strips after
+        // the supplement was added.
+        expect(sanitizeResponse("X\u{E0041}Y")).toBe("XY");
+    });
+});
+
+describe("sanitizeResponse — review-pass P2 idempotence (round 2)", () => {
+    // Bypass before the idempotence loop: an attacker constructs
+    // `(49 spaces + ZWSP) × N` where each ZWSP (U+200B) is in the Unicode-
+    // attack class and each 49-space run is below the 50+ threshold.
+    // Single-pass sanitiser: ZWSPs are removed individually, each 49-space
+    // run is preserved verbatim, output is `(49 spaces × N)` — a long
+    // contiguous whitespace run that survived the 50+ rule. Idempotence
+    // loop re-runs sanitise until output stabilises so the post-collapse
+    // whitespace run gets caught on the second pass.
+
+    it("collapses 49-space + ZWSP × N interleaved padding (whitespace-padding bypass)", () => {
+        const seg = " ".repeat(49) + "\u200B"; // 49 spaces + ZWSP
+        const input = seg.repeat(20) + " ".repeat(49); // 1029 total visible-space chars
+        const out = sanitizeResponse(input);
+        // After a single pass: 49 × 21 = 1029 spaces survive (above 50,
+        // so the second pass collapses).
+        // After the idempotence loop: must have no 50+ run of spaces.
+        expect(out).not.toMatch(/ {50,}/);
+    });
+
+    it("collapses tab + ZWSP interleaved padding", () => {
+        // 49 tabs + ZWSP, repeated.
+        const seg = "\t".repeat(49) + "\u200B";
+        const input = seg.repeat(15) + "\t".repeat(49);
+        const out = sanitizeResponse(input);
+        // No 50+ visible-space run after idempotence.
+        expect(out).not.toMatch(/[ \t ]{50,}/u);
+    });
+
+    it("converges within iteration cap on adversarial nested interleaving", () => {
+        // Nested interleaving (alternating attack chars between
+        // sub-threshold runs) — 4 iterations is more than enough.
+        const seg = " ".repeat(45) + "\u200B" + " ".repeat(45) + "\uFEFF";
+        const input = seg.repeat(50);
+        const out = sanitizeResponse(input);
+        expect(out).not.toMatch(/ {50,}/);
+        // Output must not contain any of the attack chars either.
+        expect(out).not.toContain("\u200B");
+        expect(out).not.toContain("\uFEFF");
+    });
+
+    it("idempotent on already-clean input (no extra passes wasted)", () => {
+        const input = "perfectly clean input with normal whitespace";
+        expect(sanitizeResponse(input)).toBe(input);
+    });
+});
+
+describe("sanitizeResponse — newline interleaving with inline whitespace (round-3 P2-3)", () => {
+    // The naive `\n{20,}` rule is defeated by `(\n × 19 + ws + \n × 19)`
+    // payloads: each newline run is below threshold, but the
+    // concatenated whitespace surface is enormous. Pattern
+    // `(?:\n[ \t\xa0]?){20,}` accepts at most one inline-whitespace
+    // char between newlines so the run isn't reset by interspersed
+    // ASCII space, tab, or NBSP.
+
+    it("collapses 20× (newline + space) interleaving", () => {
+        const seg = "\n ";
+        const input = `before${seg.repeat(20)}after`;
+        const out = sanitizeResponse(input);
+        expect(out).toMatch(/^before\nafter$/);
+    });
+
+    it("collapses 20× (newline + tab) interleaving", () => {
+        const seg = "\n\t";
+        const input = `before${seg.repeat(20)}after`;
+        const out = sanitizeResponse(input);
+        expect(out).toMatch(/^before\nafter$/);
+    });
+
+    it("collapses 20× (newline + NBSP) interleaving", () => {
+        // NBSP is U+00A0 — uses the explicit escape so the test actually
+        // exercises the NBSP branch of the sanitiser, not ASCII space.
+        const seg = "\n\u00A0";
+        const input = `before${seg.repeat(20)}after`;
+        const out = sanitizeResponse(input);
+        expect(out).toMatch(/^before\nafter$/);
+    });
+
+    it("collapses (\\n × 19 + space + \\n × 19) — original bypass case", () => {
+        const padding = "\n".repeat(19) + " " + "\n".repeat(19);
+        const input = `before${padding}after`;
+        const out = sanitizeResponse(input);
+        // No 20+ contiguous newlines should remain after collapse.
+        expect(out).not.toMatch(/\n{20,}/);
+    });
+
+    it("preserves a small (3-newline) run with single tab interrupter", () => {
+        // Below threshold — should not collapse legitimate prose.
+        const input = "line1\n\t\nline2\n\t\nline3";
+        expect(sanitizeResponse(input)).toBe(input);
+    });
+});
+
 describe("detectInjectionPattern", () => {
     it("returns false for clean text", () => {
         expect(detectInjectionPattern("The weather is nice today")).toBe(false);

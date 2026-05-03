@@ -101,6 +101,18 @@ configure({allowLocalhost: true})
 
 Can also be set via `MCP_CURL_ALLOW_LOCALHOST=true` environment variable.
 
+**Localhost port restrictions.** Even when localhost is permitted, the SSRF
+check restricts which ports the LLM can reach. Allowed ports are:
+
+- `80` / `443` — standard HTTP / HTTPS
+- any port `> 1024` — non-privileged ports, covers common dev-server defaults
+  (`3000`, `3001`, `4000`, `5000`, `5173`, `5432`, `8000`, `8080`, `9090`, …)
+
+Ports `1–1024` (other than `80` / `443`) are always blocked to prevent the LLM
+from reaching privileged services like SSH (22), SMTP (25), DNS (53), etc.,
+even when `MCP_CURL_ALLOW_LOCALHOST=true`. The flag is "allow dev work", not
+"open every loopback port".
+
 ### port
 
 HTTP transport listening port:

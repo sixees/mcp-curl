@@ -5,36 +5,78 @@ import { LIMITS } from "../config/limits.js";
 import { applyJqFilterToParsed } from "../jq/index.js";
 import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
-import { isBinaryContentType, safeHostname, supportsMarkupComments } from "../utils/index.js";
+import {
+    STRIP_PATH_MAX_BYTES,
+    looksLikeMarkupShape,
+    stripBlocksFixedPoint,
+    stripHtmlComments,
+    stripMarkdownBeacons,
+} from "./strip-blocks.js";
+import {
+    isMarkdownContentType,
+    isSniffableContentType,
+    safeHostname,
+    supportsMarkupComments,
+} from "../utils/index.js";
 import { sanitizeAndDetect } from "../security/index.js";
 
 // Re-export types from lib/types for convenience
 export type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
 import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
 
-// NOT exported — g flag makes it stateful; used only with .replace() here (safe)
-const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
-
 /**
  * Process response with filtering and size handling.
  *
- * Processing pipeline:
- * 1. Early size guard: reject responses exceeding absolute limit
- * 2. Sanitize: strip Unicode attack vectors and whitespace padding (text only)
- * 3. Detect injection patterns and log (observability only — content unchanged)
- * 4. Apply jq_filter if provided AND response is JSON (or looks like JSON)
- * 5. Check content size against maxResultSize
- * 6. Auto-save to file if size exceeds limit OR saveToFile=true
+ * Processing pipeline (text content only):
+ * 1. Early size guard (against {@link LIMITS.MAX_RESPONSE_SIZE}).
+ * 2. **Sanitise + detect** (Unicode attack chars stripped; visible-space
+ *    + newline padding collapsed; injection patterns logged on the
+ *    pre-sanitise text per the PR-6b S4 ordering). Runs FIRST so that
+ *    the strip path's 256 KB cap can't be evaded by Unicode-padding
+ *    inflation: an attacker can't pad with U+200B to push the body above
+ *    the cap because sanitiser collapses padding before the strip path
+ *    is gated on byte-length.
+ * 3. **Strip HTML comments + script/style blocks** (markup content types,
+ *    markdown content types, OR plain-text-shaped responses whose body
+ *    sniffs as markup — closes the `Content-Type: text/plain` tampering
+ *    bypass where an attacker serves HTML with the wrong header). The
+ *    strip path is ReDoS-hardened: open-to-closer-or-EOF lazy-match
+ *    patterns handle malformed and unclosed closers, fixed-point
+ *    iteration cap of 4 handles self-healing payloads, numeric-entity
+ *    decode unmasks `&#x3c;script&#x3e;` smuggling.
+ * 4. **Strip markdown beacons** (image / link / dangerous-scheme +
+ *    residual cleanup for nested image-inside-dangerous-link cases).
+ * 5. **Re-sanitise + detect** post-strip (`sanitizeAndDetect`, NOT plain
+ *    sanitiseResponse). The strip path's numeric-entity decoder unmasks
+ *    `&#x69;gnore previous instructions` into a real injection phrase
+ *    that the original-text Step 2 detection couldn't see (it saw the
+ *    entity-encoded form). The re-detection here closes the silenced-
+ *    log gap; throttling prevents same-hostname noise.
+ * 6. Apply jq_filter if provided AND response is JSON. Re-sanitise after
+ *    filter (JSON.parse may decode escapes into real attack chars).
+ * 7. Check size against `maxResultSize`; auto-save to file if exceeded.
+ *    NOTE: post-pipeline byte length is NOT guaranteed monotone-shrinking
+ *    — markdown beacon replacement substitutes `[link removed]` (14
+ *    bytes) which can be longer than a minimal source like `[a](http://x)`.
+ *    The post-pipeline size check is therefore required, not redundant.
  *
- * @param response - The response content to process
+ * @param response - Response content to process; runtime-checked to be a
+ *                   string (the type system enforces this for TS callers,
+ *                   but JS callers from custom-tool hooks could bypass).
  * @param options - Processing options (url, jqFilter, maxResultSize, etc.)
  * @returns ProcessedResponse with content and file save status
- * @throws Error if jq_filter is used on non-JSON content
+ * @throws TypeError if `response` is not a string
+ * @throws Error if response exceeds the absolute size cap or jq_filter
+ *   is used on non-JSON content
  */
 export async function processResponse(
     response: string,
     options: ProcessResponseOptions
 ): Promise<ProcessedResponse> {
+    if (typeof response !== "string") {
+        throw new TypeError("processResponse: response must be a string");
+    }
+
     // Step 1: Early size guard — runs BEFORE sanitization to avoid wasting CPU on oversized responses
     const rawBytes = Buffer.byteLength(response, "utf8");
     if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
@@ -45,27 +87,89 @@ export async function processResponse(
 
     let content = response;
 
-    // Resolve hostname once for injection detection logging (used in steps 2–4)
+    // Resolve hostname once for injection detection logging.
     const hostname = safeHostname(options.url);
 
-    // Compute once — content-type classification is reused in steps 2–4 below.
-    const isText = !isBinaryContentType(options.contentType);
+    // Compute content-type classification once.
+    const isMarkup = supportsMarkupComments(options.contentType);
+    const isMarkdown = isMarkdownContentType(options.contentType);
 
-    // Steps 2-3: Sanitize and detect injection patterns (text responses only)
-    if (isText) {
-        // Strip markup comments (HTML, XHTML, generic XML, SVG, *+xml) before
-        // Unicode sanitization. All these grammars share the `<!-- -->` syntax,
-        // and comments in any of them can hide injection content from a quick
-        // visual review.
-        if (supportsMarkupComments(options.contentType)) {
-            content = content.replace(HTML_COMMENT_PATTERN, "");
+    // Step 2 — sanitise + detect, ALWAYS for any string body.
+    //
+    // Earlier revisions gated this on `isText = !isBinaryContentType(CT)` —
+    // but the gate was attacker-controllable: setting `Content-Type:
+    // image/png` on an HTML body disabled the entire pipeline. The body
+    // arriving at `processResponse` is always a string (curl captured
+    // stdout as UTF-8, with replacement chars where bytes don't decode);
+    // sanitising it can only ever remove attack-class codepoints and
+    // collapse padding, both of which are no-ops on legitimate binary
+    // previews. Always running sanitise+detect closes the bypass.
+    //
+    // sanitizeAndDetect runs detection on the **original** input
+    // (PR-6b S4) before the sanitiser strips anything, so injection
+    // log signals on whatever the attacker sent — not on the post-
+    // strip surface.
+    content = sanitizeAndDetect(content, hostname);
+
+    // Outer-level byte cap. Inside `stripBlocksFixedPoint` the same cap
+    // returns the input unchanged on adversarial bodies, but
+    // `stripMarkdownBeacons` runs four global replaces on the full body
+    // and would otherwise scan multi-MB inputs after round-2 lifted the
+    // label/URL caps inside the markdown patterns. Gating Steps 3-5 on
+    // this single check keeps the cap a true upper bound for the entire
+    // strip path's cost.
+    const exceedsStripCap =
+        Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
+
+    // Content-type sniffing: an attacker controlling the response server
+    // can serve HTML body with `Content-Type: text/plain`, `text/csv`,
+    // `text/javascript`, `image/png`, `application/octet-stream`, or any
+    // unrecognised value to bypass the markup-strip path.
+    // `isSniffableContentType` covers any CT that doesn't already declare
+    // a structured grammar we'd handle either way (markup/markdown
+    // declared) or that we deliberately don't sniff (`application/json`,
+    // where `<script>` legitimately appears inside string fields).
+    //
+    // The sniffer scans the FULL post-sanitise body — bounded by the
+    // outer-level `exceedsStripCap` short-circuit so the regex never
+    // touches bodies above `STRIP_PATH_MAX_BYTES` (256 KB). Earlier
+    // revisions clipped to the first 1 KB; that was itself a bypass
+    // (1025+ bytes of preamble + `<script>` past the window).
+    const sniffedAsMarkup =
+        !exceedsStripCap &&
+        isSniffableContentType(options.contentType) &&
+        looksLikeMarkupShape(content);
+    const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
+
+    // Steps 3-5 — strip + re-sanitise (only when the body needs it AND
+    // is below the strip-path cap). The single nested branch keeps the
+    // strip-path predicate as one source of truth — Steps 3, 4, and 5
+    // share the gate.
+    if (needsStripPath && !exceedsStripCap) {
+        // Step 3 — markup comments + script/style blocks. Fires on any
+        // markup-shaped body (declared OR sniffed).
+        content = stripHtmlComments(content);
+        content = stripBlocksFixedPoint(content);
+
+        // Step 4 — markdown beacons. Image / link / dangerous-scheme +
+        // residual cleanup. Only fires for declared markdown — sniffed-
+        // markup bodies (probably HTML mis-typed as text/plain) don't
+        // need the markdown-specific patterns.
+        if (isMarkdown) {
+            content = stripMarkdownBeacons(content);
         }
 
-        // Single-pass: remove Unicode attack chars + collapse whitespace padding; detect injections
+        // Step 5 — re-sanitise + detect. The strip path's numeric-entity
+        // decoder unmasks `&#x69;gnore previous instructions` into a real
+        // injection phrase AFTER the original-text Step 2 detection
+        // passed (it saw the entity-encoded form and missed). Using
+        // sanitizeAndDetect here (not bare sanitizeResponse) closes the
+        // silenced-log gap; per-host throttling (60 s window) prevents
+        // double-counting.
         content = sanitizeAndDetect(content, hostname);
     }
 
-    // Step 4: Apply jq filter if provided AND response is JSON
+    // Step 6: Apply jq filter if provided AND response is JSON
     if (options.jqFilter) {
         const isJson = isJsonContentType(options.contentType);
         const trimmed = content.trim();
@@ -99,18 +203,21 @@ export async function processResponse(
         content = applyJqFilterToParsed(parsedData, options.jqFilter);
 
         // Re-sanitize and re-detect after filter: JSON.parse decodes Unicode escapes in string
-        // values (e.g. {"cmd":"Ig\u200Bnore..."} → zero-width space in jq output), so attack
+        // values (e.g. {"cmd":"Ig​nore..."} → zero-width space in jq output), so attack
         // chars that were invisible in the raw text become real characters in the filtered result.
-        if (isText) {
-            content = sanitizeAndDetect(content, hostname);
-        }
+        //
+        // Runs UNCONDITIONALLY — the previous `if (isText)` gate let an
+        // attacker bypass post-jq sanitisation by labelling JSON as
+        // `application/octet-stream` (binary). If we got this far jq
+        // produced a textual filter result; binary-labelled-but-actually-
+        // JSON bodies must be sanitised on output.
+        content = sanitizeAndDetect(content, hostname);
     }
 
-    // Step 5: Determine max size
+    // Step 7: Determine max size and decide save-to-file
     const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const contentBytes = Buffer.byteLength(content, "utf8");
 
-    // Step 6: Check if we need to save to file
     const shouldSave = options.saveToFile || contentBytes > maxSize;
 
     if (shouldSave) {

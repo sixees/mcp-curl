@@ -969,11 +969,11 @@ If sanitisation lives only inside `validateApiSchema()`, the `ApiSchemaValidator
 
 **Acceptance criteria.**
 
-- [ ] `sanitizeResponse()` collapses tab/NBSP/Unicode-space runs at the same threshold as ASCII space.
-- [ ] Newline runs ≥ 20 collapse to a single newline.
-- [ ] **Eight additional Unicode invisibles** in `UNICODE_ATTACK_RANGES` (U+061C, U+115F, U+1160, U+180B–U+180E, U+2800, U+3164, U+E0100–U+E01EF range).
-- [ ] 50-space threshold rationale documented with an explicit "49 is accepted tolerance" comment.
-- [ ] Each new pattern has a regression test demonstrating the previous bypass.
+- [x] `sanitizeResponse()` collapses tab/NBSP/Unicode-space runs at the same threshold as ASCII space.
+- [x] Newline runs ≥ 20 collapse to a single newline.
+- [x] **Eight additional Unicode invisibles** in `UNICODE_ATTACK_RANGES` (U+061C, U+115F, U+1160, U+180B–U+180E, U+2800, U+3164, U+E0100–U+E01EF range).
+- [x] 50-space threshold rationale documented with an explicit "49 is accepted tolerance" comment.
+- [x] Each new pattern has a regression test demonstrating the previous bypass.
 
 **Research Insights (added 2026-05-01).**
 
@@ -1078,13 +1078,13 @@ If sanitisation lives only inside `validateApiSchema()`, the `ApiSchemaValidator
 
 **Acceptance criteria.**
 
-- [ ] Script blocks removed from markup-comment-supporting content types, including self-healing and entity-encoded variants.
-- [ ] Style blocks removed similarly.
-- [ ] External markdown images replaced with `[image removed]` in markdown content types.
-- [ ] External markdown **links** replaced with `[link removed]` in markdown content types.
-- [ ] Same-origin / relative markdown images and links preserved.
-- [ ] **Strip path is skipped above 256 KB; ReDoS regression test demonstrates no hang on adversarial payload.**
-- [ ] Each behaviour has at least one regression test.
+- [x] Script blocks removed from markup-comment-supporting content types, including self-healing and entity-encoded variants.
+- [x] Style blocks removed similarly.
+- [x] External markdown images replaced with `[image removed]` in markdown content types.
+- [x] External markdown **links** replaced with `[link removed]` in markdown content types.
+- [x] Same-origin / relative markdown images and links preserved.
+- [x] **Strip path is skipped above 256 KB; ReDoS regression test demonstrates no hang on adversarial payload.**
+- [x] Each behaviour has at least one regression test.
 
 **Research Insights (added 2026-05-01).**
 
@@ -1261,7 +1261,7 @@ Update `INJECTION_PATTERNS` to widen `{0,20}` → `{0,80}` for multi-keyword phr
 - [ ] **PR-5's tests assert via the public `field.description` getter and `z.toJSONSchema()`** — not `_def.description` — to catch regressions to the broken in-place mutation pattern.
 - [ ] **PR-6a's tests cover the public-bypass path:** `validateApiSchema(rawObject)` directly (not via `loadApiSchema`) yields a sanitised schema.
 - [ ] **PR-6b includes a regression test for the 4th asymmetry:** custom-tool handler returning `U+202E` is sanitised even when `enableSpotlighting: false`.
-- [ ] **PR-7 includes a ReDoS regression test:** 1 MB pathological body, wall-clock < 100 ms, no thread hang.
+- [x] **PR-7 includes a ReDoS regression test:** 1 MB pathological body, wall-clock < 100 ms, no thread hang.
 - [ ] **PR-8 audits that no content sent to the LLM is changed.** Tests assert NFKC-normalised string is matched against the regex but the *original* string is what flows downstream.
 
 ## Acceptance Criteria

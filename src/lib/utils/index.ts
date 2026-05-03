@@ -12,7 +12,13 @@ export {
 export { resolveBaseUrl, createHttpOnlyUrlSchema, safeHostname } from "./url.js";
 export type { CreateHttpOnlyUrlSchemaOptions } from "./url.js";
 
-export { isBinaryContentType, parseMimeType, supportsMarkupComments } from "./content-type.js";
+export {
+    isBinaryContentType,
+    isMarkdownContentType,
+    isSniffableContentType,
+    parseMimeType,
+    supportsMarkupComments,
+} from "./content-type.js";
 
 export {
     sanitizeDescription,
