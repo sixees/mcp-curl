@@ -189,3 +189,30 @@ export const WHITESPACE_PADDING_CLASS =
     WHITESPACE_PADDING_CODEPOINTS.ranges
         .map(([lo, hi]) => `${fmt(lo)}-${fmt(hi)}`)
         .join("");
+
+/**
+ * **@internal** Maximum gap (in characters, including newlines) permitted
+ * between adjacent keywords inside a multi-keyword `INJECTION_PATTERNS`
+ * matcher. Sized to cover all observed gap-padding bypass attempts in the
+ * wild (`ignore<N spaces>previous instructions` and similar) while still
+ * bounding the regex engine's backtracking work. See the JSDoc on
+ * `detectInjectionPattern` and the comment block above `INJECTION_PATTERNS`
+ * in `sanitize.ts` for the sizing rationale and the leetspeak / UTS #39
+ * deferral notes.
+ *
+ * Single source of truth: change here and every multi-keyword matcher
+ * widens / tightens together. `INJECTION_PHRASE_GAP` below is the
+ * regex-source fragment derived from this number.
+ */
+export const INJECTION_PHRASE_GAP_MAX = 80;
+
+/**
+ * **@internal** Bounded-wildcard regex fragment used between adjacent
+ * keywords inside `INJECTION_PATTERNS` multi-keyword matchers. `[\s\S]`
+ * (rather than `.`) so the bound matches across newlines, catching
+ * multi-line injection phrases like
+ * `Ignore\nprevious\ninstructions`. Derived from
+ * {@link INJECTION_PHRASE_GAP_MAX} so a single edit propagates to every
+ * matcher and the upper-bound regression tests.
+ */
+export const INJECTION_PHRASE_GAP = `[\\s\\S]{0,${INJECTION_PHRASE_GAP_MAX}}`;

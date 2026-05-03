@@ -119,6 +119,8 @@ var WHITESPACE_PADDING_CODEPOINTS = {
 };
 var fmt = (cp) => cp <= 65535 ? `\\u${cp.toString(16).toUpperCase().padStart(4, "0")}` : `\\u{${cp.toString(16).toUpperCase()}}`;
 var WHITESPACE_PADDING_CLASS = WHITESPACE_PADDING_CODEPOINTS.discrete.map(fmt).join("") + WHITESPACE_PADDING_CODEPOINTS.ranges.map(([lo, hi]) => `${fmt(lo)}-${fmt(hi)}`).join("");
+var INJECTION_PHRASE_GAP_MAX = 80;
+var INJECTION_PHRASE_GAP = `[\\s\\S]{0,${INJECTION_PHRASE_GAP_MAX}}`;
 
 // src/lib/utils/sanitize.ts
 var WS_PADDING_DISCRETE_SET = new Set(
@@ -134,15 +136,15 @@ var RESPONSE_SANITIZE_PATTERN = new RegExp(
 var INJECTION_PATTERNS = new RegExp(
   [
     // Explicit instruction override
-    "ignore[\\s\\S]{0,80}(previous|prior|all|your|above|system)[\\s\\S]{0,80}instructions?",
-    "disregard[\\s\\S]{0,80}(previous|prior|all|your|above|system)[\\s\\S]{0,80}(instructions?|directives?|rules?)",
-    "forget[\\s\\S]{0,80}(previous|prior|all|your|above|everything|instructions?)",
-    "override[\\s\\S]{0,80}(your|the|all|previous)[\\s\\S]{0,80}(instructions?|settings?|behavior|config|directives?|rules?)",
-    // Synonym families for the explicit-override class (PR-8 / B7-sub-4).
-    // These cover paraphrases that the four canonical verbs above miss —
-    // e.g. "stop following your instructions", "cease compliance with the
-    // rules", "bypass your safety filters". Each family carries at least
-    // one regression test in `sanitize.test.ts`.
+    `ignore${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|system)${INJECTION_PHRASE_GAP}instructions?`,
+    `disregard${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|system)${INJECTION_PHRASE_GAP}(instructions?|directives?|rules?)`,
+    `forget${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|everything|instructions?)`,
+    `override${INJECTION_PHRASE_GAP}(your|the|all|previous)${INJECTION_PHRASE_GAP}(instructions?|settings?|behavior|config|directives?|rules?)`,
+    // Synonym families for the explicit-override class (PR-8 / B7-sub-4)
+    // — paraphrases that the four canonical verbs above miss
+    // ("stop following your instructions", "cease compliance with the
+    // rules", "bypass your safety filters"). Each family carries at
+    // least one regression test in `sanitize.test.ts`.
     "stop\\s+(following|obeying|applying)",
     "cease\\s+(compliance|following|obeying)",
     "bypass\\s+(your|all|the)\\s+(instructions?|filters?|safety)",
@@ -164,12 +166,12 @@ var INJECTION_PATTERNS = new RegExp(
     "system\\s+prompt",
     "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
     "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
-    "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,80}instructions?",
+    `do\\s+not\\s+(follow|apply|use|obey|comply)${INJECTION_PHRASE_GAP}instructions?`,
     // Data exfiltration — file system triggers
     "read\\s+~\\/\\.(ssh|cursor|env|zshrc|bashrc|config|npmrc|gitconfig)",
-    "pass[\\s\\S]{0,80}(its|the)\\s+contents?\\s+as",
+    `pass${INJECTION_PHRASE_GAP}(its|the)\\s+contents?\\s+as`,
     "exfiltrate",
-    "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,80}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)"
+    `(extract|exfiltrate|leak|transmit|send\\s+me)${INJECTION_PHRASE_GAP}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)`
   ].join("|"),
   "i"
 );

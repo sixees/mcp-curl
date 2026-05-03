@@ -3,6 +3,7 @@
 
 import { FIXED_POINT_MAX_ITERATIONS } from "../config/limits.js";
 import {
+    INJECTION_PHRASE_GAP,
     UNICODE_ATTACK_RANGES,
     WHITESPACE_PADDING_CLASS,
     WHITESPACE_PADDING_CODEPOINTS,
@@ -57,31 +58,32 @@ const RESPONSE_SANITIZE_PATTERN = new RegExp(
 // [\s\S]{0,n} instead of .{0,n} so bounded wildcards match across newlines,
 // catching multi-line injection phrases like "Ignore\nprevious\ninstructions".
 //
-// **Bounded-wildcard sizing (PR-8 / B7-sub-4).** The multi-keyword phrase
-// patterns use `{0,80}` between keywords, not `{0,20}`. The narrower window
-// missed gap-padding bypass attempts like
-// `ignore<25 spaces>previous instructions` where the attacker pads between
-// keywords with whitespace (or unicode-attack chars that survive a single
-// sanitise pass on the *raw* input) to slip past the matcher. 80 chars
-// covers all observed gap-padding in the wild while still bounding the regex
-// engine's backtracking work; the upper bound is documented in the test
-// `gap-padding above the 80-char bound is still NOT detected (B7-sub-4)`.
+// **Bounded-wildcard sizing (PR-8 / B7-sub-4).** Multi-keyword phrase
+// matchers use the shared `INJECTION_PHRASE_GAP` fragment (currently
+// `[\s\S]{0,80}`). 80 chars covers all observed gap-padding bypass attempts
+// in the wild (`ignore<N spaces>previous instructions` and similar) while
+// bounding the regex engine's backtracking work. Single source of truth
+// lives in `unicode-attack-ranges.ts → INJECTION_PHRASE_GAP_MAX`; tweak
+// there to widen/tighten every matcher together. The upper-bound is
+// regression-locked in `sanitize.test.ts` via the 200-char-gap negative
+// case and the wall-clock ReDoS budget.
 //
 // Single-keyword and structural-token patterns retain their existing
-// shapes — only the multi-keyword phrase matchers (ignore/disregard/forget/
-// override/do-not-follow/exfiltrate-creds) widen.
+// shapes — only the multi-keyword phrase matchers
+// (ignore/disregard/forget/override/do-not-follow/pass-contents/
+// exfiltrate-creds) consume the shared fragment.
 const INJECTION_PATTERNS = new RegExp(
     [
         // Explicit instruction override
-        "ignore[\\s\\S]{0,80}(previous|prior|all|your|above|system)[\\s\\S]{0,80}instructions?",
-        "disregard[\\s\\S]{0,80}(previous|prior|all|your|above|system)[\\s\\S]{0,80}(instructions?|directives?|rules?)",
-        "forget[\\s\\S]{0,80}(previous|prior|all|your|above|everything|instructions?)",
-        "override[\\s\\S]{0,80}(your|the|all|previous)[\\s\\S]{0,80}(instructions?|settings?|behavior|config|directives?|rules?)",
-        // Synonym families for the explicit-override class (PR-8 / B7-sub-4).
-        // These cover paraphrases that the four canonical verbs above miss —
-        // e.g. "stop following your instructions", "cease compliance with the
-        // rules", "bypass your safety filters". Each family carries at least
-        // one regression test in `sanitize.test.ts`.
+        `ignore${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|system)${INJECTION_PHRASE_GAP}instructions?`,
+        `disregard${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|system)${INJECTION_PHRASE_GAP}(instructions?|directives?|rules?)`,
+        `forget${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|everything|instructions?)`,
+        `override${INJECTION_PHRASE_GAP}(your|the|all|previous)${INJECTION_PHRASE_GAP}(instructions?|settings?|behavior|config|directives?|rules?)`,
+        // Synonym families for the explicit-override class (PR-8 / B7-sub-4)
+        // — paraphrases that the four canonical verbs above miss
+        // ("stop following your instructions", "cease compliance with the
+        // rules", "bypass your safety filters"). Each family carries at
+        // least one regression test in `sanitize.test.ts`.
         "stop\\s+(following|obeying|applying)",
         "cease\\s+(compliance|following|obeying)",
         "bypass\\s+(your|all|the)\\s+(instructions?|filters?|safety)",
@@ -103,27 +105,15 @@ const INJECTION_PATTERNS = new RegExp(
         "system\\s+prompt",
         "new\\s+(primary\\s+)?instructions?\\s*(are|:|follow)",
         "your\\s+new\\s+(primary\\s+|main\\s+)?objective",
-        "do\\s+not\\s+(follow|apply|use|obey|comply)[\\s\\S]{0,80}instructions?",
+        `do\\s+not\\s+(follow|apply|use|obey|comply)${INJECTION_PHRASE_GAP}instructions?`,
         // Data exfiltration — file system triggers
         "read\\s+~\\/\\.(ssh|cursor|env|zshrc|bashrc|config|npmrc|gitconfig)",
-        "pass[\\s\\S]{0,80}(its|the)\\s+contents?\\s+as",
+        `pass${INJECTION_PHRASE_GAP}(its|the)\\s+contents?\\s+as`,
         "exfiltrate",
-        "(extract|exfiltrate|leak|transmit|send\\s+me)[\\s\\S]{0,80}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)",
+        `(extract|exfiltrate|leak|transmit|send\\s+me)${INJECTION_PHRASE_GAP}(passwords?|credentials?|secrets?|tokens?|api[\\s\\S]{0,5}keys?)`,
     ].join("|"),
     "i"
 );
-
-// **Leetspeak / homoglyph coverage (deferred).** NFKC handles compatibility
-// decompositions (full-width → half-width, ligatures, ASCII-mappable variants)
-// but does NOT collapse Cyrillic/Greek homoglyphs (е, а, о, р, с, х) per
-// UTS #39 §4 — the Unicode-recommended algorithm for those is `skeleton()`
-// against `confusables.txt`, which would either bundle ~150 KB of data or
-// add a dependency. NFKC + the bounded-wildcard widening + synonym families
-// close the highest-value gaps for free; the per-host `[injection-defense]`
-// log signal is the trigger for re-evaluating skeleton-folding if Cyrillic-
-// homoglyph attacks surface in the wild. Leetspeak (`1gn0r3`, `1337`) is
-// also deferred — explicit leetspeak patterns trip false positives on
-// legitimate text like "l33t" or "1337"; left to the same per-host signal.
 
 /**
  * Sanitize a string for use in tool metadata or prompt templates.
@@ -265,25 +255,37 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * (un-sanitized) text means invisible-char-split phrases like "Ig​nore" will
  * not match, silently degrading detection coverage.
  *
- * **NFKC normalisation (PR-8 / B7-sub-4).** The matcher applies
- * `String.prototype.normalize("NFKC")` to its input before testing the
- * pattern set. NFKC collapses compatibility variants — full-width letters
- * (`ｉｇｎｏｒｅ`), ligatures (`ﬁ`), and ASCII-mappable Latin compat
- * forms — into canonical ASCII so the homoglyph-substitution bypass class
- * is closed. **Returned content is unchanged** — normalisation is applied
- * to the temporary string used for matching only; `sanitizeResponse`'s
- * output (the bytes the LLM actually sees) never goes through NFKC. UTS #39
- * confusable folding (Cyrillic/Greek look-alikes like `і`, `а`, `р`) is
- * NOT covered by NFKC and remains a documented gap; see the comment on
- * `INJECTION_PATTERNS` above for the deferral rationale.
+ * **Normalisation (PR-8 / B7-sub-4).** The matcher normalises its input
+ * before testing the pattern set, currently via
+ * `String.prototype.normalize("NFKC")`. NFKC collapses compatibility
+ * variants — full-width letters (`ｉｇｎｏｒｅ`), ligatures (`ﬁ`), and
+ * ASCII-mappable Latin compat forms — into canonical ASCII so the
+ * homoglyph-substitution bypass class is closed. **Returned content is
+ * unchanged** — normalisation is applied to a transient string used for
+ * matching only; `sanitizeResponse`'s output (the bytes the LLM actually
+ * sees) never goes through it. NFKC can expand input length under
+ * compatibility decomposition (e.g. `ﬃ` → `ffi`, ~3× worst case); the
+ * transient is bounded by the upstream `LIMITS.MAX_RESPONSE_SIZE`
+ * (10 MB) cap and collected immediately after `.test()` returns, so the
+ * memory footprint stays well inside `MAX_TOTAL_RESPONSE_MEMORY`
+ * (100 MB). UTS #39 confusable folding (Cyrillic/Greek look-alikes like
+ * `і`, `а`, `р`) is NOT covered by NFKC and remains a documented gap;
+ * see the comment on `INJECTION_PATTERNS` above for the deferral
+ * rationale.
  *
  * **Stability contract:** the *intent* — return `true` when the (already
- * sanitised) content matches a known prompt-injection signal — is stable. The
- * specific pattern set is **not** part of the public contract and will expand
- * over time as new attack phrasings emerge. Tests that assert on which strings
- * do or do not match should target known categories (e.g. instruction-override
- * phrases) rather than exact wording, and callers must continue to honour the
- * "observability only" rule regardless of which patterns are in play.
+ * sanitised) content matches a known prompt-injection signal, and never
+ * mutate the bytes flowing through `sanitizeResponse` — is stable. The
+ * specific pattern set and the specific normalisation algorithm
+ * (currently NFKC) are **implementation**: the pattern set will expand
+ * as new attack phrasings emerge, and the normaliser may swap to UTS
+ * #39 skeleton-folding once the gap-trigger surfaces. The
+ * no-content-mutation invariant is locked by an executable test
+ * (`sanitize.test.ts > does NOT mutate input`). Tests that assert on
+ * which strings do or do not match should target known categories
+ * (e.g. instruction-override phrases) rather than exact wording, and
+ * callers must continue to honour the "observability only" rule
+ * regardless of which patterns are in play.
  *
  * @param input - Content to scan (must already be passed through `sanitizeResponse`)
  * @returns true if any injection pattern matched

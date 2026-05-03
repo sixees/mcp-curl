@@ -412,3 +412,96 @@ git log --oneline main..HEAD
 | File (removed) | Title | Summary | Resolved by | Date |
 |----------------|-------|---------|-------------|------|
 | _none — input was a plan section, not a `docs/todos/` file_ | — | — | — | — |
+
+---
+
+## Code Review — 2026-05-03
+
+### Review Summary
+
+- **Reviewer:** automated multi-agent review
+- **Agents used:** code-simplicity-reviewer, security-sentinel, typescript-reviewer (TypeScript + MCP SDK best practices), pattern-recognition-specialist (cross-PR consistency vs PR-1..PR-7)
+- **Findings:** 🔴 P1: 2 | 🟡 P2: 5 | 🔵 P3: 4 actionable (+ 4 informational confirmations)
+- **Verdict:** clear to merge after fixes — all P1+P2+P3 actionable findings resolved in-session per the established repo pattern (PR-1, PR-6b, PR-7 in-place review-and-fix). Tests: 960 → **969 passing** (7 skipped, 0 failed).
+
+### Handoff Assessment
+
+The original handoff was honest about most trade-offs and proactively
+flagged the load-bearing risks (no-content-mutation contract, UTS #39
+gap, `[\s\S]{0,80}` bound) but **missed three things** the reviewers
+caught:
+
+- The `{0,80}` bound was identified as a tunable in the comment block
+  yet hardcoded as a literal nine times in the regex source — a clear
+  drift from the pattern PR-1 (`MAX_AUTH_TOKEN_LENGTH`) and PR-7
+  (`FIXED_POINT_MAX_ITERATIONS`, `WHITESPACE_PADDING_CODEPOINTS`)
+  established for sanitiser tunables. Both simplicity and pattern
+  reviewers flagged this independently as P1.
+- The deferral rationale (NFKC vs UTS #39, leetspeak deferral) was
+  documented in **three** separate places — a standalone block at
+  `sanitize.ts:116-126`, an inline comment above the synonym families,
+  and the JSDoc on `detectInjectionPattern`. The standalone block was
+  orphaned (no code attached) and ~80% redundant with the JSDoc.
+- The JSDoc `Stability contract` paragraph did not classify NFKC as
+  implementation vs intent, leaving a future maintainer no clear
+  mandate to swap to UTS #39 skeleton-folding.
+
+The handoff's §Cross-PR audit section was independently verified by
+the typescript reviewer (it spot-checked filesystem + tests) — the
+9-bypass tally and 4 open-gap classification stand.
+
+### Key Findings & Resolutions
+
+| ID | Sev | Category | Description | Resolution |
+|----|-----|----------|-------------|------------|
+| P1-A | 🔴 | DRY / pattern-drift | `{0,80}` literal duplicated 9× across `INJECTION_PATTERNS`; tests hardcode `100` / `200` / `80` against an unnamed bound. Drift from PR-1/PR-7's tunable-naming idiom. (simplicity P1-2 + pattern P1, converged) | Extracted `INJECTION_PHRASE_GAP_MAX = 80` and `INJECTION_PHRASE_GAP = "[\\s\\S]{0,80}"` to `unicode-attack-ranges.ts` (matching PR-7's tunable-home idiom). `INJECTION_PATTERNS` rebuilt via template-string interpolation; tests import the constant. |
+| P1-B | 🔴 | DRY / docs | "Leetspeak / homoglyph coverage (deferred)" comment block at `sanitize.ts:116-126` is orphaned (no code attached) and ~80% redundant with the JSDoc on `detectInjectionPattern`. (simplicity P1-1) | Block deleted; JSDoc + the rationale block above `INJECTION_PATTERNS` carry the deferral note. |
+| P2-A | 🟡 | Pattern consistency | Synonym families lack a taxonomy header comment (sister patterns have explicit `// Persona takeover`, `// Privilege escalation` headers). (pattern P2) | Combined into a single inline comment block above the three synonym entries that names the subgroup ("Synonym families for the explicit-override class"). |
+| P2-B | 🟡 | TypeScript / contract | JSDoc `Stability contract` did not classify NFKC as implementation vs intent. (typescript P2-2) | Stability contract reworded: the `no-content-mutation` invariant is intent (locked by test); the specific normaliser (NFKC) and pattern set are implementation. Future swap to UTS #39 skeleton-folding now has a clear contract anchor. |
+| P2-D | 🟡 | DRY / tests | Three describe-blocks contain ~13 near-identical `expect(...).toBe(true|false)` calls that want `it.each`. (simplicity P2-1) | Synonym positive-case (9 cases) + benign-negative (3 cases) + NFKC homoglyph (3 cases) collapsed via `it.each([...])("...", ...)`. Per-case failure attribution preserved. |
+| P2-E | 🟡 | Code hygiene / tests | `"exﬁltrate the data".replace("ex", "ex")` is a misleading no-op — comment claims it adds the ligature but the literal already contains it. (simplicity P2-2) | Inlined the literal directly inside the `it.each` table. |
+| P2-F | 🟡 | DRY / tests | Modified existing `still detects within bounded window` test asserted the same upper-bound class as the new dedicated 200-char-gap case. (simplicity P2-3) | Old assertion replaced with a one-line forward-pointer comment to the dedicated case. |
+| P3-A | 🔵 | Security / hygiene | No wall-clock ReDoS regression test on the widened `INJECTION_PATTERNS`; PR-7 set the precedent (`strip-blocks.test.ts:158-170`). (security) | Added `wall-clock ReDoS budget (PR-8 / B7-sub-4)` describe-block: 1 MB pathological `"ignore "` chain matched against `INJECTION_PATTERNS`; CI-tolerant 2 s budget; observed ~270 ms locally on the same shape per security-bench. |
+| P3-B | 🔵 | Docs / contract | NFKC's compatibility-decomposition expansion factor (~3× worst case) and the upstream `MAX_RESPONSE_SIZE` cap that bounds it were not documented in the JSDoc. (security) | One-line addendum in the JSDoc Normalisation section; references both the 10 MB upstream cap and the 100 MB global memory cap. |
+
+### Decisions explicitly NOT made / consciously deferred
+
+| Finding | Decision | Reason |
+|---------|----------|--------|
+| P3-C — synonym-family negative test thin (3 phrases) | **Deferred to a future PR** | TypeScript reviewer P3-2 — for PR-8 scope this is fine; convention note only. Lift the bar to ≥5 negative phrases per family if PR-9+ adds another synonym family. |
+| P3-D — `bypass` synonym requires a scope word, misses bare `"bypass safety"` | **Rejected** | Security reviewer P3 — broadening to `bypass\s+(your\|all\|the)?\s*(...)` would over-match legitimate prose ("the bypass instructions are in section 3"). The existing pattern handles the common attack shapes; the asymmetry is documented inline. |
+| toBe vs toStrictEqual on `expect(sanitized).toBe(fullWidth)` | **Rejected (kept toBe)** | TypeScript reviewer P3-1 — `toBe` is `Object.is` for primitives; identical to byte-equality on a string. `toStrictEqual` would be a no-op stricter and signal-noise. |
+| URL-scheme detection patterns paralleling PR-7's `data:`/`javascript:`/`vbscript:`/`file:` blocklist | **Rejected** | Security reviewer P3 — intentional layering split: dangerous-scheme URLs are *neutralised* by `strip-blocks.ts` before reaching detection, so a parallel detection pattern would be redundant signal on already-stripped content. |
+
+### Verified Claims
+
+| Handoff Claim | Verified? | Notes |
+|---------------|-----------|-------|
+| Tests pass (960/7 baseline) | ✓ | Reproduced locally; now 969/7 after review fixes (+9 net from `it.each` fan-out + ReDoS budget; -3 from collapsing duplicate upper-bound assertion + the 5→3 NFKC describe-block consolidation). |
+| Build clean | ✓ | `npm run build` passes; no new TypeScript errors. The 11 pre-existing `tsc --noEmit` errors all pre-date the branch (typescript reviewer cross-checked against `ea26373`). |
+| No content mutation | ✓ | Locked by `does NOT mutate input — sanitizeResponse output is unaffected by detection's NFKC` regression test. Also verified by tracing every call path (`processor.ts`, `post-processor.ts`, `tool-wrapper.ts`, `jq-query.ts`) — the NFKC normalised string is local to `detectInjectionPattern` and discarded after `.test()` returns. |
+| Wall-clock under 100 ms claim (handoff §What to pay attention to: "200-char-gap regression doubles as ReDoS-bound assertion") | partial | The original 200-char-gap test asserts only `false`, not elapsed time. Now genuinely covered by the new `wall-clock ReDoS budget` describe-block (2 s CI budget; ~270 ms observed). |
+| Cross-PR audit "9 → 0 documented bypasses closed" | ✓ | Independently verified by typescript reviewer (filesystem + plan + handoffs spot-check). The 4 open-gap classification (cleanup commit, PR-9, C5+S7, PR-7 deferrals) is accurate. |
+| MCP SDK 2.0 forward-compat | ✓ | TypeScript reviewer: PR-8 touches no Zod schema, no `inputSchema`, no `tools/list` payload — purely a string→boolean pure function and a regex constant. SDK 2.0's Standard Schema migration cannot affect this code. |
+
+### Outstanding Todos
+<!-- Todos created during this review -->
+
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — all P1/P2/P3 actionable findings fixed in-session per the in-place review-and-fix pattern established by PR-1, PR-6b, PR-7_ | — | — | — |
+
+### Files Modified (review pass)
+
+- `src/lib/utils/unicode-attack-ranges.ts` — added `INJECTION_PHRASE_GAP_MAX` constant (80) + `INJECTION_PHRASE_GAP` regex fragment (single source of truth for the multi-keyword phrase bound).
+- `src/lib/utils/sanitize.ts` — `INJECTION_PATTERNS` rebuilt via template-string interpolation with the shared constant; orphan leetspeak comment block deleted; rationale block trimmed; JSDoc Stability contract reworded to classify NFKC as implementation; NFKC expansion-factor + upstream-cap addendum added.
+- `src/lib/utils/sanitize.test.ts` — synonym positive/negative tests collapsed via `it.each`; NFKC homoglyph trio collapsed via `it.each` (no-op `.replace` removed); existing `still detects within bounded window` collapsed into a forward-pointer; new `wall-clock ReDoS budget` describe-block (1 MB pathological `"ignore "` chain, 2 s CI budget); imports `INJECTION_PHRASE_GAP_MAX` so tests stay in lock-step with the bound.
+
+### Tests / build (post-review)
+
+- `npm test`: **969 passed | 7 skipped | 0 failed** (was 960/7 before review fixes; net +9).
+- `npm run build`: clean.
+
+### Blockers
+
+**None.** All P1+P2 actionable findings resolved; actionable P3 items (P3-A wall-clock budget, P3-B JSDoc addendum) also resolved. Non-actionable P3 items (informational confirmations) noted in the §Decisions explicitly NOT made table.
