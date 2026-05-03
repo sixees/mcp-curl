@@ -7,15 +7,14 @@ import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
 import {
     STRIP_PATH_MAX_BYTES,
+    looksLikeMarkupShape,
     stripBlocksFixedPoint,
     stripHtmlComments,
     stripMarkdownBeacons,
 } from "./strip-blocks.js";
 import {
-    isBinaryContentType,
     isMarkdownContentType,
-    isPlainTextLikeContentType,
-    looksLikeMarkupShape,
+    isSniffableContentType,
     safeHostname,
     supportsMarkupComments,
 } from "../utils/index.js";
@@ -112,21 +111,6 @@ export async function processResponse(
     // strip surface.
     content = sanitizeAndDetect(content, hostname);
 
-    // Content-type sniffing: an attacker controlling the response server
-    // can serve HTML body with `Content-Type: text/plain`, `image/png`,
-    // `application/octet-stream`, or any unrecognised value to bypass
-    // the markup-strip path. Sniff the post-sanitise body's first ~1 KB
-    // for markup shape when the declared type is plain-text-like OR
-    // binary OR unknown — i.e., any CT that doesn't already indicate a
-    // structured text grammar. Structured text types (JSON, CSV, …) are
-    // NOT sniffed: sniffing JSON would risk breaking valid JSON bodies
-    // that legitimately contain `<script>` in a string field.
-    const sniffWindow =
-        isPlainTextLikeContentType(options.contentType) ||
-        isBinaryContentType(options.contentType);
-    const sniffedAsMarkup = sniffWindow && looksLikeMarkupShape(content);
-    const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
-
     // Outer-level byte cap. Inside `stripBlocksFixedPoint` the same cap
     // returns the input unchanged on adversarial bodies, but
     // `stripMarkdownBeacons` runs four global replaces on the full body
@@ -136,6 +120,26 @@ export async function processResponse(
     // strip path's cost.
     const exceedsStripCap =
         Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
+
+    // Content-type sniffing: an attacker controlling the response server
+    // can serve HTML body with `Content-Type: text/plain`, `text/csv`,
+    // `text/javascript`, `image/png`, `application/octet-stream`, or any
+    // unrecognised value to bypass the markup-strip path.
+    // `isSniffableContentType` covers any CT that doesn't already declare
+    // a structured grammar we'd handle either way (markup/markdown
+    // declared) or that we deliberately don't sniff (`application/json`,
+    // where `<script>` legitimately appears inside string fields).
+    //
+    // The sniffer scans the FULL post-sanitise body — bounded by the
+    // outer-level `exceedsStripCap` short-circuit so the regex never
+    // touches bodies above `STRIP_PATH_MAX_BYTES` (256 KB). Earlier
+    // revisions clipped to the first 1 KB; that was itself a bypass
+    // (1025+ bytes of preamble + `<script>` past the window).
+    const sniffedAsMarkup =
+        !exceedsStripCap &&
+        isSniffableContentType(options.contentType) &&
+        looksLikeMarkupShape(content);
+    const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
 
     // Steps 3-5 — strip + re-sanitise (only when the body needs it AND
     // is below the strip-path cap). The single nested branch keeps the

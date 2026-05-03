@@ -4,6 +4,22 @@
 /** Bytes per megabyte (for human-readable size formatting) */
 export const BYTES_PER_MB = 1_000_000;
 
+/**
+ * Shared cap for fixed-point sanitisation/strip loops on attacker-controlled
+ * text. Used by:
+ *   - `response/strip-blocks.ts → stripBlocksFixedPoint` (script/style strip
+ *     against self-healing payloads like
+ *     `<scr<script>ipt>alert(1)</scr</script>ipt>`).
+ *   - `utils/sanitize.ts → sanitizeResponse` (whitespace-padding interleaving
+ *     against `(49 spaces + ZWSP) × N` payloads).
+ *
+ * 4 iterations is a soft termination guarantee — both loops exit early when
+ * the transform converges (`next === curr`). This shared constant makes the
+ * relationship explicit so a future maintainer can see they are intended to
+ * share a value, not drift independently.
+ */
+export const FIXED_POINT_MAX_ITERATIONS = 4;
+
 export const LIMITS = {
     /** Maximum response size for processing (10MB) */
     MAX_RESPONSE_SIZE: 10_000_000,

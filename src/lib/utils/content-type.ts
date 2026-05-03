@@ -143,58 +143,37 @@ export function isMarkdownContentType(contentType: string | undefined): boolean 
 }
 
 /**
- * Returns true when `contentType` is plain-text-shaped (`text/plain`, the
- * empty string, or undefined) — the cases where an attacker controlling
- * the response server can serve HTML-shaped bytes with a "trust me, it's
- * plain text" header to bypass the response processor's markup-strip
- * path.
+ * Returns `true` when `contentType` is a candidate for body-content
+ * sniffing in the response-processor's markup-strip path. The strip
+ * subsystem's body-content sniffer (`response/strip-blocks.ts →
+ * looksLikeMarkupShape`) is only consulted when the declared CT does
+ * NOT already commit to a structured grammar we'd handle either way:
  *
- * Used by the response processor in conjunction with {@link
- * looksLikeMarkupShape}: only sniff for markup when the declared type is
- * plain-text-ish, so structured types like `application/json` stay
- * un-sniffed (sniffing JSON would risk breaking valid JSON containing
- * `<script>` inside a string field).
+ *   - **Returns `true`** for: empty / undefined CT; `text/plain`; any
+ *     other `text/*` subtype that ISN'T already declared markup
+ *     (`text/html`) or markdown (`text/markdown`, `text/x-markdown`);
+ *     and any binary CT (`image/*`, `application/octet-stream`, …).
+ *     Attackers tamper with Content-Type to disable the strip path; if
+ *     the declared shape is non-markup AND the body looks like markup,
+ *     the strip should still fire.
+ *   - **Returns `false`** for: declared markup/markdown (already strip-
+ *     handled without the sniffer) and `application/json` (legitimate
+ *     JSON can contain `<script>` inside a string field, so sniffing
+ *     would mangle the document).
  *
- * Pure: depends only on its input.
+ * Pure: depends only on its input. Replaces an earlier
+ * `isPlainTextLikeContentType` predicate that returned true ONLY for
+ * `text/plain` / empty — that narrower predicate let `text/csv`,
+ * `text/javascript`, `application/yaml` etc. silently bypass the strip.
  */
-export function isPlainTextLikeContentType(contentType: string | undefined): boolean {
+export function isSniffableContentType(contentType: string | undefined): boolean {
     const mime = parseMimeType(contentType);
-    return mime === "" || mime === "text/plain";
+    if (mime === "application/json") return false;
+    if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return false;
+    if (MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix))) return false;
+    if (MARKDOWN_MIME_EXACT.has(mime)) return false;
+    if (MARKDOWN_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix))) return false;
+    if (mime === "" || mime === "text/plain") return true;
+    if (mime.startsWith("text/")) return true;
+    return isBinaryContentType(contentType);
 }
-
-/**
- * Lightweight markup-shape detector. Inspects the first ~1 KB of body
- * for HTML/SVG/XML opening markers. Used to sniff bodies served with a
- * non-markup `Content-Type` (or no `Content-Type`) so an attacker
- * tampering with the header byte-string can't disable the markup-strip
- * path.
- *
- * Conservative — false positives on legitimate `<` characters in plain
- * text (e.g. arithmetic comparisons) are acceptable because the
- * markup-strip is best-effort and idempotent on already-clean text.
- * Restricting to the FIRST 1 KB bounds cost on adversarial bodies and
- * means the detector cannot scan arbitrary positions for nested attack
- * markers.
- *
- * Match cases:
- *  - `<!doctype` / `<!DOCTYPE`
- *  - `<html`, `<svg`, `<script`, `<style`, `<iframe`
- *  - `<?xml` (XML declaration)
- *  - any `<a-z>{1,16}` opening tag with attributes (covers vendor markup
- *    like `<x-component>`, RSS/Atom roots, custom elements)
- *
- * Linear-time, ReDoS-safe (bounded `[a-z0-9-]{0,16}` + finite alternation).
- *
- * Pure: depends only on its input.
- */
-export function looksLikeMarkupShape(content: string): boolean {
-    const head = content.slice(0, 1024);
-    return MARKUP_SHAPE_PATTERN.test(head);
-}
-
-// NOT exported — `i` flag, used only with `.test()` on a freshly-sliced
-// 1 KB head string per call. `RegExp.prototype.test` does NOT consume
-// `lastIndex` when the regex has no `g`/`y` flag (this regex has only `i`),
-// so reuse across calls is safe.
-const MARKUP_SHAPE_PATTERN =
-    /<(?:!doctype\b|html\b|svg\b|script\b|style\b|iframe\b|\?xml\b|[a-z][a-z0-9-]{0,16}[\s>/])/i;

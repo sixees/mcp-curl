@@ -13,6 +13,17 @@
 // Acceptable for our threat model — content reaches an LLM, not a
 // renderer.
 
+import { FIXED_POINT_MAX_ITERATIONS } from "../config/limits.js";
+
+/**
+ * Replacement strings written by `stripMarkdownBeacons` over removed
+ * markdown URL surfaces. Exported so tests can import the source of
+ * truth instead of duplicating the literal strings.
+ */
+export const IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
+/** @see IMAGE_REMOVED_PLACEHOLDER */
+export const LINK_REMOVED_PLACEHOLDER = "[link removed]";
+
 /**
  * 256 KB cap for the HTML-block-strip path. Above the cap the strip step
  * is skipped entirely and the caller's `sanitiseAndDetect` is the only
@@ -45,12 +56,11 @@ export const STRIP_PATH_MAX_BYTES = 256 * 1024;
  * the strip passes converge (`next === curr`) — 4 is the soft termination
  * guarantee, not a theoretical max nesting depth.
  *
- * **Sister cap:** `sanitize.ts → SANITIZE_FIXED_POINT_MAX_ITERATIONS`
- * (also 4) protects the sanitiser's interleaving fixed-point loop. The
- * two caps are intentionally independent — different attack classes —
- * but convention is they share a value.
+ * Imported from `config/limits.ts` so this cap and the parallel sanitiser
+ * cap (`utils/sanitize.ts → SANITIZE_FIXED_POINT_MAX_ITERATIONS`) cannot
+ * drift independently.
  */
-const STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
+const STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 
 // -----------------------------------------------------------------------------
 // Module-private regex constants — `g`/`gi` flags make these stateful (they
@@ -303,9 +313,64 @@ export function stripHtmlComments(input: string): string {
  */
 export function stripMarkdownBeacons(input: string): string {
     return input
-        .replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, "[image removed]")
-        .replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, "[link removed]")
-        .replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, "[image removed]")
-        .replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]")
+        .replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER)
+        .replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER)
+        .replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER)
+        .replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER)
         .replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "");
+}
+
+/**
+ * Returns `true` when the input would cause `stripBlocksFixedPoint` to
+ * skip its work due to the {@link STRIP_PATH_MAX_BYTES} cap. The strip
+ * function silently returns the input unchanged in that case (a
+ * defensive fail-open posture so the strip subsystem never breaks the
+ * handler boundary). This helper lets callers observe the skip and
+ * decide whether to apply a fallback defence (e.g. force save-to-file,
+ * decline to inline above-cap bodies, log a warning).
+ *
+ * `processor.ts` does not need this — it already gates the entire strip
+ * path (Steps 3-5) on the same cap upstream. Future direct callers of
+ * `stripBlocksFixedPoint` (PR-8 detection-pattern expansion, custom
+ * strip variants, test helpers) should consult it rather than relying
+ * on the silent-skip behaviour.
+ */
+export function wasStripSkipped(input: string): boolean {
+    return Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES;
+}
+
+// NOT exported — `i` flag, used only with `.test()` on input strings.
+// `RegExp.prototype.test` does NOT consume `lastIndex` when the regex
+// has no `g`/`y` flag, so reuse across calls is safe.
+const MARKUP_SHAPE_PATTERN =
+    /<(?:!doctype\b|html\b|svg\b|script\b|style\b|iframe\b|\?xml\b|[a-z][a-z0-9-]{0,16}[\s>/])/i;
+
+/**
+ * Body-content sniffer for HTML/SVG/XML markup shape. Used by the
+ * response processor when the declared `Content-Type` is
+ * sniffable-for-mis-labelled-markup (plain-text-like, binary, or any
+ * text/* that isn't already declared markup/markdown/JSON) — an attacker
+ * controlling the response server can otherwise tamper the header byte-
+ * string to disable the strip path while serving HTML body.
+ *
+ * Match cases (any opener within the input):
+ *  - `<!doctype` / `<!DOCTYPE`
+ *  - `<html`, `<svg`, `<script`, `<style`, `<iframe`
+ *  - `<?xml` (XML declaration)
+ *  - any `<a-z>{1,16}` opening tag with attributes (covers vendor markup
+ *    like `<x-component>`, RSS/Atom roots, custom elements)
+ *
+ * **Scans the full input.** Earlier revisions clipped the scan to the
+ * first 1 KB for cost; that was itself a bypass — an attacker padding
+ * with 1 KB of benign preamble could place `<script>` past the window.
+ * The processor's outer-level `STRIP_PATH_MAX_BYTES` (256 KB) gate
+ * bounds the body size that reaches this sniffer, so scanning the
+ * whole input is linear-time per call and bounded.
+ *
+ * Linear-time, ReDoS-safe (bounded `[a-z0-9-]{0,16}` + finite alternation).
+ *
+ * Pure: depends only on its input.
+ */
+export function looksLikeMarkupShape(content: string): boolean {
+    return MARKUP_SHAPE_PATTERN.test(content);
 }

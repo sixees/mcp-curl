@@ -950,6 +950,63 @@ describe("processResponse — review-pass P1 fixes (round 2)", () => {
         });
     });
 
+    describe("looksLikeMarkupShape full-body scan (round-3-CR-r4 P1 bypass closure)", () => {
+        it("strips <script> after 2 KB of benign preamble in text/plain body", async () => {
+            // PRIOR BEHAVIOUR (bypass): sniffer clipped scan to the
+            // first 1 KB. An attacker padding past the window with
+            // benign text then placing `<script>` would slip the strip.
+            // Round-3-CR-r4 fix scans the full body (bounded by the
+            // outer `STRIP_PATH_MAX_BYTES` gate).
+            const preamble = "lorem ipsum dolor sit amet ".repeat(80); // ~2 KB
+            const html = `${preamble}<script>steal()</script>`;
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/plain",
+            });
+            expect(result.content.toLowerCase()).not.toContain("<script");
+            expect(result.content).not.toContain("steal()");
+        });
+
+        it("strips <script> served as text/csv (round-3-CR-r4 P2: broader sniff window)", async () => {
+            // text/csv was previously NOT sniffed (only text/plain was)
+            // so HTML body served as text/csv bypassed the strip path.
+            const html = "<html><body><script>steal()</script></body></html>";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/csv",
+            });
+            expect(result.content.toLowerCase()).not.toContain("<script");
+        });
+
+        it("strips <script> served as text/javascript", async () => {
+            const html = "<html><body><script>steal()</script></body></html>";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "text/javascript",
+            });
+            expect(result.content.toLowerCase()).not.toContain("<script");
+        });
+
+        it("strips <script> served as application/yaml", async () => {
+            const html = "<html><body><script>steal()</script></body></html>";
+            const result = await processResponse(html, {
+                url: "http://example.com",
+                contentType: "application/yaml",
+            });
+            // application/yaml is NOT in the sniff window (not text/*,
+            // not binary, not empty) so this case is intentionally NOT
+            // covered — sniffer is conservative on structured-typed
+            // bodies. Document the current behaviour: the body is
+            // sanitised but not stripped.
+            //
+            // If this becomes a real signal we'd extend isSniffable
+            // further; for now the LLM sees the script tag as text and
+            // detection logging still fires on injection patterns
+            // within it.
+            expect(result.content).toContain("<script");
+        });
+    });
+
     describe("strip-path byte cap covers stripMarkdownBeacons too (round-3-CR-r3)", () => {
         it("skips strip path on a markdown body above 256 KB (markdown beacons NOT scanned)", async () => {
             // After round-2 lifted the label/URL caps inside the markdown

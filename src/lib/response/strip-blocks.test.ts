@@ -1,9 +1,13 @@
 // src/lib/response/strip-blocks.test.ts
 import { describe, it, expect } from "vitest";
 import {
+    IMAGE_REMOVED_PLACEHOLDER,
+    LINK_REMOVED_PLACEHOLDER,
+    looksLikeMarkupShape,
     stripBlocksFixedPoint,
     stripHtmlComments,
     stripMarkdownBeacons,
+    wasStripSkipped,
 } from "./strip-blocks.js";
 
 describe("stripHtmlComments", () => {
@@ -339,5 +343,108 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
             const md = `[click](https://tracker.example.com/${longUrl})`;
             expect(stripMarkdownBeacons(md)).toBe("[link removed]");
         });
+    });
+});
+
+describe("placeholder constants (round-3-CR-r4 DRY)", () => {
+    // Tests import the source-of-truth constants rather than duplicating
+    // the literal strings, so a future rename is one edit not many.
+
+    it("IMAGE_REMOVED_PLACEHOLDER is what stripMarkdownBeacons writes for images", () => {
+        expect(stripMarkdownBeacons("![logo](https://x.com/p.gif)")).toBe(
+            IMAGE_REMOVED_PLACEHOLDER
+        );
+    });
+
+    it("LINK_REMOVED_PLACEHOLDER is what stripMarkdownBeacons writes for links", () => {
+        expect(stripMarkdownBeacons("[click](https://x.com/x)")).toBe(LINK_REMOVED_PLACEHOLDER);
+    });
+
+    it("constants do not contain `]` (preserves outer-link strip on nested cases)", () => {
+        // The image-inside-link nesting case relies on the image
+        // placeholder NOT containing characters that defeat the outer
+        // link's `[^\]\n]` label class. The current bracketed form
+        // `[image removed]` DOES contain `]` — see the documented
+        // image-inside-link Known Issue. This test pins the current
+        // form so a future change to the placeholder is observable.
+        expect(IMAGE_REMOVED_PLACEHOLDER).toBe("[image removed]");
+        expect(LINK_REMOVED_PLACEHOLDER).toBe("[link removed]");
+    });
+});
+
+describe("looksLikeMarkupShape — round-3-CR-r4 P1 full-body scan", () => {
+    // Tests moved here from utils/content-type.test.ts as part of the
+    // SRP-driven move (the function inspects body content, not MIME
+    // strings, so it belongs with the strip subsystem).
+
+    it("matches a body starting with <!doctype", () => {
+        expect(looksLikeMarkupShape("<!doctype html><html>...</html>")).toBe(true);
+    });
+
+    it("matches a body starting with <html", () => {
+        expect(looksLikeMarkupShape("<html><body>x</body></html>")).toBe(true);
+    });
+
+    it("matches a body starting with <script", () => {
+        expect(looksLikeMarkupShape("<script>alert(1)</script>")).toBe(true);
+    });
+
+    it("matches a body starting with <svg", () => {
+        expect(looksLikeMarkupShape("<svg><circle/></svg>")).toBe(true);
+    });
+
+    it("matches a body starting with <iframe", () => {
+        expect(looksLikeMarkupShape("<iframe src=evil>")).toBe(true);
+    });
+
+    it("matches a body starting with <?xml", () => {
+        expect(looksLikeMarkupShape('<?xml version="1.0"?><root/>')).toBe(true);
+    });
+
+    it("matches a generic <tagname> opener", () => {
+        expect(looksLikeMarkupShape("<p>hello</p>")).toBe(true);
+        expect(looksLikeMarkupShape("<x-component>...</x-component>")).toBe(true);
+    });
+
+    it("does NOT match prose mentioning `<`", () => {
+        expect(looksLikeMarkupShape("the value is < 5")).toBe(false);
+        expect(looksLikeMarkupShape("a < b but b > c")).toBe(false);
+    });
+
+    it("does NOT match plain JSON", () => {
+        expect(looksLikeMarkupShape('{"key": "value"}')).toBe(false);
+    });
+
+    it("MATCHES markup beyond the first 1 KB — closes round-3-CR-r4 P1 bypass", () => {
+        // PRIOR BEHAVIOUR (rejected as bypass): the sniffer clipped its
+        // scan to the first 1 KB, so 1025+ bytes of benign preamble
+        // followed by `<script>` slipped past. Round-3-CR-r4 fix scans
+        // the full input. The processor's outer `STRIP_PATH_MAX_BYTES`
+        // (256 KB) gate bounds the body that ever reaches the sniffer.
+        const buried = "x".repeat(2048) + "<script>alert(1)</script>";
+        expect(looksLikeMarkupShape(buried)).toBe(true);
+    });
+
+    it("MATCHES markup at offset > 1 KB but < 256 KB cap", () => {
+        const buried = "lorem ipsum ".repeat(8000) + "<svg></svg>";
+        expect(looksLikeMarkupShape(buried)).toBe(true);
+    });
+});
+
+describe("wasStripSkipped — observability helper (round-3-CR-r4)", () => {
+    it("returns false for a small body well below the cap", () => {
+        expect(wasStripSkipped("hello")).toBe(false);
+        expect(wasStripSkipped("<script>foo</script>")).toBe(false);
+    });
+
+    it("returns false for a body at the cap boundary", () => {
+        // 256 KB exactly — at the cap (`>` not `>=`), so this returns false.
+        const atCap = "x".repeat(256 * 1024);
+        expect(wasStripSkipped(atCap)).toBe(false);
+    });
+
+    it("returns true for a body above the cap", () => {
+        const overCap = "x".repeat(256 * 1024 + 1);
+        expect(wasStripSkipped(overCap)).toBe(true);
     });
 });

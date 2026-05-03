@@ -36,6 +36,48 @@ function safeHostname(url, fallback = "unknown") {
   }
 }
 
+// src/lib/config/limits.ts
+var BYTES_PER_MB = 1e6;
+var FIXED_POINT_MAX_ITERATIONS = 4;
+var LIMITS = {
+  /** Maximum response size for processing (10MB) */
+  MAX_RESPONSE_SIZE: 1e7,
+  /** Default max result size for AI agent responses (500KB) */
+  DEFAULT_MAX_RESULT_SIZE: 5e5,
+  /** Maximum total memory across all concurrent requests (100MB) */
+  MAX_TOTAL_RESPONSE_MEMORY: 1e8,
+  /** Characters to show in error previews */
+  ERROR_PREVIEW_LENGTH: 200,
+  /** Max distance from end to search for metadata separator */
+  MAX_METADATA_TAIL_LENGTH: 200,
+  /** Default request timeout in milliseconds (30 seconds) */
+  DEFAULT_TIMEOUT_MS: 3e4,
+  /** Maximum filename length for saved files */
+  FILENAME_MAX_LENGTH: 50,
+  /** Default HTTP transport port */
+  DEFAULT_HTTP_PORT: 3e3,
+  /** Default maximum number of redirects to follow */
+  MAX_REDIRECTS: 10,
+  /**
+   * Maximum length of operator-supplied HTTP transport auth tokens.
+   * 4096 covers RSA-256 JWTs (~700–900 chars), OIDC ID tokens (1500–2500 chars),
+   * and JWE tokens (up to ~4 KB) while staying well below the 8 KB HTTP
+   * header line-limit. Above this length is almost certainly a paste error.
+   */
+  MAX_AUTH_TOKEN_LENGTH: 4096
+};
+function parsePort(value, defaultPort) {
+  const raw = value || String(defaultPort);
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
+  }
+  const port = parseInt(raw, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
+  }
+  return port;
+}
+
 // src/lib/utils/unicode-attack-ranges.ts
 var C0_CONTROLS = "\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F";
 var C1_CONTROLS = "\\u007F-\\u009F";
@@ -127,7 +169,7 @@ function sanitizeDescription(input) {
   if (input == null) return "";
   return input.replace(DESC_CONTROL_CHARS, " ").trim();
 }
-var SANITIZE_FIXED_POINT_MAX_ITERATIONS = 4;
+var SANITIZE_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 function sanitizeResponse(input) {
   if (input == null) return "";
   let curr = input;
@@ -274,15 +316,17 @@ function isMarkdownContentType(contentType) {
   if (MARKDOWN_MIME_EXACT.has(mime)) return true;
   return MARKDOWN_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
 }
-function isPlainTextLikeContentType(contentType) {
+function isSniffableContentType(contentType) {
   const mime = parseMimeType(contentType);
-  return mime === "" || mime === "text/plain";
+  if (mime === "application/json") return false;
+  if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return false;
+  if (MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix))) return false;
+  if (MARKDOWN_MIME_EXACT.has(mime)) return false;
+  if (MARKDOWN_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix))) return false;
+  if (mime === "" || mime === "text/plain") return true;
+  if (mime.startsWith("text/")) return true;
+  return isBinaryContentType(contentType);
 }
-function looksLikeMarkupShape(content) {
-  const head = content.slice(0, 1024);
-  return MARKUP_SHAPE_PATTERN.test(head);
-}
-var MARKUP_SHAPE_PATTERN = /<(?:!doctype\b|html\b|svg\b|script\b|style\b|iframe\b|\?xml\b|[a-z][a-z0-9-]{0,16}[\s>/])/i;
 
 // src/lib/security/detection-logger.ts
 var THROTTLE_WINDOW_MS = 6e4;
@@ -363,47 +407,6 @@ var JqQuerySchema = z2.object({
   save_to_file: z2.boolean().optional().describe("Force save result to file. Returns filepath instead of content"),
   output_dir: z2.string().optional().describe("Directory to save result files (must exist and be writable)")
 });
-
-// src/lib/config/limits.ts
-var BYTES_PER_MB = 1e6;
-var LIMITS = {
-  /** Maximum response size for processing (10MB) */
-  MAX_RESPONSE_SIZE: 1e7,
-  /** Default max result size for AI agent responses (500KB) */
-  DEFAULT_MAX_RESULT_SIZE: 5e5,
-  /** Maximum total memory across all concurrent requests (100MB) */
-  MAX_TOTAL_RESPONSE_MEMORY: 1e8,
-  /** Characters to show in error previews */
-  ERROR_PREVIEW_LENGTH: 200,
-  /** Max distance from end to search for metadata separator */
-  MAX_METADATA_TAIL_LENGTH: 200,
-  /** Default request timeout in milliseconds (30 seconds) */
-  DEFAULT_TIMEOUT_MS: 3e4,
-  /** Maximum filename length for saved files */
-  FILENAME_MAX_LENGTH: 50,
-  /** Default HTTP transport port */
-  DEFAULT_HTTP_PORT: 3e3,
-  /** Default maximum number of redirects to follow */
-  MAX_REDIRECTS: 10,
-  /**
-   * Maximum length of operator-supplied HTTP transport auth tokens.
-   * 4096 covers RSA-256 JWTs (~700–900 chars), OIDC ID tokens (1500–2500 chars),
-   * and JWE tokens (up to ~4 KB) while staying well below the 8 KB HTTP
-   * header line-limit. Above this length is almost certainly a paste error.
-   */
-  MAX_AUTH_TOKEN_LENGTH: 4096
-};
-function parsePort(value, defaultPort) {
-  const raw = value || String(defaultPort);
-  if (!/^\d+$/.test(raw)) {
-    throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
-  }
-  const port = parseInt(raw, 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`Invalid port value: ${value ?? "(empty)"}`);
-  }
-  return port;
-}
 
 // src/lib/config/server.ts
 var SERVER = {
@@ -1868,8 +1871,10 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 }
 
 // src/lib/response/strip-blocks.ts
+var IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
+var LINK_REMOVED_PLACEHOLDER = "[link removed]";
 var STRIP_PATH_MAX_BYTES = 256 * 1024;
-var STRIP_FIXED_POINT_MAX_ITERATIONS = 4;
+var STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 var HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
 var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?(?:<\/\s*script\b[^>]*>|$)/gi;
 var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?(?:<\/\s*style\b[^>]*>|$)/gi;
@@ -1902,7 +1907,11 @@ function stripHtmlComments(input) {
   return input.replace(HTML_COMMENT_PATTERN, "");
 }
 function stripMarkdownBeacons(input) {
-  return input.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, "[link removed]").replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, "[image removed]").replace(MARKDOWN_EXTERNAL_LINK_PATTERN, "[link removed]").replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "");
+  return input.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "");
+}
+var MARKUP_SHAPE_PATTERN = /<(?:!doctype\b|html\b|svg\b|script\b|style\b|iframe\b|\?xml\b|[a-z][a-z0-9-]{0,16}[\s>/])/i;
+function looksLikeMarkupShape(content) {
+  return MARKUP_SHAPE_PATTERN.test(content);
 }
 
 // src/lib/response/processor.ts
@@ -1921,10 +1930,9 @@ async function processResponse(response, options) {
   const isMarkup = supportsMarkupComments(options.contentType);
   const isMarkdown = isMarkdownContentType(options.contentType);
   content = sanitizeAndDetect(content, hostname);
-  const sniffWindow = isPlainTextLikeContentType(options.contentType) || isBinaryContentType(options.contentType);
-  const sniffedAsMarkup = sniffWindow && looksLikeMarkupShape(content);
-  const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
   const exceedsStripCap = Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
+  const sniffedAsMarkup = !exceedsStripCap && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
+  const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
   if (needsStripPath && !exceedsStripCap) {
     content = stripHtmlComments(content);
     content = stripBlocksFixedPoint(content);
@@ -2214,6 +2222,8 @@ export {
   resolveBaseUrl,
   createHttpOnlyUrlSchema,
   safeHostname,
+  LIMITS,
+  parsePort,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   sanitizeDescription,
   sanitizeResponse,
@@ -2225,8 +2235,6 @@ export {
   PRINTABLE_ASCII,
   safeStringCompare,
   isValidSessionId,
-  LIMITS,
-  parsePort,
   SERVER,
   applyDefaultHeaders,
   JQ_QUERY_HOSTNAME_LABEL,

@@ -1,6 +1,7 @@
 // src/lib/utils/sanitize.ts
 // Response sanitization utilities for prompt injection defense
 
+import { FIXED_POINT_MAX_ITERATIONS } from "../config/limits.js";
 import {
     UNICODE_ATTACK_RANGES,
     WHITESPACE_PADDING_CLASS,
@@ -105,15 +106,14 @@ export function sanitizeDescription(input: string | null | undefined): string {
 }
 
 /**
- * Idempotence cap for {@link sanitizeResponse}. See JSDoc there.
- *
- * **Sister cap:** `response/strip-blocks.ts → STRIP_FIXED_POINT_MAX_ITERATIONS`
- * (also 4) protects the script/style strip's fixed-point loop. The two
- * caps are intentionally independent — different attack classes (sanitiser
- * interleaving vs strip-block self-healing) — but convention is they
- * share a value.
+ * Idempotence cap for {@link sanitizeResponse}. Imports the shared
+ * `FIXED_POINT_MAX_ITERATIONS` from `config/limits.ts` so this loop and
+ * the parallel script/style-strip loop in
+ * `response/strip-blocks.ts → stripBlocksFixedPoint` cannot drift
+ * independently. See the JSDoc on `FIXED_POINT_MAX_ITERATIONS` for the
+ * shared rationale.
  */
-const SANITIZE_FIXED_POINT_MAX_ITERATIONS = 4;
+const SANITIZE_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 
 /**
  * Sanitize HTTP response content before returning to LLM.

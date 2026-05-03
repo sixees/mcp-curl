@@ -765,3 +765,53 @@ CodeRabbit's third pass found two more genuine security regressions and one test
 - **Round 3-CR-r3 P2-1**: binary CT bypassed the ENTIRE pipeline (including the original Step 2 sanitise+detect)
 
 The progression shows reviewing in waves catches successive layers — the fixes for one round expose the next-tier gap. The current fix decouples sanitise+detect from content-type entirely; this is a more durable structural change than gating tweaks.
+
+---
+
+## Review Comments Addressed — 2026-05-03 (PR #30 round 4 — CodeRabbit)
+
+### Changes Made
+| Comment | Reviewer | Category | Action Taken |
+|---------|----------|----------|--------------|
+| 🔴 1 KB sniff window in `looksLikeMarkupShape` is bypassed by 1025+ bytes of preamble + buried `<script>` | @coderabbitai | **P2 — Fix needed (real bypass)** | Removed the 1 KB slice; sniffer now scans the full input. Cost is bounded by the outer-level `STRIP_PATH_MAX_BYTES` (256 KB) gate which the processor checks BEFORE the sniffer (added `!exceedsStripCap` short-circuit so the regex never runs on above-cap bodies). 2 regression tests in `strip-blocks.test.ts` covering 2 KB and ~96 KB preamble cases; 1 in `processor.test.ts` for the end-to-end pipeline. |
+| 🟡 `text/csv`, `text/javascript`, `application/yaml` etc. bypass sniffer (only `text/plain` was sniffable) | @coderabbitai | **P2 — Fix needed** | Replaced `isPlainTextLikeContentType` with `isSniffableContentType`: any text/* (except declared markup/markdown), any binary CT, empty/undefined CT. JSON still excluded (legitimate `<script>` in string fields). 8 regression tests in `content-type.test.ts`. |
+| 🟡 `looksLikeMarkupShape` is body-content sniffer, not MIME predicate — wrong module | @coderabbitai | **P2 — SRP fix** | Moved `looksLikeMarkupShape` (and `MARKUP_SHAPE_PATTERN`) from `utils/content-type.ts` to `response/strip-blocks.ts`. `content-type.ts` is back to pure MIME-string predicates; `strip-blocks.ts` owns body-content inspection. Imports updated; tests moved to `strip-blocks.test.ts`. |
+| 🔵 Duplicated magic value 4 across `STRIP_FIXED_POINT_MAX_ITERATIONS` and `SANITIZE_FIXED_POINT_MAX_ITERATIONS` | @coderabbitai | **P3 — DRY** | Added `FIXED_POINT_MAX_ITERATIONS = 4` to `config/limits.ts` (matching the project pattern of putting limits there). Both modules import and alias to their local names so the relationship is explicit but per-loop scope reads naturally. |
+| 🔵 Replacement strings `"[image removed]"` / `"[link removed]"` duplicated 4× in source + multiple test sites | @coderabbitai | **P3 — DRY** | Exported `IMAGE_REMOVED_PLACEHOLDER` / `LINK_REMOVED_PLACEHOLDER` from `strip-blocks.ts`. The four `stripMarkdownBeacons` `.replace()` sites now use the constants; tests import them as the source of truth. 3 regression tests pin the constants and the (deliberate) bracketed form. |
+| 🔵 `stripBlocksFixedPoint` silently returns input above cap — no observable signal for direct callers | @coderabbitai | **P3 — TS observability** | Added exported `wasStripSkipped(input)` helper (CodeRabbit's Option B). Documented as the canonical way for future direct callers (PR-8, custom strip variants, test helpers) to detect the silent-skip. 3 regression tests covering well-below-cap, at-cap-boundary, and above-cap cases. |
+
+### Decisions Revised
+| Original Decision | New Approach | Reason | Reviewer |
+|-------------------|--------------|--------|----------|
+| `looksLikeMarkupShape` clips scan to first 1 KB for cost | Scan full input; rely on outer `STRIP_PATH_MAX_BYTES` gate to bound the body size that ever reaches the sniffer | The 1 KB clip was a bypass — it preserved the very tampering surface the sniffer was added to close. Bounded body × linear-time regex = negligible cost. | @coderabbitai |
+| `isPlainTextLikeContentType` covers only `text/plain` / empty | `isSniffableContentType` covers any text/* (except declared markup/markdown) + binary + empty | The narrower predicate left `text/csv`, `text/javascript`, `application/yaml` etc. as bypass surface. The new predicate is permissive about WHAT to sniff and conservative about WHEN (only for non-structured CTs); JSON exemption preserved. | @coderabbitai |
+| `looksLikeMarkupShape` lives in `utils/content-type.ts` | Lives in `response/strip-blocks.ts` | `content-type.ts` exports are pure MIME-string predicates; the body-content sniffer breaks that abstraction. Moving it to the strip subsystem makes the SRP boundary clean and keeps `content-type.ts` import-anywhere-safe. | @coderabbitai |
+| Two private `*_FIXED_POINT_MAX_ITERATIONS = 4` constants with cross-reference comments | Single shared `FIXED_POINT_MAX_ITERATIONS` in `config/limits.ts`, imported into both modules | Convention is not enforcement — drifting independently was a real risk. The project's pattern places limits in `config/limits.ts` already. | @coderabbitai |
+
+### Resolved Todos
+| File (removed) | Title | Summary | Resolved by | Date |
+|----------------|-------|---------|-------------|------|
+| _none — review feedback was inline PR threads, not `docs/todos/` files_ | — | — | — | — |
+
+### Outstanding Todos
+| File | Priority | Description | Source |
+|------|----------|-------------|--------|
+| _none — all 6 round-4 PR threads addressed in this commit_ | — | — | — |
+
+### Files Modified
+- `src/lib/config/limits.ts` (NEW: `FIXED_POINT_MAX_ITERATIONS`)
+- `src/lib/utils/content-type.ts` (removed `looksLikeMarkupShape`; replaced `isPlainTextLikeContentType` with broader `isSniffableContentType`)
+- `src/lib/utils/content-type.test.ts` (`isSniffableContentType` tests; `looksLikeMarkupShape` tests moved to strip-blocks.test.ts)
+- `src/lib/utils/index.ts` (barrel updates)
+- `src/lib/utils/sanitize.ts` (cap imported from `config/limits.ts`)
+- `src/lib/response/strip-blocks.ts` (`looksLikeMarkupShape` + `MARKUP_SHAPE_PATTERN` moved in; `IMAGE_REMOVED_PLACEHOLDER` / `LINK_REMOVED_PLACEHOLDER` exported; `wasStripSkipped` helper added; cap imported from `config/limits.ts`)
+- `src/lib/response/strip-blocks.test.ts` (placeholder constants tests; full-body sniff tests; wasStripSkipped tests)
+- `src/lib/response/processor.ts` (sniffer short-circuit on `!exceedsStripCap`; `isSniffableContentType` consumer; imports updated)
+- `src/lib/response/processor.test.ts` (4 new bypass-closure tests for full-body sniff + broadened sniffable CTs)
+
+### Tests / build
+- `npm test`: 947/947 passing (7 skipped) — was 933 after round-3-CR-r3, **net +14 regression tests**.
+- `npm run build`: clean.
+
+### Reviewer assessment
+This pass landed two real security improvements (full-body sniff, broadened sniffable CTs) plus three meaningful structural cleanups (SRP move of `looksLikeMarkupShape`, shared `FIXED_POINT_MAX_ITERATIONS`, exported placeholder constants) and one observability helper (`wasStripSkipped`). All findings were valid; CodeRabbit's reviews continue to find genuine gaps the previous rounds missed. The progression shows that even after three review rounds with multiple agents, layered defence-in-depth designs accumulate subtle bypass surfaces that only direct probing surfaces.
