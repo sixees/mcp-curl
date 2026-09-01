@@ -39,7 +39,7 @@ Execute HTTP requests with structured, validated parameters.
 | bearer_token | string | No | - | Bearer token for Authorization |
 | basic_auth | string | No | - | Basic auth as "username:password" |
 | follow_redirects | boolean | No | true | Follow HTTP redirects |
-| include_headers | boolean | No | false | Report response headers separately from the body (composes with jq_filter and save_to_file) |
+| include_headers | boolean | No | false | Report response headers. Never written into the saved file or the jq_filter input; a separate \`headers\` key under include_metadata, otherwise prefixed to the returned text |
 | include_metadata | boolean | No | false | Return JSON with metadata |
 | jq_filter | string | No | - | JSON path filter (e.g., ".data.items[0]") |
 | max_result_size | number | No | 500KB | Max bytes inline before auto-save (max: 1MB) |
@@ -55,8 +55,10 @@ Files are saved to (in priority order):
 3. System temp directory (cleaned up on shutdown)
 
 \`max_result_size\` bounds the body only. Header text from \`include_headers\` is surfaced inline
-even when the body was saved to a file, and carries its own 64KB ceiling with a visible
-\`[headers truncated: …]\` marker when a server exceeds it.
+even when the body was saved to a file, so it carries its own 64KB ceiling. Truncation is
+reported out of band as \`headers_truncated\` / \`header_bytes_received\` under
+\`include_metadata\` — never as a notice inside the header text itself, which a server could
+simply send verbatim.
 
 ### jq_filter Syntax
 

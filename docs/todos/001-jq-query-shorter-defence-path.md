@@ -1,6 +1,6 @@
 ---
 id: 001
-title: "jq_query returns file content through a shorter defence path than curl_execute"
+title: "Two text channels still take a shorter defence path than defendText"
 status: open
 severity: P1
 tags: [code-review, security, class-fix]
@@ -11,12 +11,13 @@ reviewers: [typescript-reviewer, security-sentinel]
 created: 2026-09-01
 ---
 
-# jq_query returns file content through a shorter defence path
+# Two text channels still take a shorter defence path than defendText
 
 ## Problem
 
-`src/lib/tools/jq-query.ts::executeJqQuery` defends its output with
-`sanitizeAndDetect` alone. That is Step 2 of the five-step pipeline now factored
+`src/lib/tools/jq-query.ts::executeJqQuery` and
+`src/lib/response/post-processor.ts::processTextPart` each defend their output
+with `sanitizeAndDetect` alone. That is Step 2 of the five-step pipeline now factored
 out as `src/lib/response/processor.ts::defendText`. Steps 3–5 — markup comment
 stripping, the `<script>`/`<style>` fixed point, markdown beacon removal, and the
 numeric-entity re-detect — do not run.
@@ -48,6 +49,16 @@ returned through `curl_execute` on a markdown response is replaced with
 ## Instances
 
 - `src/lib/tools/jq-query.ts::executeJqQuery` — `sanitizeAndDetect(filtered, basename(validatedFilePath))` — **confirmed**, out of scope for PR #32
+- `src/lib/response/post-processor.ts::processTextPart` — `sanitizeAndDetect(text, hostname)` with no Steps 3-5 — **confirmed**, out of scope for PR #32, found by `security-sentinel` in review round 2.
+
+  **This is the more serious of the two.** For `curl_execute` and YAML endpoints
+  the wrap is genuine defence in depth, because `executeCurlRequest` already ran
+  `defendText`. But for `registerCustomTool()` handler returns and
+  `beforeRequest` short-circuit returns **the wrap is the only defence on the
+  path** — and `CLAUDE.md` advertises it as exactly that guarantee. A library
+  consumer whose custom tool fetches a remote document gets Unicode sanitisation
+  and injection logging, and no beacon strip, no `<script>`/`<style>` strip and
+  no comment strip.
 
 ## Sweep
 
@@ -61,7 +72,7 @@ which are `defendText`'s own stages, one the post-jq re-sanitise), the outer wra
 in `post-processor.ts::createWrapper`, and doc comments. **Any other call site is
 a channel that built its own pipeline.**
 
-At time of filing: 6 non-comment hits → 5 legitimate, 1 confirmed instance.
+At time of filing: 6 non-comment hits → 4 legitimate, 2 confirmed instances.
 
 ## The complication that makes this not a one-liner
 

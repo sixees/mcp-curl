@@ -68,9 +68,9 @@ declare const ApiSchemaValidator: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.
             name: z.ZodString;
             in: z.ZodEnum<{
                 path: "path";
-                body: "body";
                 query: "query";
                 header: "header";
+                body: "body";
             }>;
             type: z.ZodEnum<{
                 string: "string";
@@ -109,7 +109,7 @@ declare const ApiSchemaValidator: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.
         description: string;
         parameters?: {
             name: string;
-            in: "path" | "body" | "query" | "header";
+            in: "path" | "query" | "header" | "body";
             type: "string" | "number" | "boolean" | "integer";
             required: boolean;
             description?: string | undefined;
@@ -158,7 +158,7 @@ declare const ApiSchemaValidator: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.
         description: string;
         parameters?: {
             name: string;
-            in: "path" | "body" | "query" | "header";
+            in: "path" | "query" | "header" | "body";
             type: "string" | "number" | "boolean" | "integer";
             required: boolean;
             description?: string | undefined;

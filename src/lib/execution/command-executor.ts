@@ -15,8 +15,21 @@ export type AllowedCommand = typeof ALLOWED_COMMANDS[number];
  * Result of executing a command.
  */
 export interface CommandResult {
-    /** Standard output from the command */
+    /** Standard output from the command, decoded as UTF-8 */
     stdout: string;
+    /**
+     * Standard output as the exact octets the process wrote.
+     *
+     * **Required whenever a byte offset from another source is applied to this
+     * output.** `stdout` is a lossy view: any byte that is not valid UTF-8
+     * decodes to U+FFFD, which re-encodes to three bytes where the wire had
+     * one, so offsets measured on the wire (cURL's `%{size_header}`, for
+     * instance) do not land in the same place in the decoded string. Indexing
+     * `stdout` with such an offset splits the stream in the wrong place and
+     * cannot be detected afterwards — the corruption is silent and the length
+     * check points the wrong way, because replacement only ever inflates.
+     */
+    stdoutBytes: Buffer;
     /** Standard error from the command */
     stderr: string;
     /** Exit code (0 indicates success) */
@@ -69,7 +82,11 @@ export async function executeCommand(
             signal: abortController.signal,
         });
 
-        let stdout = "";
+        // Chunks are concatenated once at close rather than decoded per chunk.
+        // Per-chunk `.toString()` also corrupts VALID UTF-8 whose multi-byte
+        // sequence straddles a chunk boundary, so this is two defects closed
+        // by one change.
+        const stdoutChunks: Buffer[] = [];
         let stderr = "";
         let stderrMemoryUsage = 0;
         let killed = false;
@@ -98,7 +115,7 @@ export async function executeCommand(
                 return;
             }
 
-            stdout += data.toString();
+            stdoutChunks.push(data);
             requestMemoryUsage += dataSize;
 
             // Check per-request limit
@@ -165,8 +182,10 @@ export async function executeCommand(
             clearTimeout(timeoutId);
             releaseRequestMemory(); // Release memory tracking on completion
             if (!killed) {
+                const stdoutBytes = Buffer.concat(stdoutChunks);
                 resolve({
-                    stdout,
+                    stdout: stdoutBytes.toString("utf8"),
+                    stdoutBytes,
                     stderr,
                     // null code means process was killed by signal — report as failure (not 0)
                     exitCode: code ?? (signal ? 1 : 0),

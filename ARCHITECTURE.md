@@ -8,7 +8,7 @@ RC rather than re-describing them.
 request lifecycle, data stores, external integrations and the full security
 architecture live in [`docs/architecture/architecture.md`](./docs/architecture/architecture.md),
 which is the detailed reference and is **published to npm** (`package.json` →
-`files` includes `docs/`; it does not include this file). Restating any of it
+`files` names it explicitly; this root file is not published). Restating any of it
 here would put the same fact in two places, and the two would be corrected
 separately — which is exactly what happened the first time this document existed.
 
@@ -76,6 +76,14 @@ what a violation looks like, it does not belong on this list.
    through sanitisation". An invariant that a defect can satisfy is not an
    invariant. **New text channels call `defendText`; they do not assemble their
    own pipeline.**
+
+   **Coverage today is partial, and saying so is part of the invariant.** Two
+   channels still take the short path: `jq-query.ts::executeJqQuery` and
+   `post-processor.ts::processTextPart`. The second matters most — for
+   `registerCustomTool()` returns and `beforeRequest` short-circuits the wrap is
+   the *only* defence, and it runs sanitise-and-detect alone. Both are tracked in
+   `docs/todos/001`. A claim of universal coverage would be the same defect this
+   invariant was written about: an assertion a reader trusts and stops checking.
 
 2. **DNS resolution precedes SSRF validation, and cURL is pinned to the validated
    IP.** Any change that lets cURL resolve a name itself reopens DNS rebinding.

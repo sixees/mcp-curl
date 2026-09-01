@@ -32,6 +32,27 @@ export interface DefendTextOptions {
     contentType?: string;
     /** Hostname label for injection-detection logging. */
     hostname: string;
+    /**
+     * True when the content type could not be DETERMINED, as distinct from the
+     * origin simply not sending one.
+     *
+     * Losing our own metadata must never be a way to switch a defence off. When
+     * the content type is unknown the strictest grammar applies, so every strip
+     * stage runs — the opposite of the permissive default, which let a remote
+     * disable beacon stripping by making the metadata unreadable.
+     */
+    contentTypeUndetermined?: boolean;
+    /**
+     * Whether to decode numeric HTML entities during the block strip.
+     *
+     * **Defaults true, and must be false for any channel whose consumer does
+     * not itself decode.** The decode is not a scratch copy: its result is what
+     * gets returned. On a body bound for a renderer that would decode anyway,
+     * that is correct and is what lets Step 5 catch `&#x69;gnore previous
+     * instructions`. On a channel like response headers it is additive — it
+     * turns inert text the origin sent into live markup we authored.
+     */
+    decodeEntities?: boolean;
 }
 
 /**
@@ -67,11 +88,14 @@ export interface DefendTextOptions {
  */
 export function defendText(text: string, options: DefendTextOptions): string {
     let content = text;
-    const { hostname } = options;
+    const { hostname, contentTypeUndetermined = false, decodeEntities = true } = options;
 
-    // Compute content-type classification once.
-    const isMarkup = supportsMarkupComments(options.contentType);
-    const isMarkdown = isMarkdownContentType(options.contentType);
+    // Compute content-type classification once. An UNDETERMINED content type
+    // selects the strictest grammar rather than the loosest — see the option's
+    // docs; a remote must not be able to disable a stage by making our metadata
+    // unreadable.
+    const isMarkup = contentTypeUndetermined || supportsMarkupComments(options.contentType);
+    const isMarkdown = contentTypeUndetermined || isMarkdownContentType(options.contentType);
 
     // Step 2 — sanitise + detect, ALWAYS for any string body.
     //
@@ -116,6 +140,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // (1025+ bytes of preamble + `<script>` past the window).
     const sniffedAsMarkup =
         !exceedsStripCap &&
+        !contentTypeUndetermined &&
         isSniffableContentType(options.contentType) &&
         looksLikeMarkupShape(content);
     const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
@@ -128,7 +153,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
         // Step 3 — markup comments + script/style blocks. Fires on any
         // markup-shaped body (declared OR sniffed).
         content = stripHtmlComments(content);
-        content = stripBlocksFixedPoint(content);
+        content = stripBlocksFixedPoint(content, { decodeEntities });
 
         // Step 4 — markdown beacons. Image / link / dangerous-scheme +
         // residual cleanup. Only fires for declared markdown — sniffed-
@@ -220,6 +245,7 @@ export async function processResponse(
     // channel takes the identical path; see `defendText`.
     let content = defendText(response, {
         contentType: options.contentType,
+        contentTypeUndetermined: options.contentTypeUndetermined,
         hostname,
     });
 

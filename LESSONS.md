@@ -186,3 +186,89 @@ restating an existing class under a new name with its own counter.
   3. **Text defended only as a side effect of where it sat loses that defence the
      moment it moves.** When splitting a value out of a processed buffer, ask
      what the buffer was doing *for* it, not only what the new path does *to* it.
+
+### RC-2 — The fix for a boundary bug introduced a boundary bug one layer down
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
+
+**Class:** `broken-contract`, `untyped-boundary`
+
+- **The plan said:** taking the header/body split from cURL's `%{size_header}`
+  removed the class, because the offset now comes from a channel the origin
+  cannot write to. RC-1 recorded that as settled.
+- **Reality was:** the offset was correct and was applied to the wrong thing.
+  `%{size_header}` counts **wire** bytes; `command-executor.ts::executeCommand`
+  accumulated stdout with `stdout += data.toString()`, so every byte that is not
+  valid UTF-8 became U+FFFD and re-encoded to three bytes where the wire had one.
+  Indexing the re-encoded string with a wire offset splits early, gluing the
+  header terminator onto the front of the body — the exact corruption the PR
+  exists to remove. The fail-closed guard `headerBytes > buf.length` could never
+  fire, because replacement only ever *inflates*: I wrote a guard for the right
+  cause pointing the wrong way. The same `.toString()` per chunk also corrupted
+  valid UTF-8 straddling a chunk boundary, which was pre-existing and which the
+  fix made load-bearing.
+- **What changed:** `executeCommand` accumulates `Buffer[]` and concatenates
+  once, exposing `stdoutBytes`; `parseResponseWithMetadata` and
+  `splitResponseHeaders` operate on octets and return `bodyBytes`.
+  `ARCHITECTURE.md` invariant 13 gained its second half.
+- **What this costs next time:** two rules.
+  1. **An offset and the thing it indexes are one type, not two.** If a count is
+     measured on representation A, it may only index representation A. Where a
+     decode sits between them, the decode is the defect site — not the indexer.
+  2. **A guard must point the way the failure actually goes.** Ask which
+     direction the quantity moves under the fault before writing the comparison.
+     A length check against inflation catches nothing, and reads as protection.
+
+### RC-3 — "Over-stripping costs nothing" was false: the pipeline is not purely subtractive
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
+
+**Class:** `unescaped-sink`
+
+- **The plan said:** declaring header text `text/markdown` — the strictest
+  grammar — was safe, because running extra strip stages on a header value could
+  only remove things. The comment said so in terms.
+- **Reality was:** `strip-blocks.ts::stripBlocksFixedPoint` calls
+  `decodeNumericHtmlEntities` and **returns the decoded content**. A header
+  carrying inert `&#x49;&#x67;&#x6e;...` — text Step 2 correctly passed as
+  harmless — came out as a live `Ignore all previous instructions`. On a body
+  that is correct, because the renderer would decode anyway and Step 5 needs to
+  see the decoded form. On a channel whose consumer does not decode, it is
+  additive: the pipeline manufactured the payload on the origin's behalf.
+- **What changed:** `stripBlocksFixedPoint` takes `{ decodeEntities }`;
+  `defendText` exposes it; the header channel passes `false`.
+- **What this costs next time:** **"stricter" is only safe for stages that
+  subtract.** Before applying a pipeline to a channel it was not written for,
+  enumerate which of its stages *transform* rather than remove, and ask what the
+  consumer of that channel does with the result. A stage that decodes, expands or
+  normalises adds meaning, and adding meaning to attacker-controlled text is
+  authoring it for them.
+
+### RC-4 — Internal work products were published to npm by a wildcard
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
+
+**Class:** `missing-validation`
+
+- **The plan said:** `docs/` is the project's documentation tree, and
+  `CONVENTIONS.md` — written in this same PR — states plainly that anything put
+  there ships to npm consumers, so authors would write accordingly.
+- **Reality was:** the very next act in the same PR was to write
+  `docs/todos/001` — an **open, severity P1** security todo naming an unfixed
+  defence gap, its call site, its missing stages and a worked failure scenario —
+  into that published tree, alongside a profile stating the repository has no
+  branch protection and no required reviews. `package.json` `files` was
+  `["dist","docs"]`, so both would have shipped in the tarball with the version
+  they describe a gap in. npm forbids re-publishing a version and bars unpublish
+  after 72 hours. `docs/brainstorms/` had been shipping this way already.
+- **What changed:** `files` names the seven consumer documents explicitly;
+  `src/lib/release-guards.test.ts` fails if anything under `docs/todos/`,
+  `work/`, `plans/`, `compound/`, `solutions/` or `brainstorms/` resolves into
+  the package, with a positive control asserting the consumer docs still do.
+- **What this costs next time:** **a convention that only prose enforces is not
+  enforced.** The rule was written down, in the same change that broke it, by the
+  same author, and that is the strongest available evidence that the layer was
+  wrong rather than the author careless. Where a rule governs an irreversible act
+  — publish, push, delete — put it in something that runs. Also: **an allowlist
+  of directories is a wildcard over their future contents.** `files: ["docs"]`
+  was a decision about every file anyone would ever put there.

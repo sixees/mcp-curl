@@ -26,9 +26,23 @@ export interface FileSaveInfo {
  * - message: string (informational message)
  * - headers: string (response header text, if include_headers was used)
  *
+ * - headers_truncated: boolean (only when header text was cut)
+ * - header_bytes_received: number (only when header text was cut)
+ * - headers_undetermined: boolean (include_headers was requested but the
+ *   header/body boundary could not be established, so no headers are reported
+ *   and the body may still carry the header block)
+ *
  * When includeMetadata is false:
  * - If file was saved: returns the message or filepath
- * - Otherwise: returns plain stdout
+ * - Otherwise: returns header text (if any), a blank line, then stdout
+ *
+ * **The two branches differ in more than shape.** Under `include_metadata` the
+ * header text is a discrete `headers` key and the body in `response` is the body
+ * alone. On the plain branch there is only one string, so header text is
+ * prefixed to the body with a blank line — the caller gets a blob that is not
+ * JSON-parseable. What holds on BOTH branches, and is the guarantee worth
+ * relying on, is that header text never reaches the saved file and never reaches
+ * `jq_filter`.
  *
  * @param stdout - Standard output from the command
  * @param stderr - Standard error from the command
@@ -36,10 +50,13 @@ export interface FileSaveInfo {
  * @param includeMetadata - Whether to wrap response in JSON with metadata
  * @param fileSaveInfo - Optional information about file saving
  * @param responseHeaders - Optional response header text (from include_headers).
- *   Reported alongside the body rather than glued to the front of it, so that a
- *   saved file stays parseable and a jq filter still sees plain JSON. Always
- *   surfaced inline even when the body went to a file — headers are small, and
- *   they are usually the reason the caller asked for them.
+ *   Kept out of the body so a saved file stays parseable and a jq filter still
+ *   sees plain JSON. Surfaced inline even when the body went to a file, which is
+ *   why it carries its own byte ceiling rather than relying on `max_result_size`.
+ * @param headerInfo - Out-of-band facts about the header text. Reported as
+ *   separate fields rather than appended to `responseHeaders`, because a notice
+ *   written into remote-authored text is indistinguishable from the same words
+ *   sent by the origin.
  * @returns Formatted response string
  */
 export function formatResponse(
@@ -48,7 +65,8 @@ export function formatResponse(
     exitCode: number,
     includeMetadata: boolean,
     fileSaveInfo?: FileSaveInfo,
-    responseHeaders?: string
+    responseHeaders?: string,
+    headerInfo?: { truncated?: boolean; bytesReceived?: number; undetermined?: boolean }
 ): string {
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
@@ -62,6 +80,11 @@ export function formatResponse(
                 message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents.",
             };
             if (responseHeaders) output.headers = responseHeaders;
+            if (responseHeaders && headerInfo?.truncated) {
+                output.headers_truncated = true;
+                output.header_bytes_received = headerInfo.bytesReceived;
+            }
+            if (headerInfo?.undetermined) output.headers_undetermined = true;
             if (stderr) output.stderr = stderr;
             return JSON.stringify(output, null, 2);
         }
@@ -78,6 +101,11 @@ export function formatResponse(
             response: stdout,
         };
         if (responseHeaders) output.headers = responseHeaders;
+        if (responseHeaders && headerInfo?.truncated) {
+            output.headers_truncated = true;
+            output.header_bytes_received = headerInfo.bytesReceived;
+        }
+        if (headerInfo?.undetermined) output.headers_undetermined = true;
         if (stderr) output.stderr = stderr;
         return JSON.stringify(output, null, 2);
     }

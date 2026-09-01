@@ -28,6 +28,14 @@ export interface ProcessResponseOptions {
     saveToFile?: boolean;
     /** Content-Type header from response (used to detect JSON) */
     contentType?: string;
+    /**
+     * True when the content type could not be DETERMINED — the `-w` metadata
+     * block was not located — as distinct from the origin sending none.
+     *
+     * Selects the strictest grammar in `defendText`, so that losing our own
+     * metadata can never be a way to switch a strip stage off.
+     */
+    contentTypeUndetermined?: boolean;
     /** Directory for saving large responses (default: temp dir) */
     outputDir?: string;
 }

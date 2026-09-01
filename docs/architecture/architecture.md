@@ -73,7 +73,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 
 - URL must parse, use `http`/`https`, and resolve to a non-private IP before the request issues (unless `MCP_CURL_ALLOW_LOCALHOST=true`).
 - cURL is pinned to the resolved IP via `--resolve hostname:port:ip` — defeats DNS rebinding.
-- `include_headers` reports the header block separately from the body, so it composes
+- `include_headers` reports the header block out of the body — never into the saved file or the jq_filter input — so it composes
   with `jq_filter` and `save_to_file`; a saved file holds the body only. Header text is
   server-controlled and takes the **full** defence pipeline (`processor.ts::defendText` —
   sanitise, detect, and the markup/markdown strip stages), not sanitise-and-detect alone;

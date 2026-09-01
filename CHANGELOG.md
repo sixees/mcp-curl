@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.3.0] - 2026-09-01
 
 ### Fixed
 
@@ -37,23 +37,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes: a body may legitimately *be* an HTTP transcript, so no pattern can tell a real header block
   from a body that looks like one.
 
-### BREAKING
+### Changed — response shape under `include_headers`
 
 - **`response` no longer contains the response headers when `include_headers` is set.** Under
   `include_metadata`, headers move from being embedded at the top of `response` to a discrete
-  `headers` key. A consumer that grabbed a `Set-Cookie` or parsed `^HTTP/` out of `response` now
-  gets nothing — silently, with no error, because the field still exists and still parses.
+  `headers` key. A consumer that grabbed a `Set-Cookie` or parsed `^HTTP/` out of `response` would
+  now get nothing — silently, with no error, because the field still exists and still parses.
 
-  This is a change to the published output shape across all four npm entry points (`mcp-curl`,
-  `/cli`, `/lib`, `/schema`), so **it is not a patch release.** The version in `package.json` is
-  deliberately left unchanged here: choosing between a major bump and a compatibility shim is a
-  release decision, and this entry exists so it is made rather than defaulted. Nothing is
-  irreversible until publish; afterwards the shape can only be taken back with a second breaking
-  change.
+  **Released as a MINOR bump, deliberately.** This is a change to a published output shape and
+  would ordinarily be a MAJOR. It is not treated as one because this package has no consumers:
+  the rule exists to protect people pinning to the old shape, and there are none. Recording the
+  decision here so it reads as a deliberate posture rather than an oversight — and so that the
+  next such change, made once consumers exist, is not justified by pointing at this one.
+
+  `mcp-curl/schema` is unaffected either way: YAML-driven endpoints pin `include_headers: false`
+  (`schema/generator.ts::createToolHandler`), so no `/schema` consumer could have had headers
+  inside `response`.
 
   Files already on disk are unaffected in either direction — `include_headers` + `save_to_file`
   wrote unparseable files before this change and `jq_query` could not read them then either, so no
   previously-written file becomes less readable.
+
+### Added
+
+- `headers_truncated` / `header_bytes_received` / `headers_undetermined` metadata fields, reported
+  out of band so a remote cannot author them by sending the same words in a header value.
+- `processor.ts::defendText` — the shared five-stage defence pipeline, so no text channel can
+  assemble a shorter one.
 
 ## [3.2.0] - 2026-09-01
 

@@ -41,8 +41,25 @@ export const LIMITS = {
      * remote gets to falsify.
      */
     MAX_HEADER_TEXT_BYTES: 64_000,
-    /** Max distance from end to search for metadata separator */
-    MAX_METADATA_TAIL_LENGTH: 200,
+    /**
+     * Byte allowance for the `-w` metadata FIELDS, searched backwards from the
+     * end of stdout. **This is the budget for the fields only** — the window
+     * actually searched is this plus the separator's own length.
+     *
+     * It must not be a flat constant that the separator and a remote-controlled
+     * field share. `%{content_type}` is echoed verbatim from the origin and has
+     * no length limit, so when the three shared one 200-byte budget an origin
+     * could evict the separator simply by sending a long `Content-Type` — a
+     * legal `application/vnd.api+json; charset=utf-8; profile="…"` did it at
+     * ~144 characters. The parse then found no separator, reported every
+     * cURL-authored field as absent, and the caller silently lost both the
+     * header/body split and the content-type-driven strip stages.
+     *
+     * 8KB covers every realistic origin (cURL permits ~100KB per header line,
+     * but no real service approaches that in a Content-Type). Beyond it the
+     * parse fails closed and the caller is told the metadata is undetermined.
+     */
+    MAX_METADATA_TAIL_LENGTH: 8_192,
     /** Default request timeout in milliseconds (30 seconds) */
     DEFAULT_TIMEOUT_MS: 30_000,
     /** Maximum filename length for saved files */
