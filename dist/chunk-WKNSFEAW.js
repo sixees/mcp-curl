@@ -481,6 +481,42 @@ var JQ = {
   /** TTL for allowed directories cache in file validation (1 minute) */
   ALLOWED_DIRS_CACHE_TTL_MS: 6e4
 };
+var UNSUPPORTED_KEY_CHARS = /* @__PURE__ */ new Set([
+  // Pipes, comparison, and arithmetic operators
+  "|",
+  "=",
+  "<",
+  ">",
+  "!",
+  "+",
+  "*",
+  "/",
+  "%",
+  // Optional operator
+  "?",
+  // Object construction, grouping, and function calls
+  "{",
+  "}",
+  "(",
+  ")",
+  ":",
+  ";",
+  // Variables and format strings
+  "$",
+  "@",
+  // String literals belong inside bracket notation
+  '"',
+  "'",
+  "`",
+  "\\",
+  // Whitespace: a bare key containing spaces must use bracket notation
+  " ",
+  "	",
+  "\n",
+  "\r",
+  "\f",
+  "\v"
+]);
 
 // src/lib/config/environment.ts
 var ENV = {
@@ -1686,7 +1722,13 @@ function parseJqFilter(filter) {
     }
     let key = "";
     while (i < filter.length && filter[i] !== "." && filter[i] !== "[") {
-      key += filter[i];
+      const ch = filter[i];
+      if (UNSUPPORTED_KEY_CHARS.has(ch)) {
+        throw new Error(
+          `Invalid jq_filter "${filter}": unsupported jq syntax ${JSON.stringify(ch)} at position ${i}. This filter supports paths only: .key, .[n], .[n:m], .["key"], and comma-separated paths. Pipes, object construction, and functions (e.g. "| {id}", "map(...)", "select(...)") are not supported.`
+        );
+      }
+      key += ch;
       i++;
     }
     if (key) {
@@ -1710,6 +1752,12 @@ function parseJqFilter(filter) {
         throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_TOKENS} path segments`);
       }
     }
+  }
+  const iterateIndex = tokens.findIndex((t) => t.type === "iterate");
+  if (iterateIndex !== -1 && iterateIndex !== tokens.length - 1) {
+    throw new Error(
+      `Invalid jq_filter "${filter}": "[]" cannot be followed by further path segments. This filter does not support jq's iterate-and-project (e.g. ".items[].id"); use an explicit index (".items[0].id") or a slice (".items[0:20]") instead.`
+    );
   }
   return tokens;
 }
@@ -1868,7 +1916,7 @@ function applyJqFilterToParsed(data, filter) {
   }
   if (filters.length === 1) {
     const result = applySingleJqFilter(data, filters[0]);
-    return JSON.stringify(result, null, 2);
+    return JSON.stringify(result, null, 2) ?? "null";
   }
   const results = filters.map((f) => applySingleJqFilter(data, f));
   return JSON.stringify(results, null, 2);

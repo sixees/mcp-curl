@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`jq_filter` no longer silently misreads unsupported jq syntax.** The bare-key scanner in
+  `parseJqFilter()` treated any character that was not `.` or `[` as part of a key name, so a real jq
+  expression was absorbed into a key, missed, and resolved to `null`. `.data | {id, name}` returned
+  `[null, null]` and `.data | {id}` returned `undefined`, with no indication that the syntax was never
+  supported. Such filters now throw an error naming the offending character and listing what is
+  supported. Hyphens and underscores in bare keys (`.content-type`, `.assignee_user_ids`) and bracket
+  notation (`.["a|b: {c}"]`) are unaffected.
+
+- **`applyJqFilter()` / `applyJqFilterToParsed()` no longer return `undefined`.** `JSON.stringify(undefined)`
+  is `undefined`, not a string, so a missing key leaked a non-string value out of a function declared to
+  return `string`. A missing path now yields the string `"null"`, matching jq's output for an absent path.
+  `applySingleJqFilter()` keeps its documented `undefined`-for-missing-key contract.
+
+- **Iterate-and-project (`.items[].id`) is now rejected instead of returning `null`.** `[]` is an array
+  passthrough, not jq's iterate, so a key lookup after it landed on the array and silently resolved to
+  `null`. A trailing `[]` still works; use an explicit index or slice to project.
+
+### Documentation
+
+- `docs/api-schema.md` advertised `jqFilter: ".data | {id, name}"` and `".data | {id}"` in two
+  `filterPresets` examples. Neither could ever work — both are now supported path syntax, and the
+  Response Configuration section states plainly what `jqFilter` does and does not support.
+
+- `README.md` documents the `[]` passthrough and states that jq expression syntax is rejected.
+
 ## [3.0.0] - 2026-04-03
 
 ### Breaking Changes

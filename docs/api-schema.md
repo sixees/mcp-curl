@@ -140,7 +140,7 @@ endpoints:
       jqFilter: ".data"
       filterPresets:
         - name: minimal
-          jqFilter: ".data | {id, name}"
+          jqFilter: ".data.id,.data.name"
 ```
 
 #### Endpoint Fields
@@ -180,12 +180,19 @@ parameters:
 
 #### Response Configuration
 
+> **`jqFilter` is a path extractor, not jq.** Supported: `.key`, `.[n]` / `.n`,
+> `.[n:m]`, `.["key"]`, and comma-separated paths (max 20, returns an array).
+> Pipes, object construction, and functions (`| {id}`, `map(...)`,
+> `select(...)`, `length`) are **not** supported and are rejected with an error.
+> To reshape or aggregate a response, save it (`save_to_file`) and post-process
+> it outside the server.
+
 ```yaml
 response:
   jqFilter: ".data"           # Default filter
   filterPresets: # Named presets
     - name: minimal
-      jqFilter: ".data | {id}"
+      jqFilter: ".data.id"
     - name: full
       jqFilter: ".data"
 ```

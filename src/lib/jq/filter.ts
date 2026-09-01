@@ -101,10 +101,14 @@ export function applyJqFilterToParsed(data: unknown, filter: string): string {
         );
     }
 
-    // Single filter: return value directly (backward compatible)
+    // Single filter: return value directly (backward compatible).
+    // `applySingleJqFilter()` yields `undefined` for a missing key, and
+    // `JSON.stringify(undefined)` is `undefined` — not a string — which would
+    // break this function's declared `string` return type. Missing keys are
+    // reported as JSON `null`, matching jq's own output for an absent path.
     if (filters.length === 1) {
         const result = applySingleJqFilter(data, filters[0]);
-        return JSON.stringify(result, null, 2);
+        return JSON.stringify(result, null, 2) ?? "null";
     }
 
     // Multiple filters: return array of values

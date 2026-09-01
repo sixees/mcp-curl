@@ -86,3 +86,27 @@ describe('applyJqFilter', () => {
             .toThrow('too many comma-separated paths');
     });
 });
+
+describe('applyJqFilter — return type contract', () => {
+    const jsonStr = JSON.stringify({ name: 'test', items: [{ id: 1 }] });
+
+    // Regression: JSON.stringify(undefined) is undefined, not a string, so a
+    // missing key used to leak a non-string out of a function declared to
+    // return string. jq prints null for an absent path; so do we.
+    it('returns the string "null" for a missing key, never undefined', () => {
+        const result = applyJqFilter(jsonStr, '.nonexistent');
+        expect(typeof result).toBe('string');
+        expect(result).toBe('null');
+    });
+
+    it('returns a string for every comma-separated path that is missing', () => {
+        const result = applyJqFilter(jsonStr, '.nope,.alsoNope');
+        expect(typeof result).toBe('string');
+        expect(JSON.parse(result)).toEqual([null, null]);
+    });
+
+    it('reports unsupported jq expressions instead of returning null', () => {
+        expect(() => applyJqFilter(jsonStr, '.items | map(.id)'))
+            .toThrow('unsupported jq syntax');
+    });
+});

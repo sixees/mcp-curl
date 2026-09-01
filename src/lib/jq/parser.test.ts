@@ -138,3 +138,58 @@ describe('splitJqFilters', () => {
             .toThrow('unclosed');
     });
 });
+
+describe('parseJqFilter — unsupported jq expression syntax', () => {
+    // Regression: these expressions were previously absorbed into a bare key
+    // name and silently resolved to null instead of being reported as
+    // unsupported. See UNSUPPORTED_KEY_CHARS in src/lib/config/jq.ts.
+    it.each([
+        ['pipe into object construction', '.data | {id, name}'],
+        ['pipe into single-field object', '.data | {id}'],
+        ['object construction', '{temp: .main.temp}'],
+        ['map()', '.items | map(.id)'],
+        ['select()', '.items | select(.id == 1)'],
+        ['length', '.items | length'],
+        ['string interpolation', '.items[0].name | @text'],
+        ['variable binding', '.items as $x'],
+        ['optional operator', '.items?'],
+        ['arithmetic', '.a+.b'],
+        ['comparison', '.a==1'],
+    ])('rejects %s', (_label, filter) => {
+        expect(() => parseJqFilter(filter)).toThrow('unsupported jq syntax');
+    });
+
+    it('names the offending character and its position', () => {
+        // The space precedes the pipe, so it is reported first.
+        expect(() => parseJqFilter('.data | {id}'))
+            .toThrow(/unsupported jq syntax " " at position 5/);
+        // Without spaces, the pipe itself is named.
+        expect(() => parseJqFilter('.data|{id}'))
+            .toThrow(/unsupported jq syntax "\|" at position 5/);
+    });
+
+    it('still accepts hyphens and underscores in bare keys', () => {
+        expect(parseJqFilter('.content-type')).toEqual([{ type: 'key', value: 'content-type' }]);
+        expect(parseJqFilter('.assignee_user_ids')).toEqual([
+            { type: 'key', value: 'assignee_user_ids' },
+        ]);
+    });
+
+    it('rejects iterate-and-project, which would silently resolve to null', () => {
+        expect(() => parseJqFilter('.results[].id'))
+            .toThrow('cannot be followed by further path segments');
+        expect(() => parseJqFilter('.a[].b[].c'))
+            .toThrow('cannot be followed by further path segments');
+    });
+
+    it('still accepts a trailing "[]" as an array passthrough', () => {
+        expect(parseJqFilter('.results[]')).toEqual([
+            { type: 'key', value: 'results' },
+            { type: 'iterate' },
+        ]);
+    });
+
+    it('still accepts jq operator characters inside bracket notation', () => {
+        expect(parseJqFilter('.["a|b: {c}"]')).toEqual([{ type: 'key', value: 'a|b: {c}' }]);
+    });
+});

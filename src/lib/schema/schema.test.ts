@@ -1056,7 +1056,7 @@ describe("generateToolDefinitions", () => {
                     response: {
                         jqFilter: ".data",
                         filterPresets: [
-                            { name: "summary", jqFilter: "{name: .data.name, email: .data.email}" },
+                            { name: "summary", jqFilter: ".data.name,.data.email" },
                             { name: "full", jqFilter: "." },
                         ],
                     },
@@ -1070,7 +1070,7 @@ describe("generateToolDefinitions", () => {
         await tools[0].handler({ id: "123", filter_preset: "summary" });
         expect(mockedExecuteCurlRequest).toHaveBeenCalledWith(
             expect.objectContaining({
-                jq_filter: "{name: .data.name, email: .data.email}",
+                jq_filter: ".data.name,.data.email",
             }),
             expect.objectContaining({ allowLocalhost: undefined })
         );
@@ -1217,7 +1217,7 @@ describe("generateToolDefinitions", () => {
                     description: "Get data",
                     response: {
                         filterPresets: [
-                            { name: "ids_only", jqFilter: ".results[].id" },
+                            { name: "ids_only", jqFilter: ".results[0:20]" },
                         ],
                     },
                 },
@@ -1225,7 +1225,7 @@ describe("generateToolDefinitions", () => {
         };
 
         const tools = generateToolDefinitions(schema);
-        expect(tools[0].description).toContain('ids_only: applies filter ".results[].id"');
+        expect(tools[0].description).toContain('ids_only: applies filter ".results[0:20]"');
     });
 
     it("handles mixed presets with and without descriptions", () => {

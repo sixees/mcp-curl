@@ -50,7 +50,7 @@ endpoints:
       jqFilter: ".main"
       filterPresets:
         - name: temp_only
-          jqFilter: "{temp: .main.temp}"
+          jqFilter: ".main.temp"
         - name: full
           jqFilter: "."
 

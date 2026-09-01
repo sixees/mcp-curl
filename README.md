@@ -116,6 +116,13 @@ Files must be in the temp directory, `MCP_CURL_OUTPUT_DIR`, or current working d
 | `.[n:m]`       | `.[0:10]`          | Array slice                     |
 | `.["key"]`     | `.["special-key"]` | Bracket notation                |
 | `.a,.b,.c`     | `.name,.email`     | Multiple paths (returns array)  |
+| `.key[]`       | `.items[]`         | Array passthrough (must be last)|
+
+This is a **path extractor, not jq**. The jq expression language — pipes, object construction, and
+functions (`| {id}`, `map(...)`, `select(...)`, `length`) — is **not** supported and is rejected with an
+error naming the offending syntax. Iterate-and-project (`.items[].id`) is rejected too; use an explicit
+index (`.items[0].id`) or a slice (`.items[0:20]`). To reshape or aggregate a response, save it
+(`save_to_file`) and post-process it with real jq outside the server.
 
 ## Programmatic API
 

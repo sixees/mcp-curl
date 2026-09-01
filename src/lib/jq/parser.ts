@@ -1,7 +1,7 @@
 // src/lib/jq/parser.ts
 // JQ filter expression parsing
 
-import { JQ } from "../config/jq.js";
+import { JQ, UNSUPPORTED_KEY_CHARS } from "../config/jq.js";
 import type { JqToken } from "../types/index.js";
 import { parseBracketToken } from "./tokenizer.js";
 
@@ -45,7 +45,18 @@ export function parseJqFilter(filter: string): JqToken[] {
         // Bare key (or numeric index via dot notation like .0)
         let key = "";
         while (i < filter.length && filter[i] !== "." && filter[i] !== "[") {
-            key += filter[i];
+            const ch = filter[i];
+            // Reject jq expression syntax instead of absorbing it into the key
+            // name, which would silently yield null for a missing key.
+            if (UNSUPPORTED_KEY_CHARS.has(ch)) {
+                throw new Error(
+                    `Invalid jq_filter "${filter}": unsupported jq syntax ${JSON.stringify(ch)} at position ${i}. ` +
+                    `This filter supports paths only: .key, .[n], .[n:m], .["key"], ` +
+                    `and comma-separated paths. Pipes, object construction, and ` +
+                    `functions (e.g. "| {id}", "map(...)", "select(...)") are not supported.`
+                );
+            }
+            key += ch;
             i++;
         }
         if (key) {
@@ -72,6 +83,20 @@ export function parseJqFilter(filter: string): JqToken[] {
                 throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_TOKENS} path segments`);
             }
         }
+    }
+
+    // `[]` is an array passthrough, not jq's iterate-and-project. Projecting
+    // through it (`.results[].id`) would silently resolve to null, because the
+    // following key lookup lands on the array itself. Reject it rather than
+    // return a wrong answer.
+    const iterateIndex = tokens.findIndex((t) => t.type === "iterate");
+    if (iterateIndex !== -1 && iterateIndex !== tokens.length - 1) {
+        throw new Error(
+            `Invalid jq_filter "${filter}": "[]" cannot be followed by further path ` +
+            `segments. This filter does not support jq's iterate-and-project ` +
+            `(e.g. ".items[].id"); use an explicit index (".items[0].id") or a ` +
+            `slice (".items[0:20]") instead.`
+        );
     }
 
     return tokens;
