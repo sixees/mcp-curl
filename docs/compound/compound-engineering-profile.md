@@ -1,6 +1,6 @@
 ---
 title: "Compound Engineering — Project Profile (mcp-curl)"
-purpose: instantiates the portable methodology for one project; copy to compound-engineering-profile.md and fill in
+purpose: instantiates the portable methodology for this project (mcp-curl); active, not a template
 reference: compound-engineering-methodology.md
 core: compound-engineering-core.md
 status: active

@@ -117,7 +117,16 @@ export function findUnbackedBreakingChange(
     // forever (LESSONS.md RC-5).
     const below = nextHeading === -1 ? "" : changelog.slice(nextHeading);
     const priorRelease = /^## \[(\d+)\.\d+\.\d+\]/m.exec(below);
-    const lastMajor = priorRelease ? Number(priorRelease[1]) : 0;
+    // No prior release heading means the comparison has no subject. Defaulting
+    // to 0 would make `major > 0` true for every 3.x and pass the guard exactly
+    // when it cannot see anything — the RC-5 shape again.
+    if (!priorRelease) {
+        throw new Error(
+            "release guard: a BREAKING heading is present but no prior release " +
+            "heading was found, so the major bump cannot be verified"
+        );
+    }
+    const lastMajor = Number(priorRelease[1]);
 
     return major > lastMajor ? null : { major, lastMajor };
 }
@@ -154,6 +163,11 @@ describe("version and changelog agree on severity", () => {
     it("is silent when the top section carries no BREAKING heading", () => {
         const cl = "## [3.3.0] - 2026-09-01\n\n### Fixed\n\n- x\n\n## [3.2.0] - 2026-08-01\n\n### Fixed\n\n- y\n";
         expect(findUnbackedBreakingChange(cl, "3.3.0")).toBeNull();
+    });
+
+    it("throws rather than passing when there is no prior release to compare against", () => {
+        const cl = "## [3.3.0] - 2026-09-01\n\n### BREAKING\n\n- x\n";
+        expect(() => findUnbackedBreakingChange(cl, "3.3.0")).toThrow(/no prior release heading/);
     });
 
     it("throws rather than passing when the changelog cannot be parsed", () => {

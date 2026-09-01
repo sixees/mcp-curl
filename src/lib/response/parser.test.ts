@@ -278,6 +278,18 @@ describe("parseResponseWithMetadata — window sizing", () => {
         expect(parsed.body).toBe('{"id":1}');
     });
 
+    it("marks metadata as not found once the field allowance is exceeded", () => {
+        // The positive case proves the 200-byte regression is gone; this proves
+        // where the new boundary actually is, so a future widening or narrowing
+        // of MAX_METADATA_TAIL_LENGTH is visible rather than silent.
+        const tooLongCt = "text/plain; profile=\"" + "x".repeat(LIMITS.MAX_METADATA_TAIL_LENGTH) + "\"";
+        const parsed = parseResponseWithMetadata(buf(`body${SEP}246 ${tooLongCt}`), SEP);
+
+        expect(parsed.metadataFound).toBe(false);
+        expect(parsed.headerBytes).toBeUndefined();
+        expect(parsed.contentType).toBeUndefined();
+    });
+
     it("marks metadata as not found rather than guessing", () => {
         const parsed = parseResponseWithMetadata(buf("plain body"), SEP);
         expect(parsed.metadataFound).toBe(false);

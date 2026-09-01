@@ -62,3 +62,45 @@ describe("formatResponse — response headers", () => {
         expect(parsed).not.toHaveProperty("headers");
     });
 });
+
+describe("formatResponse — header metadata", () => {
+    const HDRS = "HTTP/2 200 \r\nx-request-id: abc\r\n";
+
+    it("emits the out-of-band truncation keys under include_metadata", () => {
+        const out = JSON.parse(
+            formatResponse("body", "", 0, true, undefined, HDRS, {
+                truncated: true,
+                bytesReceived: 90_000,
+            })
+        );
+        expect(out.headers_truncated).toBe(true);
+        expect(out.header_bytes_received).toBe(90_000);
+    });
+
+    it("emits headers_undetermined under include_metadata", () => {
+        const out = JSON.parse(
+            formatResponse("body", "", 0, true, undefined, undefined, { undetermined: true })
+        );
+        expect(out.headers_undetermined).toBe(true);
+    });
+
+    it("omits the keys entirely when nothing degraded", () => {
+        // Absence must mean "nothing happened", so it cannot be emitted always.
+        const out = JSON.parse(formatResponse("body", "", 0, true, undefined, HDRS, {}));
+        expect(out.headers_truncated).toBeUndefined();
+        expect(out.header_bytes_received).toBeUndefined();
+        expect(out.headers_undetermined).toBeUndefined();
+    });
+
+    it("signals degradation on the plain branch, which carries no JSON fields", () => {
+        const out = formatResponse("body", "", 0, false, undefined, HDRS, {
+            truncated: true,
+            bytesReceived: 90_000,
+        });
+        expect(out).toContain("[mcp-curl]");
+        expect(out).toContain("truncated");
+        // Server-authored and placed BEFORE the remote text, so an origin
+        // cannot occupy the position and forge it.
+        expect(out.indexOf("[mcp-curl]")).toBeLessThan(out.indexOf("HTTP/2 200"));
+    });
+});

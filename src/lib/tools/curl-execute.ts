@@ -61,8 +61,11 @@ Args:
     arrive under a separate "headers" key; without it they are prefixed to the returned
     text followed by a blank line, so that result is NOT JSON-parseable. On both
     branches headers never reach the saved file and never reach jq_filter, which is
-    what makes this safe to combine with save_to_file and jq_filter. Header text is
-    capped at 64KB; truncation is reported via headers_truncated
+    what makes this safe to combine with save_to_file and jq_filter — and if the
+    header/body boundary cannot be determined, those two are refused rather than
+    performed on unseparated bytes. Header text is capped at
+    min(64KB, max_result_size); truncation is reported as headers_truncated under
+    include_metadata, and as a leading [mcp-curl] notice otherwise
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
