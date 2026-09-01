@@ -101,8 +101,15 @@ Low-surface-area work (single-file refactor with no contract change, docs-only, 
 > The control points where the human director authorises irreversible transitions.
 
 - **Transitions requiring explicit human authorisation:** **push and merge**. The agent may commit freely on a feature branch, but stops before pushing and again before merging, and waits. Committing locally is reversible; publishing to the remote and merging to `main` are not.
-- **Branch protection / required checks:** work happens on feature branches off `main` (current: `fix/separate-response-headers-from-body`); PRs go to `main`. No required-status-check or required-review rule is configured on the repository — the gate is procedural, recorded here, rather than enforced by GitHub. If branch protection is added later, record it in this section rather than relying on memory of the change.
-- **Accepted merge gate:** bot review (Surface 3) **plus explicit human authorisation IS the accepted gate — no separate human approving reviewer is required.** This is a deliberate decision for a small team on a library with strong automated coverage, not an accumulated habit. If a PR carries an unresolved Surface 3 finding on a high-surface trigger from §7, that is the moment to reconsider it for that PR specifically.
+- **Branch protection / required checks:** work happens on feature branches off `main`; PRs go to `main`, which **is** protected. Verified against the API on 2026-09-01 rather than assumed:
+  - **1 approving review required**, and `require_code_owner_reviews` is on — though there is no `CODEOWNERS` file, so that clause is currently vacuous.
+  - **Signed commits required** (`required_signatures`), and they verify.
+  - **Pushes restricted** to `jpdippenaar` and the `fe-admin` team; `main` cannot be deleted.
+  - `enforce_admins` is **off**, so an admin can bypass all of the above. That is the escape hatch to watch: a string of admin overrides is how a required-review rule becomes decorative. Use of `--admin` is a recorded decision, not a routine step.
+  - Checks configured on PRs: CodeQL, `Analyze (javascript-typescript)`, CodeRabbit.
+
+  > **This section previously stated that no branch protection was configured. That was wrong**, and it was written from assumption rather than from the API. It also made this tracked file assert a weaker security posture than the repository actually has — the kind of claim an attacker reads and a maintainer trusts. Check the API when this is next reviewed.
+- **Accepted merge gate:** GitHub requires **one approving review**, so a separate human approver *is* required in practice — the earlier claim that it was not was based on the mistaken branch-protection reading above. Bot review (Surface 3) plus explicit human authorisation is the intended posture; the approving review is how GitHub enforces it. If a PR carries an unresolved Surface 3 finding on a high-surface trigger from §7, that is the moment to reconsider it for that PR specifically.
 - **Findings-before-merge:** Surface 3 findings are brought back to the director with a disposition for each (fixed / declined-with-evidence / deferred-with-trigger) before merge is authorised. Never merge-on-green. No project-specific exceptions.
 
 ## 9. Case-study appendix
