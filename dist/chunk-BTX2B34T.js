@@ -60,6 +60,11 @@ var LIMITS = {
    * remote gets to falsify.
    */
   MAX_HEADER_TEXT_BYTES: 64e3,
+  // NOTE: the EFFECTIVE ceiling on returned header text is
+  // `min(MAX_HEADER_TEXT_BYTES, max_result_size)` — header text is inline, so
+  // it honours the caller's inline budget too. Cite this constant rather than
+  // restating either number; four documents said "64KB" unconditionally and
+  // were wrong for any caller who set a smaller max_result_size.
   /**
    * Byte allowance for the `-w` metadata FIELDS, searched backwards from the
    * end of stdout. **This is the budget for the fields only** — the window
@@ -1409,8 +1414,8 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
       releaseRequestMemory();
       if (!killed) {
         const stdoutBytes = Buffer.concat(stdoutChunks);
+        stdoutChunks.length = 0;
         resolve4({
-          stdout: stdoutBytes.toString("utf8"),
           stdoutBytes,
           stderr,
           // null code means process was killed by signal — report as failure (not 0)
@@ -1512,7 +1517,7 @@ function isJsonContentType(contentType) {
   return mime === "application/json" || mime.endsWith("+json");
 }
 function parseResponseWithMetadata(rawResponse, separator) {
-  const raw = Buffer.isBuffer(rawResponse) ? rawResponse : Buffer.from(rawResponse, "utf8");
+  const raw = rawResponse;
   const sep = Buffer.from(separator, "utf8");
   const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
   const searchStart = Math.max(0, raw.length - windowBytes);
@@ -1545,6 +1550,10 @@ function splitResponseHeaders(bodyBytes, headerBytes) {
   if (headerBytes > bodyBytes.length) {
     return { body: bodyBytes.toString("utf8") };
   }
+  const terminator = bodyBytes.subarray(Math.max(0, headerBytes - 4), headerBytes).toString("latin1");
+  if (!terminator.endsWith("\r\n\r\n") && !terminator.endsWith("\n\n")) {
+    return { body: bodyBytes.toString("utf8") };
+  }
   const body = bodyBytes.subarray(headerBytes).toString("utf8");
   const capped = headerBytes > LIMITS.MAX_HEADER_TEXT_BYTES;
   const sliceEnd = capped ? LIMITS.MAX_HEADER_TEXT_BYTES : headerBytes;
@@ -1566,6 +1575,13 @@ function sanitizeErrorMessage(message, includeDetails) {
 
 // src/lib/response/formatter.ts
 function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
+  const plainNotice = !includeMetadata && headerInfo ? [
+    headerInfo.truncated ? `[mcp-curl] response headers truncated at ${LIMITS.MAX_HEADER_TEXT_BYTES} of ${headerInfo.bytesReceived} bytes` : null,
+    headerInfo.undetermined ? "[mcp-curl] response header boundary undetermined; headers are NOT separated from the body below" : null
+  ].filter(Boolean).join("\n") : "";
+  const withNotice = (text) => plainNotice ? `${plainNotice}
+
+${text}` : text;
   if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
     if (includeMetadata) {
       const output = {
@@ -1585,9 +1601,9 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo,
       return JSON.stringify(output, null, 2);
     }
     const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-    return responseHeaders ? `${responseHeaders}
+    return withNotice(responseHeaders ? `${responseHeaders}
 
-${message}` : message;
+${message}` : message);
   }
   if (includeMetadata) {
     const output = {
@@ -1604,9 +1620,9 @@ ${message}` : message;
     if (stderr) output.stderr = stderr;
     return JSON.stringify(output, null, 2);
   }
-  return responseHeaders ? `${responseHeaders}
+  return withNotice(responseHeaders ? `${responseHeaders}
 
-${stdout}` : stdout;
+${stdout}` : stdout);
 }
 
 // src/lib/response/file-saver.ts
@@ -2067,11 +2083,13 @@ function looksLikeMarkupShape(content) {
 function defendText(text, options) {
   let content = text;
   const { hostname, contentTypeUndetermined = false, decodeEntities = true } = options;
-  const isMarkup = contentTypeUndetermined || supportsMarkupComments(options.contentType);
-  const isMarkdown = contentTypeUndetermined || isMarkdownContentType(options.contentType);
+  const looksLikeJsonBody = content.trimStart().startsWith("{") || content.trimStart().startsWith("[");
+  const strictestGrammar = contentTypeUndetermined && !looksLikeJsonBody;
+  const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
+  const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
   content = sanitizeAndDetect(content, hostname);
   const exceedsStripCap = Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
-  const sniffedAsMarkup = !exceedsStripCap && !contentTypeUndetermined && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
+  const sniffedAsMarkup = !exceedsStripCap && !strictestGrammar && !looksLikeJsonBody && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
   const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
   if (needsStripPath && !exceedsStripCap) {
     content = stripHtmlComments(content);
@@ -2347,6 +2365,11 @@ async function executeCurlRequest(params, extra = {}) {
         headerBytesReceived = split.headerBytesReceived;
       }
     }
+    if (headersUndetermined && (params.save_to_file || params.jq_filter)) {
+      throw new Error(
+        "Response header boundary could not be determined, so the body cannot be separated from the header block. Refusing save_to_file/jq_filter rather than writing or filtering unseparated bytes. Retry without include_headers to operate on the raw response."
+      );
+    }
     const processed = await processResponse(body, {
       url: params.url,
       jqFilter: params.jq_filter,
@@ -2356,9 +2379,14 @@ async function executeCurlRequest(params, extra = {}) {
       contentTypeUndetermined: !metadataFound,
       outputDir: validatedOutputDir
     });
+    const defendedStderr = result.stderr ? defendText(result.stderr, {
+      contentType: MARKDOWN_MIME,
+      hostname: safeHostname(params.url),
+      decodeEntities: false
+    }) : result.stderr;
     const output = formatResponse(
       processed.content,
-      result.stderr,
+      defendedStderr,
       result.exitCode,
       params.include_metadata,
       {

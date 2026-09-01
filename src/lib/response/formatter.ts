@@ -1,5 +1,6 @@
 // src/lib/response/formatter.ts
 // Format response for MCP output
+import { LIMITS } from "../config/limits.js";
 
 /**
  * Information about file saving for response formatting.
@@ -68,6 +69,24 @@ export function formatResponse(
     responseHeaders?: string,
     headerInfo?: { truncated?: boolean; bytesReceived?: number; undetermined?: boolean }
 ): string {
+    // The plain branch has one string and so cannot carry JSON fields — but
+    // "no field available" must not become "no signal". A truncated header
+    // block is byte-identical to a complete one, so a caller reading it
+    // concludes a security header is absent when it was merely cut off.
+    // Written by us and placed BEFORE the remote text, which is a position an
+    // origin cannot occupy, so this does not reintroduce the forgeable marker
+    // that was deliberately moved out of band.
+    const plainNotice = !includeMetadata && headerInfo
+        ? [
+              headerInfo.truncated
+                  ? `[mcp-curl] response headers truncated at ${LIMITS.MAX_HEADER_TEXT_BYTES} of ${headerInfo.bytesReceived} bytes`
+                  : null,
+              headerInfo.undetermined
+                  ? "[mcp-curl] response header boundary undetermined; headers are NOT separated from the body below"
+                  : null,
+          ].filter(Boolean).join("\n")
+        : "";
+    const withNotice = (text: string) => (plainNotice ? `${plainNotice}\n\n${text}` : text);
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
         if (includeMetadata) {
@@ -90,7 +109,7 @@ export function formatResponse(
         }
         // Plain text - just return the message or fallback to filepath
         const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-        return responseHeaders ? `${responseHeaders}\n\n${message}` : message;
+        return withNotice(responseHeaders ? `${responseHeaders}\n\n${message}` : message);
     }
 
     // Normal response
@@ -109,5 +128,5 @@ export function formatResponse(
         if (stderr) output.stderr = stderr;
         return JSON.stringify(output, null, 2);
     }
-    return responseHeaders ? `${responseHeaders}\n\n${stdout}` : stdout;
+    return withNotice(responseHeaders ? `${responseHeaders}\n\n${stdout}` : stdout);
 }

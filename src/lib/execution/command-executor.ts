@@ -15,8 +15,6 @@ export type AllowedCommand = typeof ALLOWED_COMMANDS[number];
  * Result of executing a command.
  */
 export interface CommandResult {
-    /** Standard output from the command, decoded as UTF-8 */
-    stdout: string;
     /**
      * Standard output as the exact octets the process wrote.
      *
@@ -182,9 +180,14 @@ export async function executeCommand(
             clearTimeout(timeoutId);
             releaseRequestMemory(); // Release memory tracking on completion
             if (!killed) {
+                // Concat INSIDE the accounted window, then drop the chunk
+                // references so only one full-size copy survives. No eager
+                // `.toString()`: it cost a full decode (20MB on a 10MB
+                // non-UTF-8 response, since U+FFFD forces a two-byte string)
+                // and no production caller ever read it.
                 const stdoutBytes = Buffer.concat(stdoutChunks);
+                stdoutChunks.length = 0;
                 resolve({
-                    stdout: stdoutBytes.toString("utf8"),
                     stdoutBytes,
                     stderr,
                     // null code means process was killed by signal — report as failure (not 0)

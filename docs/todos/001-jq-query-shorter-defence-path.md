@@ -59,12 +59,25 @@ returned through `curl_execute` on a markdown response is replaced with
   consumer whose custom tool fetches a remote document gets Unicode sanitisation
   and injection logging, and no beacon strip, no `<script>`/`<style>` strip and
   no comment strip.
+- `src/lib/tools/curl-execute.ts::executeCurlRequest` (cURL stderr) — **FIXED in
+  round 3.** Recorded because it is the instance that proves the old sweep was
+  wrong: stderr reached the model with *no* pipeline, and under `verbose: true`
+  carries the origin's own response headers. Now routed through `defendText` with
+  the same arguments as the header channel.
 
 ## Sweep
 
 ```bash
-rg -n 'sanitizeAndDetect\(' src --type ts -g '!*.test.ts'
+# What reaches the returned text — NOT "who calls the weak function".
+rg -n 'output\.[a-z_]+ = |text: ' src/lib/response/formatter.ts src/lib/tools/*.ts -g '!*.test.ts'
 ```
+
+**The original sweep here was `rg 'sanitizeAndDetect\('`, and it was structurally
+incapable of finding this class.** That query enumerates channels calling a
+*weaker* defence; it can never surface a channel calling *none*. It is why cURL
+stderr — which reached the model with no pipeline at all — went unfound for two
+rounds while three reviewers ran variants of it. `.claude/rules/01-known-shapes.md`
+K-4: *the sweep finds the shape it searched for*. Sweep the sink, not the helper.
 
 Run after any fix. Legitimate remaining hits are only: the definition in
 `security/detection-logger.ts`, the three calls **inside** `processor.ts` (two of

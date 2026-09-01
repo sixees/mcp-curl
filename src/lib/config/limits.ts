@@ -41,6 +41,11 @@ export const LIMITS = {
      * remote gets to falsify.
      */
     MAX_HEADER_TEXT_BYTES: 64_000,
+    // NOTE: the EFFECTIVE ceiling on returned header text is
+    // `min(MAX_HEADER_TEXT_BYTES, max_result_size)` — header text is inline, so
+    // it honours the caller's inline budget too. Cite this constant rather than
+    // restating either number; four documents said "64KB" unconditionally and
+    // were wrong for any caller who set a smaller max_result_size.
     /**
      * Byte allowance for the `-w` metadata FIELDS, searched backwards from the
      * end of stdout. **This is the budget for the fields only** — the window

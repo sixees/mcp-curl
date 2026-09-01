@@ -147,7 +147,9 @@ restating an existing class under a new name with its own counter.
 
 **Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (none; this PR carried no plan)
 
-**Class:** `lost-code-path`, `fail-open-default` — aliases `unescaped-sink`,
+**Class:** K-1, K-2 — *class-id:* `lost-code-path`, `fail-open-default`
+
+_(superseded by the line above; retained as filed)_ **Class:** `lost-code-path`, `fail-open-default` — aliases `unescaped-sink`,
 `oversized-payload`, `injectable-input`, `repeated-computation`
 
 - **The plan said:** splitting response headers out of the body was a contained
@@ -191,7 +193,9 @@ restating an existing class under a new name with its own counter.
 
 **Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
 
-**Class:** `broken-contract`, `untyped-boundary`
+**Class:** K-11, K-10 — *class-id:* `broken-contract`, `untyped-boundary`
+
+_(superseded by the line above; retained as filed)_ **Class:** `broken-contract`, `untyped-boundary`
 
 - **The plan said:** taking the header/body split from cURL's `%{size_header}`
   removed the class, because the offset now comes from a channel the origin
@@ -223,7 +227,9 @@ restating an existing class under a new name with its own counter.
 
 **Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
 
-**Class:** `unescaped-sink`
+**Class:** K-3 — *class-id:* `unescaped-sink`
+
+_(superseded by the line above; retained as filed)_ **Class:** `unescaped-sink`
 
 - **The plan said:** declaring header text `text/markdown` — the strictest
   grammar — was safe, because running extra strip stages on a header value could
@@ -248,7 +254,9 @@ restating an existing class under a new name with its own counter.
 
 **Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
 
-**Class:** `missing-validation`
+**Class:** K-3 — *class-id:* `missing-validation`, `unretained-pii`
+
+_(superseded by the line above; retained as filed)_ **Class:** `missing-validation`
 
 - **The plan said:** `docs/` is the project's documentation tree, and
   `CONVENTIONS.md` — written in this same PR — states plainly that anything put
@@ -272,3 +280,69 @@ restating an existing class under a new name with its own counter.
   — publish, push, delete — put it in something that runs. Also: **an allowlist
   of directories is a wildcard over their future contents.** `files: ["docs"]`
   was a decision about every file anyone would ever put there.
+
+### RC-5 — The guard written to enforce RC-4 contained the defect RC-2 named
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 3, self-probe)
+
+**Class:** K-1 — *class-id:* `missing-validation`
+
+_(superseded by the line above; retained as filed)_ **Class:** `missing-validation` — instantiates RC-2's rule 2
+
+- **The plan said:** `src/lib/release-guards.test.ts` closed RC-4 by putting the
+  publish-time rules into something that runs. Two guards: nothing internal in
+  the tarball, and no `### BREAKING` heading unbacked by a major bump.
+- **Reality was:** only the first had teeth. The second computed the prior major
+  as `[...all version headings].filter(n => n !== major)`, intending to skip the
+  current release's own heading — but that filter drops **every** prior 3.x
+  release too, leaving an empty list, `lastMajor = 0`, and an assertion of
+  `3 > 0` that passes for any 3.x version forever. Reintroducing a `BREAKING`
+  heading at 3.3.0 did not fail the suite. Found only by probing the guard;
+  nothing about reading it suggested a problem.
+- **What changed:** the prior major now comes from the first version heading
+  strictly below the top section. Both guards re-probed: reverting `files` to the
+  `docs/` wildcard fails the tarball tests, and a `BREAKING` heading at 3.3.0
+  fails the version test.
+- **What this costs next time:** **a guard is not done when it is written, only
+  when it has been made to fail.** This is RC-2's second rule — *a guard must
+  point the way the failure actually goes* — reappearing one round later, inside
+  the fix for a different RC, written by someone who had just recorded that rule.
+  Knowing a lesson is not the same as applying it, so the control cannot be
+  knowledge; it has to be the probe. Treat "I wrote a guard" and "I saw the guard
+  fail" as different states, and never report the first as the second.
+
+  Corollary, because this is where it hid: **an exclusion written to skip *this*
+  item will usually skip a whole class of items.** `!== major` meant "not this
+  release" to the author and "no 3.x release at all" to the machine. Prefer
+  positional selection (the heading below) over value-based exclusion when the
+  value is not unique.
+
+### RC-6 — A sweep that enumerates the weak call finds only channels that make it
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 3)
+
+**Class:** K-4 — *class-id:* `unescaped-sink`, `missing-validation`
+
+- **The plan said:** `docs/todos/001` tracked the remaining channels taking a
+  shorter defence path, and its sweep — `rg 'sanitizeAndDetect\('` — enumerated
+  them. Two instances were recorded and the class was believed bounded. Three
+  reviewers across two rounds ran variants of that query and agreed.
+- **Reality was:** the query can only surface a channel that calls a *weaker*
+  defence. A channel calling **none** matches nothing and reads as absent. cURL
+  stderr was exactly that: passed verbatim from `executeCurlRequest` to
+  `formatResponse`, reaching the model with no sanitisation, no strip, no
+  injection logging — and under `verbose: true` it carries the origin's own
+  response headers. It had been there the whole time, invisible to every sweep
+  because the sweep was derived from the instance in hand rather than from the
+  class's definition.
+- **What changed:** stderr now takes `defendText` with the same arguments as the
+  header channel. Todo 001's sweep was replaced with one over the *sink* —
+  `rg 'output\.[a-z_]+ = |text: '` across the formatter and the tools — and the
+  reason the old one was wrong is recorded there so it is not reinstated.
+- **What this costs next time:** **derive the sweep from what the class IS, not
+  from what the found instance DOES.** "Channels that call `sanitizeAndDetect`"
+  is a description of two known sites; "text that reaches the returned result" is
+  the class. The first is a list of the bugs already found — `CONVENTIONS.md` →
+  *Tests* states the same rule for deny-lists, and it binds sweeps identically.
+  A practical test: ask whether the query could match an instance nobody has seen
+  yet. If it can only match code shaped like the example, it is not a sweep.

@@ -223,6 +223,22 @@ export async function executeCurlRequest(
             }
         }
 
+        // The body is only PROVEN clean when the boundary was determined. When
+        // it was not, the header block is still on the front of it — so the two
+        // operations that turn it into a durable or parsed artefact are refused
+        // rather than performed on unproven bytes. That is what makes the
+        // "headers never reach the saved file or the jq_filter input" guarantee
+        // true on every path instead of only the happy one, and it is invariant
+        // 13's "claim nothing" applied to the body as well as to the headers.
+        if (headersUndetermined && (params.save_to_file || params.jq_filter)) {
+            throw new Error(
+                "Response header boundary could not be determined, so the body cannot be " +
+                "separated from the header block. Refusing save_to_file/jq_filter rather " +
+                "than writing or filtering unseparated bytes. Retry without include_headers " +
+                "to operate on the raw response."
+            );
+        }
+
         // Process response with filtering and size handling
         const processed = await processResponse(body, {
             url: params.url,
@@ -234,9 +250,21 @@ export async function executeCurlRequest(
             outputDir: validatedOutputDir,
         });
 
+        // cURL stderr is remote-influenced — under `verbose` it carries the
+        // origin's own response headers — and reached the model with no
+        // pipeline at all. Not a shorter one: none. Same treatment as the
+        // header channel, so the two text channels stay symmetric.
+        const defendedStderr = result.stderr
+            ? defendText(result.stderr, {
+                  contentType: MARKDOWN_MIME,
+                  hostname: safeHostname(params.url),
+                  decodeEntities: false,
+              })
+            : result.stderr;
+
         const output = formatResponse(
             processed.content,
-            result.stderr,
+            defendedStderr,
             result.exitCode,
             params.include_metadata,
             {

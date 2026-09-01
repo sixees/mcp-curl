@@ -54,11 +54,12 @@ Files are saved to (in priority order):
 2. \`MCP_CURL_OUTPUT_DIR\` environment variable if set
 3. System temp directory (cleaned up on shutdown)
 
-\`max_result_size\` bounds the body only. Header text from \`include_headers\` is surfaced inline
-even when the body was saved to a file, so it carries its own 64KB ceiling. Truncation is
-reported out of band as \`headers_truncated\` / \`header_bytes_received\` under
-\`include_metadata\` — never as a notice inside the header text itself, which a server could
-simply send verbatim.
+\`max_result_size\` bounds the body. Header text from \`include_headers\` is surfaced inline even
+when the body was saved to a file, and is capped at \`min(64KB, max_result_size)\` — it honours
+the caller's inline budget as well as its own ceiling. Truncation is reported out of band as
+\`headers_truncated\` / \`header_bytes_received\` under \`include_metadata\`, and as a leading
+\`[mcp-curl]\` notice otherwise — never as a marker inside the header text, which a server
+could simply send verbatim.
 
 ### jq_filter Syntax
 

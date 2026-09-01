@@ -76,10 +76,13 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * @returns ParsedResponse with body, optional contentType and headerBytes
  */
 export function parseResponseWithMetadata(
-    rawResponse: string | Buffer,
+    rawResponse: Buffer,
     separator: string
 ): ParsedResponse {
-    const raw = Buffer.isBuffer(rawResponse) ? rawResponse : Buffer.from(rawResponse, "utf8");
+    // Buffer only, deliberately. A `string | Buffer` union left the lossy arm —
+    // the one RC-2 was about — one character away at every call site, with no
+    // compiler objection. Tests convert at the call site instead.
+    const raw = rawResponse;
     const sep = Buffer.from(separator, "utf8");
 
     // The window is the separator's own length PLUS the field allowance, not a
@@ -185,6 +188,16 @@ export function splitResponseHeaders(
     if (headerBytes > bodyBytes.length) {
         // cURL reported more header bytes than we hold: a truncated read.
         // Undetermined again.
+        return { body: bodyBytes.toString("utf8") };
+    }
+
+    // The reported region must actually END at a header terminator. cURL's
+    // count and the stream's layout are two different sources, and this is the
+    // cheap check that they agree — an assumption asserted in a comment is not
+    // evidence about the bytes. On disagreement, fail closed rather than
+    // reporting a region we cannot vouch for.
+    const terminator = bodyBytes.subarray(Math.max(0, headerBytes - 4), headerBytes).toString("latin1");
+    if (!terminator.endsWith("\r\n\r\n") && !terminator.endsWith("\n\n")) {
         return { body: bodyBytes.toString("utf8") };
     }
 

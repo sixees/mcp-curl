@@ -90,12 +90,24 @@ export function defendText(text: string, options: DefendTextOptions): string {
     let content = text;
     const { hostname, contentTypeUndetermined = false, decodeEntities = true } = options;
 
-    // Compute content-type classification once. An UNDETERMINED content type
-    // selects the strictest grammar rather than the loosest — see the option's
-    // docs; a remote must not be able to disable a stage by making our metadata
-    // unreadable.
-    const isMarkup = contentTypeUndetermined || supportsMarkupComments(options.contentType);
-    const isMarkdown = contentTypeUndetermined || isMarkdownContentType(options.contentType);
+    // An UNDETERMINED content type selects the strictest grammar rather than
+    // the loosest: a remote must not be able to disable a stage by making our
+    // metadata unreadable.
+    //
+    // With ONE exception, and it is not a softening — a body that is plainly
+    // JSON is excluded, exactly as a declared `application/json` is. That
+    // exclusion exists because `<script>` and `[a](b)` are legitimate inside
+    // JSON string values, and `processResponse` writes the POST-strip content
+    // to disk: stripping here does not just alter what the model reads, it
+    // alters the artefact `jq_query` later reads back, silently. Applying a
+    // model-facing posture to persisted bytes is a different decision from
+    // applying it to the model, and only the first was ever argued for.
+    const looksLikeJsonBody =
+        content.trimStart().startsWith("{") || content.trimStart().startsWith("[");
+    const strictestGrammar = contentTypeUndetermined && !looksLikeJsonBody;
+
+    const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
+    const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
 
     // Step 2 — sanitise + detect, ALWAYS for any string body.
     //
@@ -140,7 +152,8 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // (1025+ bytes of preamble + `<script>` past the window).
     const sniffedAsMarkup =
         !exceedsStripCap &&
-        !contentTypeUndetermined &&
+        !strictestGrammar &&
+        !looksLikeJsonBody &&
         isSniffableContentType(options.contentType) &&
         looksLikeMarkupShape(content);
     const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;

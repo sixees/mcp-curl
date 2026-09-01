@@ -28,9 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `defendText`, which is sanitise + injection-detect *and* the markup/markdown strip stages.
   Splitting it out does not route it around those defences. Header text is declared `text/markdown`
   for that pass — the strictest grammar — because header values are rendered by whatever the client
-  renders. It is truncated at 64KB (`LIMITS.MAX_HEADER_TEXT_BYTES`) with a visible marker, since it
-  is surfaced inline even when the body was saved to a file and so is not bounded by
-  `max_result_size`. On a redirect chain every header block is reported, as `curl -i` prints them.
+  renders. It is capped at `min(LIMITS.MAX_HEADER_TEXT_BYTES, max_result_size)` — it is surfaced
+  inline even when the body was saved to a file, so it honours both its own ceiling and the
+  caller's inline budget. Truncation is reported out of band (see **Added**), never as a
+  marker inside the header text. On a redirect chain every header block is reported, as `curl -i` prints them.
 
   The header/body boundary comes from cURL's own `%{size_header}`, delivered on the `-w` metadata
   channel behind the unguessable per-request separator. It is never inferred from the response

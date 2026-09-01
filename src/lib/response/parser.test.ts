@@ -194,7 +194,7 @@ describe("parseResponseWithMetadata", () => {
 
     it("reads the header size and content type from the metadata block", () => {
         const raw = `{"id":1}${SEP}246 application/json`;
-        const parsed = parseResponseWithMetadata(raw, SEP);
+        const parsed = parseResponseWithMetadata(buf(raw), SEP);
         expect(parsed.body).toBe('{"id":1}');
         expect(parsed.contentType).toBe("application/json");
         expect(parsed.headerBytes).toBe(246);
@@ -203,13 +203,13 @@ describe("parseResponseWithMetadata", () => {
 
     it("leaves headerBytes undefined when the metadata block has no count", () => {
         const raw = `{"id":1}${SEP}application/json`;
-        const parsed = parseResponseWithMetadata(raw, SEP);
+        const parsed = parseResponseWithMetadata(buf(raw), SEP);
         expect(parsed.headerBytes).toBeUndefined();
         expect(parsed.contentType).toBe("application/json");
     });
 
     it("leaves headerBytes undefined when the separator is absent", () => {
-        const parsed = parseResponseWithMetadata("plain body", SEP);
+        const parsed = parseResponseWithMetadata(buf("plain body"), SEP);
         expect(parsed.body).toBe("plain body");
         expect(parsed.headerBytes).toBeUndefined();
         expect(parsed.metadataFound).toBe(false);
@@ -220,7 +220,7 @@ describe("parseResponseWithMetadata", () => {
         // so it has no delimiter after it to spoof. A digits-and-spaces
         // content type must not be read as the count.
         const raw = `body${SEP}12 text/plain; charset="999999 evil"`;
-        const parsed = parseResponseWithMetadata(raw, SEP);
+        const parsed = parseResponseWithMetadata(buf(raw), SEP);
         expect(parsed.headerBytes).toBe(12);
         expect(parsed.contentType).toBe('text/plain; charset="999999 evil"');
     });
@@ -270,7 +270,7 @@ describe("parseResponseWithMetadata — window sizing", () => {
             'application/vnd.api+json; charset=utf-8; profile="' + "x".repeat(300) + '"';
         const raw = `{"id":1}${SEP}246 ${longCt}`;
 
-        const parsed = parseResponseWithMetadata(raw, SEP);
+        const parsed = parseResponseWithMetadata(buf(raw), SEP);
 
         expect(parsed.metadataFound).toBe(true);
         expect(parsed.headerBytes).toBe(246);
@@ -279,7 +279,7 @@ describe("parseResponseWithMetadata — window sizing", () => {
     });
 
     it("marks metadata as not found rather than guessing", () => {
-        const parsed = parseResponseWithMetadata("plain body", SEP);
+        const parsed = parseResponseWithMetadata(buf("plain body"), SEP);
         expect(parsed.metadataFound).toBe(false);
         expect(parsed.headerBytes).toBeUndefined();
         expect(parsed.contentType).toBeUndefined();

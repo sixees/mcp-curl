@@ -75,7 +75,12 @@ what a violation looks like, it does not belong on this list.
    `sanitizeAndDetect`, and thereby lost Steps 3–5 while still satisfying "goes
    through sanitisation". An invariant that a defect can satisfy is not an
    invariant. **New text channels call `defendText`; they do not assemble their
-   own pipeline.**
+   own pipeline**, with one recorded exception: the header channel passes
+   `decodeEntities: false`. That is a deliberate narrowing, not a weakening —
+   the decode stage's output is *returned*, so on a channel whose consumer does
+   not decode it would manufacture live markup from inert bytes (`LESSONS.md`
+   RC-3). What it costs: Step 5 cannot unmask an entity-encoded injection phrase
+   in a header, so detection is blind to that one vector on that one channel.
 
    **Coverage today is partial, and saying so is part of the invariant.** Two
    channels still take the short path: `jq-query.ts::executeJqQuery` and
@@ -119,10 +124,13 @@ what a violation looks like, it does not belong on this list.
     "undetermined" and "absent" must resolve the same way, never the permissive
     way.
 14. **Anything surfaced inline to the model is bounded by an explicit limit.**
-    `max_result_size` bounds the body; header text carries its own
-    `LIMITS.MAX_HEADER_TEXT_BYTES` ceiling because it is returned inline even when
-    the body was saved to a file. A value added to the result after the size gate
-    has run is unbounded in practice, whatever the gate reports.
+    `max_result_size` bounds the body; header text is capped at
+    `min(LIMITS.MAX_HEADER_TEXT_BYTES, max_result_size)` — its own ceiling AND
+    the caller's inline budget, because it is returned inline even when the body
+    was saved to a file. A value added to the result after the size gate has run
+    is unbounded in practice, whatever the gate reports. The cap is applied after
+    the defence pipeline as well as before it, since `[link removed]` is longer
+    than some of the forms it replaces.
 
 ## Environments
 
