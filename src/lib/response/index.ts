@@ -10,6 +10,11 @@ export {
 } from "./parser.js";
 
 export {
+    extractHeaderChannel,
+    type HeaderChannel,
+} from "./header-channel.js";
+
+export {
     formatResponse,
     type FileSaveInfo,
 } from "./formatter.js";

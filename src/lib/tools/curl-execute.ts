@@ -15,7 +15,7 @@ import {
     formatResponse,
     processResponse,
     defendText,
-    splitResponseHeaders,
+    extractHeaderChannel,
 } from "../response/index.js";
 
 /** Tool result type returned by executeCurlRequest */
@@ -188,42 +188,25 @@ export async function executeCurlRequest(
         const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
         const { contentType, headerBytes, metadataFound } = parsed;
 
-        // `-i` prepends the header block to the body on stdout. Split it off
-        // before anything touches the body, at the offset cURL reported.
+        // `-i` prepends the header block to the body on stdout. Taking it off,
+        // defending it and bounding it is one concern with one home — see
+        // `extractHeaderChannel`, which lives beside the functions it composes
+        // because every defect here has been a composition defect.
         let responseHeaders: string | undefined;
         let headersUndetermined = false;
         let body = parsed.body;
         if (params.include_headers) {
-            const split = splitResponseHeaders(parsed.bodyBytes, headerBytes);
-            body = split.body;
-            headersUndetermined = split.headerText === undefined;
-            if (split.headerText) {
-                // Same pipeline as the body, not a shorter one (invariant 1a).
-                // Markdown = the strictest grammar, so every strip stage runs.
-                // `decodeEntities: false` because that stage is ADDITIVE and its
-                // result is returned: decoding a header would hand the model a
-                // live instruction the origin only ever sent as inert text.
-                const defended = defendText(split.headerText, {
-                    contentType: MARKDOWN_MIME,
-                    hostname: safeHostname(params.url),
-                    decodeEntities: false,
-                });
-                // Re-cap AFTER defence: `[link removed]` is longer than some of
-                // the forms it replaces, so capping only before it lets the
-                // documented ceiling be exceeded. Also honour the caller's
-                // inline budget — this text is returned inline even when the
-                // body went to a file, so `max_result_size` never bounded it.
-                const inlineCeiling = Math.min(
-                    LIMITS.MAX_HEADER_TEXT_BYTES,
-                    params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
-                );
-                responseHeaders = Buffer.byteLength(defended, "utf8") > inlineCeiling
-                    ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8")
-                    : defended;
-                headerTruncated = split.truncated === true
-                    || Buffer.byteLength(defended, "utf8") > inlineCeiling;
-                headerBytesReceived = split.headerBytesReceived;
-            }
+            const channel = extractHeaderChannel(
+                parsed.bodyBytes,
+                headerBytes,
+                params.url,
+                params.max_result_size
+            );
+            body = channel.body;
+            responseHeaders = channel.responseHeaders;
+            headersUndetermined = channel.undetermined;
+            headerTruncated = channel.truncated;
+            headerBytesReceived = channel.bytesReceived;
         }
 
         // The body is only PROVEN clean when the boundary was determined. When

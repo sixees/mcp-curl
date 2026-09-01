@@ -1573,101 +1573,6 @@ function sanitizeErrorMessage(message, includeDetails) {
   return sanitized;
 }
 
-// src/lib/response/formatter.ts
-function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
-  const plainNotice = !includeMetadata && headerInfo ? [
-    headerInfo.truncated ? `[mcp-curl] response headers truncated at ${LIMITS.MAX_HEADER_TEXT_BYTES} of ${headerInfo.bytesReceived} bytes` : null,
-    headerInfo.undetermined ? "[mcp-curl] response header boundary undetermined; headers are NOT separated from the body below" : null
-  ].filter(Boolean).join("\n") : "";
-  const withNotice = (text) => plainNotice ? `${plainNotice}
-
-${text}` : text;
-  if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
-    if (includeMetadata) {
-      const output = {
-        success: exitCode === 0,
-        exit_code: exitCode,
-        saved_to_file: true,
-        filepath: fileSaveInfo.filepath,
-        message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
-      };
-      if (responseHeaders) output.headers = responseHeaders;
-      if (responseHeaders && headerInfo?.truncated) {
-        output.headers_truncated = true;
-        output.header_bytes_received = headerInfo.bytesReceived;
-      }
-      if (headerInfo?.undetermined) output.headers_undetermined = true;
-      if (stderr) output.stderr = stderr;
-      return JSON.stringify(output, null, 2);
-    }
-    const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-    return withNotice(responseHeaders ? `${responseHeaders}
-
-${message}` : message);
-  }
-  if (includeMetadata) {
-    const output = {
-      success: exitCode === 0,
-      exit_code: exitCode,
-      response: stdout
-    };
-    if (responseHeaders) output.headers = responseHeaders;
-    if (responseHeaders && headerInfo?.truncated) {
-      output.headers_truncated = true;
-      output.header_bytes_received = headerInfo.bytesReceived;
-    }
-    if (headerInfo?.undetermined) output.headers_undetermined = true;
-    if (stderr) output.stderr = stderr;
-    return JSON.stringify(output, null, 2);
-  }
-  return withNotice(responseHeaders ? `${responseHeaders}
-
-${stdout}` : stdout);
-}
-
-// src/lib/response/file-saver.ts
-import { join as join2, resolve as resolve3 } from "path";
-import { writeFile, realpath as realpath3 } from "fs/promises";
-function createSafeFilenameBase(input, fallback = "response") {
-  let base = input.replace(/[^a-zA-Z0-9]/g, "_");
-  base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-  base = base.replace(/^_+|_+$/g, "");
-  if (!base) {
-    base = fallback;
-  }
-  if (isWindowsReservedBasename(base) || base === "." || base === "..") {
-    const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-    base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH) : prefixed;
-  }
-  return base;
-}
-async function saveResponseToFile(content, url, outputDir) {
-  const targetDir = outputDir ?? await getOrCreateTempDir();
-  if (outputDir) {
-    const realDir = await realpath3(resolve3(outputDir));
-    const normalizedTarget = await realpath3(resolve3(targetDir));
-    if (realDir !== normalizedTarget) {
-      throw new Error(`Output directory path mismatch after normalization`);
-    }
-  }
-  let baseName;
-  try {
-    const urlObj = new URL(url);
-    baseName = urlObj.hostname + urlObj.pathname;
-  } catch (error) {
-    if (error instanceof TypeError) {
-      baseName = url;
-    } else {
-      throw error;
-    }
-  }
-  const safeName = createSafeFilenameBase(baseName);
-  const filename = `${safeName}_${Date.now()}.txt`;
-  const filepath = join2(targetDir, filename);
-  await writeFile(filepath, content, { encoding: "utf-8", mode: 384 });
-  return filepath;
-}
-
 // src/lib/jq/tokenizer.ts
 function parseQuotedKey(filter, quoteIndex) {
   const quote = filter[quoteIndex];
@@ -2034,6 +1939,49 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
   return applyJqFilterToParsed(data, filter);
 }
 
+// src/lib/response/file-saver.ts
+import { join as join2, resolve as resolve3 } from "path";
+import { writeFile, realpath as realpath3 } from "fs/promises";
+function createSafeFilenameBase(input, fallback = "response") {
+  let base = input.replace(/[^a-zA-Z0-9]/g, "_");
+  base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+  base = base.replace(/^_+|_+$/g, "");
+  if (!base) {
+    base = fallback;
+  }
+  if (isWindowsReservedBasename(base) || base === "." || base === "..") {
+    const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+    base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH) : prefixed;
+  }
+  return base;
+}
+async function saveResponseToFile(content, url, outputDir) {
+  const targetDir = outputDir ?? await getOrCreateTempDir();
+  if (outputDir) {
+    const realDir = await realpath3(resolve3(outputDir));
+    const normalizedTarget = await realpath3(resolve3(targetDir));
+    if (realDir !== normalizedTarget) {
+      throw new Error(`Output directory path mismatch after normalization`);
+    }
+  }
+  let baseName;
+  try {
+    const urlObj = new URL(url);
+    baseName = urlObj.hostname + urlObj.pathname;
+  } catch (error) {
+    if (error instanceof TypeError) {
+      baseName = url;
+    } else {
+      throw error;
+    }
+  }
+  const safeName = createSafeFilenameBase(baseName);
+  const filename = `${safeName}_${Date.now()}.txt`;
+  const filepath = join2(targetDir, filename);
+  await writeFile(filepath, content, { encoding: "utf-8", mode: 384 });
+  return filepath;
+}
+
 // src/lib/response/strip-blocks.ts
 var IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
 var LINK_REMOVED_PLACEHOLDER = "[link removed]";
@@ -2173,6 +2121,84 @@ async function processResponse(response, options) {
     content,
     savedToFile: false
   };
+}
+
+// src/lib/response/header-channel.ts
+function extractHeaderChannel(bodyBytes, headerBytes, url, maxResultSize) {
+  const split = splitResponseHeaders(bodyBytes, headerBytes);
+  if (!split.headerText) {
+    return { body: split.body, undetermined: true, truncated: false };
+  }
+  const defended = defendText(split.headerText, {
+    contentType: MARKDOWN_MIME,
+    hostname: safeHostname(url),
+    decodeEntities: false
+  });
+  const inlineCeiling = Math.min(
+    LIMITS.MAX_HEADER_TEXT_BYTES,
+    maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
+  );
+  const defendedBytes = Buffer.byteLength(defended, "utf8");
+  const overCeiling = defendedBytes > inlineCeiling;
+  return {
+    body: split.body,
+    responseHeaders: overCeiling ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8") : defended,
+    undetermined: false,
+    truncated: split.truncated === true || overCeiling,
+    bytesReceived: split.headerBytesReceived
+  };
+}
+
+// src/lib/response/formatter.ts
+function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
+  const plainNotice = !includeMetadata && headerInfo ? [
+    headerInfo.truncated ? `[mcp-curl] response headers truncated at ${LIMITS.MAX_HEADER_TEXT_BYTES} of ${headerInfo.bytesReceived} bytes` : null,
+    headerInfo.undetermined ? "[mcp-curl] response header boundary undetermined; headers are NOT separated from the body below" : null
+  ].filter(Boolean).join("\n") : "";
+  const withNotice = (text) => plainNotice ? `${plainNotice}
+
+${text}` : text;
+  if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
+    if (includeMetadata) {
+      const output = {
+        success: exitCode === 0,
+        exit_code: exitCode,
+        saved_to_file: true,
+        filepath: fileSaveInfo.filepath,
+        message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
+      };
+      if (responseHeaders) output.headers = responseHeaders;
+      if (responseHeaders && headerInfo?.truncated) {
+        output.headers_truncated = true;
+        output.header_bytes_received = headerInfo.bytesReceived;
+      }
+      if (headerInfo?.undetermined) output.headers_undetermined = true;
+      if (stderr) output.stderr = stderr;
+      return JSON.stringify(output, null, 2);
+    }
+    const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
+    return withNotice(responseHeaders ? `${responseHeaders}
+
+${message}` : message);
+  }
+  if (includeMetadata) {
+    const output = {
+      success: exitCode === 0,
+      exit_code: exitCode,
+      response: stdout
+    };
+    if (responseHeaders) output.headers = responseHeaders;
+    if (responseHeaders && headerInfo?.truncated) {
+      output.headers_truncated = true;
+      output.header_bytes_received = headerInfo.bytesReceived;
+    }
+    if (headerInfo?.undetermined) output.headers_undetermined = true;
+    if (stderr) output.stderr = stderr;
+    return JSON.stringify(output, null, 2);
+  }
+  return withNotice(responseHeaders ? `${responseHeaders}
+
+${stdout}` : stdout);
 }
 
 // src/lib/response/post-processor.ts
@@ -2361,23 +2387,17 @@ async function executeCurlRequest(params, extra = {}) {
     let headersUndetermined = false;
     let body = parsed.body;
     if (params.include_headers) {
-      const split = splitResponseHeaders(parsed.bodyBytes, headerBytes);
-      body = split.body;
-      headersUndetermined = split.headerText === void 0;
-      if (split.headerText) {
-        const defended = defendText(split.headerText, {
-          contentType: MARKDOWN_MIME,
-          hostname: safeHostname(params.url),
-          decodeEntities: false
-        });
-        const inlineCeiling = Math.min(
-          LIMITS.MAX_HEADER_TEXT_BYTES,
-          params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
-        );
-        responseHeaders = Buffer.byteLength(defended, "utf8") > inlineCeiling ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8") : defended;
-        headerTruncated = split.truncated === true || Buffer.byteLength(defended, "utf8") > inlineCeiling;
-        headerBytesReceived = split.headerBytesReceived;
-      }
+      const channel = extractHeaderChannel(
+        parsed.bodyBytes,
+        headerBytes,
+        params.url,
+        params.max_result_size
+      );
+      body = channel.body;
+      responseHeaders = channel.responseHeaders;
+      headersUndetermined = channel.undetermined;
+      headerTruncated = channel.truncated;
+      headerBytesReceived = channel.bytesReceived;
     }
     if (headersUndetermined && (params.save_to_file || params.jq_filter)) {
       throw new Error(
@@ -2490,8 +2510,8 @@ export {
   validateOutputDir,
   CurlExecuteSchema,
   JqQuerySchema,
-  createSafeFilenameBase,
   applyJqFilter,
+  createSafeFilenameBase,
   createWrapper,
   CURL_EXECUTE_TOOL_META,
   executeCurlRequest,

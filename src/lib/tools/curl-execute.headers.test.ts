@@ -136,6 +136,48 @@ describe("curl_execute include_headers — defence pipeline", () => {
         expect(parsed.header_bytes_received).toBeGreaterThan(LIMITS.MAX_HEADER_TEXT_BYTES);
     });
 
+    it("re-caps header text that GREW through the defence pipeline", () => {
+        // `[link removed]` is longer than some forms it replaces, so a cap
+        // applied only before defence can be exceeded after it. Beacon-dense
+        // header text just under the ceiling inflates past it.
+        // The replacement must be LONGER than what it replaces: `[link removed]`
+        // is 14 chars, so a 13-char `[a](http://x)` grows by one per beacon.
+        const beacon = "x-b: [a](http://x)\r\n";
+        const repeats = Math.ceil((LIMITS.MAX_HEADER_TEXT_BYTES - 200) / beacon.length);
+        const headers = "HTTP/2 200 \r\n" + beacon.repeat(repeats) + "\r\n";
+        mockedExecuteCommand.mockResolvedValue(stdoutFor(headers, "ok", "text/plain"));
+
+        return executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            include_metadata: true,
+        })).then((result) => {
+            const parsed = JSON.parse(result.content[0].text);
+            expect(Buffer.byteLength(parsed.headers, "utf8"))
+                .toBeLessThanOrEqual(LIMITS.MAX_HEADER_TEXT_BYTES);
+            expect(parsed.headers_truncated).toBe(true);
+        });
+    });
+
+    it("honours a caller's max_result_size as the header ceiling too", async () => {
+        // Header text is returned inline even when the body is saved, so the
+        // caller's inline budget bounds it as well as its own ceiling.
+        const filler = "x-pad: " + "a".repeat(300) + "\r\n";
+        const headers = "HTTP/2 200 \r\n" + filler.repeat(20) + "\r\n";
+        mockedExecuteCommand.mockResolvedValue(stdoutFor(headers, "ok", "text/plain"));
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            include_metadata: true,
+            max_result_size: 2000,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(Buffer.byteLength(parsed.headers, "utf8")).toBeLessThanOrEqual(2000);
+        expect(parsed.headers_truncated).toBe(true);
+    });
+
     // Positive control: every assertion above is an absence, and a handler
     // that returned nothing at all would satisfy all four simultaneously.
     it("returns real headers and a real body when nothing is hostile", async () => {
