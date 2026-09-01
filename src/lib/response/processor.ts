@@ -25,70 +25,49 @@ export type { ProcessResponseOptions, ProcessedResponse } from "../types/index.j
 import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
 
 /**
- * Process response with filtering and size handling.
- *
- * Processing pipeline (text content only):
- * 1. Early size guard (against {@link LIMITS.MAX_RESPONSE_SIZE}).
- * 2. **Sanitise + detect** (Unicode attack chars stripped; visible-space
- *    + newline padding collapsed; injection patterns logged on the
- *    pre-sanitise text per the PR-6b S4 ordering). Runs FIRST so that
- *    the strip path's 256 KB cap can't be evaded by Unicode-padding
- *    inflation: an attacker can't pad with U+200B to push the body above
- *    the cap because sanitiser collapses padding before the strip path
- *    is gated on byte-length.
- * 3. **Strip HTML comments + script/style blocks** (markup content types,
- *    markdown content types, OR plain-text-shaped responses whose body
- *    sniffs as markup — closes the `Content-Type: text/plain` tampering
- *    bypass where an attacker serves HTML with the wrong header). The
- *    strip path is ReDoS-hardened: open-to-closer-or-EOF lazy-match
- *    patterns handle malformed and unclosed closers, fixed-point
- *    iteration cap of 4 handles self-healing payloads, numeric-entity
- *    decode unmasks `&#x3c;script&#x3e;` smuggling.
- * 4. **Strip markdown beacons** (image / link / dangerous-scheme +
- *    residual cleanup for nested image-inside-dangerous-link cases).
- * 5. **Re-sanitise + detect** post-strip (`sanitizeAndDetect`, NOT plain
- *    sanitiseResponse). The strip path's numeric-entity decoder unmasks
- *    `&#x69;gnore previous instructions` into a real injection phrase
- *    that the original-text Step 2 detection couldn't see (it saw the
- *    entity-encoded form). The re-detection here closes the silenced-
- *    log gap; throttling prevents same-hostname noise.
- * 6. Apply jq_filter if provided AND response is JSON. Re-sanitise after
- *    filter (JSON.parse may decode escapes into real attack chars).
- * 7. Check size against `maxResultSize`; auto-save to file if exceeded.
- *    NOTE: post-pipeline byte length is NOT guaranteed monotone-shrinking
- *    — markdown beacon replacement substitutes `[link removed]` (14
- *    bytes) which can be longer than a minimal source like `[a](http://x)`.
- *    The post-pipeline size check is therefore required, not redundant.
- *
- * @param response - Response content to process; runtime-checked to be a
- *                   string (the type system enforces this for TS callers,
- *                   but JS callers from custom-tool hooks could bypass).
- * @param options - Processing options (url, jqFilter, maxResultSize, etc.)
- * @returns ProcessedResponse with content and file save status
- * @throws TypeError if `response` is not a string
- * @throws Error if response exceeds the absolute size cap or jq_filter
- *   is used on non-JSON content
+ * Options for {@link defendText}.
  */
-export async function processResponse(
-    response: string,
-    options: ProcessResponseOptions
-): Promise<ProcessedResponse> {
-    if (typeof response !== "string") {
-        throw new TypeError("processResponse: response must be a string");
-    }
+export interface DefendTextOptions {
+    /** Content-Type of the text, used to select the strip stages. */
+    contentType?: string;
+    /** Hostname label for injection-detection logging. */
+    hostname: string;
+}
 
-    // Step 1: Early size guard — runs BEFORE sanitization to avoid wasting CPU on oversized responses
-    const rawBytes = Buffer.byteLength(response, "utf8");
-    if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
-        throw new Error(
-            `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
-        );
-    }
-
-    let content = response;
-
-    // Resolve hostname once for injection detection logging.
-    const hostname = safeHostname(options.url);
+/**
+ * Run the full defensive pipeline over one piece of remote-origin text.
+ *
+ * **This is the single defence path for anything returned to the LLM, and it
+ * exists as a shared function so that no caller can assemble a shorter one.**
+ * It was extracted after `include_headers` split header text out of the body:
+ * the header path kept only `sanitizeAndDetect` (Step 2) and silently lost
+ * Steps 3-5, so markdown beacons, `<script>`/`<style>` blocks and
+ * numeric-entity-masked injections reached the model through the header
+ * channel after being stripped from the body for years.
+ *
+ * The stages, in order, and the order is load-bearing:
+ *
+ * - **Step 2** — sanitise + detect, ALWAYS, on the ORIGINAL text. Detection
+ *   runs before the sanitiser strips anything, so the log signals on what the
+ *   attacker actually sent.
+ * - **Steps 3-4** — markup comments, `<script>`/`<style>` fixed-point strip,
+ *   and (for declared markdown) beacon removal. Gated on the strip-path cap so
+ *   the cost stays bounded on adversarial input.
+ * - **Step 5** — re-sanitise + detect, because the strip path's numeric-entity
+ *   decoder unmasks `&#x69;gnore previous instructions` into a real injection
+ *   phrase that Step 2 could not see.
+ *
+ * Callers that need size capping or file-saving want {@link processResponse},
+ * which wraps this. Call `defendText` directly only for a text channel that
+ * genuinely is not the body — response headers being the one such channel.
+ *
+ * @param text - Remote-origin text to defend
+ * @param options - Content-type (selects strip stages) and hostname (logging)
+ * @returns The defended text; never suppressed, only rewritten
+ */
+export function defendText(text: string, options: DefendTextOptions): string {
+    let content = text;
+    const { hostname } = options;
 
     // Compute content-type classification once.
     const isMarkup = supportsMarkupComments(options.contentType);
@@ -168,6 +147,81 @@ export async function processResponse(
         // double-counting.
         content = sanitizeAndDetect(content, hostname);
     }
+
+    return content;
+}
+
+/**
+ * Process response with filtering and size handling.
+ *
+ * Processing pipeline (text content only):
+ * 1. Early size guard (against {@link LIMITS.MAX_RESPONSE_SIZE}).
+ * 2. **Sanitise + detect** (Unicode attack chars stripped; visible-space
+ *    + newline padding collapsed; injection patterns logged on the
+ *    pre-sanitise text per the PR-6b S4 ordering). Runs FIRST so that
+ *    the strip path's 256 KB cap can't be evaded by Unicode-padding
+ *    inflation: an attacker can't pad with U+200B to push the body above
+ *    the cap because sanitiser collapses padding before the strip path
+ *    is gated on byte-length.
+ * 3. **Strip HTML comments + script/style blocks** (markup content types,
+ *    markdown content types, OR plain-text-shaped responses whose body
+ *    sniffs as markup — closes the `Content-Type: text/plain` tampering
+ *    bypass where an attacker serves HTML with the wrong header). The
+ *    strip path is ReDoS-hardened: open-to-closer-or-EOF lazy-match
+ *    patterns handle malformed and unclosed closers, fixed-point
+ *    iteration cap of 4 handles self-healing payloads, numeric-entity
+ *    decode unmasks `&#x3c;script&#x3e;` smuggling.
+ * 4. **Strip markdown beacons** (image / link / dangerous-scheme +
+ *    residual cleanup for nested image-inside-dangerous-link cases).
+ * 5. **Re-sanitise + detect** post-strip (`sanitizeAndDetect`, NOT plain
+ *    sanitiseResponse). The strip path's numeric-entity decoder unmasks
+ *    `&#x69;gnore previous instructions` into a real injection phrase
+ *    that the original-text Step 2 detection couldn't see (it saw the
+ *    entity-encoded form). The re-detection here closes the silenced-
+ *    log gap; throttling prevents same-hostname noise.
+ * 6. Apply jq_filter if provided AND response is JSON. Re-sanitise after
+ *    filter (JSON.parse may decode escapes into real attack chars).
+ * 7. Check size against `maxResultSize`; auto-save to file if exceeded.
+ *    NOTE: post-pipeline byte length is NOT guaranteed monotone-shrinking
+ *    — markdown beacon replacement substitutes `[link removed]` (14
+ *    bytes) which can be longer than a minimal source like `[a](http://x)`.
+ *    The post-pipeline size check is therefore required, not redundant.
+ *
+ * @param response - Response content to process; runtime-checked to be a
+ *                   string (the type system enforces this for TS callers,
+ *                   but JS callers from custom-tool hooks could bypass).
+ * @param options - Processing options (url, jqFilter, maxResultSize, etc.)
+ * @returns ProcessedResponse with content and file save status
+ * @throws TypeError if `response` is not a string
+ * @throws Error if response exceeds the absolute size cap or jq_filter
+ *   is used on non-JSON content
+ */
+export async function processResponse(
+    response: string,
+    options: ProcessResponseOptions
+): Promise<ProcessedResponse> {
+    if (typeof response !== "string") {
+        throw new TypeError("processResponse: response must be a string");
+    }
+
+    // Step 1: Early size guard — runs BEFORE sanitization to avoid wasting CPU on oversized responses
+    const rawBytes = Buffer.byteLength(response, "utf8");
+    if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
+        throw new Error(
+            `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
+        );
+    }
+
+    // Resolve hostname once for injection-detection logging; the defence
+    // pipeline and the post-jq re-sanitise below both label with it.
+    const hostname = safeHostname(options.url);
+
+    // Steps 2-5 — the shared defence pipeline. Extracted so the header
+    // channel takes the identical path; see `defendText`.
+    let content = defendText(response, {
+        contentType: options.contentType,
+        hostname,
+    });
 
     // Step 6: Apply jq filter if provided AND response is JSON
     if (options.jqFilter) {

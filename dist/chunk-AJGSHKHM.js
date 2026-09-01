@@ -37,7 +37,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-GVQMH7MT.js";
+} from "./chunk-4BMNPQ3N.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -258,11 +258,15 @@ Execute HTTP requests with structured, validated parameters.
 
 ### Large Response Handling
 
-Responses larger than \`max_result_size\` (default: 500KB) are automatically saved to a file.
+Response **bodies** larger than \`max_result_size\` (default: 500KB) are automatically saved to a file.
 Files are saved to (in priority order):
 1. \`output_dir\` parameter if provided
 2. \`MCP_CURL_OUTPUT_DIR\` environment variable if set
 3. System temp directory (cleaned up on shutdown)
+
+\`max_result_size\` bounds the body only. Header text from \`include_headers\` is surfaced inline
+even when the body was saved to a file, and carries its own 64KB ceiling with a visible
+\`[headers truncated: \u2026]\` marker when a server exceeds it.
 
 ### jq_filter Syntax
 

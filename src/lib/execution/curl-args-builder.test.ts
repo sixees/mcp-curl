@@ -14,6 +14,33 @@ function makeParams(overrides: Partial<CurlArgsParams> = {}): CurlArgsParams {
 }
 
 describe("buildCurlArgs", () => {
+    describe("-w metadata block", () => {
+        // This block is the contract between buildCurlArgs and
+        // parseResponseWithMetadata/splitResponseHeaders. Drop %{size_header}
+        // and the split has no boundary to use, so it fails closed and
+        // `include_headers` silently reports nothing — green suite, missing
+        // feature. These assertions are what make that a test failure.
+        it("emits size_header before content_type, after the separator", () => {
+            const args = buildCurlArgs(makeParams());
+            const w = args[args.indexOf("-w") + 1];
+            expect(w).toContain("%{size_header}");
+            expect(w).toContain("%{content_type}");
+            expect(w.indexOf("%{size_header}")).toBeLessThan(w.indexOf("%{content_type}"));
+        });
+
+        it("puts the whole metadata block after the escaped separator", () => {
+            const args = buildCurlArgs(makeParams());
+            const w = args[args.indexOf("-w") + 1];
+            expect(w).toBe("\\n---SEP---\\n%{size_header} %{content_type}");
+        });
+
+        it("appends the metadata block to a caller's output_format", () => {
+            const args = buildCurlArgs(makeParams({ output_format: "%{http_code}" }));
+            const w = args[args.indexOf("-w") + 1];
+            expect(w).toBe("%{http_code}\\n---SEP---\\n%{size_header} %{content_type}");
+        });
+    });
+
     describe("--proto flag", () => {
         it("always includes --proto =http,https", () => {
             const args = buildCurlArgs(makeParams());

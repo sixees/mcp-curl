@@ -159,9 +159,21 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
         args.push("-s");
     }
 
-    // Output format for response info (custom format + metadata separator for content-type)
-    // The separator is unique per-request to prevent response injection attacks
-    const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
+    // Output format for response info (custom format + metadata separator for
+    // content-type and header size).
+    //
+    // The separator is unique per-request to prevent response injection attacks.
+    //
+    // Field order is load-bearing: `%{size_header}` is cURL-authored and always
+    // a bare integer, `%{content_type}` is echoed from the remote and may hold
+    // anything. The server-controlled field goes LAST so a crafted
+    // `Content-Type` has no delimiter after it to spoof and cannot shift or
+    // forge the byte count. `size_header` is what tells the response parser
+    // where `-i` headers end — inferring that boundary from the bytes is not
+    // possible, because a body may legitimately be an HTTP transcript.
+    const metadataSuffix =
+        params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") +
+        "%{size_header} %{content_type}";
     if (params.output_format) {
         args.push("-w", params.output_format + metadataSuffix);
     } else {

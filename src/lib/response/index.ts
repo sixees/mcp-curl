@@ -20,7 +20,9 @@ export {
 } from "./file-saver.js";
 
 export {
+    defendText,
     processResponse,
+    type DefendTextOptions,
     type ProcessResponseOptions,
     type ProcessedResponse,
 } from "./processor.js";

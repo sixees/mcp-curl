@@ -24,9 +24,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than being embedded in `response`. In the plain, unfiltered, unsaved case the output is
   unchanged in substance: header text, blank line, body.
 
-  Header text is server-controlled, so it goes through the same `sanitizeAndDetect` sanitisation and
-  injection-detection path that the body gets; splitting it out does not route it around those
-  defences. On a redirect chain every header block is reported, as `curl -i` prints them.
+  Header text is server-controlled, so it goes through **the same defence pipeline as the body** —
+  `defendText`, which is sanitise + injection-detect *and* the markup/markdown strip stages.
+  Splitting it out does not route it around those defences. Header text is declared `text/markdown`
+  for that pass — the strictest grammar — because header values are rendered by whatever the client
+  renders. It is truncated at 64KB (`LIMITS.MAX_HEADER_TEXT_BYTES`) with a visible marker, since it
+  is surfaced inline even when the body was saved to a file and so is not bounded by
+  `max_result_size`. On a redirect chain every header block is reported, as `curl -i` prints them.
+
+  The header/body boundary comes from cURL's own `%{size_header}`, delivered on the `-w` metadata
+  channel behind the unguessable per-request separator. It is never inferred from the response
+  bytes: a body may legitimately *be* an HTTP transcript, so no pattern can tell a real header block
+  from a body that looks like one.
+
+### BREAKING
+
+- **`response` no longer contains the response headers when `include_headers` is set.** Under
+  `include_metadata`, headers move from being embedded at the top of `response` to a discrete
+  `headers` key. A consumer that grabbed a `Set-Cookie` or parsed `^HTTP/` out of `response` now
+  gets nothing — silently, with no error, because the field still exists and still parses.
+
+  This is a change to the published output shape across all four npm entry points (`mcp-curl`,
+  `/cli`, `/lib`, `/schema`), so **it is not a patch release.** The version in `package.json` is
+  deliberately left unchanged here: choosing between a major bump and a compatibility shim is a
+  release decision, and this entry exists so it is made rather than defaulted. Nothing is
+  irreversible until publish; afterwards the shape can only be taken back with a second breaking
+  change.
+
+  Files already on disk are unaffected in either direction — `include_headers` + `save_to_file`
+  wrote unparseable files before this change and `jq_query` could not read them then either, so no
+  previously-written file becomes less readable.
 
 ## [3.2.0] - 2026-09-01
 

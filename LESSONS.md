@@ -142,3 +142,47 @@ restating an existing class under a new name with its own counter.
 > expensive stale prose a repository can hold: the next round is instructed not to
 > check it. Append-only and current are in conflict only if rewriting the entry is the
 > sole way to correct it.
+
+### RC-1 — An invariant can be satisfied by the bug it was written to prevent
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (none; this PR carried no plan)
+
+**Class:** `lost-code-path`, `fail-open-default` — aliases `unescaped-sink`,
+`oversized-payload`, `injectable-input`, `repeated-computation`
+
+- **The plan said:** splitting response headers out of the body was a contained
+  fix. The code comment at `curl-execute.ts::executeCurlRequest` stated the
+  intent correctly — *"splitting it out must not route it around that"* — and
+  `ARCHITECTURE.md` invariant 1, written in the same PR, required every byte
+  returned to the LLM to pass through sanitisation. Both were believed to hold.
+- **Reality was:** both held in letter and the defect was live anyway.
+  `sanitizeAndDetect` is Step 2 of a five-step pipeline; `processResponse` Steps
+  3–5 (markup comments, `<script>`/`<style>` fixed point, markdown beacons,
+  numeric-entity re-detect) were silently lost for the header channel. Header
+  text had been defended for years *because it was concatenated into the body* —
+  never by anything that named it. Separately, `parser.ts::splitResponseHeaders`
+  recovered the boundary by pattern-matching status lines, which cannot work: a
+  body may legitimately be an HTTP transcript, so a real header block and a
+  forged one are the same bytes. That let a remote launder its own content into
+  the metadata channel and silently truncate the body, and made the scan
+  quadratic — 2MB of crafted stdout blocked the event loop for 2.9s,
+  extrapolating to ~74s at the 10MB ceiling, all of it after the abort timer
+  could still fire.
+- **What changed:** Steps 2–5 extracted as `processor.ts::defendText`, called by
+  both `processResponse` and the header path, so no caller can assemble a shorter
+  pipeline. `splitResponseHeaders` now takes the boundary from cURL's own
+  `%{size_header}` on the `-w` channel behind the unguessable per-request
+  separator, and fails closed when it is undetermined. Header text is capped at
+  `LIMITS.MAX_HEADER_TEXT_BYTES` where it is produced, not at the four sites that
+  emit it. `ARCHITECTURE.md` gained invariants 1a, 13 and 14.
+- **What this costs next time:** three rules.
+  1. **An invariant the defect satisfies is not an invariant.** "Goes through
+     sanitisation" was satisfiable by one stage of five. Name the pipeline, not
+     the property, wherever a partial application is possible.
+  2. **A boundary between remote-controlled regions is never inferred from the
+     bytes.** Take it from a channel the remote cannot write to, and fail closed
+     when it is undetermined — "undetermined" and "absent" must not resolve the
+     permissive way.
+  3. **Text defended only as a side effect of where it sat loses that defence the
+     moment it moves.** When splitting a value out of a processed buffer, ask
+     what the buffer was doing *for* it, not only what the new path does *to* it.

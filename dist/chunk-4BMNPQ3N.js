@@ -48,6 +48,18 @@ var LIMITS = {
   MAX_TOTAL_RESPONSE_MEMORY: 1e8,
   /** Characters to show in error previews */
   ERROR_PREVIEW_LENGTH: 200,
+  /**
+   * Maximum bytes of response header text returned inline (64KB).
+   *
+   * Header text is server-controlled and is surfaced inline even when the
+   * body was auto-saved to a file, so it is not covered by
+   * `max_result_size`. Without its own ceiling the only bound is
+   * `MAX_RESPONSE_SIZE` (10MB) — twenty times the default inline return.
+   * cURL permits ~100KB per header line and caps neither header count nor
+   * redirect-chain length, so "headers are small" is an assumption the
+   * remote gets to falsify.
+   */
+  MAX_HEADER_TEXT_BYTES: 64e3,
   /** Max distance from end to search for metadata separator */
   MAX_METADATA_TAIL_LENGTH: 200,
   /** Default request timeout in milliseconds (30 seconds) */
@@ -1459,7 +1471,7 @@ function buildCurlArgs(params) {
   if (params.silent !== false) {
     args.push("-s");
   }
-  const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
+  const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{size_header} %{content_type}";
   if (params.output_format) {
     args.push("-w", params.output_format + metadataSuffix);
   } else {
@@ -1488,36 +1500,34 @@ function parseResponseWithMetadata(rawResponse, separator) {
   }
   const separatorIndex = searchStart + separatorIndexInTail;
   const body = rawResponse.slice(0, separatorIndex);
-  const contentType = rawResponse.slice(separatorIndex + separator.length).trim();
-  return { body, contentType: contentType || void 0 };
+  const metadata = rawResponse.slice(separatorIndex + separator.length);
+  const sizeMatch = /^(\d+) ?/.exec(metadata);
+  const headerBytes = sizeMatch ? Number(sizeMatch[1]) : void 0;
+  const contentType = (sizeMatch ? metadata.slice(sizeMatch[0].length) : metadata).trim();
+  return {
+    body,
+    contentType: contentType || void 0,
+    headerBytes: Number.isSafeInteger(headerBytes) ? headerBytes : void 0
+  };
 }
-var STATUS_LINE_PATTERN = /^HTTP\/\d(?:\.\d)?[ \t]+\d{3}(?:[ \t][^\r\n]*)?\r?\n/;
-function splitResponseHeaders(raw) {
-  const blocks = [];
-  let rest = raw;
-  while (STATUS_LINE_PATTERN.test(rest)) {
-    const crlfEnd = rest.indexOf("\r\n\r\n");
-    const lfEnd = rest.indexOf("\n\n");
-    let end;
-    let terminatorLength;
-    if (crlfEnd !== -1 && (lfEnd === -1 || crlfEnd <= lfEnd)) {
-      end = crlfEnd;
-      terminatorLength = 4;
-    } else if (lfEnd !== -1) {
-      end = lfEnd;
-      terminatorLength = 2;
-    } else {
-      blocks.push(rest);
-      rest = "";
-      break;
-    }
-    blocks.push(rest.slice(0, end));
-    rest = rest.slice(end + terminatorLength);
-  }
-  if (blocks.length === 0) {
+function splitResponseHeaders(raw, headerBytes) {
+  if (headerBytes === void 0 || !Number.isSafeInteger(headerBytes) || headerBytes <= 0) {
     return { body: raw };
   }
-  return { headerText: blocks.join("\n\n"), body: rest };
+  const buf = Buffer.from(raw, "utf8");
+  if (headerBytes > buf.length) {
+    return { body: raw };
+  }
+  const body = buf.subarray(headerBytes).toString("utf8");
+  const capped = headerBytes > LIMITS.MAX_HEADER_TEXT_BYTES;
+  const headerSlice = buf.subarray(0, capped ? LIMITS.MAX_HEADER_TEXT_BYTES : headerBytes);
+  let headerText = headerSlice.toString("utf8").replace(/\r?\n\r?\n$/, "");
+  if (capped) {
+    headerText += `
+
+[headers truncated: ${headerBytes} bytes received, ${LIMITS.MAX_HEADER_TEXT_BYTES} shown]`;
+  }
+  return headerText ? { headerText, body } : { body };
 }
 function sanitizeErrorMessage(message, includeDetails) {
   if (includeDetails) {
@@ -2020,18 +2030,9 @@ function looksLikeMarkupShape(content) {
 }
 
 // src/lib/response/processor.ts
-async function processResponse(response, options) {
-  if (typeof response !== "string") {
-    throw new TypeError("processResponse: response must be a string");
-  }
-  const rawBytes = Buffer.byteLength(response, "utf8");
-  if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
-    throw new Error(
-      `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
-    );
-  }
-  let content = response;
-  const hostname = safeHostname(options.url);
+function defendText(text, options) {
+  let content = text;
+  const { hostname } = options;
   const isMarkup = supportsMarkupComments(options.contentType);
   const isMarkdown = isMarkdownContentType(options.contentType);
   content = sanitizeAndDetect(content, hostname);
@@ -2046,6 +2047,23 @@ async function processResponse(response, options) {
     }
     content = sanitizeAndDetect(content, hostname);
   }
+  return content;
+}
+async function processResponse(response, options) {
+  if (typeof response !== "string") {
+    throw new TypeError("processResponse: response must be a string");
+  }
+  const rawBytes = Buffer.byteLength(response, "utf8");
+  if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
+    throw new Error(
+      `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
+    );
+  }
+  const hostname = safeHostname(options.url);
+  let content = defendText(response, {
+    contentType: options.contentType,
+    hostname
+  });
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);
     const trimmed = content.trim();
@@ -2180,9 +2198,10 @@ Args:
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Report response headers alongside the body. Headers are kept
-    separate from the body, so this combines safely with jq_filter and save_to_file
-    (the saved file holds the body only)
+  - include_headers (boolean): Report response headers alongside the body, under a
+    separate "headers" key. Headers are kept out of the body, so this combines safely
+    with jq_filter and save_to_file (the saved file holds the body only). Header text
+    is truncated at 64KB with a visible marker
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -2208,7 +2227,8 @@ Returns:
   {
     "success": boolean,
     "exit_code": number,
-    "response": string,
+    "response": string (the body alone \u2014 headers are NOT in here),
+    "headers": string (response header text; present only with include_headers),
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
     "filepath": string (path to saved file)
@@ -2264,16 +2284,21 @@ async function executeCurlRequest(params, extra = {}) {
     });
     const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3) * 1e3;
     const result = await executeCommand("curl", args, timeoutMs);
-    const { body: rawBody, contentType } = parseResponseWithMetadata(
+    const { body: rawBody, contentType, headerBytes } = parseResponseWithMetadata(
       result.stdout,
       metadataSeparator
     );
     let responseHeaders;
     let body = rawBody;
     if (params.include_headers) {
-      const split = splitResponseHeaders(rawBody);
+      const split = splitResponseHeaders(rawBody, headerBytes);
       body = split.body;
-      responseHeaders = split.headerText ? sanitizeAndDetect(split.headerText, safeHostname(params.url)) : void 0;
+      if (split.headerText) {
+        responseHeaders = defendText(split.headerText, {
+          contentType: "text/markdown",
+          hostname: safeHostname(params.url)
+        });
+      }
     }
     const processed = await processResponse(body, {
       url: params.url,

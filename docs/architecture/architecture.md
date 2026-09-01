@@ -15,7 +15,7 @@ scope: full
 
 Node ≥18 ESM, TypeScript strict, Zod runtime validation, `@modelcontextprotocol/sdk` 1.x, Express for HTTP transport, `js-yaml` for schema loading, vitest for tests, tsup for bundling. See `package.json` for pinned versions.
 
-- **Distribution.** Published to npm as `mcp-curl` (currently 3.0.2). `prepublishOnly` runs the tsup build; only `dist/` and `docs/` are shipped.
+- **Distribution.** Published to npm as `mcp-curl`; see `package.json` for the current version rather than a number copied here. `prepublishOnly` runs the tsup build; only `dist/` and `docs/` are shipped.
 - **CI/CD.** No `.github/workflows/` checked in. Quality gates rely on local `npm test` plus `.coderabbit.yaml` and `.gemini/styleguide.md` for external review.
 - **Deployment surfaces.** Three modes — global CLI (`bin: curl-mcp`), library import, HTTP server behind a process manager (`TRANSPORT=http PORT=… npm start`).
 
@@ -55,7 +55,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 
 ### Key Workflows
 
-1. **`curl_execute`** — Zod parse → cross-field validation → URL parse + DNS resolve + SSRF check → per-host & per-client rate limit → output-dir validate → unique metadata separator → `buildCurlArgs` (with `--resolve`, `--proto`, `--max-filesize`) → `spawn("curl", …)` no-shell → streamed buffer (memory tracked) → metadata split → header/body split (when `include_headers`) → sanitize + injection-detect → optional jq → inline-vs-save decision → MCP `text` result.
+1. **`curl_execute`** — Zod parse → cross-field validation → URL parse + DNS resolve + SSRF check → per-host & per-client rate limit → output-dir validate → unique metadata separator → `buildCurlArgs` (with `--resolve`, `--proto`, `--max-filesize`) → `spawn("curl", …)` no-shell → streamed buffer (memory tracked) → metadata split (yields `%{size_header}`) → header/body split at that offset (when `include_headers`) → `defendText` on each of body and header text → optional jq → inline-vs-save decision → MCP `text` result.
 2. **`jq_query`** — Path validation (`realpath`, allowed-roots check, traversal reject) → read file → tokenize → time-boxed parse → walk → sanitize + injection-detect → inline-vs-save.
 3. **Hook lifecycle (built-in tools only).** `beforeRequest` (sequential, may short-circuit or merge params) → tool body → on success `afterResponse`, on throw `onError`. **Custom tools and schema-generated tools both bypass this wrapper** — see Workflow #4. All hooks run with a frozen config snapshot.
 4. **YAML → tools.** `loadApiSchema()` (safe `JSON_SCHEMA`, no `!!js/function`) → `validateApiSchema` → `generateToolDefinitions` produces handlers that close over `executeCurlRequest` directly. `api-server.ts` then registers each via `server.registerCustomTool(…)`, **so schema-generated tools bypass `executeWithHooks` in the same way custom tools do.** SSRF, rate limit, sanitize, and injection-detect defenses still apply because they live inside `executeCurlRequest`, not in the hook layer. Operators relying on hooks for observability of *all* tool traffic must wrap their schema/custom handlers themselves.
@@ -63,11 +63,24 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 
 ### Business Rules / Invariants
 
+> **The numbered, citable invariant list lives in `ARCHITECTURE.md` at the repository
+> root** — that is the copy a review finding or an RC cites by number, and the copy to
+> change. The bullets below are the operational rules of this system stated in prose;
+> where the two describe the same property, the numbered list is authoritative. Do not
+> add a new invariant here without adding it there, or the two will diverge — they did
+> once already, and the divergence was found by review rather than by anyone reading
+> both.
+
 - URL must parse, use `http`/`https`, and resolve to a non-private IP before the request issues (unless `MCP_CURL_ALLOW_LOCALHOST=true`).
 - cURL is pinned to the resolved IP via `--resolve hostname:port:ip` — defeats DNS rebinding.
 - `include_headers` reports the header block separately from the body, so it composes
   with `jq_filter` and `save_to_file`; a saved file holds the body only. Header text is
-  server-controlled and goes through the same sanitize + injection-detect path as the body.
+  server-controlled and takes the **full** defence pipeline (`processor.ts::defendText` —
+  sanitise, detect, and the markup/markdown strip stages), not sanitise-and-detect alone;
+  it is capped at `LIMITS.MAX_HEADER_TEXT_BYTES` because it is surfaced inline even when
+  the body was saved. The header/body boundary comes from cURL's `%{size_header}` on the
+  `-w` metadata channel, never from pattern-matching the response bytes. See
+  `ARCHITECTURE.md` invariants 1a, 13 and 14.
 - Both per-host (60/min) **and** per-client (300/min) rate limits apply.
 - `jq_query` reads are confined to `{ tempDir, MCP_CURL_OUTPUT_DIR, cwd-subtree }` after `realpath()` resolution.
 - Responses larger than `max_result_size` (default 500 KB, max 1 MB) auto-save to a `0o600` file.

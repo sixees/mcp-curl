@@ -22,30 +22,42 @@ This file instantiates the [Compound Engineering Methodology](compound-engineeri
 
 ## 2. Path conventions
 
-| Artifact | Location |
-|---|---|
-| Plans (master / deep) | `docs/plans/` |
-| Per-PR handoffs | `docs/work/handoff-<type>-<slug>.md` |
-| Solutions / decision records | `docs/solutions/` |
-| Deferred-work todos | `docs/todos/` |
-| Contributing guide (records the RC convention) | `CONVENTIONS.md` (this repo has no `CONTRIBUTING.md`; conventions live at the root) |
-| This profile | `docs/compound/compound-engineering-profile.md` |
-| Shared/reusable code (reuse-scan scope) | `src/lib/utils/`, `src/lib/config/` (incl. `config/security/`), `src/lib/types/`, `src/lib/security/` — a Step 2 reuse audit looks here first, then at the sibling module it is about to duplicate (`src/lib/response/`, `src/lib/execution/`, `src/lib/jq/`, `src/lib/schema/`) |
+**`CONVENTIONS.md` → *Where work products go* owns this table**, including which
+paths are committed and which are gitignored. It is not restated here: two copies
+of a path table produce a correction applied to one of them.
+
+The one path this file must state, because it is the file: this profile lives at
+`docs/compound/compound-engineering-profile.md`, and it is the sole tracked
+exception inside an otherwise-ignored `docs/compound/`.
+
+Handoffs follow `handoff-<type>-<slug>.md`; the reuse-scan scope for a Step 2
+audit is `src/lib/utils/`, `src/lib/config/` (incl. `config/security/`),
+`src/lib/types/` and `src/lib/security/`, then the sibling module the change is
+about to duplicate.
 
 ## 3. Stack
 
 > Drives what **Surface 3** is expected to catch.
 
-- **Languages / frameworks:** TypeScript 5.5 (strict, ESM, `"type": "module"`) on Node 22 types · Model Context Protocol SDK (`@modelcontextprotocol/sdk` ^1.29) · Express 4 for the HTTP transport · Zod 4 for runtime validation · `js-yaml` for the YAML schema system · built with `tsup`, tested with `vitest`
-- **Datastores:** none. State is in-process only — session map (HTTP transport), rate-limiter counters, memory tracker, and a managed temp directory on local disk for saved responses.
-- **Platform / cloud:** none deployed by this repo. Ships as an npm package (`mcp-curl`) with a `curl-mcp` bin; runs on the operator's machine over stdio, or as an Express HTTP/SSE server the operator hosts.
-- **Other surfaces of risk:**
-  - **Outbound request surface** — this process makes attacker-influenced HTTP requests. SSRF, DNS rebinding, protocol smuggling, and local-file exfiltration via cURL argument shaping are the top risks.
-  - **LLM trust boundary** — every byte returned to the model is attacker-controlled. Prompt injection, Unicode homoglyph/invisible-character attacks, and markup-embedded beacons are in scope.
-  - **Subprocess boundary** — `spawn()` without a shell, compile-time and runtime command allowlist; any change here is a command-injection surface.
-  - **Local filesystem** — `jq_query` reads saved files; path traversal, symlink escape, and output-directory scope are enforced rather than assumed.
-  - **Published API** — this is a library other people import. Type and behaviour changes are wire contracts.
-  - No PII, no multi-tenancy, no money handling in this repo itself — but a downstream consumer may route any of the three through it, which is why response-side sanitisation is treated as a hard boundary rather than a convenience.
+**The stack table lives in `docs/architecture/architecture.md` → *Stack &
+Distribution*, and the numbered invariants in `ARCHITECTURE.md`.** Neither is
+restated here. What this section adds is the part those documents do not carry —
+what the risk surface means *for review*:
+
+- **Outbound request surface.** This process makes attacker-influenced HTTP
+  requests. SSRF, DNS rebinding, protocol smuggling and local-file exfiltration
+  via cURL argument shaping are the top risks.
+- **LLM trust boundary.** Every byte returned to the model is attacker-controlled.
+  Prompt injection, Unicode homoglyph and invisible-character attacks, and
+  markup-embedded beacons are in scope. **Any new text channel is a new instance
+  of this surface** — see invariant 1a, which exists because one was added.
+- **Subprocess boundary.** `spawn()` without a shell, allowlisted command. Any
+  change here is a command-injection surface.
+- **Published API.** Four npm entry points that consumers pin to. Type and
+  behaviour changes are wire contracts.
+- No PII, no multi-tenancy and no money handling in this repo — but a downstream
+  consumer may route any of the three through it, which is why response-side
+  defence is treated as a hard boundary rather than a convenience.
 
 ## 4. Surface 3 — bot-reviewer roster
 

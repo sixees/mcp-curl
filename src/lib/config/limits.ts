@@ -29,6 +29,18 @@ export const LIMITS = {
     MAX_TOTAL_RESPONSE_MEMORY: 100_000_000,
     /** Characters to show in error previews */
     ERROR_PREVIEW_LENGTH: 200,
+    /**
+     * Maximum bytes of response header text returned inline (64KB).
+     *
+     * Header text is server-controlled and is surfaced inline even when the
+     * body was auto-saved to a file, so it is not covered by
+     * `max_result_size`. Without its own ceiling the only bound is
+     * `MAX_RESPONSE_SIZE` (10MB) — twenty times the default inline return.
+     * cURL permits ~100KB per header line and caps neither header count nor
+     * redirect-chain length, so "headers are small" is an assumption the
+     * remote gets to falsify.
+     */
+    MAX_HEADER_TEXT_BYTES: 64_000,
     /** Max distance from end to search for metadata separator */
     MAX_METADATA_TAIL_LENGTH: 200,
     /** Default request timeout in milliseconds (30 seconds) */

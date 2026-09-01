@@ -7,7 +7,8 @@ own the rest, and each fact lives in exactly one of them:
 
 | Question | Document |
 |---|---|
-| How is this system built? What must a change not break? | [`ARCHITECTURE.md`](./ARCHITECTURE.md) |
+| What must a change not break? (numbered invariants, trust boundaries) | [`ARCHITECTURE.md`](./ARCHITECTURE.md) |
+| How is this system built? (stack, lifecycle, security detail) | [`docs/architecture/architecture.md`](./docs/architecture/architecture.md) |
 | What must the work look like? | [`CONVENTIONS.md`](./CONVENTIONS.md) |
 | What went wrong before, and what did it teach us? | [`LESSONS.md`](./LESSONS.md) |
 | How is the workflow configured for this repo? | [`docs/compound/compound-engineering-profile.md`](./docs/compound/compound-engineering-profile.md) |
@@ -53,8 +54,11 @@ before sanitising. Check `ARCHITECTURE.md` before simplifying any of it.
 
 ## What lives where
 
-- **Architecture, module map, tools, security model, invariants** →
-  [`ARCHITECTURE.md`](./ARCHITECTURE.md)
+- **Numbered invariants and the trust-boundary map** →
+  [`ARCHITECTURE.md`](./ARCHITECTURE.md). Cite them by number.
+- **Stack, directory structure, request lifecycle, data stores, full security
+  architecture** → [`docs/architecture/architecture.md`](./docs/architecture/architecture.md)
+  (this one is published to npm; the root file is not)
 - **Code style, naming, layering rules, test and commit conventions, work-product
   paths** → [`CONVENTIONS.md`](./CONVENTIONS.md)
 - **Reality Corrections and the shapes this project has earned** →
