@@ -5,7 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.2.0] - 2026-09-01
+
+### Added
+
+- **Prompt-injection hardening across every tool-response path** (PR-4 … PR-8). Response sanitisation
+  expanded to cover the Variation Selector Supplement ("Sneaky Bits"), Braille blank, Hangul fillers,
+  Mongolian invisibles and Arabic Letter Mark; visual-space-padding and newline runs collapsed; an
+  idempotence loop defeats interleaved padding. HTML/Markdown stripping is ReDoS-hardened with a
+  bounded fixed-point loop and a body-shape sniffer for tampered Content-Types. Injection detection
+  now normalises NFKC before matching and logs (never redacts) to stderr.
+
+- **Defence-in-depth response wrap** on YAML endpoints, custom tools and hook short-circuit returns
+  (PR-6b), so every tool result routes through one post-processor.
+
+- **YAML schemas sanitised at parse time** (PR-6a), closing an `ApiSchemaValidator` bypass: bidi and
+  zero-width bytes can no longer reach the LLM or appear in Zod error messages.
+
+- **`registerCustomTool()` auto-sanitises `inputSchema` field descriptions** at every depth (PR-5),
+  recursing through all Zod wrapper and container types while preserving runtime invariants.
+
+- **HTTP auth-token validation** (PR-4): `MCP_AUTH_TOKEN` must be printable ASCII and ≤4096 chars;
+  the rejected token is never echoed, and bearer comparison is timing-safe.
+
+- URL helper hardening and public-barrel symmetry (PR-1); `executeJqQuery` unit tests (PR-2);
+  architecture overview and integration-test script.
 
 ### Fixed
 
