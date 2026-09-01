@@ -4,8 +4,15 @@
 export {
     parseResponseWithMetadata,
     sanitizeErrorMessage,
+    splitResponseHeaders,
     type ParsedResponse,
+    type SplitResponse,
 } from "./parser.js";
+
+export {
+    extractHeaderChannel,
+    type HeaderChannel,
+} from "./header-channel.js";
 
 export {
     formatResponse,
@@ -18,7 +25,9 @@ export {
 } from "./file-saver.js";
 
 export {
+    defendText,
     processResponse,
+    type DefendTextOptions,
     type ProcessResponseOptions,
     type ProcessedResponse,
 } from "./processor.js";

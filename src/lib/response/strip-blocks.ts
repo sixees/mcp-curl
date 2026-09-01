@@ -265,11 +265,15 @@ function decodeNumericHtmlEntities(input: string): string {
  * @param input - text content to strip (caller is responsible for
  *                content-type gating; this function does not check it)
  */
-export function stripBlocksFixedPoint(input: string): string {
+export function stripBlocksFixedPoint(
+    input: string,
+    options: { decodeEntities?: boolean } = {}
+): string {
+    const { decodeEntities = true } = options;
     if (Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES) return input;
     let curr = input;
     for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
-        const decoded = decodeNumericHtmlEntities(curr);
+        const decoded = decodeEntities ? decodeNumericHtmlEntities(curr) : curr;
         const next = decoded.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
         if (next === curr) return next;
         curr = next;

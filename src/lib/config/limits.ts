@@ -29,8 +29,42 @@ export const LIMITS = {
     MAX_TOTAL_RESPONSE_MEMORY: 100_000_000,
     /** Characters to show in error previews */
     ERROR_PREVIEW_LENGTH: 200,
-    /** Max distance from end to search for metadata separator */
-    MAX_METADATA_TAIL_LENGTH: 200,
+    /**
+     * Maximum bytes of response header text returned inline (64KB).
+     *
+     * Header text is server-controlled and is surfaced inline even when the
+     * body was auto-saved to a file, so it is not covered by
+     * `max_result_size`. Without its own ceiling the only bound is
+     * `MAX_RESPONSE_SIZE` (10MB) — twenty times the default inline return.
+     * cURL permits ~100KB per header line and caps neither header count nor
+     * redirect-chain length, so "headers are small" is an assumption the
+     * remote gets to falsify.
+     */
+    MAX_HEADER_TEXT_BYTES: 64_000,
+    // NOTE: the EFFECTIVE ceiling on returned header text is
+    // `min(MAX_HEADER_TEXT_BYTES, max_result_size)` — header text is inline, so
+    // it honours the caller's inline budget too. Cite this constant rather than
+    // restating either number; four documents said "64KB" unconditionally and
+    // were wrong for any caller who set a smaller max_result_size.
+    /**
+     * Byte allowance for the `-w` metadata FIELDS, searched backwards from the
+     * end of stdout. **This is the budget for the fields only** — the window
+     * actually searched is this plus the separator's own length.
+     *
+     * It must not be a flat constant that the separator and a remote-controlled
+     * field share. `%{content_type}` is echoed verbatim from the origin and has
+     * no length limit, so when the three shared one 200-byte budget an origin
+     * could evict the separator simply by sending a long `Content-Type` — a
+     * legal `application/vnd.api+json; charset=utf-8; profile="…"` did it at
+     * ~144 characters. The parse then found no separator, reported every
+     * cURL-authored field as absent, and the caller silently lost both the
+     * header/body split and the content-type-driven strip stages.
+     *
+     * 8KB covers every realistic origin (cURL permits ~100KB per header line,
+     * but no real service approaches that in a Content-Type). Beyond it the
+     * parse fails closed and the caller is told the metadata is undetermined.
+     */
+    MAX_METADATA_TAIL_LENGTH: 8_192,
     /** Default request timeout in milliseconds (30 seconds) */
     DEFAULT_TIMEOUT_MS: 30_000,
     /** Maximum filename length for saved files */

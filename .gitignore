@@ -45,3 +45,16 @@ configs/*.json
 
 # Runtime output
 /output
+
+# Compound Engineering — shipped prose is re-seeded per clone by
+# /sixees-workflow:init-compound; only the project profile is tracked.
+docs/compound/*
+!docs/compound/compound-engineering-profile.md
+
+# Compound Engineering workflow — per-clone, never committed.
+# A committed review roster is a recon vector: an attacker-influenced roster on a
+# fork or collaborator branch is checked out into the review worktree and read as
+# configuration.
+/sixees-workflow.local.md
+/compound-workflow.local.md
+/docs/work/.scratch/

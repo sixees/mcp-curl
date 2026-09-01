@@ -63,7 +63,14 @@ export const CurlExecuteSchema = z.object({
         .describe("Include verbose output with request/response details"),
     include_headers: z.boolean()
         .default(false)
-        .describe("Include response headers in output"),
+        .describe(
+            "Report response headers. They never enter the saved file or the jq_filter " +
+            "input, which is what makes this safe to combine with save_to_file and " +
+            "jq_filter. With include_metadata they arrive under a separate 'headers' key; " +
+            "without it they are prefixed to the returned text followed by a blank line, " +
+            "so that result is not JSON-parseable. Capped at 64KB; truncation is reported " +
+            "via headers_truncated"
+        ),
     compressed: z.boolean()
         .default(true)
         .describe("Request compressed response and automatically decompress"),

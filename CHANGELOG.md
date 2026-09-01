@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-09-01
+
+### Fixed
+
+- **`include_headers` no longer corrupts the response body.** cURL's `-i` prepends the header block
+  to the body on stdout, and that combined string was passed straight into body processing. Two
+  consequences: `save_to_file` wrote the status line and headers above the JSON, so the saved file
+  was not a valid JSON document and `jq_query` could not read it back; and `jq_filter` had to be
+  rejected outright with "Cannot use jq_filter with include_headers". Headers are now split from the
+  body before any body-shaped operation, so a saved file holds the body alone.
+
+### Changed
+
+- **`include_headers` composes with `jq_filter` and `save_to_file`.** The cross-field validation that
+  rejected `include_headers` + `jq_filter` is gone — the combination now filters the body and reports
+  the headers next to it. Under `include_metadata` the headers arrive as a discrete `headers` key
+  rather than being embedded in `response`. In the plain, unfiltered, unsaved case the output is
+  unchanged in substance: header text, blank line, body.
+
+  Header text is server-controlled, so it goes through **the same defence pipeline as the body** —
+  `defendText`, which is sanitise + injection-detect *and* the markup/markdown strip stages.
+  Splitting it out does not route it around those defences. Header text is declared `text/markdown`
+  for that pass — the strictest grammar — because header values are rendered by whatever the client
+  renders. It is capped at `min(LIMITS.MAX_HEADER_TEXT_BYTES, max_result_size)` — it is surfaced
+  inline even when the body was saved to a file, so it honours both its own ceiling and the
+  caller's inline budget. Truncation is reported out of band (see **Added**), never as a
+  marker inside the header text. On a redirect chain every header block is reported, as `curl -i` prints them.
+
+  The header/body boundary comes from cURL's own `%{size_header}`, delivered on the `-w` metadata
+  channel behind the unguessable per-request separator. It is never inferred from the response
+  bytes: a body may legitimately *be* an HTTP transcript, so no pattern can tell a real header block
+  from a body that looks like one.
+
+### Changed — response shape under `include_headers`
+
+- **`response` no longer contains the response headers when `include_headers` is set.** Under
+  `include_metadata`, headers move from being embedded at the top of `response` to a discrete
+  `headers` key. A consumer that grabbed a `Set-Cookie` or parsed `^HTTP/` out of `response` would
+  now get nothing — silently, with no error, because the field still exists and still parses.
+
+  **Released as a MINOR bump, deliberately.** This is a change to a published output shape and
+  would ordinarily be a MAJOR. It is not treated as one because this package has no consumers:
+  the rule exists to protect people pinning to the old shape, and there are none. Recording the
+  decision here so it reads as a deliberate posture rather than an oversight — and so that the
+  next such change, made once consumers exist, is not justified by pointing at this one.
+
+  `mcp-curl/schema` is unaffected either way: YAML-driven endpoints pin `include_headers: false`
+  (`schema/generator.ts::createToolHandler`), so no `/schema` consumer could have had headers
+  inside `response`.
+
+  Files already on disk are unaffected in either direction — `include_headers` + `save_to_file`
+  wrote unparseable files before this change and `jq_query` could not read them then either, so no
+  previously-written file becomes less readable.
+
+### Added
+
+- `headers_truncated` / `header_bytes_received` / `headers_undetermined` metadata fields, reported
+  out of band so a remote cannot author them by sending the same words in a header value.
+- `processor.ts::defendText` — the shared five-stage defence pipeline, so no text channel can
+  assemble a shorter one.
+
 ## [3.2.0] - 2026-09-01
 
 ### Added

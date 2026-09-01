@@ -1,0 +1,348 @@
+# Lessons
+
+> Seeded by `/sixees-workflow:init-compound`. **It is yours now** — nothing
+> overwrites it, and nothing refreshes it. Append to it; do not rewrite it.
+
+**This file is the Reality Correction ledger.** Every RC lands here, permanently,
+in addition to the PR handoff it was filed in.
+
+**Why it exists, and it is the whole point of the file.** A handoff is read once,
+by the run that wrote it, and then it is archived. An RC recorded only there is a
+lesson that expires the moment the PR merges — so the next session rediscovers it,
+pays for it again, and files it again under a new number. This file is the one
+place a lesson outlives the run that learned it.
+
+It is not a changelog. A changelog says what shipped; this says what reality
+turned out to be, and what it cost to find out.
+
+Read it when a rule looks arbitrary, and **before planning anything that touches a
+surface an RC already names**. Do not read it as a checklist: a new defect that
+looks like none of these still needs its own investigation.
+
+---
+
+## Filing an RC
+
+**When.** Reality diverges from the plan. What the plan assumed was not true, and
+the work had to change course.
+
+**Number.** `RC-N`, sequential across the whole trail. The unit — per project, per
+feature or per theme — is declared in this project's Compound Engineering profile.
+Claim the number at the time; it is durable once assigned.
+
+**Where.** Two places, both required: inline in the PR handoff beside the work it
+corrected, and appended to the ledger below. Add a one-line `POST-AUDIT`
+annotation in the plan pointing at the RC — and **never retro-edit plan text.** The
+plan is the record of what was believed; correcting it in place destroys the only
+evidence that anything diverged.
+
+**What is not an RC.** Plan typos go to commit history. Requirement pivots go to a
+kickoff update. Unrelated bugs go to the todo system. An RC is specifically: the
+plan said X, reality was Y.
+
+### Entry format
+
+```markdown
+### RC-N — <one line: what reality turned out to be>
+
+**Date:** YYYY-MM-DD · **PR:** #N · **Plan:** <path>
+
+**Class:** <the `K-` shapes and local `C` classes this instantiates, or `—`>
+
+- **The plan said:** what was assumed, and where that assumption came from.
+- **Reality was:** what was actually true, and how it was discovered.
+- **What changed:** the decision taken, with the specific files and symbols.
+- **What this costs next time:** the rule, if there is one. Not every RC yields a
+  rule; say so rather than inventing one.
+```
+
+Name the files and symbols. An RC that says "fixed the auth handling" is a note to
+nobody — the next reader needs to know *where* to be careful.
+
+### A near-miss is recorded as caught
+
+An RC found before merge is recorded as **caught**, not re-framed as a failure that
+slipped through. A dense ledger is the discipline working, and a project whose
+ledger is thin is usually one that stopped filing, not one that stopped diverging.
+
+### Settled conflicts stay settled
+
+**A review finding that reverses an earlier round's change is a divergence, and
+gets an RC like any other.** It is not a fix to apply.
+
+When a finding asks you to undo what a previous round did: stop, state both
+positions in one line each, and put it to the director. Record the answer here.
+Then treat that RC as binding — a later round proposing the same reversal is
+answered by citing it, not by re-litigating. Without this, review surfaces with no
+memory of each other oscillate, and round N's fix becomes round N+1's finding.
+
+---
+
+## Shapes
+
+**The `K-` shapes live in `.claude/rules/01-known-shapes.md`, not here**, and
+that placement is the point: rules load at the start of every session, so the
+vocabulary is in context *before* the work — which is the only time a lookout list
+helps. They are also shipped prose, refreshed by
+`/sixees-workflow:refresh-compound`, so they improve for every repo at once; a copy
+in this file would freeze at the day it was seeded. **Do not restate the table here**,
+and do not edit the loaded copy — `.claude/rules/` is a materialisation, so a local
+change to it is lost at the next refresh. A shape you want changed is a change to the
+plugin; a shape that is *yours* goes below.
+
+An entry's `Class:` field cites those ids. Instances are a query, never a list
+maintained by hand:
+
+```bash
+grep -n '^\*\*Class:\*\* .*K-9' LESSONS.md          # every entry citing K-9
+grep -c '^\*\*Class:\*\* —$' LESSONS.md              # entries that matched no shape
+```
+
+### A shape this project earned
+
+**A shape seen three times *here* that the loaded table does not name — number it `C1`,
+`C2`, …, never `K-`.** Different prefixes so a grep for one cannot match the other,
+and so it stays visible which shapes were inherited and which this project paid for
+itself. State the rule once, and let the entries cite it; **a heading never owns the
+list of its instances**, because that copy goes stale on the next entry and then
+reads as the shape being obsolete.
+
+**`—` is a real answer**, and so is a long-empty section: the inherited table is a
+wide net. But treat a *run* of `—` as a signal the list is missing something rather than
+as a tidy ledger.
+
+**Naming the shape is a step in filing an RC, not a periodic tidy-up** — which is
+why the entry format has a field for it. A blank field is a question the filer has to
+answer; a paragraph of law is not. Measured once, in the project that wrote this
+section: the law was stated and nothing asked the question, so the ledger reached
+RC-45 with nine shapes past the threshold, **one** heading written, and one entry
+restating an existing class under a new name with its own counter.
+
+---
+
+## RC ledger
+
+> Newest last. Append; never edit an entry once filed. If an RC turns out to be
+> wrong, file a new one that says so and cite it.
+>
+> **Two annotations may be added to a filed entry, and nothing else.** A
+> `**Class:**` line, and a `**Mechanism superseded:**` line naming what no longer
+> exists at HEAD and the RC that replaced it. Both are **additive** — they sit above
+> the body and change no word of it, because the body is the record of what was
+> believed, and correcting it in place destroys the only evidence anything diverged.
+>
+> **The body is frozen; an annotation is maintained.** It points at HEAD, so when HEAD
+> moves again the pointer names the newer RC — an annotation that has itself gone stale
+> is the defect it exists to prevent.
+>
+> **The second one is required rather than optional, because an entry's lesson
+> outlives its fix and this format states them in one breath.** A reader arriving for
+> the durable half is told the mechanism with equal confidence, and a binding entry is
+> *cited rather than re-litigated* — so a stale mechanism inside one is the most
+> expensive stale prose a repository can hold: the next round is instructed not to
+> check it. Append-only and current are in conflict only if rewriting the entry is the
+> sole way to correct it.
+
+### RC-1 — An invariant can be satisfied by the bug it was written to prevent
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (none; this PR carried no plan)
+
+**Class:** K-1, K-2 — *class-id:* `lost-code-path`, `fail-open-default`
+
+_(superseded by the line above; retained as filed)_ **Class:** `lost-code-path`, `fail-open-default` — aliases `unescaped-sink`,
+`oversized-payload`, `injectable-input`, `repeated-computation`
+
+- **The plan said:** splitting response headers out of the body was a contained
+  fix. The code comment at `curl-execute.ts::executeCurlRequest` stated the
+  intent correctly — *"splitting it out must not route it around that"* — and
+  `ARCHITECTURE.md` invariant 1, written in the same PR, required every byte
+  returned to the LLM to pass through sanitisation. Both were believed to hold.
+- **Reality was:** both held in letter and the defect was live anyway.
+  `sanitizeAndDetect` is Step 2 of a five-step pipeline; `processResponse` Steps
+  3–5 (markup comments, `<script>`/`<style>` fixed point, markdown beacons,
+  numeric-entity re-detect) were silently lost for the header channel. Header
+  text had been defended for years *because it was concatenated into the body* —
+  never by anything that named it. Separately, `parser.ts::splitResponseHeaders`
+  recovered the boundary by pattern-matching status lines, which cannot work: a
+  body may legitimately be an HTTP transcript, so a real header block and a
+  forged one are the same bytes. That let a remote launder its own content into
+  the metadata channel and silently truncate the body, and made the scan
+  quadratic — 2MB of crafted stdout blocked the event loop for 2.9s,
+  extrapolating to ~74s at the 10MB ceiling, all of it after the abort timer
+  could still fire.
+- **What changed:** Steps 2–5 extracted as `processor.ts::defendText`, called by
+  both `processResponse` and the header path, so no caller can assemble a shorter
+  pipeline. `splitResponseHeaders` now takes the boundary from cURL's own
+  `%{size_header}` on the `-w` channel behind the unguessable per-request
+  separator, and fails closed when it is undetermined. Header text is capped at
+  `LIMITS.MAX_HEADER_TEXT_BYTES` where it is produced, not at the four sites that
+  emit it. `ARCHITECTURE.md` gained invariants 1a, 13 and 14.
+- **What this costs next time:** three rules.
+  1. **An invariant the defect satisfies is not an invariant.** "Goes through
+     sanitisation" was satisfiable by one stage of five. Name the pipeline, not
+     the property, wherever a partial application is possible.
+  2. **A boundary between remote-controlled regions is never inferred from the
+     bytes.** Take it from a channel the remote cannot write to, and fail closed
+     when it is undetermined — "undetermined" and "absent" must not resolve the
+     permissive way.
+  3. **Text defended only as a side effect of where it sat loses that defence the
+     moment it moves.** When splitting a value out of a processed buffer, ask
+     what the buffer was doing *for* it, not only what the new path does *to* it.
+
+### RC-2 — The fix for a boundary bug introduced a boundary bug one layer down
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
+
+**Class:** K-11, K-10 — *class-id:* `broken-contract`, `untyped-boundary`
+
+_(superseded by the line above; retained as filed)_ **Class:** `broken-contract`, `untyped-boundary`
+
+- **The plan said:** taking the header/body split from cURL's `%{size_header}`
+  removed the class, because the offset now comes from a channel the origin
+  cannot write to. RC-1 recorded that as settled.
+- **Reality was:** the offset was correct and was applied to the wrong thing.
+  `%{size_header}` counts **wire** bytes; `command-executor.ts::executeCommand`
+  accumulated stdout with `stdout += data.toString()`, so every byte that is not
+  valid UTF-8 became U+FFFD and re-encoded to three bytes where the wire had one.
+  Indexing the re-encoded string with a wire offset splits early, gluing the
+  header terminator onto the front of the body — the exact corruption the PR
+  exists to remove. The fail-closed guard `headerBytes > buf.length` could never
+  fire, because replacement only ever *inflates*: I wrote a guard for the right
+  cause pointing the wrong way. The same `.toString()` per chunk also corrupted
+  valid UTF-8 straddling a chunk boundary, which was pre-existing and which the
+  fix made load-bearing.
+- **What changed:** `executeCommand` accumulates `Buffer[]` and concatenates
+  once, exposing `stdoutBytes`; `parseResponseWithMetadata` and
+  `splitResponseHeaders` operate on octets and return `bodyBytes`.
+  `ARCHITECTURE.md` invariant 13 gained its second half.
+- **What this costs next time:** two rules.
+  1. **An offset and the thing it indexes are one type, not two.** If a count is
+     measured on representation A, it may only index representation A. Where a
+     decode sits between them, the decode is the defect site — not the indexer.
+  2. **A guard must point the way the failure actually goes.** Ask which
+     direction the quantity moves under the fault before writing the comparison.
+     A length check against inflation catches nothing, and reads as protection.
+
+### RC-3 — "Over-stripping costs nothing" was false: the pipeline is not purely subtractive
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
+
+**Class:** K-3 — *class-id:* `unescaped-sink`
+
+_(superseded by the line above; retained as filed)_ **Class:** `unescaped-sink`
+
+- **The plan said:** declaring header text `text/markdown` — the strictest
+  grammar — was safe, because running extra strip stages on a header value could
+  only remove things. The comment said so in terms.
+- **Reality was:** `strip-blocks.ts::stripBlocksFixedPoint` calls
+  `decodeNumericHtmlEntities` and **returns the decoded content**. A header
+  carrying inert `&#x49;&#x67;&#x6e;...` — text Step 2 correctly passed as
+  harmless — came out as a live `Ignore all previous instructions`. On a body
+  that is correct, because the renderer would decode anyway and Step 5 needs to
+  see the decoded form. On a channel whose consumer does not decode, it is
+  additive: the pipeline manufactured the payload on the origin's behalf.
+- **What changed:** `stripBlocksFixedPoint` takes `{ decodeEntities }`;
+  `defendText` exposes it; the header channel passes `false`.
+- **What this costs next time:** **"stricter" is only safe for stages that
+  subtract.** Before applying a pipeline to a channel it was not written for,
+  enumerate which of its stages *transform* rather than remove, and ask what the
+  consumer of that channel does with the result. A stage that decodes, expands or
+  normalises adds meaning, and adding meaning to attacker-controlled text is
+  authoring it for them.
+
+### RC-4 — Internal work products were published to npm by a wildcard
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
+
+**Class:** K-3 — *class-id:* `missing-validation`, `unretained-pii`
+
+_(superseded by the line above; retained as filed)_ **Class:** `missing-validation`
+
+- **The plan said:** `docs/` is the project's documentation tree, and
+  `CONVENTIONS.md` — written in this same PR — states plainly that anything put
+  there ships to npm consumers, so authors would write accordingly.
+- **Reality was:** the very next act in the same PR was to write
+  `docs/todos/001` — an **open, severity P1** security todo naming an unfixed
+  defence gap, its call site, its missing stages and a worked failure scenario —
+  into that published tree, alongside a profile stating the repository has no
+  branch protection and no required reviews. `package.json` `files` was
+  `["dist","docs"]`, so both would have shipped in the tarball with the version
+  they describe a gap in. npm forbids re-publishing a version and bars unpublish
+  after 72 hours. `docs/brainstorms/` had been shipping this way already.
+- **What changed:** `files` names the seven consumer documents explicitly;
+  `src/lib/release-guards.test.ts` fails if anything under `docs/todos/`,
+  `work/`, `plans/`, `compound/`, `solutions/` or `brainstorms/` resolves into
+  the package, with a positive control asserting the consumer docs still do.
+- **What this costs next time:** **a convention that only prose enforces is not
+  enforced.** The rule was written down, in the same change that broke it, by the
+  same author, and that is the strongest available evidence that the layer was
+  wrong rather than the author careless. Where a rule governs an irreversible act
+  — publish, push, delete — put it in something that runs. Also: **an allowlist
+  of directories is a wildcard over their future contents.** `files: ["docs"]`
+  was a decision about every file anyone would ever put there.
+
+### RC-5 — The guard written to enforce RC-4 contained the defect RC-2 named
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 3, self-probe)
+
+**Class:** K-1 — *class-id:* `missing-validation`
+
+_(superseded by the line above; retained as filed)_ **Class:** `missing-validation` — instantiates RC-2's rule 2
+
+- **The plan said:** `src/lib/release-guards.test.ts` closed RC-4 by putting the
+  publish-time rules into something that runs. Two guards: nothing internal in
+  the tarball, and no `### BREAKING` heading unbacked by a major bump.
+- **Reality was:** only the first had teeth. The second computed the prior major
+  as `[...all version headings].filter(n => n !== major)`, intending to skip the
+  current release's own heading — but that filter drops **every** prior 3.x
+  release too, leaving an empty list, `lastMajor = 0`, and an assertion of
+  `3 > 0` that passes for any 3.x version forever. Reintroducing a `BREAKING`
+  heading at 3.3.0 did not fail the suite. Found only by probing the guard;
+  nothing about reading it suggested a problem.
+- **What changed:** the prior major now comes from the first version heading
+  strictly below the top section. Both guards re-probed: reverting `files` to the
+  `docs/` wildcard fails the tarball tests, and a `BREAKING` heading at 3.3.0
+  fails the version test.
+- **What this costs next time:** **a guard is not done when it is written, only
+  when it has been made to fail.** This is RC-2's second rule — *a guard must
+  point the way the failure actually goes* — reappearing one round later, inside
+  the fix for a different RC, written by someone who had just recorded that rule.
+  Knowing a lesson is not the same as applying it, so the control cannot be
+  knowledge; it has to be the probe. Treat "I wrote a guard" and "I saw the guard
+  fail" as different states, and never report the first as the second.
+
+  Corollary, because this is where it hid: **an exclusion written to skip *this*
+  item will usually skip a whole class of items.** `!== major` meant "not this
+  release" to the author and "no 3.x release at all" to the machine. Prefer
+  positional selection (the heading below) over value-based exclusion when the
+  value is not unique.
+
+### RC-6 — A sweep that enumerates the weak call finds only channels that make it
+
+**Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 3)
+
+**Class:** K-4 — *class-id:* `unescaped-sink`, `missing-validation`
+
+- **The plan said:** `docs/todos/001` tracked the remaining channels taking a
+  shorter defence path, and its sweep — `rg 'sanitizeAndDetect\('` — enumerated
+  them. Two instances were recorded and the class was believed bounded. Three
+  reviewers across two rounds ran variants of that query and agreed.
+- **Reality was:** the query can only surface a channel that calls a *weaker*
+  defence. A channel calling **none** matches nothing and reads as absent. cURL
+  stderr was exactly that: passed verbatim from `executeCurlRequest` to
+  `formatResponse`, reaching the model with no sanitisation, no strip, no
+  injection logging — and under `verbose: true` it carries the origin's own
+  response headers. It had been there the whole time, invisible to every sweep
+  because the sweep was derived from the instance in hand rather than from the
+  class's definition.
+- **What changed:** stderr now takes `defendText` with the same arguments as the
+  header channel. Todo 001's sweep was replaced with one over the *sink* —
+  `rg 'output\.[a-z_]+ = |text: '` across the formatter and the tools — and the
+  reason the old one was wrong is recorded there so it is not reinstated.
+- **What this costs next time:** **derive the sweep from what the class IS, not
+  from what the found instance DOES.** "Channels that call `sanitizeAndDetect`"
+  is a description of two known sites; "text that reaches the returned result" is
+  the class. The first is a list of the bugs already found — `CONVENTIONS.md` →
+  *Tests* states the same rule for deny-lists, and it binds sweeps identically.
+  A practical test: ask whether the query could match an instance nobody has seen
+  yet. If it can only match code shaped like the example, it is not a sweep.

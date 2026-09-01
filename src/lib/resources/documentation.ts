@@ -39,7 +39,7 @@ Execute HTTP requests with structured, validated parameters.
 | bearer_token | string | No | - | Bearer token for Authorization |
 | basic_auth | string | No | - | Basic auth as "username:password" |
 | follow_redirects | boolean | No | true | Follow HTTP redirects |
-| include_headers | boolean | No | false | Include response headers |
+| include_headers | boolean | No | false | Report response headers. Never written into the saved file or the jq_filter input; a separate \`headers\` key under include_metadata, otherwise prefixed to the returned text |
 | include_metadata | boolean | No | false | Return JSON with metadata |
 | jq_filter | string | No | - | JSON path filter (e.g., ".data.items[0]") |
 | max_result_size | number | No | 500KB | Max bytes inline before auto-save (max: 1MB) |
@@ -48,11 +48,18 @@ Execute HTTP requests with structured, validated parameters.
 
 ### Large Response Handling
 
-Responses larger than \`max_result_size\` (default: 500KB) are automatically saved to a file.
+Response **bodies** larger than \`max_result_size\` (default: 500KB) are automatically saved to a file.
 Files are saved to (in priority order):
 1. \`output_dir\` parameter if provided
 2. \`MCP_CURL_OUTPUT_DIR\` environment variable if set
 3. System temp directory (cleaned up on shutdown)
+
+\`max_result_size\` bounds the body. Header text from \`include_headers\` is surfaced inline even
+when the body was saved to a file, and is capped at \`min(64KB, max_result_size)\` — it honours
+the caller's inline budget as well as its own ceiling. Truncation is reported out of band as
+\`headers_truncated\` / \`header_bytes_received\` under \`include_metadata\`, and as a leading
+\`[mcp-curl]\` notice otherwise — never as a marker inside the header text, which a server
+could simply send verbatim.
 
 ### jq_filter Syntax
 

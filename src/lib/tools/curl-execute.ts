@@ -7,13 +7,15 @@ import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
-import { getErrorMessage, safeHostname } from "../utils/index.js";
+import { getErrorMessage, safeHostname, MARKDOWN_MIME } from "../utils/index.js";
 import { executeCommand, buildCurlArgs } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
     sanitizeErrorMessage,
     formatResponse,
     processResponse,
+    defendText,
+    extractHeaderChannel,
 } from "../response/index.js";
 
 /** Tool result type returned by executeCurlRequest */
@@ -55,7 +57,15 @@ Args:
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Include response headers in output
+  - include_headers (boolean): Report response headers. With include_metadata they
+    arrive under a separate "headers" key; without it they are prefixed to the returned
+    text followed by a blank line, so that result is NOT JSON-parseable. On both
+    branches headers never reach the saved file and never reach jq_filter, which is
+    what makes this safe to combine with save_to_file and jq_filter — and if the
+    header/body boundary cannot be determined, those two are refused rather than
+    performed on unseparated bytes. Header text is capped at
+    min(64KB, max_result_size); truncation is reported as headers_truncated under
+    include_metadata, and as a leading [mcp-curl] notice otherwise
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -81,7 +91,8 @@ Returns:
   {
     "success": boolean,
     "exit_code": number,
-    "response": string,
+    "response": string (the body alone — headers are NOT in here),
+    "headers": string (response header text; present only with include_headers),
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
     "filepath": string (path to saved file)
@@ -131,16 +142,6 @@ export async function executeCurlRequest(
     extra: CurlExecuteExtra = {}
 ): Promise<CurlExecuteResult> {
     try {
-        // Validate incompatible options: include_headers prepends HTTP headers to response,
-        // making it non-JSON and breaking jq_filter parsing
-        if (params.include_headers && params.jq_filter) {
-            throw new Error(
-                "Cannot use jq_filter with include_headers. " +
-                "HTTP headers in the response make it non-JSON. " +
-                "Remove include_headers to use jq_filter, or remove jq_filter to see headers."
-            );
-        }
-
         // Validate basic_auth format if provided
         if (params.basic_auth && !params.basic_auth.includes(":")) {
             throw new Error("basic_auth must be in 'username:password' format");
@@ -178,8 +179,51 @@ export async function executeCurlRequest(
         const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
         const result = await executeCommand("curl", args, timeoutMs);
 
-        // Parse response using the same unique separator
-        const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);
+        let headerTruncated = false;
+        let headerBytesReceived: number | undefined;
+
+        // Parse response using the same unique separator. Byte-exact: the
+        // header boundary below is a WIRE byte count, and `result.stdout` is a
+        // lossy UTF-8 view of those bytes.
+        const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
+        const { contentType, headerBytes, metadataFound } = parsed;
+
+        // `-i` prepends the header block to the body on stdout. Taking it off,
+        // defending it and bounding it is one concern with one home — see
+        // `extractHeaderChannel`, which lives beside the functions it composes
+        // because every defect here has been a composition defect.
+        let responseHeaders: string | undefined;
+        let headersUndetermined = false;
+        let body = parsed.body;
+        if (params.include_headers) {
+            const channel = extractHeaderChannel(
+                parsed.bodyBytes,
+                headerBytes,
+                params.url,
+                params.max_result_size
+            );
+            body = channel.body;
+            responseHeaders = channel.responseHeaders;
+            headersUndetermined = channel.undetermined;
+            headerTruncated = channel.truncated;
+            headerBytesReceived = channel.bytesReceived;
+        }
+
+        // The body is only PROVEN clean when the boundary was determined. When
+        // it was not, the header block is still on the front of it — so the two
+        // operations that turn it into a durable or parsed artefact are refused
+        // rather than performed on unproven bytes. That is what makes the
+        // "headers never reach the saved file or the jq_filter input" guarantee
+        // true on every path instead of only the happy one, and it is invariant
+        // 13's "claim nothing" applied to the body as well as to the headers.
+        if (headersUndetermined && (params.save_to_file || params.jq_filter)) {
+            throw new Error(
+                "Response header boundary could not be determined, so the body cannot be " +
+                "separated from the header block. Refusing save_to_file/jq_filter rather " +
+                "than writing or filtering unseparated bytes. Retry without include_headers " +
+                "to operate on the raw response."
+            );
+        }
 
         // Process response with filtering and size handling
         const processed = await processResponse(body, {
@@ -188,18 +232,41 @@ export async function executeCurlRequest(
             maxResultSize: params.max_result_size,
             saveToFile: params.save_to_file,
             contentType,
+            contentTypeUndetermined: !metadataFound,
             outputDir: validatedOutputDir,
         });
 
+        // cURL stderr is remote-influenced — under `verbose` it carries the
+        // origin's own response headers — and reached the model with no
+        // pipeline at all. Not a shorter one: none. Same treatment as the
+        // header channel, so the two text channels stay symmetric.
+        const defendedStderr = result.stderr
+            ? defendText(result.stderr, {
+                  contentType: MARKDOWN_MIME,
+                  hostname: safeHostname(params.url),
+                  decodeEntities: false,
+              })
+            : result.stderr;
+
         const output = formatResponse(
             processed.content,
-            result.stderr,
+            defendedStderr,
             result.exitCode,
             params.include_metadata,
             {
                 savedToFile: processed.savedToFile,
                 filepath: processed.savedToFile ? processed.filepath : undefined,
                 message: processed.message,
+            },
+            responseHeaders,
+            {
+                truncated: headerTruncated,
+                bytesReceived: headerBytesReceived,
+                // The caller asked for headers and provably did not get them.
+                // Reporting it is the point: silence is what made the pre-fix
+                // corruption invisible, because the degraded path returned bytes
+                // indistinguishable from the success path.
+                undetermined: params.include_headers && headersUndetermined,
             }
         );
 

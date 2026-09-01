@@ -112,8 +112,18 @@ export function supportsMarkupComments(contentType: string | undefined): boolean
 // in the response processor. The structured-syntax suffix `+markdown` is
 // rare in practice but defined by RFC 6838 so we accept it for symmetry with
 // the `+xml` handling above.
+/**
+ * The canonical markdown MIME type.
+ *
+ * Exported so a caller that needs to *declare* markdown — rather than detect it
+ * — references the same string the predicates match against, instead of a bare
+ * literal the compiler cannot check. A typo in such a literal silently disables
+ * the markdown strip stages.
+ */
+export const MARKDOWN_MIME = "text/markdown" as const;
+
 const MARKDOWN_MIME_EXACT: ReadonlySet<string> = new Set([
-    "text/markdown",
+    MARKDOWN_MIME,
     "text/x-markdown",
 ]);
 

@@ -48,8 +48,42 @@ var LIMITS = {
   MAX_TOTAL_RESPONSE_MEMORY: 1e8,
   /** Characters to show in error previews */
   ERROR_PREVIEW_LENGTH: 200,
-  /** Max distance from end to search for metadata separator */
-  MAX_METADATA_TAIL_LENGTH: 200,
+  /**
+   * Maximum bytes of response header text returned inline (64KB).
+   *
+   * Header text is server-controlled and is surfaced inline even when the
+   * body was auto-saved to a file, so it is not covered by
+   * `max_result_size`. Without its own ceiling the only bound is
+   * `MAX_RESPONSE_SIZE` (10MB) — twenty times the default inline return.
+   * cURL permits ~100KB per header line and caps neither header count nor
+   * redirect-chain length, so "headers are small" is an assumption the
+   * remote gets to falsify.
+   */
+  MAX_HEADER_TEXT_BYTES: 64e3,
+  // NOTE: the EFFECTIVE ceiling on returned header text is
+  // `min(MAX_HEADER_TEXT_BYTES, max_result_size)` — header text is inline, so
+  // it honours the caller's inline budget too. Cite this constant rather than
+  // restating either number; four documents said "64KB" unconditionally and
+  // were wrong for any caller who set a smaller max_result_size.
+  /**
+   * Byte allowance for the `-w` metadata FIELDS, searched backwards from the
+   * end of stdout. **This is the budget for the fields only** — the window
+   * actually searched is this plus the separator's own length.
+   *
+   * It must not be a flat constant that the separator and a remote-controlled
+   * field share. `%{content_type}` is echoed verbatim from the origin and has
+   * no length limit, so when the three shared one 200-byte budget an origin
+   * could evict the separator simply by sending a long `Content-Type` — a
+   * legal `application/vnd.api+json; charset=utf-8; profile="…"` did it at
+   * ~144 characters. The parse then found no separator, reported every
+   * cURL-authored field as absent, and the caller silently lost both the
+   * header/body split and the content-type-driven strip stages.
+   *
+   * 8KB covers every realistic origin (cURL permits ~100KB per header line,
+   * but no real service approaches that in a Content-Type). Beyond it the
+   * parse fails closed and the caller is told the metadata is undetermined.
+   */
+  MAX_METADATA_TAIL_LENGTH: 8192,
   /** Default request timeout in milliseconds (30 seconds) */
   DEFAULT_TIMEOUT_MS: 3e4,
   /** Maximum filename length for saved files */
@@ -325,8 +359,9 @@ function supportsMarkupComments(contentType) {
   if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return true;
   return MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
 }
+var MARKDOWN_MIME = "text/markdown";
 var MARKDOWN_MIME_EXACT = /* @__PURE__ */ new Set([
-  "text/markdown",
+  MARKDOWN_MIME,
   "text/x-markdown"
 ]);
 var MARKDOWN_MIME_SUFFIXES = ["+markdown"];
@@ -412,7 +447,9 @@ var CurlExecuteSchema = z2.object({
   basic_auth: z2.string().optional().describe("Basic authentication in format 'username:password'"),
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
-  include_headers: z2.boolean().default(false).describe("Include response headers in output"),
+  include_headers: z2.boolean().default(false).describe(
+    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they are prefixed to the returned text followed by a blank line, so that result is not JSON-parseable. Capped at 64KB; truncation is reported via headers_truncated"
+  ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
   jq_filter: z2.string().optional().describe('JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check.'),
@@ -433,7 +470,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "3.2.0" : "0.0.0"
+  VERSION: true ? "3.3.0" : "0.0.0"
 };
 
 // src/lib/config/session.ts
@@ -1302,7 +1339,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
     const childProcess = spawn(command, args, {
       signal: abortController.signal
     });
-    let stdout = "";
+    const stdoutChunks = [];
     let stderr = "";
     let stderrMemoryUsage = 0;
     let killed = false;
@@ -1323,7 +1360,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
         ));
         return;
       }
-      stdout += data.toString();
+      stdoutChunks.push(data);
       requestMemoryUsage += dataSize;
       if (requestMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
         killed = true;
@@ -1376,8 +1413,10 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
       clearTimeout(timeoutId);
       releaseRequestMemory();
       if (!killed) {
+        const stdoutBytes = Buffer.concat(stdoutChunks);
+        stdoutChunks.length = 0;
         resolve4({
-          stdout,
+          stdoutBytes,
           stderr,
           // null code means process was killed by signal — report as failure (not 0)
           exitCode: code ?? (signal ? 1 : 0)
@@ -1457,7 +1496,7 @@ function buildCurlArgs(params) {
   if (params.silent !== false) {
     args.push("-s");
   }
-  const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
+  const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{size_header} %{content_type}";
   if (params.output_format) {
     args.push("-w", params.output_format + metadataSuffix);
   } else {
@@ -1478,16 +1517,49 @@ function isJsonContentType(contentType) {
   return mime === "application/json" || mime.endsWith("+json");
 }
 function parseResponseWithMetadata(rawResponse, separator) {
-  const searchStart = Math.max(0, rawResponse.length - LIMITS.MAX_METADATA_TAIL_LENGTH);
-  const tailSection = rawResponse.slice(searchStart);
-  const separatorIndexInTail = tailSection.lastIndexOf(separator);
-  if (separatorIndexInTail === -1) {
-    return { body: rawResponse };
+  const raw = rawResponse;
+  const sep = Buffer.from(separator, "utf8");
+  const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
+  const searchStart = Math.max(0, raw.length - windowBytes);
+  const indexInWindow = raw.subarray(searchStart).lastIndexOf(sep);
+  const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
+  if (separatorIndex === -1) {
+    return {
+      body: raw.toString("utf8"),
+      bodyBytes: raw,
+      metadataFound: false
+    };
   }
-  const separatorIndex = searchStart + separatorIndexInTail;
-  const body = rawResponse.slice(0, separatorIndex);
-  const contentType = rawResponse.slice(separatorIndex + separator.length).trim();
-  return { body, contentType: contentType || void 0 };
+  const bodyBytes = raw.subarray(0, separatorIndex);
+  const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
+  const sizeMatch = /^(\d+) ?/.exec(metadata);
+  const parsedBytes = sizeMatch ? Number(sizeMatch[1]) : void 0;
+  const contentType = (sizeMatch ? metadata.slice(sizeMatch[0].length) : metadata).trim();
+  return {
+    body: bodyBytes.toString("utf8"),
+    bodyBytes,
+    contentType: contentType || void 0,
+    headerBytes: Number.isSafeInteger(parsedBytes) ? parsedBytes : void 0,
+    metadataFound: true
+  };
+}
+function splitResponseHeaders(bodyBytes, headerBytes) {
+  if (headerBytes === void 0 || !Number.isSafeInteger(headerBytes) || headerBytes <= 0) {
+    return { body: bodyBytes.toString("utf8") };
+  }
+  if (headerBytes > bodyBytes.length) {
+    return { body: bodyBytes.toString("utf8") };
+  }
+  const terminator = bodyBytes.subarray(Math.max(0, headerBytes - 4), headerBytes).toString("latin1");
+  if (!terminator.endsWith("\r\n\r\n") && !terminator.endsWith("\n\n")) {
+    return { body: bodyBytes.toString("utf8") };
+  }
+  const body = bodyBytes.subarray(headerBytes).toString("utf8");
+  const capped = headerBytes > LIMITS.MAX_HEADER_TEXT_BYTES;
+  const sliceEnd = capped ? LIMITS.MAX_HEADER_TEXT_BYTES : headerBytes;
+  const headerText = bodyBytes.subarray(0, sliceEnd).toString("utf8").replace(/\r?\n\r?\n$/, "");
+  if (!headerText) return { body };
+  return { headerText, body, headerBytesReceived: headerBytes, truncated: capped };
 }
 function sanitizeErrorMessage(message, includeDetails) {
   if (includeDetails) {
@@ -1499,77 +1571,6 @@ function sanitizeErrorMessage(message, includeDetails) {
     sanitized += " (use include_metadata: true for details)";
   }
   return sanitized;
-}
-
-// src/lib/response/formatter.ts
-function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo) {
-  if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
-    if (includeMetadata) {
-      const output = {
-        success: exitCode === 0,
-        exit_code: exitCode,
-        saved_to_file: true,
-        filepath: fileSaveInfo.filepath,
-        message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
-      };
-      if (stderr) output.stderr = stderr;
-      return JSON.stringify(output, null, 2);
-    }
-    return fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-  }
-  if (includeMetadata) {
-    const output = {
-      success: exitCode === 0,
-      exit_code: exitCode,
-      response: stdout
-    };
-    if (stderr) output.stderr = stderr;
-    return JSON.stringify(output, null, 2);
-  }
-  return stdout;
-}
-
-// src/lib/response/file-saver.ts
-import { join as join2, resolve as resolve3 } from "path";
-import { writeFile, realpath as realpath3 } from "fs/promises";
-function createSafeFilenameBase(input, fallback = "response") {
-  let base = input.replace(/[^a-zA-Z0-9]/g, "_");
-  base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-  base = base.replace(/^_+|_+$/g, "");
-  if (!base) {
-    base = fallback;
-  }
-  if (isWindowsReservedBasename(base) || base === "." || base === "..") {
-    const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-    base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH) : prefixed;
-  }
-  return base;
-}
-async function saveResponseToFile(content, url, outputDir) {
-  const targetDir = outputDir ?? await getOrCreateTempDir();
-  if (outputDir) {
-    const realDir = await realpath3(resolve3(outputDir));
-    const normalizedTarget = await realpath3(resolve3(targetDir));
-    if (realDir !== normalizedTarget) {
-      throw new Error(`Output directory path mismatch after normalization`);
-    }
-  }
-  let baseName;
-  try {
-    const urlObj = new URL(url);
-    baseName = urlObj.hostname + urlObj.pathname;
-  } catch (error) {
-    if (error instanceof TypeError) {
-      baseName = url;
-    } else {
-      throw error;
-    }
-  }
-  const safeName = createSafeFilenameBase(baseName);
-  const filename = `${safeName}_${Date.now()}.txt`;
-  const filepath = join2(targetDir, filename);
-  await writeFile(filepath, content, { encoding: "utf-8", mode: 384 });
-  return filepath;
 }
 
 // src/lib/jq/tokenizer.ts
@@ -1938,6 +1939,49 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
   return applyJqFilterToParsed(data, filter);
 }
 
+// src/lib/response/file-saver.ts
+import { join as join2, resolve as resolve3 } from "path";
+import { writeFile, realpath as realpath3 } from "fs/promises";
+function createSafeFilenameBase(input, fallback = "response") {
+  let base = input.replace(/[^a-zA-Z0-9]/g, "_");
+  base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+  base = base.replace(/^_+|_+$/g, "");
+  if (!base) {
+    base = fallback;
+  }
+  if (isWindowsReservedBasename(base) || base === "." || base === "..") {
+    const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+    base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH) : prefixed;
+  }
+  return base;
+}
+async function saveResponseToFile(content, url, outputDir) {
+  const targetDir = outputDir ?? await getOrCreateTempDir();
+  if (outputDir) {
+    const realDir = await realpath3(resolve3(outputDir));
+    const normalizedTarget = await realpath3(resolve3(targetDir));
+    if (realDir !== normalizedTarget) {
+      throw new Error(`Output directory path mismatch after normalization`);
+    }
+  }
+  let baseName;
+  try {
+    const urlObj = new URL(url);
+    baseName = urlObj.hostname + urlObj.pathname;
+  } catch (error) {
+    if (error instanceof TypeError) {
+      baseName = url;
+    } else {
+      throw error;
+    }
+  }
+  const safeName = createSafeFilenameBase(baseName);
+  const filename = `${safeName}_${Date.now()}.txt`;
+  const filepath = join2(targetDir, filename);
+  await writeFile(filepath, content, { encoding: "utf-8", mode: 384 });
+  return filepath;
+}
+
 // src/lib/response/strip-blocks.ts
 var IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
 var LINK_REMOVED_PLACEHOLDER = "[link removed]";
@@ -1960,11 +2004,12 @@ function decodeNumericHtmlEntities(input) {
     return String.fromCodePoint(cp);
   });
 }
-function stripBlocksFixedPoint(input) {
+function stripBlocksFixedPoint(input, options = {}) {
+  const { decodeEntities = true } = options;
   if (Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES) return input;
   let curr = input;
   for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
-    const decoded = decodeNumericHtmlEntities(curr);
+    const decoded = decodeEntities ? decodeNumericHtmlEntities(curr) : curr;
     const next = decoded.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
     if (next === curr) return next;
     curr = next;
@@ -1983,6 +2028,38 @@ function looksLikeMarkupShape(content) {
 }
 
 // src/lib/response/processor.ts
+function isDefinitelyJson(text) {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function defendText(text, options) {
+  let content = text;
+  const { hostname, contentTypeUndetermined = false, decodeEntities = true } = options;
+  const looksLikeJsonBody = isDefinitelyJson(content);
+  const strictestGrammar = contentTypeUndetermined && !looksLikeJsonBody;
+  const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
+  const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
+  content = sanitizeAndDetect(content, hostname);
+  const exceedsStripCap = Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
+  const sniffedAsMarkup = !exceedsStripCap && !strictestGrammar && !looksLikeJsonBody && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
+  const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
+  if (needsStripPath && !exceedsStripCap) {
+    content = stripHtmlComments(content);
+    content = stripBlocksFixedPoint(content, { decodeEntities });
+    if (isMarkdown) {
+      content = stripMarkdownBeacons(content);
+    }
+    content = sanitizeAndDetect(content, hostname);
+  }
+  return content;
+}
 async function processResponse(response, options) {
   if (typeof response !== "string") {
     throw new TypeError("processResponse: response must be a string");
@@ -1993,22 +2070,12 @@ async function processResponse(response, options) {
       `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
     );
   }
-  let content = response;
   const hostname = safeHostname(options.url);
-  const isMarkup = supportsMarkupComments(options.contentType);
-  const isMarkdown = isMarkdownContentType(options.contentType);
-  content = sanitizeAndDetect(content, hostname);
-  const exceedsStripCap = Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
-  const sniffedAsMarkup = !exceedsStripCap && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
-  const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
-  if (needsStripPath && !exceedsStripCap) {
-    content = stripHtmlComments(content);
-    content = stripBlocksFixedPoint(content);
-    if (isMarkdown) {
-      content = stripMarkdownBeacons(content);
-    }
-    content = sanitizeAndDetect(content, hostname);
-  }
+  let content = defendText(response, {
+    contentType: options.contentType,
+    contentTypeUndetermined: options.contentTypeUndetermined,
+    hostname
+  });
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);
     const trimmed = content.trim();
@@ -2054,6 +2121,84 @@ async function processResponse(response, options) {
     content,
     savedToFile: false
   };
+}
+
+// src/lib/response/header-channel.ts
+function extractHeaderChannel(bodyBytes, headerBytes, url, maxResultSize) {
+  const split = splitResponseHeaders(bodyBytes, headerBytes);
+  if (!split.headerText) {
+    return { body: split.body, undetermined: true, truncated: false };
+  }
+  const defended = defendText(split.headerText, {
+    contentType: MARKDOWN_MIME,
+    hostname: safeHostname(url),
+    decodeEntities: false
+  });
+  const inlineCeiling = Math.min(
+    LIMITS.MAX_HEADER_TEXT_BYTES,
+    maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
+  );
+  const defendedBytes = Buffer.byteLength(defended, "utf8");
+  const overCeiling = defendedBytes > inlineCeiling;
+  return {
+    body: split.body,
+    responseHeaders: overCeiling ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8") : defended,
+    undetermined: false,
+    truncated: split.truncated === true || overCeiling,
+    bytesReceived: split.headerBytesReceived
+  };
+}
+
+// src/lib/response/formatter.ts
+function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
+  const plainNotice = !includeMetadata && headerInfo ? [
+    headerInfo.truncated ? `[mcp-curl] response headers truncated at ${LIMITS.MAX_HEADER_TEXT_BYTES} of ${headerInfo.bytesReceived} bytes` : null,
+    headerInfo.undetermined ? "[mcp-curl] response header boundary undetermined; headers are NOT separated from the body below" : null
+  ].filter(Boolean).join("\n") : "";
+  const withNotice = (text) => plainNotice ? `${plainNotice}
+
+${text}` : text;
+  if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
+    if (includeMetadata) {
+      const output = {
+        success: exitCode === 0,
+        exit_code: exitCode,
+        saved_to_file: true,
+        filepath: fileSaveInfo.filepath,
+        message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
+      };
+      if (responseHeaders) output.headers = responseHeaders;
+      if (responseHeaders && headerInfo?.truncated) {
+        output.headers_truncated = true;
+        output.header_bytes_received = headerInfo.bytesReceived;
+      }
+      if (headerInfo?.undetermined) output.headers_undetermined = true;
+      if (stderr) output.stderr = stderr;
+      return JSON.stringify(output, null, 2);
+    }
+    const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
+    return withNotice(responseHeaders ? `${responseHeaders}
+
+${message}` : message);
+  }
+  if (includeMetadata) {
+    const output = {
+      success: exitCode === 0,
+      exit_code: exitCode,
+      response: stdout
+    };
+    if (responseHeaders) output.headers = responseHeaders;
+    if (responseHeaders && headerInfo?.truncated) {
+      output.headers_truncated = true;
+      output.header_bytes_received = headerInfo.bytesReceived;
+    }
+    if (headerInfo?.undetermined) output.headers_undetermined = true;
+    if (stderr) output.stderr = stderr;
+    return JSON.stringify(output, null, 2);
+  }
+  return withNotice(responseHeaders ? `${responseHeaders}
+
+${stdout}` : stdout);
 }
 
 // src/lib/response/post-processor.ts
@@ -2143,7 +2288,15 @@ Args:
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Include response headers in output
+  - include_headers (boolean): Report response headers. With include_metadata they
+    arrive under a separate "headers" key; without it they are prefixed to the returned
+    text followed by a blank line, so that result is NOT JSON-parseable. On both
+    branches headers never reach the saved file and never reach jq_filter, which is
+    what makes this safe to combine with save_to_file and jq_filter \u2014 and if the
+    header/body boundary cannot be determined, those two are refused rather than
+    performed on unseparated bytes. Header text is capped at
+    min(64KB, max_result_size); truncation is reported as headers_truncated under
+    include_metadata, and as a leading [mcp-curl] notice otherwise
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -2169,7 +2322,8 @@ Returns:
   {
     "success": boolean,
     "exit_code": number,
-    "response": string,
+    "response": string (the body alone \u2014 headers are NOT in here),
+    "headers": string (response header text; present only with include_headers),
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
     "filepath": string (path to saved file)
@@ -2207,11 +2361,6 @@ Temp File Lifecycle:
 };
 async function executeCurlRequest(params, extra = {}) {
   try {
-    if (params.include_headers && params.jq_filter) {
-      throw new Error(
-        "Cannot use jq_filter with include_headers. HTTP headers in the response make it non-JSON. Remove include_headers to use jq_filter, or remove jq_filter to see headers."
-      );
-    }
     if (params.basic_auth && !params.basic_auth.includes(":")) {
       throw new Error("basic_auth must be in 'username:password' format");
     }
@@ -2230,24 +2379,64 @@ async function executeCurlRequest(params, extra = {}) {
     });
     const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3) * 1e3;
     const result = await executeCommand("curl", args, timeoutMs);
-    const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);
+    let headerTruncated = false;
+    let headerBytesReceived;
+    const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
+    const { contentType, headerBytes, metadataFound } = parsed;
+    let responseHeaders;
+    let headersUndetermined = false;
+    let body = parsed.body;
+    if (params.include_headers) {
+      const channel = extractHeaderChannel(
+        parsed.bodyBytes,
+        headerBytes,
+        params.url,
+        params.max_result_size
+      );
+      body = channel.body;
+      responseHeaders = channel.responseHeaders;
+      headersUndetermined = channel.undetermined;
+      headerTruncated = channel.truncated;
+      headerBytesReceived = channel.bytesReceived;
+    }
+    if (headersUndetermined && (params.save_to_file || params.jq_filter)) {
+      throw new Error(
+        "Response header boundary could not be determined, so the body cannot be separated from the header block. Refusing save_to_file/jq_filter rather than writing or filtering unseparated bytes. Retry without include_headers to operate on the raw response."
+      );
+    }
     const processed = await processResponse(body, {
       url: params.url,
       jqFilter: params.jq_filter,
       maxResultSize: params.max_result_size,
       saveToFile: params.save_to_file,
       contentType,
+      contentTypeUndetermined: !metadataFound,
       outputDir: validatedOutputDir
     });
+    const defendedStderr = result.stderr ? defendText(result.stderr, {
+      contentType: MARKDOWN_MIME,
+      hostname: safeHostname(params.url),
+      decodeEntities: false
+    }) : result.stderr;
     const output = formatResponse(
       processed.content,
-      result.stderr,
+      defendedStderr,
       result.exitCode,
       params.include_metadata,
       {
         savedToFile: processed.savedToFile,
         filepath: processed.savedToFile ? processed.filepath : void 0,
         message: processed.message
+      },
+      responseHeaders,
+      {
+        truncated: headerTruncated,
+        bytesReceived: headerBytesReceived,
+        // The caller asked for headers and provably did not get them.
+        // Reporting it is the point: silence is what made the pre-fix
+        // corruption invisible, because the degraded path returned bytes
+        // indistinguishable from the success path.
+        undetermined: params.include_headers && headersUndetermined
       }
     );
     return {
@@ -2321,8 +2510,8 @@ export {
   validateOutputDir,
   CurlExecuteSchema,
   JqQuerySchema,
-  createSafeFilenameBase,
   applyJqFilter,
+  createSafeFilenameBase,
   createWrapper,
   CURL_EXECUTE_TOOL_META,
   executeCurlRequest,

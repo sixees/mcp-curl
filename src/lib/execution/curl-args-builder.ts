@@ -159,9 +159,15 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
         args.push("-s");
     }
 
-    // Output format for response info (custom format + metadata separator for content-type)
-    // The separator is unique per-request to prevent response injection attacks
-    const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
+    // Output format: unique per-request separator, then the metadata fields.
+    //
+    // Field order is load-bearing — the cURL-authored integer first, the
+    // remote-echoed `%{content_type}` last, so it has no delimiter after it to
+    // spoof. See `parseResponseWithMetadata` for the parse and ARCHITECTURE.md
+    // invariant 13 for why the boundary comes from cURL rather than the bytes.
+    const metadataSuffix =
+        params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") +
+        "%{size_header} %{content_type}";
     if (params.output_format) {
         args.push("-w", params.output_format + metadataSuffix);
     } else {

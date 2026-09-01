@@ -1,6 +1,6 @@
 {
   "name": "mcp-curl",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "MCP server for executing cURL commands",
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
@@ -28,7 +28,13 @@
   },
   "files": [
     "dist",
-    "docs"
+    "docs/README.md",
+    "docs/getting-started.md",
+    "docs/configuration.md",
+    "docs/api-schema.md",
+    "docs/custom-tools.md",
+    "docs/hooks.md",
+    "docs/architecture/"
   ],
   "repository": {
     "type": "git",
@@ -40,7 +46,7 @@
   },
   "scripts": {
     "build": "tsup && node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm test && npm run build",
     "start": "node dist/index.js",
     "dev": "tsup --watch",
     "test": "vitest run",
