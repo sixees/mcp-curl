@@ -412,7 +412,9 @@ var CurlExecuteSchema = z2.object({
   basic_auth: z2.string().optional().describe("Basic authentication in format 'username:password'"),
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
-  include_headers: z2.boolean().default(false).describe("Include response headers in output"),
+  include_headers: z2.boolean().default(false).describe(
+    "Report response headers alongside the body. Headers are kept separate from the body, so this combines safely with jq_filter and save_to_file (a saved file holds the body only)"
+  ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
   jq_filter: z2.string().optional().describe('JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check.'),
@@ -1489,6 +1491,34 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const contentType = rawResponse.slice(separatorIndex + separator.length).trim();
   return { body, contentType: contentType || void 0 };
 }
+var STATUS_LINE_PATTERN = /^HTTP\/\d(?:\.\d)?[ \t]+\d{3}(?:[ \t][^\r\n]*)?\r?\n/;
+function splitResponseHeaders(raw) {
+  const blocks = [];
+  let rest = raw;
+  while (STATUS_LINE_PATTERN.test(rest)) {
+    const crlfEnd = rest.indexOf("\r\n\r\n");
+    const lfEnd = rest.indexOf("\n\n");
+    let end;
+    let terminatorLength;
+    if (crlfEnd !== -1 && (lfEnd === -1 || crlfEnd <= lfEnd)) {
+      end = crlfEnd;
+      terminatorLength = 4;
+    } else if (lfEnd !== -1) {
+      end = lfEnd;
+      terminatorLength = 2;
+    } else {
+      blocks.push(rest);
+      rest = "";
+      break;
+    }
+    blocks.push(rest.slice(0, end));
+    rest = rest.slice(end + terminatorLength);
+  }
+  if (blocks.length === 0) {
+    return { body: raw };
+  }
+  return { headerText: blocks.join("\n\n"), body: rest };
+}
 function sanitizeErrorMessage(message, includeDetails) {
   if (includeDetails) {
     return message;
@@ -1502,7 +1532,7 @@ function sanitizeErrorMessage(message, includeDetails) {
 }
 
 // src/lib/response/formatter.ts
-function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo) {
+function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders) {
   if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
     if (includeMetadata) {
       const output = {
@@ -1512,10 +1542,14 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo)
         filepath: fileSaveInfo.filepath,
         message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
       };
+      if (responseHeaders) output.headers = responseHeaders;
       if (stderr) output.stderr = stderr;
       return JSON.stringify(output, null, 2);
     }
-    return fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
+    const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
+    return responseHeaders ? `${responseHeaders}
+
+${message}` : message;
   }
   if (includeMetadata) {
     const output = {
@@ -1523,10 +1557,13 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo)
       exit_code: exitCode,
       response: stdout
     };
+    if (responseHeaders) output.headers = responseHeaders;
     if (stderr) output.stderr = stderr;
     return JSON.stringify(output, null, 2);
   }
-  return stdout;
+  return responseHeaders ? `${responseHeaders}
+
+${stdout}` : stdout;
 }
 
 // src/lib/response/file-saver.ts
@@ -2143,7 +2180,9 @@ Args:
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Include response headers in output
+  - include_headers (boolean): Report response headers alongside the body. Headers are kept
+    separate from the body, so this combines safely with jq_filter and save_to_file
+    (the saved file holds the body only)
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -2207,11 +2246,6 @@ Temp File Lifecycle:
 };
 async function executeCurlRequest(params, extra = {}) {
   try {
-    if (params.include_headers && params.jq_filter) {
-      throw new Error(
-        "Cannot use jq_filter with include_headers. HTTP headers in the response make it non-JSON. Remove include_headers to use jq_filter, or remove jq_filter to see headers."
-      );
-    }
     if (params.basic_auth && !params.basic_auth.includes(":")) {
       throw new Error("basic_auth must be in 'username:password' format");
     }
@@ -2230,7 +2264,17 @@ async function executeCurlRequest(params, extra = {}) {
     });
     const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3) * 1e3;
     const result = await executeCommand("curl", args, timeoutMs);
-    const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);
+    const { body: rawBody, contentType } = parseResponseWithMetadata(
+      result.stdout,
+      metadataSeparator
+    );
+    let responseHeaders;
+    let body = rawBody;
+    if (params.include_headers) {
+      const split = splitResponseHeaders(rawBody);
+      body = split.body;
+      responseHeaders = split.headerText ? sanitizeAndDetect(split.headerText, safeHostname(params.url)) : void 0;
+    }
     const processed = await processResponse(body, {
       url: params.url,
       jqFilter: params.jq_filter,
@@ -2248,7 +2292,8 @@ async function executeCurlRequest(params, extra = {}) {
         savedToFile: processed.savedToFile,
         filepath: processed.savedToFile ? processed.filepath : void 0,
         message: processed.message
-      }
+      },
+      responseHeaders
     );
     return {
       content: [

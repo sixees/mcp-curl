@@ -6,7 +6,7 @@ import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
-import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
+import { validateUrlAndResolveDns, checkRateLimits, sanitizeAndDetect } from "../security/index.js";
 import { getErrorMessage, safeHostname } from "../utils/index.js";
 import { executeCommand, buildCurlArgs } from "../execution/index.js";
 import {
@@ -14,6 +14,7 @@ import {
     sanitizeErrorMessage,
     formatResponse,
     processResponse,
+    splitResponseHeaders,
 } from "../response/index.js";
 
 /** Tool result type returned by executeCurlRequest */
@@ -55,7 +56,9 @@ Args:
   - basic_auth (string): Basic auth as "username:password"
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Include response headers in output
+  - include_headers (boolean): Report response headers alongside the body. Headers are kept
+    separate from the body, so this combines safely with jq_filter and save_to_file
+    (the saved file holds the body only)
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -131,16 +134,6 @@ export async function executeCurlRequest(
     extra: CurlExecuteExtra = {}
 ): Promise<CurlExecuteResult> {
     try {
-        // Validate incompatible options: include_headers prepends HTTP headers to response,
-        // making it non-JSON and breaking jq_filter parsing
-        if (params.include_headers && params.jq_filter) {
-            throw new Error(
-                "Cannot use jq_filter with include_headers. " +
-                "HTTP headers in the response make it non-JSON. " +
-                "Remove include_headers to use jq_filter, or remove jq_filter to see headers."
-            );
-        }
-
         // Validate basic_auth format if provided
         if (params.basic_auth && !params.basic_auth.includes(":")) {
             throw new Error("basic_auth must be in 'username:password' format");
@@ -179,7 +172,28 @@ export async function executeCurlRequest(
         const result = await executeCommand("curl", args, timeoutMs);
 
         // Parse response using the same unique separator
-        const { body, contentType } = parseResponseWithMetadata(result.stdout, metadataSeparator);
+        const { body: rawBody, contentType } = parseResponseWithMetadata(
+            result.stdout,
+            metadataSeparator
+        );
+
+        // `include_headers` (cURL `-i`) prepends the header block to the body on
+        // stdout. Split it back off before anything touches the body: glued
+        // together, the header text corrupted every body-shaped operation —
+        // `save_to_file` wrote a file that was no longer the JSON it claimed to
+        // be, and `jq_filter` had to be refused outright.
+        let responseHeaders: string | undefined;
+        let body = rawBody;
+        if (params.include_headers) {
+            const split = splitResponseHeaders(rawBody);
+            body = split.body;
+            // Header text is server-controlled, so it gets the same sanitise +
+            // injection-detection treatment `processResponse` applies to the
+            // body. Splitting it out must not route it around that.
+            responseHeaders = split.headerText
+                ? sanitizeAndDetect(split.headerText, safeHostname(params.url))
+                : undefined;
+        }
 
         // Process response with filtering and size handling
         const processed = await processResponse(body, {
@@ -200,7 +214,8 @@ export async function executeCurlRequest(
                 savedToFile: processed.savedToFile,
                 filepath: processed.savedToFile ? processed.filepath : undefined,
                 message: processed.message,
-            }
+            },
+            responseHeaders
         );
 
         return {

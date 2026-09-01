@@ -24,6 +24,7 @@ export interface FileSaveInfo {
  * - saved_to_file: boolean (if fileSaveInfo provided)
  * - filepath: string (path to saved file)
  * - message: string (informational message)
+ * - headers: string (response header text, if include_headers was used)
  *
  * When includeMetadata is false:
  * - If file was saved: returns the message or filepath
@@ -34,6 +35,11 @@ export interface FileSaveInfo {
  * @param exitCode - Exit code (0 indicates success)
  * @param includeMetadata - Whether to wrap response in JSON with metadata
  * @param fileSaveInfo - Optional information about file saving
+ * @param responseHeaders - Optional response header text (from include_headers).
+ *   Reported alongside the body rather than glued to the front of it, so that a
+ *   saved file stays parseable and a jq filter still sees plain JSON. Always
+ *   surfaced inline even when the body went to a file — headers are small, and
+ *   they are usually the reason the caller asked for them.
  * @returns Formatted response string
  */
 export function formatResponse(
@@ -41,7 +47,8 @@ export function formatResponse(
     stderr: string,
     exitCode: number,
     includeMetadata: boolean,
-    fileSaveInfo?: FileSaveInfo
+    fileSaveInfo?: FileSaveInfo,
+    responseHeaders?: string
 ): string {
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
@@ -54,11 +61,13 @@ export function formatResponse(
                 filepath: fileSaveInfo.filepath,
                 message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents.",
             };
+            if (responseHeaders) output.headers = responseHeaders;
             if (stderr) output.stderr = stderr;
             return JSON.stringify(output, null, 2);
         }
         // Plain text - just return the message or fallback to filepath
-        return fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
+        const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
+        return responseHeaders ? `${responseHeaders}\n\n${message}` : message;
     }
 
     // Normal response
@@ -68,8 +77,9 @@ export function formatResponse(
             exit_code: exitCode,
             response: stdout,
         };
+        if (responseHeaders) output.headers = responseHeaders;
         if (stderr) output.stderr = stderr;
         return JSON.stringify(output, null, 2);
     }
-    return stdout;
+    return responseHeaders ? `${responseHeaders}\n\n${stdout}` : stdout;
 }

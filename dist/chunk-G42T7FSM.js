@@ -37,7 +37,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-5O4ZGRVQ.js";
+} from "./chunk-GVQMH7MT.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -249,7 +249,7 @@ Execute HTTP requests with structured, validated parameters.
 | bearer_token | string | No | - | Bearer token for Authorization |
 | basic_auth | string | No | - | Basic auth as "username:password" |
 | follow_redirects | boolean | No | true | Follow HTTP redirects |
-| include_headers | boolean | No | false | Include response headers |
+| include_headers | boolean | No | false | Report response headers separately from the body (composes with jq_filter and save_to_file) |
 | include_metadata | boolean | No | false | Return JSON with metadata |
 | jq_filter | string | No | - | JSON path filter (e.g., ".data.items[0]") |
 | max_result_size | number | No | 500KB | Max bytes inline before auto-save (max: 1MB) |

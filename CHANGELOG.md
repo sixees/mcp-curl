@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`include_headers` no longer corrupts the response body.** cURL's `-i` prepends the header block
+  to the body on stdout, and that combined string was passed straight into body processing. Two
+  consequences: `save_to_file` wrote the status line and headers above the JSON, so the saved file
+  was not a valid JSON document and `jq_query` could not read it back; and `jq_filter` had to be
+  rejected outright with "Cannot use jq_filter with include_headers". Headers are now split from the
+  body before any body-shaped operation, so a saved file holds the body alone.
+
+### Changed
+
+- **`include_headers` composes with `jq_filter` and `save_to_file`.** The cross-field validation that
+  rejected `include_headers` + `jq_filter` is gone — the combination now filters the body and reports
+  the headers next to it. Under `include_metadata` the headers arrive as a discrete `headers` key
+  rather than being embedded in `response`. In the plain, unfiltered, unsaved case the output is
+  unchanged in substance: header text, blank line, body.
+
+  Header text is server-controlled, so it goes through the same `sanitizeAndDetect` sanitisation and
+  injection-detection path that the body gets; splitting it out does not route it around those
+  defences. On a redirect chain every header block is reported, as `curl -i` prints them.
+
 ## [3.2.0] - 2026-09-01
 
 ### Added
