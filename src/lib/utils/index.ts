@@ -16,6 +16,7 @@ export {
     isBinaryContentType,
     isMarkdownContentType,
     MARKDOWN_MIME,
+    JSON_MIME,
     isSniffableContentType,
     parseMimeType,
     supportsMarkupComments,

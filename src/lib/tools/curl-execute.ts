@@ -15,6 +15,7 @@ import {
     formatResponse,
     processResponse,
     defendText,
+    markDefended,
     extractHeaderChannel,
 } from "../response/index.js";
 
@@ -270,14 +271,21 @@ export async function executeCurlRequest(
             }
         );
 
-        return {
+        // Tagged: every remote-origin channel folded into `output` above took
+        // `defendText` under the Content-Type the origin actually declared —
+        // the body via `processResponse`, the header text via
+        // `extractHeaderChannel`, and stderr just above. The wrap knows less
+        // than this call site does, so it defers rather than re-deciding the
+        // grammar from text whose Content-Type it can no longer see. The error
+        // return below is deliberately NOT tagged.
+        return markDefended({
             content: [
                 {
                     type: "text",
                     text: output,
                 },
             ],
-        };
+        });
     } catch (error) {
         const rawMessage = getErrorMessage(error);
         const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
