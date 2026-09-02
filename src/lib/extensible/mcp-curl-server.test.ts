@@ -1075,10 +1075,13 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         expect(result.content[0].text).toBe(legit);
     });
 
-    // Second positive control: structured output is the case the strictest
-    // grammar would otherwise mangle, and custom tools commonly return it.
-    it("leaves a JSON document returned by a custom tool intact", async () => {
-        const json = '{"html":"<script>x</script>","link":"[a](https://example.test)"}';
+    // Second positive control: structured output is what the strictest grammar
+    // could most easily mangle, and custom tools commonly return it. Dropping
+    // the JSON exemption at this boundary (RC-10) must still leave ordinary
+    // values alone — only markdown link/image syntax and script/style tags are
+    // rewritten, so a bare URL in a field survives.
+    it("leaves ordinary JSON values from a custom tool byte-identical", async () => {
+        const json = '{"name":"alpha","count":3,"url":"https://example.test/x"}';
         const wrapped = await startWithCustomTool("jsonout", async () => ({
             content: [{ type: "text", text: json }],
             isError: false,

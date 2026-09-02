@@ -402,13 +402,13 @@ describe("curl_execute include_headers — degraded paths stay honest", () => {
 // bytes would get two different defences chosen by an output-format flag.
 // -----------------------------------------------------------------------------
 
-describe("curl_execute — the result defers to the pipeline that had the Content-Type", () => {
+describe("curl_execute — both output shapes get the same defence", () => {
     beforeEach(() => vi.clearAllMocks());
 
     const linkBody = "See [the docs](https://example.test/docs) for details.";
 
     for (const include_metadata of [false, true]) {
-        it(`keeps markdown syntax in a text/plain body (include_metadata: ${include_metadata})`, async () => {
+        it(`rewrites markdown link syntax in a text/plain body (include_metadata: ${include_metadata})`, async () => {
             mockedExecuteCommand.mockResolvedValue(
                 stdoutFor("", linkBody, "text/plain")
             );
@@ -419,10 +419,13 @@ describe("curl_execute — the result defers to the pipeline that had the Conten
             );
             const wrapped = createWrapper({})(result, "example.test");
 
-            // Same assertion on both branches: the defence a body gets must not
-            // depend on how the caller asked for the output to be shaped.
-            expect(wrapped.content[0].text).toContain("[the docs](https://example.test/docs)");
-            expect(wrapped.content[0].text).not.toContain("[link removed]");
+            // Same assertion on both branches, which is the point of the loop:
+            // the defence a body gets must not depend on how the caller asked
+            // for the output to be shaped. Before RC-10 it did — with
+            // include_metadata true the body sat inside a JSON envelope that the
+            // exemption protected, and with it false it did not.
+            expect(wrapped.content[0].text).toContain("[link removed]");
+            expect(wrapped.content[0].text).not.toContain("example.test/docs");
         });
     }
 

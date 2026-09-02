@@ -10,7 +10,7 @@ import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../file
 import { validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
 import { getErrorMessage, sanitizeDescription, JSON_MIME } from "../utils/index.js";
-import { createSafeFilenameBase, defendText, markDefended } from "../response/index.js";
+import { createSafeFilenameBase, defendText } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
@@ -73,18 +73,9 @@ Examples:
     },
 };
 
-/**
- * One success result, tagged so the wrap skips its strip stages.
- *
- * Both success branches route through here so the tag and the result shape have
- * a single site: the claim `markDefended` makes is only as good as the reasons
- * behind every call, and two spellings of the same return is where one of them
- * drifts. The error return deliberately does NOT use this — it carries
- * exception text that can embed a preview of the file being read, so it takes
- * the wrap's full pipeline.
- */
-function defendedResult(text: string): JqQueryResult {
-    return markDefended({ content: [{ type: "text" as const, text }] });
+/** One success result shape, so both success branches spell it once. */
+function successResult(text: string): JqQueryResult {
+    return { content: [{ type: "text" as const, text }] };
 }
 
 /**
@@ -153,10 +144,10 @@ export async function executeJqQuery(
 
             // Server-authored: a byte count and a path this process built from
             // a validated directory and a sanitised basename. No remote text.
-            return defendedResult(`Result (${contentBytes} bytes) saved to: ${filepath}`);
+            return successResult(`Result (${contentBytes} bytes) saved to: ${filepath}`);
         }
 
-        return defendedResult(sanitized);
+        return successResult(sanitized);
     } catch (error) {
         const errorMessage = getErrorMessage(error);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";

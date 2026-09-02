@@ -43,6 +43,19 @@ export interface DefendTextOptions {
      */
     contentTypeUndetermined?: boolean;
     /**
+     * Whether a text that parses as a JSON document is exempt from the markup
+     * and markdown strip stages. Defaults true.
+     *
+     * **The exemption is about the artefact, not the model.** `processResponse`
+     * writes post-strip content to disk and `jq_query` reads it back, so
+     * rewriting `<script>` or `[a](b)` inside a JSON string value there would
+     * silently alter a persisted document. That argument is the whole basis for
+     * the exemption — and it does not reach the post-processor wrap, whose
+     * channels have no disk artefact: a custom tool's return goes straight to
+     * the model. The wrap therefore passes `false`. See `LESSONS.md` RC-10.
+     */
+    excludeJsonDocuments?: boolean;
+    /**
      * Whether to decode numeric HTML entities during the block strip.
      *
      * **Defaults true, and must be false for any channel whose consumer does
@@ -135,7 +148,16 @@ export function defendText(text: string, options: DefendTextOptions): string {
     //
     // Bounded deliberately: only attempted below the strip-path cap, because
     // above it Steps 3-5 do not run and the distinction cannot change anything.
-    const looksLikeJsonBody = isDefinitelyJson(content);
+    // Evaluated only where it can change an outcome. Both consumers below are
+    // already decided when the caller declares a grammar that neither sniffs
+    // nor takes the strictest path — `jq_query` passes `application/json` on
+    // every call — and `isDefinitelyJson` is a full parse whose object graph is
+    // built and discarded.
+    const excludeJsonDocuments = options.excludeJsonDocuments ?? true;
+    const jsonExemptionCouldApply =
+        excludeJsonDocuments &&
+        (contentTypeUndetermined || isSniffableContentType(options.contentType));
+    const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);
     const strictestGrammar = contentTypeUndetermined && !looksLikeJsonBody;
 
     const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
