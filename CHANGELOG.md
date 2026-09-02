@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The defence deleted a JSON field when two of its values held the halves of one markup token.** By
+  the post-processor wrap, `formatResponse` has sealed body, headers and stderr into a single JSON
+  envelope, and the strip stages pair an opening token with a closing one without any notion of the
+  syntax separating two fields. A body carrying `<!--` and a response header carrying `-->` therefore
+  had everything between them removed — **including the whole `headers` key** — and the result was
+  still valid JSON, so nothing downstream could tell. The same held for one plain JSON document whose
+  sibling values carried the two halves, which is the shape `jq_query` returns. `defendForInline` now
+  parses a JSON document and defends each string value separately; text that is not JSON still takes
+  the undivided scan. Re-serialising indents only where indenting does not grow the document, so the
+  size gate's growth bound stays sound — `formatResponse` and jq both emit two spaces and come back
+  looking as they went in. Object keys are deliberately
+  left undefended, because two keys defending to the same string would collapse into one — the very
+  loss this fixes. See `ARCHITECTURE.md` invariant 16.
+
 - **A quadratic scan in the response strip path could block the event loop for 82 seconds.** Four of
   the five markdown beacon patterns shared a `[^\]\n]*` label class, so a failing match attempt
   scanned forward from every `[` in the input: O(n) attempts of O(n). 256 KB of `[` measured 82.9 s,
@@ -59,7 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A beacon inside a JSON string value no longer reaches the model.** The JSON exemption protects a
   persisted artefact — `processResponse` writes post-strip content to disk and `jq_query` reads it
   back — and that reasoning does not reach the wrap, whose channels write to no disk. What is
-  persisted keeps the exemption; what is returned does not.
+  persisted keeps the exemption; what is returned does not. **"Persisted keeps it" is true of the
+  content types that can claim it:** the exemption is gated on the type being undetermined or
+  sniffable, so a JSON body the origin declared `text/html` or `text/markdown` is treated as what it
+  was declared to be and is persisted stripped. `ARCHITECTURE.md` invariant 1a states the gate and
+  what it costs.
 
 ### Fixed
 

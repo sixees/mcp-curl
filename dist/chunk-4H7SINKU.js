@@ -1943,15 +1943,17 @@ var JSON_DOCUMENT_FIRST_CHARS = /* @__PURE__ */ new Set([
   "n"
 ]);
 function isDefinitelyJson(text) {
+  return parseJsonDocument(text) !== void 0;
+}
+function parseJsonDocument(text) {
   const trimmed = text.trimStart();
-  if (trimmed.length === 0) return false;
-  if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return false;
-  if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
+  if (trimmed.length === 0) return void 0;
+  if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return void 0;
+  if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return void 0;
   try {
-    JSON.parse(text);
-    return true;
+    return { value: JSON.parse(text) };
   } catch {
-    return false;
+    return void 0;
   }
 }
 function defendText(text, options) {
@@ -1979,12 +1981,31 @@ function defendText(text, options) {
   return content;
 }
 function defendForInline(text, hostname) {
+  const parsed = parseJsonDocument(text);
+  if (parsed === void 0) return defendInlineString(text, hostname);
+  const defended = defendJsonLeaves(parsed.value, hostname);
+  const indented = JSON.stringify(defended, null, 2);
+  return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(text, "utf8") ? indented : JSON.stringify(defended);
+}
+function defendInlineString(text, hostname) {
   return defendText(text, {
     hostname,
     contentTypeUndetermined: true,
     excludeJsonDocuments: false,
     decodeEntities: false
   });
+}
+function defendJsonLeaves(value, hostname) {
+  if (typeof value === "string") return defendInlineString(value, hostname);
+  if (Array.isArray(value)) return value.map((item) => defendJsonLeaves(item, hostname));
+  if (value !== null && typeof value === "object") {
+    const defended = {};
+    for (const [key, item] of Object.entries(value)) {
+      defended[key] = defendJsonLeaves(item, hostname);
+    }
+    return defended;
+  }
+  return value;
 }
 var SHORTEST_REPLACED_BEACON = "[](file:)".length;
 var MAX_INLINE_GROWTH_RATIO = Math.max(IMAGE_REMOVED_PLACEHOLDER.length, LINK_REMOVED_PLACEHOLDER.length) / SHORTEST_REPLACED_BEACON;

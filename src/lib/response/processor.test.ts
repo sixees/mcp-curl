@@ -1159,6 +1159,37 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         expect(console.error).not.toHaveBeenCalled();
     });
 
+    // RC-16 gave `defendForInline` a second way to change a document's length —
+    // it re-serialises JSON — and indenting a sparsely formatted document grows
+    // it by its NESTING DEPTH, which no constant ratio can bound. Measured on
+    // the case below before the guard: 53 bytes in, 140 out, against a ratio arm
+    // that believes the ceiling is 15/9. That would have reported compliance for
+    // a body reaching the model over its cap: invariant 16's fix reintroducing
+    // invariant 14's violation.
+    //
+    // The guard is in `defendForInline`, not here — it indents only when
+    // indenting does not grow the document. Probed by forcing the indented form
+    // unconditionally.
+    it("re-serialising never grows a document past the ratio (RC-16 meets RC-15)", () => {
+        const sparse = '{"a":1,\n"b":[1,2,3,4,5,6,7,8,9,10],"c":{"d":{"e":1}}}';
+        const out = defendForInline(sparse, "h");
+        expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(
+            Buffer.byteLength(sparse, "utf8")
+        );
+        // And the gate that trusts the ratio therefore still answers correctly.
+        const cap = Buffer.byteLength(sparse, "utf8");
+        expect(exceedsInlineCap(sparse, "h", cap)).toBe(
+            Buffer.byteLength(out, "utf8") > cap
+        );
+    });
+
+    // The other direction: a document already at two spaces — what
+    // `formatResponse` and jq both emit — keeps its layout.
+    it("a pretty-printed document comes back pretty-printed", () => {
+        const pretty = JSON.stringify({ a: 1, b: { c: "kept" } }, null, 2);
+        expect(defendForInline(pretty, "h")).toBe(pretty);
+    });
+
     it("MAX_INLINE_GROWTH_RATIO's premise holds: nothing grows more than 15/9", () => {
         // The ratio is derived from the placeholder lengths over `[](file:)`,
         // the shortest form that can be replaced by a longer one. If a pattern

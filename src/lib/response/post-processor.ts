@@ -2,7 +2,8 @@
 // Defence-in-depth wrap for tool results (PR-6b / B3).
 //
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
-// the full response-side defence — `defendText` (Steps 2-5), then optional
+// the full response-side defence — `defendForInline` (Steps 2-5, per JSON
+// value where the text is a JSON document), then optional
 // spotlighting — over each text content part of a `CallToolResult`.
 // Server-scope config (the spotlighting flag) is bound once at server
 // creation; request-scope hostname is passed per call so the per-host
@@ -167,11 +168,13 @@ export function isWrappedResult(result: unknown): boolean {
  * or Proxy-blocked). Defence-in-depth must never propagate exceptions to the
  * handler boundary, so we swallow the defineProperty failure here. The
  * trade-off: a downstream wrap on the same frozen result will re-run the
- * pipeline. That is semantically harmless: `defendText` is idempotent on this
- * boundary's options — the entity decode is off, and every remaining stage
- * rewrites to a form it no longer matches — and `applySpotlighting`
- * short-circuits on already-wrapped envelopes. The worst case is one extra
- * linear pass over the body, never a correctness issue.
+ * pipeline. That is semantically harmless: `defendForInline` is idempotent on
+ * this boundary's options — the entity decode is off, every remaining stage
+ * rewrites to a form it no longer matches, and the JSON arm's serialisation is
+ * a fixed point because a second pass measures the first pass's own output and
+ * makes the same indent choice — and `applySpotlighting` short-circuits on
+ * already-wrapped envelopes. The worst case is one extra linear pass over the
+ * body, never a correctness issue.
  *
  * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
  * Proxy whose `getOwnPropertyDescriptor` / `get` trap throws cannot break

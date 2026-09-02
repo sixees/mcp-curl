@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createWrapper, isWrappedResult } from "./post-processor.js";
+import { formatResponse } from "./formatter.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
 import * as detectionLogger from "../security/detection-logger.js";
@@ -741,3 +742,98 @@ describe("createWrapper — full defence on untagged (custom-tool / hook / YAML)
     });
 });
 
+
+// ---------------------------------------------------------------------------
+// Invariant 16 — a composite document is defended region by region.
+//
+// The strip stages work by pairing an opening token with a closing one. Run
+// over a SERIALISED JSON document they pair them across the syntax that
+// separates two fields, so an opener in one value and a closer in a later one
+// delete everything between — including the intervening key. The output stays
+// valid JSON, which is why nothing downstream noticed and why this needed a
+// reviewer to find it (`LESSONS.md` RC-16).
+//
+// Every case here fails if `defendForInline` goes back to scanning the
+// serialised form: probed by reverting it to a single `defendText` call.
+// ---------------------------------------------------------------------------
+describe("createWrapper — JSON documents are defended value by value", () => {
+    const wrapOf = (text: string): string => {
+        const out = createWrapper({})({ content: [{ type: "text", text }] }, "example.test");
+        return (out.content as { type: string; text: string }[])[0].text;
+    };
+
+    // The reported instance. `formatResponse` puts the body in `response` and
+    // the header text in `headers` directly after it, so a `<!--` the body
+    // kept — a JSON body is exempt from the strip when it is persisted, RC-8 —
+    // reaches the wrap with a `-->` in a header sitting downstream of it.
+    it("keeps the headers key when the body holds an unpaired comment opener", () => {
+        const envelope = formatResponse(
+            JSON.stringify({ note: "budget <!-- draft", ok: true }),
+            "",
+            0,
+            true,
+            undefined,
+            "HTTP/2 200\nx-trace: a-->b\n",
+            undefined
+        );
+        const parsed = JSON.parse(wrapOf(envelope)) as Record<string, unknown>;
+        expect(Object.keys(parsed)).toContain("headers");
+        expect(parsed.headers).toContain("x-trace");
+    });
+
+    // The same class with no envelope and no headers in it: one JSON document
+    // whose own values carry the two halves. This is the `jq_query` shape, and
+    // it is why the fix could not be "special-case our own envelope".
+    it("keeps every key when two sibling values hold the two halves of a token", () => {
+        const doc = JSON.stringify(
+            { a: "open <!-- here", b: "close --> there", c: "kept" },
+            null,
+            2
+        );
+        const parsed = JSON.parse(wrapOf(doc)) as Record<string, unknown>;
+        expect(Object.keys(parsed)).toEqual(["a", "b", "c"]);
+        expect(parsed.c).toBe("kept");
+    });
+
+    // Script and style pair the same way; the comment strip is not special.
+    it("keeps every key when the halves are a script opener and closer", () => {
+        const doc = JSON.stringify(
+            { a: "mention <script", b: "tail </script> rest", c: "kept" },
+            null,
+            2
+        );
+        const parsed = JSON.parse(wrapOf(doc)) as Record<string, unknown>;
+        expect(Object.keys(parsed)).toEqual(["a", "b", "c"]);
+        expect(parsed.c).toBe("kept");
+    });
+
+    // Nesting is where a value-boundary fix could plausibly stop early.
+    it("reaches values nested inside arrays and objects", () => {
+        const doc = JSON.stringify(
+            { rows: [{ v: "a <!-- b" }, { v: "c --> d" }], tail: "kept" },
+            null,
+            2
+        );
+        const parsed = JSON.parse(wrapOf(doc)) as { rows: { v: string }[]; tail: string };
+        expect(parsed.rows).toHaveLength(2);
+        expect(parsed.tail).toBe("kept");
+        expect(parsed.rows[1]!.v).toContain("d");
+    });
+
+    // The other direction: per-value defence must not become per-value
+    // EXEMPTION. RC-10 is what the wrap dropping the JSON exclusion bought,
+    // and this is the case that fails if the leaves stop being defended.
+    it("still strips a beacon inside a nested string value (RC-10 holds)", () => {
+        const doc = JSON.stringify({ outer: { note: "![x](https://evil.test/p.gif)" } });
+        const out = wrapOf(doc);
+        expect(out).not.toContain("evil.test");
+        expect(out).toContain("[image removed]");
+    });
+
+    // Not JSON — the undivided path still runs, so the fix is a branch and not
+    // a replacement.
+    it("leaves the non-JSON path scanning the whole string", () => {
+        const out = wrapOf("prose with ![x](https://evil.test/p.gif) in it");
+        expect(out).not.toContain("evil.test");
+    });
+});

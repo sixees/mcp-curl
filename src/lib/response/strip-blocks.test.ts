@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
     IMAGE_REMOVED_PLACEHOLDER,
     LINK_REMOVED_PLACEHOLDER,
+    STRIP_PATH_MAX_BYTES,
     looksLikeMarkupShape,
     stripBlocksFixedPoint,
     stripHtmlComments,
@@ -387,6 +388,13 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         ["style openers borrowing the closer's `>`", "<style".repeat(30000) + "</style>"],
         ["openers borrowing a whitespace closer's `>`", "<script".repeat(30000) + "</ script>"],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
+        // **The sixth toothless-guard shape, caught before it cost anything.**
+        // Above the cap `stripBlocksFixedPoint` returns its input untouched, so
+        // an oversized flood passes by doing no work at all — and the leading-`>`
+        // case is 262144 bytes, which is the cap exactly. One character added to
+        // any literal above and the whole block is vacuous and still green.
+        // Reported by coderabbitai on PR #33 round 5.
+        expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(STRIP_PATH_MAX_BYTES);
         const start = Date.now();
         stripBlocksFixedPoint(body);
         expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);

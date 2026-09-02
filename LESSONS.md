@@ -683,3 +683,63 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   with the fix reverted exactly as it did with the fix in. It passed for the
   wrong reason. **Derive a fixture's boundary from a real call, never from a
   re-implementation of what the code under test does.**
+
+### RC-16 — The defence paired tokens across the boundary it could not see
+
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-5 — *class-id:* `unwrapped-multi-write`
+
+- **The plan said:** the wrap defends "every piece of remote-origin text", and
+  `defendForInline` was written as one call over one string. Invariant 1a
+  reasoned about *which stages* run on a channel and never about *how many
+  regions* the string it was handed contains.
+- **Reality was:** by the wrap, `formatResponse` has sealed body, headers and
+  stderr into one JSON envelope — the same fact RC-15 measured a week earlier
+  and read only for its size. The strip stages pair an opening token with a
+  closing one and cannot see JSON syntax, so an opener in `response` and a
+  closer in `headers` deleted everything between them, **the `headers` key
+  included**. Measured: `{"note":"budget <!-- draft"}` as the body with
+  `x-trace: a-->b` in the headers returned an envelope with no `headers` key at
+  all, and `{"a":"open <!--","b":"close -->","c":"kept"}` — one document, no
+  envelope, the `jq_query` shape — came back as `{"a":"open ","c":"kept"}`.
+- **What I did:** `defendForInline` now parses a JSON document and defends each
+  string LEAF, then re-serialises; the undivided scan is the arm for text that
+  is not JSON. Invariant 16 states the property. Object keys are left alone
+  deliberately — two keys defending to the same string would collapse into one,
+  which is the loss this fix exists to prevent.
+- **And the fix's first version broke invariant 14**, which is why this RC has
+  two halves. Indenting whenever the input held a newline re-inflated a sparsely
+  formatted document by its nesting depth — 53 bytes in, 140 out, against a
+  growth ratio that believes the ceiling is 15/9 — so `exceedsInlineCap`'s cheap
+  arm would have reported compliance for a body reaching the model over its cap.
+  **The obvious repair was worse:** gating that arm on `isDefinitelyJson` made
+  the measurement run the full pass, which logs, and the suite failed on a test
+  asserting silence — RC-15's own second lesson, arriving from the opposite
+  direction one round later. What holds is a comparison against the input, which
+  needs no constant at all: indent only where indenting does not grow the
+  document.
+- **Files:** `src/lib/response/processor.ts` (`defendForInline`,
+  `defendInlineString`, `defendJsonLeaves`, `parseJsonDocument`),
+  `src/lib/response/post-processor.test.ts`, `ARCHITECTURE.md` invariant 16.
+
+**The output stayed valid JSON, and that is the whole reason this survived four
+review rounds and a rewrite of the surrounding prose.** A corruption that
+produces a parse error announces itself; this one produced a smaller,
+well-formed document that every consumer accepted. **Where a defence can delete,
+the test is not "does the result parse" but "are all the parts still there".**
+
+**RC-15 and RC-16 are the same observation read twice.** Both rest on the
+envelope existing at the wrap; RC-15 asked how big it was and shipped, and
+nobody asked what was inside it. **A fact established for one question is worth
+re-interrogating for the next** — the measurement was already in the ledger.
+
+**Invariant 13 already stated this property one layer down** and did not reach
+here. It says a boundary between remote-controlled regions never comes from the
+bytes themselves; the header/body split obeys it, and then the reassembled
+envelope was handed to a pass that had no notion of regions at all. **A rule
+stated about one seam does not travel to the next one by itself** — K-13, and
+invariant 16 is where the general form now lives.
+
+Reported by chatgpt-codex-connector on PR #33 round 5, graded P1 by them and
+confirmed P1 here on the data-loss calibration.

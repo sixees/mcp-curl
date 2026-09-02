@@ -225,10 +225,13 @@ import { defendText, applySpotlighting } from "mcp-curl";
 import { randomUUID } from "node:crypto";
 
 const defended = defendText(externalContent, {
-    hostname,                    // label for the throttled injection log
-    contentType,                 // the origin's Content-Type, when you know it
-    // contentTypeUndetermined: true,  // when you do NOT — see below
-    // decodeEntities: false,          // when your consumer does not decode
+    hostname,                       // label for the throttled injection log
+    contentType,                    // the origin's Content-Type, when you know it
+    contentTypeUndetermined: false, // REQUIRED — no default. `false` says you
+                                    // know the type (including knowing the
+                                    // origin sent none); `true` says you could
+                                    // not determine it. See below.
+    // decodeEntities: false,       // when your consumer does not decode
 });
 const wrapped = config.enableSpotlighting
     ? applySpotlighting(defended, randomUUID())

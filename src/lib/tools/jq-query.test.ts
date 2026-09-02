@@ -424,7 +424,7 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
 
     /** The exact inline bytes this query returns with no cap in play. */
     const uncappedBytes = async (file: string): Promise<number> => {
-        const r = await executeJqQuery({ filepath: file, jq_filter: ".v" });
+        const r = await executeJqQuery({ filepath: file, jq_filter: ".v" }, {});
         return Buffer.byteLength((r.content[0] as { text: string }).text, "utf8");
     };
 
@@ -435,7 +435,7 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
         // gate that accounts for the wrap's growth saves this.
         const cap = await uncappedBytes(file);
 
-        const result = await executeJqQuery({ filepath: file, jq_filter: ".v", max_result_size: cap });
+        const result = await executeJqQuery({ filepath: file, jq_filter: ".v", max_result_size: cap }, {});
         expect((result.content[0] as { text: string }).text).toMatch(SAVED_TO_PREFIX);
     });
 
@@ -446,7 +446,7 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
 
         const wrap = createWrapper({});
         const wrapped = wrap(
-            await executeJqQuery({ filepath: file, jq_filter: ".v", max_result_size: cap }),
+            await executeJqQuery({ filepath: file, jq_filter: ".v", max_result_size: cap }, {}),
             "jq"
         );
         const text = (wrapped.content as { text: string }[])[0].text;
@@ -458,7 +458,7 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
         await writeFile(file, JSON.stringify({ name: "Ada" }));
         const result = await executeJqQuery({
             filepath: file, jq_filter: ".name", max_result_size: 10_000,
-        });
+        }, {});
         const text = (result.content[0] as { text: string }).text;
         expect(text).not.toMatch(SAVED_TO_PREFIX);
         expect(text).toContain("Ada");

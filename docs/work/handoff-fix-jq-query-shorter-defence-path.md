@@ -92,7 +92,7 @@ describes the real pipeline with a 3.4.0 upgrade note.
 | Neutralise an orphan opener instead of deleting to EOF | CodeQL's rule is about the residual TOKEN, which removal satisfies. Deleting the caller's payload was never the requirement. | Keep the arm and add a byte-count notice (see below) |
 | **Declined:** the `[mcp-curl] N bytes removed` notice | You approved it alongside the P1-B fix, and its justification was the *silent unbounded* loss. That loss is gone — every remaining removal is a bounded substitution that announces itself (`[link removed]`) or leaves the body visible. A byte counter on every stripped response would be noise. Flagging rather than burying, since you asked for it. | Add it anyway |
 | **Reverted:** the RC-3 scratch-copy decode | Built it; the commit rule cannot serve both channels. See RC-12 and todo 004. The half that is unambiguous — never entity-decode a JSON document — did land. | Ship the naive version (loses the detector and the sanitiser on masked payloads) |
-| `contentTypeUndetermined` becomes required | Absence resolved to the permissive arm on a type this release publishes. Not breaking: the type is new in 3.4.0. | Discriminated union (larger, same effect); leave it and document (the doc snippet I wrote had the unsafe arm uncommented) |
+| `contentTypeUndetermined` becomes required | Absence resolved to the permissive arm on a type this release publishes. Not breaking: the type is new in 3.4.0. **Both halves shipped:** the field is required so a TypeScript caller must decide, AND `defendText` destructures it with `= true`, so a JavaScript caller who omits it gets the STRICTEST grammar rather than the permissive one. A caller passes `false` only when the content type is known. | Discriminated union (larger, same effect); leave it and document (the doc snippet I wrote had the unsafe arm uncommented — fixed in round 5) |
 | Bump to 3.4.0 | Additive export, no breaking change. | Major (nothing removed) |
 
 ## What to pay attention to during review
@@ -134,9 +134,12 @@ describes the real pipeline with a 3.4.0 upgrade note.
 
 ## Testing summary
 
-- **Suite: 1098 passed, 7 skipped, 32 files.** `npm test` (vitest). Build exits
-  0. `npx tsc --noEmit`: **0 errors in non-test files**; 12 pre-existing test-file
-  errors, unchanged in count and location.
+- **Suite: 1098 passed, 7 skipped, 32 files** — the reading at the ORIGINAL
+  implementation, before five rounds of PR review. The final figure is in the
+  round-5 section below; this one is kept as the snapshot it was, not updated in
+  place. `npm test` (vitest). Build exits 0. `npx tsc --noEmit`: **0 errors in
+  non-test files**; 12 pre-existing test-file errors, unchanged in count and
+  location.
 - **Verification mode:** vitest has no trustworthy structured reporter per
   `/work` §5, so this verdict is the human-readable summary and the per-mutation
   failures were read by name. **Not a machine-parsed artefact.**
@@ -491,3 +494,99 @@ the class sweep RC-14 prescribes.
 
 **No escalations remain open.** Merge authorisation is the director's, on
 GitHub — nothing in this workflow merges.
+
+## Review Comments Addressed — 2026-09-02 (round 5, PR #33)
+
+Both bots reviewed. **11 inline findings — 2 from codex, 9 from coderabbitai.**
+The round's headline is that codex found a **P1 this branch introduced and four
+rounds missed**, in code the last three rounds rewrote repeatedly.
+
+### Changes Made
+
+| Comment | Reviewer | Severity | Category | Action taken |
+|---|---|---|---|---|
+| "Preserve JSON field boundaries during the outer defense" | codex | **P1** (theirs: P1) | Fix needed | **Fixed.** Reproduced before touching anything, and it is worse than reported — see below. `defendForInline` now parses a JSON document and defends each string LEAF. RC-16, invariant 16 |
+| Grammar selector missing from the published example | codex | P2 (theirs: P2) | Fix needed | **Fixed.** `docs/custom-tools.md`'s recommended snippet had `contentTypeUndetermined` commented out, so the example a consumer copies does not compile against the type this release publishes. Now live, with the meaning of each arm beside it |
+| Four `executeJqQuery` calls missing the required second argument | coderabbitai | P3 (theirs: Major) | Fix needed | **Fixed.** Confirmed with `tsc --noEmit`: HEAD had 16 test-file type errors against main's 12, and the 4 extra were exactly these — mine, added in round 4. Graded P3 rather than Major because nothing enforces it: there is no `typecheck` script and `tsup` does not typecheck tests, so the suite and the build were both green. Now back to main's 12 |
+| Flood bodies can silently exceed `STRIP_PATH_MAX_BYTES` | coderabbitai | P2 (theirs: Trivial) | Fix needed | **Fixed**, and graded UP. Above the cap `stripBlocksFixedPoint` returns its input untouched, so an oversized flood passes by doing no work — and `">" + "<script".repeat(37449)` is 262144 bytes, the cap exactly. One character in any literal and the whole block is vacuous and green. On a branch with five toothless guards already this is not trivial. Probed: one extra byte now fails it |
+| Spotlighting claim contradicts the new wrap behaviour | coderabbitai | P3 | Documentation | **Fixed.** `docs/architecture/architecture.md` line 211 said custom and schema-generated tools "never get spotlighted, because the wrapper is the only call site". Since 3.4.0 `createWrapper` spotlights every text part it defends and `generator.ts` passes the flag in. Published to npm, and this PR is what made it false |
+| Persisted-JSON records overstate the exemption | coderabbitai | P3 (theirs: Major) | Documentation | **Partially fixed** — see Declined. Confirmed by measurement: `{"a":"<script>x</script>"}` served as `text/html` is persisted as `{"a":""}`. This PR narrowed the exemption (`jsonExemptionCouldApply`); on main the gate did not exist. ARCHITECTURE.md invariant 1a and CHANGELOG now state the content-type gate and what it costs |
+| Invariant 15 states the linearity condition too loosely | coderabbitai | P3 | Documentation | **Fixed, but not as asked.** Their point was that "must exclude" over-claims. The real defect is the opposite: the rule as written justified `[^>]*`, which is precisely what RC-14 was. Now: exclude every delimiter still to be consumed, with partitioning as an explicit, argued exception |
+| Byte-identity criterion conflicts with inline stripping | coderabbitai | P3 | Documentation | **Fixed.** `docs/todos/004`'s criterion now says PERSISTED channel and names the inline exception, so whoever picks it up is not chasing a criterion correct behaviour fails |
+| Record the final grammar-selector contract | coderabbitai | P3 | Documentation | **Fixed.** The Key decisions row now records both halves — required in the type, defaulting to the STRICT arm at runtime |
+| Identify the test-count snapshot | coderabbitai | P3 | Documentation | **Fixed.** 1098 is labelled as the original reading, not updated in place |
+
+### The P1, and why it survived four rounds
+
+`formatResponse` seals body, headers and stderr into one JSON envelope. The
+strip stages pair an opening token with a closing one and have no notion of the
+syntax between two fields, so an opener in `response` and a closer in `headers`
+delete everything between them.
+
+Measured before the fix:
+
+- body `{"note":"budget <!-- draft"}` + header `x-trace: a-->b` → the returned
+  envelope had **no `headers` key at all**, and the body was cut mid-value.
+- `{"a":"open <!--","b":"close -->","c":"kept"}` → `{"a":"open ","c":"kept"}`.
+  One document, no envelope, no headers — this is the `jq_query` shape.
+
+**Both outputs are valid JSON.** That is why nothing downstream noticed and why
+no test caught it: the guards ask whether the result parses, not whether all the
+parts are still there.
+
+**RC-15 measured this same envelope one round earlier** and asked only how big
+it was. The fact was already in the ledger.
+
+### The fix's own first version broke invariant 14
+
+Recorded because it is the more useful half. Indenting whenever the input held a
+newline re-inflates a sparsely formatted document by its nesting depth — 53
+bytes in, **140 out**, against a growth ratio that believes the ceiling is 15/9 —
+so `exceedsInlineCap`'s cheap arm would have reported compliance for a body
+reaching the model over its cap.
+
+**The obvious repair was worse.** Gating that arm on `isDefinitelyJson` made the
+measurement run the full pass, which logs; the suite failed on a test asserting
+silence. That is RC-15's own second lesson arriving from the opposite direction
+one round later. What holds needs no constant: indent only where indenting does
+not grow the document.
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Correct RC-8 and RC-10 in `LESSONS.md` to match the strip path | coderabbitai | P3 | In scope | `LESSONS.md` is an append-only ledger and an RC is durable once assigned — `.claude/rules/03-divergence.md`. Retro-editing a past RC to reflect later knowledge destroys the record of what was known when. The correction belongs in a NEW entry, and it is in invariant 1a and the CHANGELOG where a reader meets the rule rather than its history |
+| Renumber the invariant list so markdownlint MD029 passes | coderabbitai | P3 | In scope | The `1a` entry is deliberate and every invariant is cited BY NUMBER across `LESSONS.md`, the rules files, the source docblocks and four rounds of PR replies. Renumbering to satisfy a linter that is not in this project's pipeline would silently invalidate every one of those citations — K-7, for a warning with no consequence |
+
+### Outstanding Todos
+
+**0 filed this round.** The four in `docs/todos/` are pre-existing backlog and
+none carries `pr: "#33"`. `docs/todos/004` gained a scoping clause.
+
+**One open question is recorded, not filed:** a remote-declared content type
+decides whether a persisted artefact is altered (invariant 1a). Both directions
+have a cost and the bypass is the worse one, so it is documented where the rule
+is stated rather than promised as work.
+
+### Files Modified
+
+`src/lib/response/processor.ts`, `post-processor.ts`, and the three test files
+`post-processor.test.ts`, `processor.test.ts`, `strip-blocks.test.ts`,
+`src/lib/tools/jq-query.test.ts`, `ARCHITECTURE.md`, `LESSONS.md`,
+`CHANGELOG.md`, `docs/architecture/architecture.md`, `docs/custom-tools.md`,
+`docs/todos/004-…md`, `dist/` (rebuilt), and this handoff.
+
+### Testing summary — round 5
+
+**1158 passed, 7 skipped, 32 files.** `npx tsc --noEmit`: **12 errors, exactly
+main's count and locations** — the 4 this branch added are gone. Build exits 0.
+
+**Teeth verified against four source mutations**, each backed up with `cp` and
+restored from the copy (`diff` confirmed byte-identical):
+
+| Mutation | Tests that failed |
+|---|---|
+| `defendForInline` back to scanning the serialised form | 4 of the 6 new invariant-16 cases. The other two are labelled positive controls and pass either way, by design |
+| `defendForInline` always indents | the RC-16-meets-RC-15 growth guard |
+| `defendForInline` always compacts | the pretty-preservation guard |
+| one extra byte in a flood literal | that flood case, on the new cap assertion |

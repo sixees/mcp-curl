@@ -73,6 +73,11 @@ half above.
 - [ ] An entity-encoded beacon reaching the wrap is stripped.
 - [ ] An inert entity-encoded phrase in header text is returned undecoded
       (RC-3's guard still passes).
-- [ ] A JSON document round-trips byte-identical through every channel.
+- [ ] A JSON document round-trips byte-identical through every PERSISTED
+      channel. Not every channel: the wrap strips beacons inside JSON string
+      values by design (RC-10), and since RC-16 it re-serialises the document
+      to defend each value separately — so an inline copy is deliberately not
+      byte-identical, and a criterion demanding that it be would fail against
+      correct behaviour.
 - [ ] The `decodeEntities` per-caller flag is gone, or `ARCHITECTURE.md`
       invariant 1a states why it must remain.

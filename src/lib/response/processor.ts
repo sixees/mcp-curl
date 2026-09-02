@@ -127,17 +127,29 @@ const JSON_DOCUMENT_FIRST_CHARS: ReadonlySet<string> = new Set([
  * strip decision.
  */
 function isDefinitelyJson(text: string): boolean {
+    return parseJsonDocument(text) !== undefined;
+}
+
+/**
+ * The parse behind {@link isDefinitelyJson}, returning the value rather than
+ * discarding it.
+ *
+ * Two callers need the same question answered and only one of them needs the
+ * answer thrown away, so the parse lives here once. `undefined` means "not a
+ * JSON document" — distinguishable from a document whose value IS `null`,
+ * which parses fine and comes back wrapped.
+ */
+function parseJsonDocument(text: string): { value: unknown } | undefined {
     const trimmed = text.trimStart();
-    if (trimmed.length === 0) return false;
-    if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0]!)) return false;
+    if (trimmed.length === 0) return undefined;
+    if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0]!)) return undefined;
     // Cheap gate first: above the strip cap no stage runs either way, so the
     // parse would be pure cost.
-    if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
+    if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return undefined;
     try {
-        JSON.parse(text);
-        return true;
+        return { value: JSON.parse(text) };
     } catch {
-        return false;
+        return undefined;
     }
 }
 
@@ -341,14 +353,75 @@ export function defendText(text: string, options: DefendTextOptions): string {
  * **This pass can make text LONGER** — `[link removed]` is 14 bytes and the
  * shortest form it replaces is 9 — which is the whole reason it runs before a
  * size gate rather than after one. `LESSONS.md` RC-15.
+ *
+ * **A JSON document is defended value by value, never as one string.** The
+ * strip stages pair an opening token with a closing one, and a scan over the
+ * serialised form pairs them ACROSS the syntax that separates two fields — so
+ * `<!--` in one value and `-->` in a later one deleted the intervening key,
+ * silently, leaving valid JSON that nothing downstream could tell had been
+ * cut. `LESSONS.md` RC-16 and ARCHITECTURE.md invariant 16.
  */
 export function defendForInline(text: string, hostname: string): string {
+    const parsed = parseJsonDocument(text);
+    if (parsed === undefined) return defendInlineString(text, hostname);
+    const defended = defendJsonLeaves(parsed.value, hostname);
+
+    // **Indented only where indenting does not GROW the document.** The obvious
+    // rule — "indent if the input has a newline" — re-inflates a sparsely
+    // formatted document by its nesting depth: `{"a":1,\n"b":[1,2,3,4,5,6,7,8,
+    // 9,10],"c":{"d":{"e":1}}}` measured 53 bytes in and 140 out. Nothing
+    // bounds that by a constant, so it would silently break
+    // {@link exceedsInlineCap}'s cheap arm and with it invariant 14 — the fix
+    // for one invariant reintroducing the violation of another.
+    //
+    // Comparing against the input instead needs no constant. The compact form
+    // can never exceed the input by more than the beacon substitution already
+    // accounted for, so whichever branch is taken the growth stays inside
+    // {@link MAX_INLINE_GROWTH_RATIO}. Both real producers of pretty JSON here
+    // — `formatResponse` and jq, each at two spaces — take the first branch and
+    // come back looking as they went in.
+    const indented = JSON.stringify(defended, null, 2);
+    return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(text, "utf8")
+        ? indented
+        : JSON.stringify(defended);
+}
+
+/** {@link defendForInline}'s option set, applied to one undivided string. */
+function defendInlineString(text: string, hostname: string): string {
     return defendText(text, {
         hostname,
         contentTypeUndetermined: true,
         excludeJsonDocuments: false,
         decodeEntities: false,
     });
+}
+
+/**
+ * Defend every string leaf of a parsed JSON value, leaving the structure alone.
+ *
+ * **Object KEYS are deliberately not defended.** Two keys that defended to the
+ * same string would collapse into one, losing a field — which is the very
+ * failure this function exists to stop, so the fix must not reintroduce it by
+ * another door. A beacon in a key therefore survives to the model; it is a
+ * stated residual rather than an oversight.
+ *
+ * Numbers, booleans and `null` are returned untouched, and re-serialising
+ * normalises their spelling (`1.50` becomes `1.5`). Nothing reads meaning from
+ * that spelling on an inline copy — the persisted artefact never takes this
+ * path — and it is the price of knowing where one value ends and the next
+ * begins.
+ */
+function defendJsonLeaves(value: unknown, hostname: string): unknown {
+    if (typeof value === "string") return defendInlineString(value, hostname);
+    if (Array.isArray(value)) return value.map((item) => defendJsonLeaves(item, hostname));
+    if (value !== null && typeof value === "object") {
+        const defended: Record<string, unknown> = {};
+        for (const [key, item] of Object.entries(value)) {
+            defended[key] = defendJsonLeaves(item, hostname);
+        }
+        return defended;
+    }
+    return value;
 }
 
 /**
