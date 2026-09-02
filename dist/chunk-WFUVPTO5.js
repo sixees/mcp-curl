@@ -1958,6 +1958,22 @@ function defendText(text, options) {
   }
   return content;
 }
+function defendForInline(text, hostname) {
+  return defendText(text, {
+    hostname,
+    contentTypeUndetermined: true,
+    excludeJsonDocuments: false,
+    decodeEntities: false
+  });
+}
+var SHORTEST_REPLACED_BEACON = "[](file:)".length;
+var MAX_INLINE_GROWTH_RATIO = Math.max(IMAGE_REMOVED_PLACEHOLDER.length, LINK_REMOVED_PLACEHOLDER.length) / SHORTEST_REPLACED_BEACON;
+function exceedsInlineCap(text, hostname, maxBytes) {
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > maxBytes) return true;
+  if (bytes * MAX_INLINE_GROWTH_RATIO <= maxBytes) return false;
+  return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
+}
 async function processResponse(response, options) {
   if (typeof response !== "string") {
     throw new TypeError("processResponse: response must be a string");
@@ -2000,19 +2016,20 @@ async function processResponse(response, options) {
     content = sanitizeAndDetect(content, hostname);
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-  const contentBytes = Buffer.byteLength(content, "utf8");
-  const shouldSave = options.saveToFile || contentBytes > maxSize;
+  const overCap = exceedsInlineCap(content, hostname, maxSize);
+  const shouldSave = options.saveToFile || overCap;
   if (shouldSave) {
     const filepath = await saveResponseToFile(content, options.url, options.outputDir);
     let displayContent = content;
-    if (contentBytes > maxSize) {
-      displayContent = Buffer.from(content, "utf8").subarray(0, maxSize).toString("utf8");
+    if (overCap) {
+      displayContent = Buffer.from(defendForInline(content, hostname), "utf8").subarray(0, maxSize).toString("utf8");
     }
     return {
       content: displayContent,
       savedToFile: true,
       filepath,
-      message: `Response (${contentBytes} bytes) saved to: ${filepath}`
+      // Describes the artefact on disk, which is the origin-grammar copy.
+      message: `Response (${Buffer.byteLength(content, "utf8")} bytes) saved to: ${filepath}`
     };
   }
   return {
@@ -2139,12 +2156,7 @@ function processTextPart(part, hostname, requestId) {
     return part;
   }
   if (type !== "text" || typeof text !== "string") return part;
-  const defended = defendText(text, {
-    hostname,
-    contentTypeUndetermined: true,
-    excludeJsonDocuments: false,
-    decodeEntities: false
-  });
+  const defended = defendForInline(text, hostname);
   const finalText = requestId ? applySpotlighting(defended, requestId) : defended;
   try {
     return { ...contentPart, text: finalText };
@@ -2643,6 +2655,7 @@ export {
   applyJqFilter,
   createSafeFilenameBase,
   defendText,
+  exceedsInlineCap,
   createWrapper,
   CURL_EXECUTE_TOOL_META,
   executeCurlRequest,

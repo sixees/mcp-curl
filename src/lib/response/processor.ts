@@ -6,6 +6,8 @@ import { applyJqFilterToParsed } from "../jq/index.js";
 import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
 import {
+    IMAGE_REMOVED_PLACEHOLDER,
+    LINK_REMOVED_PLACEHOLDER,
     STRIP_PATH_MAX_BYTES,
     looksLikeMarkupShape,
     stripBlocksFixedPoint,
@@ -283,6 +285,91 @@ export function defendText(text: string, options: DefendTextOptions): string {
 }
 
 /**
+ * The defence every copy that goes INLINE to the model takes.
+ *
+ * **It exists so the wrap and the size gate cannot disagree about what the
+ * model will receive.** The post-processor wrap applies this to every text
+ * part; `processResponse` and `executeJqQuery` apply it to the body *before*
+ * weighing it, so the gate weighs the bytes that are actually returned. Two
+ * callers, one option set, stated here rather than spelled twice.
+ *
+ * The options and their reasons:
+ *
+ * - `contentTypeUndetermined: true` — at these boundaries the grammar
+ *   genuinely is unknown, so the STRICTEST arm runs and every stage fires.
+ * - `excludeJsonDocuments: false` — the JSON exemption is about a persisted
+ *   artefact, and nothing inline is persisted. Persisted keeps the exemption;
+ *   returned does not (`LESSONS.md` RC-10).
+ * - `decodeEntities: false` — the decode's output is what gets returned, so on
+ *   a channel whose consumer does not itself decode it would manufacture live
+ *   markup from inert bytes (`LESSONS.md` RC-3). Its cost is stated on
+ *   `processTextPart` and in ARCHITECTURE.md invariant 1a.
+ *
+ * **This pass can make text LONGER** — `[link removed]` is 14 bytes and the
+ * shortest form it replaces is 9 — which is the whole reason it runs before a
+ * size gate rather than after one. `LESSONS.md` RC-15.
+ */
+export function defendForInline(text: string, hostname: string): string {
+    return defendText(text, {
+        hostname,
+        contentTypeUndetermined: true,
+        excludeJsonDocuments: false,
+        decodeEntities: false,
+    });
+}
+
+/**
+ * Shortest markdown form {@link defendForInline} can replace with a longer
+ * placeholder: `[](file:)`, nine bytes, matched by the dangerous-scheme link
+ * pattern. Every other replaced form is longer, and every other stage of the
+ * pipeline only deletes — the sanitiser strips attack codepoints and collapses
+ * padding, the markup stages remove tags and comments, and the entity decode is
+ * off on this path. So the beacon substitution is the ONLY way the defence can
+ * add bytes, and this is its worst case.
+ *
+ * **Pinned by a test rather than asserted here.** A pattern change that admits
+ * a shorter form would raise the real ratio while this constant stayed put, and
+ * nothing would error.
+ */
+const SHORTEST_REPLACED_BEACON = "[](file:)".length;
+
+/**
+ * Most {@link defendForInline} can multiply a body's length by. Derived from
+ * the placeholders themselves so a longer one cannot silently invalidate it.
+ */
+const MAX_INLINE_GROWTH_RATIO =
+    Math.max(IMAGE_REMOVED_PLACEHOLDER.length, LINK_REMOVED_PLACEHOLDER.length) /
+    SHORTEST_REPLACED_BEACON;
+
+/**
+ * Whether `text` will still exceed `maxBytes` AFTER the defence the model-facing
+ * boundary applies to it.
+ *
+ * **This is the question a size gate has to ask, and asking it of the raw bytes
+ * is what invariant 14 was violated by.** `defendForInline` can make text
+ * longer, so a body that measures 1000 bytes under a 1000-byte cap can reach the
+ * model as 1400 — inside the limit by the gate's reckoning and over it in fact
+ * (`LESSONS.md` RC-15).
+ *
+ * **The defence pass is a measurement here, so it must not be run when it cannot
+ * change the answer.** It is not free and it is not side-effect-free: it runs
+ * `sanitizeAndDetect`, which logs. Two cheap arms answer first —
+ * already-over needs no pass, and growth bounded by
+ * {@link MAX_INLINE_GROWTH_RATIO} cannot cross a cap this far away — so the pass
+ * runs only for a body within that ratio of the limit. That is also what keeps
+ * the detect-on-original trade-off in `processResponse` intact for every body
+ * nowhere near its cap.
+ *
+ * @param hostname - label for the detection log, on the rare arm that runs it
+ */
+export function exceedsInlineCap(text: string, hostname: string, maxBytes: number): boolean {
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > maxBytes) return true;
+    if (bytes * MAX_INLINE_GROWTH_RATIO <= maxBytes) return false;
+    return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
+}
+
+/**
  * Process response with filtering and size handling.
  *
  * Processing pipeline (text content only):
@@ -404,25 +491,61 @@ export async function processResponse(
         content = sanitizeAndDetect(content, hostname);
     }
 
-    // Step 7: Determine max size and decide save-to-file
+    // Step 7: Determine max size and decide save-to-file.
+    //
+    // **The gate weighs the DEFENDED bytes and returns the undefended ones, and
+    // the asymmetry is the point.** Downstream of here the post-processor wrap
+    // applies `defendForInline` to whatever goes inline, and that pass can make
+    // text longer — `[link removed]` is 14 bytes and the shortest form it
+    // replaces is 9. Measuring `content` would therefore report a size the
+    // model never receives and let an over-cap result stay inline, which is the
+    // invariant-14 violation this closes (`LESSONS.md` RC-15).
+    //
+    // What it does NOT do is rewrite the returned value. `processResponse` is a
+    // published entry point whose documented behaviour is the ORIGIN's grammar —
+    // a `text/plain` body keeps its comments, a JSON document keeps `<script>`
+    // inside its string values (RC-10) — and the strict pass belongs to the
+    // model-facing boundary, not to this one. So the defended text is computed
+    // as a measurement and discarded; only the gate consumes it.
+    //
+    // **This is also why the cap cannot be enforced at the wrap itself**, which
+    // was the other candidate. By then the body is sealed inside
+    // `formatResponse`'s JSON envelope, so there is no discrete body left to
+    // bound, a byte-truncation would cut the envelope mid-JSON, and the wrap has
+    // no file to save to. Measured: a compliant 1000-byte body arrives at the
+    // wrap as a 1057-byte text part under `include_metadata`, so a wrap-side cap
+    // would truncate correct responses.
     const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-    const contentBytes = Buffer.byteLength(content, "utf8");
+    const overCap = exceedsInlineCap(content, hostname, maxSize);
 
-    const shouldSave = options.saveToFile || contentBytes > maxSize;
+    const shouldSave = options.saveToFile || overCap;
 
     if (shouldSave) {
         const filepath = await saveResponseToFile(content, options.url, options.outputDir);
-        // Keep content as actual response data, capped to maxSize for preview
-        // Use byte-aware truncation (best-effort: may produce replacement chars at boundary)
+        // The preview is the one place the defended form is RETURNED, because
+        // it is the only form that can be bounded: truncating `content` would
+        // leave the wrap free to grow it back over the cap. Truncation can only
+        // destroy a complete `[…](…)`, never create one, so the wrap's pass over
+        // this preview finds nothing left to replace and cannot grow it.
+        //
+        // Byte-aware, best-effort — may produce a replacement char at the
+        // boundary. No notice is written into the text: a truncation notice
+        // inside remote-authored text is a control-plane fact in a data-plane
+        // string and an origin can send the same words, so the fact travels in
+        // the server-authored `message`. Same reasoning as `parser.ts`'s
+        // `headerBytesReceived`.
         let displayContent = content;
-        if (contentBytes > maxSize) {
-            displayContent = Buffer.from(content, "utf8").subarray(0, maxSize).toString("utf8");
+        if (overCap) {
+            displayContent = Buffer.from(defendForInline(content, hostname), "utf8")
+                .subarray(0, maxSize)
+                .toString("utf8");
         }
         return {
             content: displayContent,
             savedToFile: true,
             filepath,
-            message: `Response (${contentBytes} bytes) saved to: ${filepath}`,
+            // Describes the artefact on disk, which is the origin-grammar copy.
+            message: `Response (${Buffer.byteLength(content, "utf8")} bytes) saved to: ${filepath}`,
         };
     }
 

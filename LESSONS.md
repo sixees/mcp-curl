@@ -620,3 +620,52 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   found it is mechanical and takes a minute — *for every character class in a
   pattern, does it exclude the first character of the token the match must
   reach?* — and it is now the acceptance criterion in `docs/todos/005`.
+
+---
+
+### RC-15 — A cap measured its input where the pipeline grows its output
+
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-11 — *class-id:* `broken-contract`
+
+- **The plan said:** `max_result_size` bounds what is surfaced inline, and
+  invariant 14 already said in terms that "the cap is applied after the defence
+  pipeline as well as before it, since `[link removed]` is longer than some of
+  the forms it replaces". The invariant was written; the code was not.
+- **Reality was:** this PR added a second defence pass at the post-processor
+  wrap, downstream of every size gate. A `text/plain` body of
+  `"[a](file:)".repeat(100)` — exactly 1000 bytes under a 1000-byte cap — stayed
+  inline and reached the model as **1400 bytes**, with the gate reporting
+  compliance. Reported by `chatgpt-codex-connector` in round 1 and independently
+  by `coderabbitai` in round 2, which read it out of this branch's own handoff.
+- **What changed:** `processor.ts::exceedsInlineCap` asks the question a size
+  gate has to ask — *will this still be over the cap after the defence?* — and
+  both `processResponse` and `executeJqQuery` gate on it. Over-cap now saves to
+  a file, and the returned preview is the defended form, because truncating the
+  raw form would leave the wrap free to grow it back over the limit.
+- **What this costs next time, in three parts:**
+
+  **The obvious fix was the wrong one, and the measurement is what said so.**
+  "Plumb the cap into the wrap" is the natural reading, and at the wrap the body
+  is already inside `formatResponse`'s JSON envelope — a compliant 1000-byte
+  body arrives as a **1057-byte** text part under `include_metadata`. A wrap-side
+  cap would truncate every correct metadata response, mid-JSON. **A cap has to
+  be applied where the quantity it names still exists**, and `max_result_size`
+  names the body, not the envelope.
+
+  **A measurement acquired a side effect and the suite caught it.** The first
+  version ran the full defence to weigh it, and that pass calls
+  `sanitizeAndDetect`, which logs — silently converting a documented
+  detect-on-original trade-off into a log line. The fix is two cheap arms that
+  answer without the pass: already-over, and growth bounded by the placeholder
+  ratio being unable to reach the cap. **A predicate that needs a side-effecting
+  pass to answer should run it only where it can change the answer.**
+
+  **And the first regression guard for the jq channel was toothless — the fifth
+  on this branch.** It computed the cap with `JSON.stringify`, but jq
+  pretty-prints with a two-space indent, so the assumed 530 bytes were really
+  642: the result was already over the cap on its own size and saved to file
+  with the fix reverted exactly as it did with the fix in. It passed for the
+  wrong reason. **Derive a fixture's boundary from a real call, never from a
+  re-implementation of what the code under test does.**

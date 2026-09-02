@@ -406,3 +406,61 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
         expect(wrapped.content[0].text).not.toContain("evil.test");
     });
 });
+
+describe("executeJqQuery — invariant 14: the gate weighs what the model receives (RC-15)", () => {
+    // Same class as `processResponse`'s, one channel over. `executeJqQuery`
+    // returns JSON, and the post-processor wrap does NOT exempt JSON — so a
+    // beacon inside a string value is replaced with a longer placeholder AFTER
+    // this function's size gate has run. Weighing the pre-defence bytes let an
+    // over-cap result stay inline while the gate reported compliance.
+    //
+    // **The cap is taken from a real uncapped call, never re-derived.** The
+    // first version of this guard computed it with `JSON.stringify` and was
+    // toothless: jq pretty-prints with a two-space indent, so the assumed 530
+    // bytes were really 642, the result was already over the cap on its own
+    // size, and it saved to file with the fix reverted just as it did with the
+    // fix in. It passed for the wrong reason and proved nothing.
+    const beaconDoc = JSON.stringify({ v: Array.from({ length: 40 }, () => "[a](file:)") });
+
+    /** The exact inline bytes this query returns with no cap in play. */
+    const uncappedBytes = async (file: string): Promise<number> => {
+        const r = await executeJqQuery({ filepath: file, jq_filter: ".v" });
+        return Buffer.byteLength((r.content[0] as { text: string }).text, "utf8");
+    };
+
+    it("saves to file when the defence will push an at-cap result over it", async () => {
+        const file = join(allowedDir, "beacons.json");
+        await writeFile(file, beaconDoc);
+        // Exactly at the cap: the pre-defence gate sees compliance, and only a
+        // gate that accounts for the wrap's growth saves this.
+        const cap = await uncappedBytes(file);
+
+        const result = await executeJqQuery({ filepath: file, jq_filter: ".v", max_result_size: cap });
+        expect((result.content[0] as { text: string }).text).toMatch(SAVED_TO_PREFIX);
+    });
+
+    it("what the WRAP finally emits is inside the cap, end to end", async () => {
+        const file = join(allowedDir, "beacons2.json");
+        await writeFile(file, beaconDoc);
+        const cap = await uncappedBytes(file);
+
+        const wrap = createWrapper({});
+        const wrapped = wrap(
+            await executeJqQuery({ filepath: file, jq_filter: ".v", max_result_size: cap }),
+            "jq"
+        );
+        const text = (wrapped.content as { text: string }[])[0].text;
+        expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(cap);
+    });
+
+    it("leaves a result comfortably inside the cap inline", async () => {
+        const file = join(allowedDir, "small.json");
+        await writeFile(file, JSON.stringify({ name: "Ada" }));
+        const result = await executeJqQuery({
+            filepath: file, jq_filter: ".name", max_result_size: 10_000,
+        });
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).not.toMatch(SAVED_TO_PREFIX);
+        expect(text).toContain("Ada");
+    });
+});

@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than buried: a literal `<` inside a quoted attribute value stops the balanced match, so
   the body survives as inert text — both tags still go, which is the RC-11 posture the closer has
   had since round 2. `LESSONS.md` RC-14.
+- **`max_result_size` now bounds what the model actually receives, which is what invariant 14 already
+  claimed.** The defence pass can make text longer — `[link removed]` is 14 bytes and the shortest
+  form it replaces is 9 — and this release added a second pass at the post-processor wrap,
+  downstream of every size gate. A `text/plain` body of `"[a](file:)".repeat(100)`, exactly 1000
+  bytes under a 1000-byte cap, stayed inline and reached the model as **1400 bytes** with the gate
+  reporting compliance. Both size gates now ask `exceedsInlineCap`, which weighs the defended form;
+  over-cap saves to a file as it always did. Found by review, twice, independently.
+
+  **Not fixed at the wrap, and the measurement is why.** By the wrap the body is sealed inside the
+  metadata envelope: a *compliant* 1000-byte body arrives there as a 1057-byte text part under
+  `include_metadata`, so a wrap-side cap would truncate correct responses mid-JSON, and the wrap has
+  no file to save to. `LESSONS.md` RC-15.
 - **Custom tools, hook short-circuits and YAML endpoints now get the full response defence.** The
   post-processor wrap ran `sanitizeAndDetect` alone — Step 2 of the five in `defendText` — so a
   `registerCustomTool()` handler returning remote markdown or HTML reached the model with

@@ -57,7 +57,7 @@
 import { randomUUID } from "node:crypto";
 import { logWrapError } from "../security/wrap-error-logger.js";
 import { applySpotlighting } from "../utils/sanitize.js";
-import { defendText } from "./processor.js";
+import { defendForInline } from "./processor.js";
 
 // Module-private symbol — deliberately NOT `Symbol.for()`. The global symbol
 // registry is reachable from any code path that runs in this realm, including
@@ -256,12 +256,7 @@ function processTextPart(
     }
     if (type !== "text" || typeof text !== "string") return part;
 
-    const defended = defendText(text, {
-        hostname,
-        contentTypeUndetermined: true,
-        excludeJsonDocuments: false,
-        decodeEntities: false,
-    });
+    const defended = defendForInline(text, hostname);
     const finalText = requestId ? applySpotlighting(defended, requestId) : defended;
     // Spread reads every own enumerable property, also routed through Proxy
     // `get` / `ownKeys` traps. Contain the same way — a throwing trap on a

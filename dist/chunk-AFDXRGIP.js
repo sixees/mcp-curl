@@ -19,6 +19,7 @@ import {
   createSafeFilenameBase,
   createWrapper,
   defendText,
+  exceedsInlineCap,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
@@ -38,7 +39,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-KDKEPIEL.js";
+} from "./chunk-WFUVPTO5.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -169,24 +170,25 @@ async function executeJqQuery(params, _extra) {
     const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : void 0;
     const content = await readFile(validatedFilePath, { encoding: "utf-8" });
     const filtered = applyJqFilter(content, params.jq_filter);
-    const defended = defendText(filtered, {
+    const label = basename(validatedFilePath);
+    const persisted = defendText(filtered, {
       contentType: JSON_MIME,
       contentTypeUndetermined: false,
-      hostname: basename(validatedFilePath)
+      hostname: label
     });
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-    const contentBytes = Buffer.byteLength(defended, "utf8");
-    const shouldSave = params.save_to_file || contentBytes > maxSize;
+    const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
     if (shouldSave) {
       const sourceBasename = basename(validatedFilePath) || "query_result";
       const safeName = createSafeFilenameBase(sourceBasename, "query_result");
       const filename = `${safeName}_${Date.now()}.txt`;
       const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
       const filepath = join(targetDir, filename);
-      await writeFile(filepath, defended, { encoding: "utf-8", mode: 384 });
-      return successResult(`Result (${contentBytes} bytes) saved to: ${filepath}`);
+      await writeFile(filepath, persisted, { encoding: "utf-8", mode: 384 });
+      const persistedBytes = Buffer.byteLength(persisted, "utf8");
+      return successResult(`Result (${persistedBytes} bytes) saved to: ${filepath}`);
     }
-    return successResult(defended);
+    return successResult(persisted);
   } catch (error) {
     const errorMessage = getErrorMessage(error);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";

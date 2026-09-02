@@ -151,9 +151,22 @@ what a violation looks like, it does not belong on this list.
     `min(LIMITS.MAX_HEADER_TEXT_BYTES, max_result_size)` — its own ceiling AND
     the caller's inline budget, because it is returned inline even when the body
     was saved to a file. A value added to the result after the size gate has run
-    is unbounded in practice, whatever the gate reports. The cap is applied after
-    the defence pipeline as well as before it, since `[link removed]` is longer
-    than some of the forms it replaces.
+    is unbounded in practice, whatever the gate reports.
+
+    **The gate weighs the DEFENDED bytes, because the defence can add them.**
+    `[link removed]` is 14 bytes and the shortest form it replaces is 9, so a
+    body measured raw can pass a cap it then exceeds on the way to the model —
+    `"[a](file:)".repeat(100)` returned 1400 bytes under a 1000-byte cap. The
+    predicate is `processor.ts::exceedsInlineCap` and both size gates call it;
+    a gate that measures its input rather than its output is the violation.
+
+    **The gate belongs where the body is still a discrete string, not at the
+    wrap.** By the wrap the body is sealed inside `formatResponse`'s JSON
+    envelope: there is no body left to bound, a byte-truncation would cut the
+    envelope mid-JSON, and the wrap has no file to save to. Measured: a
+    *compliant* 1000-byte body reaches the wrap as a 1057-byte text part under
+    `include_metadata`, so a wrap-side cap truncates correct responses. What the
+    wrap gets instead is a guarantee from upstream. `LESSONS.md` RC-15.
 
 15. **Every regex in the strip path is linear in the size of its input, and the
     byte cap is not what makes it so.** A `g`-flagged replace starts a match
