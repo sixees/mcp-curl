@@ -1180,3 +1180,63 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         }
     });
 });
+
+describe("scalar JSON documents keep the exemption (round 4, coderabbitai)", () => {
+    // RFC 8259 puts any VALUE at the top level, so a bare string, number,
+    // boolean or null is a whole JSON document. The leading-character gate
+    // enumerated `{` and `[` only, so a scalar document took the strictest
+    // grammar under an undetermined content type: its contents were rewritten
+    // and the altered bytes persisted for `jq_query` to read back — the outcome
+    // the exemption exists to prevent (RC-10).
+    //
+    // **Only STRING documents are testable here, and the first version of this
+    // block pretended otherwise.** It enumerated number, boolean and null cases
+    // too; each asserted `content === body`, which holds under either gate
+    // because there is nothing in `12345` for any strip stage to rewrite. Five
+    // of six cases passed with the fix reverted. A case that cannot fail is not
+    // coverage, so they are gone rather than restated — the classification they
+    // meant to assert has no observable consequence through this surface.
+    const beacon = "https://host/pixel.gif";
+
+    it("does not strip a beacon inside a scalar JSON string document", async () => {
+        const body = JSON.stringify(`![x](${beacon})`);
+        const result = await processResponse(body, {
+            url: "http://example.com",
+            contentTypeUndetermined: true,
+        });
+        expect(result.content).toBe(body);
+    });
+
+    it("does not entity-decode a scalar JSON string document (RC-12)", async () => {
+        // The other half of the exemption, and a distinct failure: `&#x22;`
+        // decodes to `"`, which ends a JSON string. A document decoded here is
+        // persisted unparseable.
+        const body = JSON.stringify("a &#x22;b&#x22; c");
+        const result = await processResponse(body, {
+            url: "http://example.com",
+            contentTypeUndetermined: true,
+        });
+        expect(result.content).toBe(body);
+        expect(() => JSON.parse(result.content)).not.toThrow();
+    });
+
+    it("still strips text that merely STARTS like a scalar", async () => {
+        // `true` is a JSON document; `truely …` is prose beginning with `t`.
+        // The widened gate is a pre-filter — the parse is what decides.
+        const body = `truely ![x](${beacon})`;
+        const result = await processResponse(body, {
+            url: "http://example.com",
+            contentTypeUndetermined: true,
+        });
+        expect(result.content).not.toContain(beacon);
+    });
+
+    it("still strips an object that only LOOKS like JSON", async () => {
+        const body = `{ not json ![x](${beacon}) }`;
+        const result = await processResponse(body, {
+            url: "http://example.com",
+            contentTypeUndetermined: true,
+        });
+        expect(result.content).not.toContain(beacon);
+    });
+});

@@ -1923,9 +1923,29 @@ function stopWrapErrorCleanup(interval) {
 }
 
 // src/lib/response/processor.ts
+var JSON_DOCUMENT_FIRST_CHARS = /* @__PURE__ */ new Set([
+  "{",
+  "[",
+  '"',
+  "-",
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "t",
+  "f",
+  "n"
+]);
 function isDefinitelyJson(text) {
   const trimmed = text.trimStart();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  if (trimmed.length === 0) return false;
+  if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return false;
   if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
   try {
     JSON.parse(text);

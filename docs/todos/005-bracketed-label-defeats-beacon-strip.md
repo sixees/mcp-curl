@@ -102,12 +102,35 @@ rg -n 'MARKDOWN_.*_PATTERN =' -A2 src/lib/response/strip-blocks.ts
       case OMITS that token. Two generations of guard here passed while the
       defect they were named for was live, because each fed input the
       then-current bound already handled.
-- [ ] **The class sweep, run over every pattern the fix touches:** for each
-      character class in the pattern, does it exclude the first character of
-      the token the match must next reach? A class that does not can consume
-      that token and send the attempt scanning past it. This is mechanical and
-      takes a minute; it is written down because the region bound alone looked
-      like a proof of linearity for three review rounds and was not one
-      (`LESSONS.md` RC-14, `ARCHITECTURE.md` invariant 15).
+- [ ] **The class sweep, run over every pattern the fix touches.** For each
+      repeated character class, list **every** token the match must still
+      consume after it — not just the next one — and check the class against
+      all of them. A class that can eat the first character of any later
+      required token can consume that token and send the attempt scanning past
+      it.
+
+      **State the delimiters, do not describe them.** For the script/style
+      opener that is `<` *and* `>`, so the class is `[^<>]*`: `>` because it
+      terminates the opening tag, `<` because `</script>` begins with one.
+
+      **Excluding them all is sufficient, not necessary — so a class that does
+      not owes an argument, in writing, and a flood case.** The bar is that
+      failing attempts *partition* the input, not that the class names every
+      delimiter. Run against the beacon patterns this criterion flags the label
+      class `[^\]\[\n]*`, which does not exclude `(`, `h` or `)`; the answer
+      is that excluding `[` makes every attempt START at a `[` and every failing
+      scan END at the next `[` or `]`, so the spans are disjoint and the pass is
+      linear. That argument is what the criterion is asking for. A class with no
+      such argument is the defect.
+
+      **An earlier wording of this criterion asked only about "the token the
+      match must next reach", and it would have passed the defect it was
+      written for** — the next token after `<script\b[^>]*` is `>`, which
+      `[^>]*` does exclude. Reported by coderabbitai on PR #33 round 4.
+      (`LESSONS.md` RC-14, `ARCHITECTURE.md` invariant 15.)
+- [ ] **A flood case per delimiter the class excludes**, each omitting only
+      that one. A single payload exercises a single bound; two generations of
+      guard here passed because every case they carried was answered by the
+      then-current bound.
 - [ ] A positive control asserts legitimate prose with brackets and parentheses
       is untouched.

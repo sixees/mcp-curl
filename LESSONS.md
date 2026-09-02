@@ -617,9 +617,23 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   than a footnote on the first: **naming a shape does not make the next
   instance visible, and both instances here were found by a reviewer rather
   than by the sweep the previous RC prescribed.** The sweep that would have
-  found it is mechanical and takes a minute — *for every character class in a
-  pattern, does it exclude the first character of the token the match must
-  reach?* — and it is now the acceptance criterion in `docs/todos/005`.
+  found it is mechanical and takes a minute: *for every repeated character
+  class, list every token the match must still consume after it, and check the
+  class against all of them.* For the script/style opener that is `<` and `>`,
+  which is why the class is `[^<>]*`. Excluding them all is sufficient rather
+  than necessary — the real bar is that failing attempts partition the input —
+  so a class that does not exclude one owes that argument in writing plus a
+  flood case. The markdown label class is the worked example: it does not
+  exclude `(` or `)`, and it is linear anyway because excluding `[` makes every
+  attempt start at a `[` and every failing scan end at the next `[` or `]`. It
+  is the acceptance criterion in `docs/todos/005`.
+
+  **The first wording of that criterion said "the token the match must NEXT
+  reach", and would have passed the very defect it was written for** — the next
+  token after `<script\b[^>]*` is `>`, and `[^>]*` excludes `>`. Caught by
+  coderabbitai in round 4, hours after it was written. A rule derived from a
+  fix rather than from the fix's *class* inherits the fix's blind spot: K-1, on
+  the remedy this time rather than on a test.
 
 ---
 

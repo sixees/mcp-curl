@@ -85,6 +85,27 @@ export interface DefendTextOptions {
 }
 
 /**
+ * Every character a JSON document may begin with. RFC 8259 puts any *value* at
+ * the top level, so a bare string, number, `true`, `false` or `null` is a whole
+ * document — `"![x](https://host/p.gif)"` is one, and jq reads it.
+ *
+ * **Enumerated because the two-member version was a case set missing its third
+ * value.** `{` and `[` cover the documents people picture and omit every scalar,
+ * so a scalar document took the strictest grammar, had the beacon inside it
+ * rewritten, and was persisted altered — the exact outcome the JSON exemption
+ * exists to prevent (RC-10). Reported by coderabbitai on PR #33 round 4.
+ *
+ * This is only a cheap pre-filter for the parse below; being permissive here
+ * costs a `JSON.parse` that fails on its first token, and prose beginning with
+ * `t`, `f` or `n` is common enough that the arm is worth having.
+ */
+const JSON_DOCUMENT_FIRST_CHARS: ReadonlySet<string> = new Set([
+    "{", "[", '"', "-",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "t", "f", "n",
+]);
+
+/**
  * Whether `text` genuinely parses as JSON.
  *
  * Used only to decide whether an UNDETERMINED content type may skip the
@@ -93,10 +114,22 @@ export interface DefendTextOptions {
  * `[a](b)` are legitimate string content that must survive) from attacker text
  * wearing a `[` at the front. Fails closed — anything that does not parse is
  * treated as not-JSON, which selects the stricter path.
+ *
+ * **The leading-character test may only ever REJECT what the parse would
+ * reject.** It is an optimisation, and every character it turns away is a
+ * document class silently losing the exemption — see
+ * {@link JSON_DOCUMENT_FIRST_CHARS}.
+ *
+ * The sibling check in `processResponse`'s jq branch is deliberately NOT this
+ * function. It answers a different question — *should I attempt a filter on a
+ * body whose content type does not say JSON?* — ahead of an explicit parse that
+ * throws either way, so its narrowness changes an error message rather than a
+ * strip decision.
  */
 function isDefinitelyJson(text: string): boolean {
     const trimmed = text.trimStart();
-    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+    if (trimmed.length === 0) return false;
+    if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0]!)) return false;
     // Cheap gate first: above the strip cap no stage runs either way, so the
     // parse would be pure cost.
     if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
