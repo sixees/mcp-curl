@@ -379,8 +379,9 @@ export function createHttpApp(options: HttpAppOptions): Express {
             await transport.handleRequest(req, res, req.body);
         } catch (error) {
             // Minimal error logging: shape only, never message contents — matches
-            // the project-wide stderr convention (see CLAUDE.md "Error logging":
-            // `tool_name error: [<context>] <ErrorClassName>`). The bracketed
+            // the project-wide stderr convention (see docs/architecture/architecture.md
+            // → "Error-Logging Discipline": `tool_name error: [<context>] <ErrorClassName>`).
+            // The bracketed
             // context is the session id when one passed validation, otherwise
             // "no-session". An unvalidated header is treated as absent so a
             // malicious client cannot inject arbitrary bytes into stderr.
@@ -453,8 +454,9 @@ export function createHttpApp(options: HttpAppOptions): Express {
 
     // Global error handler. Reached when a route handler calls `next(error)`.
     // Logs in the project-wide minimal shape (`http_unhandled error:
-    // [<route>] <ErrorClassName>` — see CLAUDE.md "Error logging") and never
-    // echoes the error message, so a thrown error from upstream code can't
+    // [<route>] <ErrorClassName>` — see docs/architecture/architecture.md →
+    // "Error-Logging Discipline") and never echoes the error message, so a
+    // thrown error from upstream code can't
     // surface request-specific detail (path/headers) into operator stderr.
     app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
         const errorClass = err instanceof Error ? err.constructor.name : "unknown";

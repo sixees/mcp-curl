@@ -237,11 +237,9 @@ describe("parseMimeType — non-string runtime guard (round-3 P2-2)", () => {
 });
 
 describe("isSniffableContentType (round-3-CR-r4 P2 broadening)", () => {
-    // Replaces the earlier `isPlainTextLikeContentType` predicate which
-    // returned true ONLY for `text/plain` / empty / undefined — that
-    // narrower predicate let `text/csv`, `text/javascript`,
-    // `application/yaml` etc. silently bypass the sniff window. The new
-    // predicate covers ANY CT where mis-labelled markup is plausible.
+    // Deliberately broad: covers ANY CT where mis-labelled markup is
+    // plausible — `text/csv`, `text/javascript`, `application/yaml`, etc.
+    // — so mislabelling the response cannot bypass the sniff window.
 
     it("returns true for undefined", () => {
         expect(isSniffableContentType(undefined)).toBe(true);

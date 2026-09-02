@@ -241,7 +241,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // previews. Always running sanitise+detect closes the bypass.
     //
     // sanitizeAndDetect runs detection on the **original** input
-    // (PR-6b S4) before the sanitiser strips anything, so injection
+    // (PR-6b) before the sanitiser strips anything, so injection
     // log signals on whatever the attacker sent — not on the post-
     // strip surface.
     content = sanitizeAndDetect(content, hostname);
@@ -482,7 +482,7 @@ export function exceedsInlineCap(text: string, hostname: string, maxBytes: numbe
  * 1. Early size guard (against {@link LIMITS.MAX_RESPONSE_SIZE}).
  * 2. **Sanitise + detect** (Unicode attack chars stripped; visible-space
  *    + newline padding collapsed; injection patterns logged on the
- *    pre-sanitise text per the PR-6b S4 ordering). Runs FIRST so that
+ *    pre-sanitise text per the PR-6b ordering). Runs FIRST so that
  *    the strip path's 256 KB cap can't be evaded by Unicode-padding
  *    inflation: an attacker can't pad with U+200B to push the body above
  *    the cap because sanitiser collapses padding before the strip path
@@ -569,7 +569,6 @@ export async function processResponse(
             }
         }
 
-        // Parse once - reuse for filter application
         try {
             parsedData = JSON.parse(trimmed);
         } catch (error) {

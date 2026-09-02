@@ -20,11 +20,12 @@ export interface FileSaveInfo {
  * When includeMetadata is true, returns a JSON object with:
  * - success: boolean (true if exitCode is 0)
  * - exit_code: number
- * - response: string (stdout content)
+ * - response: string (stdout content; present only on the not-saved-to-file branch)
  * - stderr: string (if present)
- * - saved_to_file: boolean (if fileSaveInfo provided)
- * - filepath: string (path to saved file)
- * - message: string (informational message)
+ * - saved_to_file: boolean (present, and true, only when fileSaveInfo.savedToFile is
+ *   true AND fileSaveInfo.filepath is set — absent otherwise, never emitted as false)
+ * - filepath: string (path to saved file; present only alongside saved_to_file)
+ * - message: string (informational message; present only alongside saved_to_file)
  * - headers: string (response header text, if include_headers was used)
  *
  * - headers_truncated: boolean (only when header text was cut)

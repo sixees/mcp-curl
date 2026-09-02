@@ -48,21 +48,21 @@ const SOFT_HYPHEN = "\\u00AD";
 
 /**
  * U+061C ARABIC LETTER MARK — bidi control routinely missed by sanitiser
- * lists. Same hiding properties as U+202E. (PR-7 / B7-sub-1-3)
+ * lists. Same hiding properties as U+202E.
  */
 const ARABIC_LETTER_MARK = "\\u061C";
 
 /**
  * U+115F HANGUL CHOSEONG FILLER and U+1160 HANGUL JUNGSEONG FILLER — render
  * as zero-width in many fonts; documented hiding chars in 2025–2026
- * prompt-injection reports. (PR-7 / B7-sub-1-3)
+ * prompt-injection reports.
  */
 const HANGUL_FILLERS = "\\u115F\\u1160";
 
 /**
  * U+180B–U+180D MONGOLIAN FREE VARIATION SELECTORs ONE-TO-THREE (used in 2025
  * "Sneaky Bits" research alongside the U+FE00–U+FE0F Variation Selectors)
- * AND U+180E MONGOLIAN VOWEL SEPARATOR. (PR-7 / B7-sub-1-3)
+ * AND U+180E MONGOLIAN VOWEL SEPARATOR.
  */
 const MONGOLIAN_INVISIBLES = "\\u180B-\\u180E";
 
@@ -87,13 +87,13 @@ const BIDI_ISOLATES = "\\u2066-\\u2069";
 /**
  * U+2800 BRAILLE PATTERN BLANK — renders as space in Braille fonts but is a
  * single Braille codepoint, not whitespace. Tokenisation is inconsistent
- * across MCP clients. (PR-7 / B7-sub-1-3)
+ * across MCP clients.
  */
 const BRAILLE_PATTERN_BLANK = "\\u2800";
 
 /**
  * U+3164 HANGUL FILLER — zero-width-renderable filler in many fonts; classic
- * homoglyph hiding char in 2026 reports. (PR-7 / B7-sub-1-3)
+ * homoglyph hiding char in 2026 reports.
  */
 const HANGUL_FILLER_3164 = "\\u3164";
 
@@ -113,7 +113,7 @@ const TAGS_BLOCK = "\\u{E0000}-\\u{E007F}";
  * U+E0100–U+E01EF VARIATION SELECTORs SEVENTEEN-TO-256 (Variation Selectors
  * Supplement). Distinct from the lower TAGS block — the original sanitiser
  * range only covered U+E0000–U+E007F, leaving "Sneaky Bits" payloads encoded
- * in the supplement intact. (PR-7 / B7-sub-1-3)
+ * in the supplement intact.
  */
 const VARIATION_SELECTORS_SUPPLEMENT = "\\u{E0100}-\\u{E01EF}";
 

@@ -31,8 +31,7 @@ import { sanitizeDescription } from "../utils/index.js";
 /**
  * Recursion depth bound. A pathological caller-built schema with
  * thousands of nesting layers should not blow the call stack — we cap
- * traversal at 100 levels (matching the bound used by other defensive
- * walkers in the repo).
+ * traversal at 100 levels.
  */
 const MAX_RECURSION_DEPTH = 100;
 

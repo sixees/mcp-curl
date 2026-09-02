@@ -78,7 +78,7 @@ const IPV4_MAPPED_IPV6_HEX_RE = /^\[?::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]?$/
  * predicate lets the existing dotted-quad patterns continue to do all the
  * work without a parallel set of hex patterns drifting out of sync.
  *
- * Exported so the corresponding stateful predicate (`isBlockedHostname`/
+ * Exported so the corresponding pure predicate (`isBlockedHostname`/
  * `isBlockedIp`) can apply it; tests also exercise it directly.
  */
 export function normalizeIpv4MappedIpv6(host: string): string {

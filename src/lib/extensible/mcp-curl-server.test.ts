@@ -393,7 +393,7 @@ describe("McpCurlServer.registerCustomTool()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PR-5 / B4 — deep sanitisation of `inputSchema` field descriptions.
+// PR-5 — deep sanitisation of `inputSchema` field descriptions.
 //
 // Every assertion reads via the public `.description` getter or
 // `z.toJSONSchema(...)` — never `_def.description` — because Zod v4 stores
@@ -784,9 +784,8 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         const blank = z.string().describe("");
         const inputSchema = z.object({ blank });
         server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
-        // The leaf and the wrapping object both started with `.describe("")`
-        // (well, the leaf did). After registration the registry entry for the
-        // leaf must not carry an empty `description` key.
+        // The leaf schema started with `.describe("")`. After registration the
+        // registry entry for the leaf must not carry an empty `description` key.
         const sanitised = lastTool(server).meta.inputSchema;
         const leaf = sanitised.shape.blank as z.ZodString;
         expect(leaf.description).toBeUndefined();
@@ -956,8 +955,10 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         // Defence-in-depth: the WRAPPED symbol is module-private, so any
         // attempt by a custom-tool author to pre-tag their result with
         // `Symbol.for(\"mcp-curl.wrapped\")` cannot match the wrap's own
-        // symbol and therefore cannot short-circuit the sanitise/detect/
-        // spotlight pipeline. This test asserts the security closure: even
+        // symbol and therefore cannot short-circuit `defendText`'s full
+        // five-step pipeline (detect, sanitise, markup/script strip, beacon
+        // strip, re-sanitise + detect) or the optional spotlight pass. This
+        // test asserts the security closure: even
         // when the handler returns a result tagged with the global-registry
         // symbol, the wrap still fires and the bidi chars are stripped.
         const FORGED = Symbol.for("mcp-curl.wrapped");

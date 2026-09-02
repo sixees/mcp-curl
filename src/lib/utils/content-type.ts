@@ -60,7 +60,11 @@ const BINARY_MIME_EXACT: ReadonlySet<string> = new Set([
 
 /**
  * Returns true for MIME types that are binary (not text).
- * Binary responses should be returned as-is without Unicode sanitization.
+ *
+ * Used by `isSniffableContentType` to classify anything that isn't text/*,
+ * JSON, or declared markup/markdown. The sanitisation pipeline itself does
+ * not gate on this — Content-Type is attacker-controlled, and gating
+ * sanitisation on it was found bypassable.
  *
  * Pure: depends only on its input. Safe to import anywhere.
  */
@@ -184,10 +188,10 @@ export function isMarkdownContentType(contentType: string | undefined): boolean 
  *     JSON can contain `<script>` inside a string field, so sniffing
  *     would mangle the document).
  *
- * Pure: depends only on its input. Replaces an earlier
- * `isPlainTextLikeContentType` predicate that returned true ONLY for
- * `text/plain` / empty — that narrower predicate let `text/csv`,
- * `text/javascript`, `application/yaml` etc. silently bypass the strip.
+ * Pure: depends only on its input. Deliberately broad — covers any CT where
+ * mis-labelled markup is plausible (`text/csv`, `text/javascript`,
+ * `application/yaml`, …), so mislabelling the response cannot bypass the
+ * markup-strip path.
  */
 export function isSniffableContentType(contentType: string | undefined): boolean {
     const mime = parseMimeType(contentType);

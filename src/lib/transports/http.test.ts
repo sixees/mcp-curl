@@ -123,7 +123,7 @@ describe("createAuthMiddleware", () => {
     it("rejects oversized Authorization headers without invoking the timing-safe compare", () => {
         // Defence-in-depth: a malicious client should not be able to force
         // `safeStringCompare` to allocate Buffers proportional to a
-        // ~16 KB Authorization header. The middleware short-circuits on
+        // ~8 KB Authorization header. The middleware short-circuits on
         // length mismatch, which is safe — `safeStringCompare` already
         // returns false for length-mismatched inputs.
         const mw = createAuthMiddleware("secret-token");

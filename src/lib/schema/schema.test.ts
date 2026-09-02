@@ -142,7 +142,7 @@ describe("validateApiSchema", () => {
                 ...validSchema,
                 endpoints: [
                     validSchema.endpoints[0],
-                    { ...validSchema.endpoints[0] }, // Duplicate ID
+                    { ...validSchema.endpoints[0] },
                 ],
             })
         ).toThrow("Duplicate endpoint ID");
@@ -546,7 +546,7 @@ describe("generateInputSchema", () => {
     });
 
     it("preserves manually-constructed (validator-bypassed) preset names verbatim", () => {
-        // PR-6a / B9 boundary contract: schemas reaching the generator are
+        // PR-6a boundary contract: schemas reaching the generator are
         // assumed pre-sanitised by ApiSchemaValidator, so the generator does
         // not re-sanitise. When a consumer bypasses the validator and feeds
         // raw values directly, the generator preserves them as-is. Duplicate-
@@ -590,9 +590,7 @@ describe("generateInputSchema", () => {
         const schema = generateInputSchema(endpoint);
         // Single-element enum uses z.literal() - should accept the single value
         expect(schema.safeParse({ filter_preset: "minimal" }).success).toBe(true);
-        // Should reject other values
         expect(schema.safeParse({ filter_preset: "other" }).success).toBe(false);
-        // Should allow omitting the optional preset
         expect(schema.safeParse({}).success).toBe(true);
     });
 
@@ -609,7 +607,7 @@ describe("generateInputSchema", () => {
                     in: "query",
                     type: "string",
                     required: true,
-                    enum: ["json"], // Single-element string enum
+                    enum: ["json"],
                 },
             ],
         };
@@ -632,7 +630,7 @@ describe("generateInputSchema", () => {
                     in: "query",
                     type: "integer",
                     required: true,
-                    enum: [1], // Single-element number enum
+                    enum: [1],
                 },
             ],
         };
@@ -1254,7 +1252,7 @@ describe("generateToolDefinitions", () => {
     });
 
     it("preserves bidi/zero-width chars when generator is called with validator-bypassed schema", () => {
-        // PR-6a / B9 boundary: the generator no longer re-sanitises. When a
+        // PR-6a boundary: the generator no longer re-sanitises. When a
         // consumer constructs an ApiSchema by hand and skips ApiSchemaValidator,
         // the unsafe characters survive — documenting in code that sanitisation
         // is the validator's job, not the generator's. The validator-side path
@@ -1351,7 +1349,7 @@ describe("generateToolDefinitions", () => {
     });
 });
 
-// --- PR-6b / B3 defence-in-depth wrap on YAML-driven tool output ---
+// --- PR-6b defence-in-depth wrap on YAML-driven tool output ---
 //
 // These tests cover the YAML-tool side of the PR-6b wrap. createToolHandler
 // builds a wrap closure with the GeneratorConfig.enableSpotlighting flag and
@@ -1391,8 +1389,8 @@ describe("PR-6b wrap on YAML-tool output", () => {
 
     it("sanitises bidi/zero-width chars in YAML-tool response text (4th asymmetry)", async () => {
         // Simulate a YAML-tool handler whose executor returns text with
-        // injection-class bytes. Pre-PR-6b the YAML path bypassed the wrap;
-        // now createToolHandler runs sanitise+detect on the result.
+        // injection-class bytes. createToolHandler runs sanitise+detect on
+        // the result before returning it to the caller.
         mockedExecuteCurlRequest.mockResolvedValue({
             content: [{ type: "text", text: "ok‮evil​" }],
             isError: false,
@@ -1474,14 +1472,15 @@ describe("PR-6b wrap on YAML-tool output", () => {
     });
 });
 
-// --- PR-6a / B9 sanitisation invariant ---
+// --- PR-6a sanitisation invariant ---
 //
 // These tests cover the trust-boundary contract introduced in PR-6a:
 //   ApiSchemaValidator runs sanitizeDescription() on every user-facing string
-//   field via a .transform() step, so every public entry point that produces
-//   a parsed ApiSchema (loadApiSchema, loadApiSchemaFromString,
-//   validateApiSchema, AND ApiSchemaValidator.parse() directly) yields a
-//   pre-sanitised schema. The downstream generator does NOT re-sanitise.
+//   field via a z.preprocess() step that fires before Zod validates structure,
+//   so every public entry point that produces a parsed ApiSchema (loadApiSchema,
+//   loadApiSchemaFromString, validateApiSchema, AND ApiSchemaValidator.parse()
+//   directly) yields a pre-sanitised schema. The downstream generator does NOT
+//   re-sanitise.
 
 describe("PR-6a sanitisation invariant", () => {
     const baseSchema = {

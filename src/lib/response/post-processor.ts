@@ -1,5 +1,5 @@
 // src/lib/response/post-processor.ts
-// Defence-in-depth wrap for tool results (PR-6b / B3).
+// Defence-in-depth wrap for tool results (PR-6b).
 //
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
 // the full response-side defence — `defendForInline` (Steps 2-5, per JSON
@@ -18,9 +18,10 @@
 //    short-circuit return path in `extensible/hook-executor.ts`. Symbol-tag
 //    idempotence (see point 3) lets these compose freely.
 //
-// 2. **Detect-on-original ordering (S4).** The wrap delegates the whole
-//    pipeline to `defendText()` in `processor.ts`, whose Step 2 detects on
-//    the **original** text before sanitisation. That ordering is load-bearing
+// 2. **Detect-on-original ordering.** The wrap runs `defendForInline()`
+//    from `processor.ts`, which delegates each text value (the whole body, or
+//    each JSON string leaf) to `defendText()`, whose Step 2 detects on the
+//    **original** text before sanitisation. That ordering is load-bearing
 //    here precisely because Steps 3-5 strip the byte sequences the detector
 //    looks for; running detection first preserves the log signal.
 //    `processTextPart` below states which options this boundary passes,
@@ -49,7 +50,7 @@
 //    `logWrapError`. Defence-in-depth must never become a load-bearing
 //    dependency that can break the handler boundary.
 //
-// 5. **Per-message UUID for spotlighting (A11).** When spotlighting is
+// 5. **Per-message UUID for spotlighting.** When spotlighting is
 //    enabled, a fresh `randomUUID()` is generated **per `wrap()` call** (one
 //    UUID for the whole call, shared by every text part of that result) so
 //    the begin/end sentinels match within a single response and a hostile
@@ -303,7 +304,7 @@ export function createWrapper(
             // handler's problem, not the wrap's responsibility to "fix."
             if (!Array.isArray(result.content)) return tag(result);
 
-            // Per-message UUID (A11): one UUID per wrap call, shared by every
+            // Per-message UUID: one UUID per wrap call, shared by every
             // text part of this result. Generated only when spotlighting is
             // enabled AND this is not an error result — error text is a
             // status message about the call, not external content the LLM

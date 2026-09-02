@@ -139,13 +139,13 @@ export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/u
 // phrases (`Ig​nore` → the matcher does not see `Ignore`) — acceptable
 // because the throttled log is observability only, not a content gate.
 //
-// PR-7 expanded `sanitizeResponse` to cover the full visual-space class
+// `sanitizeResponse`'s visual-space rule covers the full visual-space class
 // (tabs, NBSP, en/em-spaces, NARROW NO-BREAK, MEDIUM MATHEMATICAL, IDEOGRAPHIC
-// SPACE) at the same 50+ threshold, added a 20+ newline run rule, and added 8
-// missing Unicode invisibles (U+061C ARABIC LETTER MARK, U+115F/1160 HANGUL
-// fillers, U+180B–U+180E Mongolian invisibles, U+2800 BRAILLE PATTERN BLANK,
-// U+3164 HANGUL FILLER, U+E0100–U+E01EF "Sneaky Bits" Variation Selectors
-// Supplement). The named codepoint groups live in
+// SPACE) at a 50+ character threshold, plus a separate 20+ newline run rule,
+// and covers Unicode invisibles including U+061C ARABIC LETTER MARK,
+// U+115F/1160 HANGUL fillers, U+180B–U+180E Mongolian invisibles, U+2800
+// BRAILLE PATTERN BLANK, U+3164 HANGUL FILLER, and U+E0100–U+E01EF Variation
+// Selectors Supplement. The named codepoint groups live in
 // `src/lib/utils/unicode-attack-ranges.ts` so they read as a taxonomy rather
 // than an opaque char-class string.
 //

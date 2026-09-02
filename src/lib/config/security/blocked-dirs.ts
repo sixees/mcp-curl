@@ -24,7 +24,7 @@ const LINUX_BLOCKED_DIRS: readonly string[] = Object.freeze([
 
 /**
  * macOS system directories that should never be writable by this tool.
- * Includes system files, libraries, and protected volumes.
+ * Includes system files, binaries, libraries, and core dumps.
  */
 const MACOS_BLOCKED_DIRS: readonly string[] = Object.freeze([
     "/System",
@@ -49,7 +49,8 @@ const MACOS_ROOT_ONLY_BLOCKED: readonly string[] = Object.freeze([
 
 /**
  * Windows system directory patterns (case-insensitive, any drive letter).
- * Using lowercase for comparison since we normalize paths to lowercase.
+ * Case-insensitivity comes from each pattern's `/i` flag; the path itself
+ * is never lowercased.
  */
 const WINDOWS_BLOCKED_PATTERNS: readonly RegExp[] = Object.freeze([
     /^[a-z]:\\windows(\\|$)/i,

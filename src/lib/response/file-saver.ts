@@ -23,7 +23,9 @@ import { getOrCreateTempDir } from "../files/index.js";
 export function createSafeFilenameBase(input: string, fallback = "response"): string {
     // Replace non-alphanumeric characters with underscores
     let base = input.replace(/[^a-zA-Z0-9]/g, "_");
-    // Enforce maximum length before trimming underscores to prevent ReDoS
+    // Enforce maximum length before trimming underscores so an unbounded
+    // hostname+pathname cannot force the trim regex to run over more bytes
+    // than a filename could ever use
     // on strings with many consecutive underscores (e.g., "____...____")
     base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
     // Trim leading and trailing underscores to avoid names like "___"

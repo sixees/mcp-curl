@@ -1,7 +1,7 @@
 // src/lib/schema/generator.ts
 // Generates MCP tools from API schema endpoint definitions.
 //
-// **Sanitisation contract (PR-6a / B9).** Schemas reaching this module are
+// **Sanitisation contract (PR-6a).** Schemas reaching this module are
 // pre-sanitised by the `z.preprocess()` step on `ApiSchemaValidator` in
 // `src/lib/schema/validator.ts`. Every user-facing string field is already
 // stripped of bidi/zero-width/Tags-block characters before reaching here.
@@ -102,8 +102,8 @@ export function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<z
 }
 
 /**
- * Build a string enum schema, falling back to z.literal() for single-element arrays
- * because z.enum() requires at least 2 elements.
+ * Build a string enum schema, using z.literal() for a single-element array
+ * instead of z.enum() to produce a narrower single-value schema.
  */
 function buildStringEnum(values: string[]): z.ZodTypeAny {
     if (values.length === 1) return z.literal(values[0]);
@@ -111,8 +111,8 @@ function buildStringEnum(values: string[]): z.ZodTypeAny {
 }
 
 /**
- * Build a number union schema, falling back to z.literal() for single-element arrays
- * because z.union() requires at least 2 elements.
+ * Build a number union schema, using z.literal() for a single-element array
+ * instead of z.union() to produce a narrower single-value schema.
  */
 function buildNumberUnion(values: number[]): z.ZodTypeAny {
     if (values.length === 1) return z.literal(values[0]);

@@ -23,16 +23,10 @@ export class SessionManager {
         }
     }
 
-    /**
-     * Check if a session exists.
-     */
     has(id: string): boolean {
         return this.sessions.has(id);
     }
 
-    /**
-     * Get a session by ID.
-     */
     get(id: string): Session | undefined {
         return this.sessions.get(id);
     }
@@ -61,16 +55,10 @@ export class SessionManager {
         this.sessions.delete(id);
     }
 
-    /**
-     * Get the number of active sessions.
-     */
     get size(): number {
         return this.sessions.size;
     }
 
-    /**
-     * Iterate over all sessions.
-     */
     entries(): IterableIterator<[string, Session]> {
         return this.sessions.entries();
     }
@@ -109,9 +97,6 @@ export class SessionManager {
         this.cleanupInterval.unref();
     }
 
-    /**
-     * Stop the cleanup interval.
-     */
     stopCleanup(): void {
         if (this.cleanupInterval) {
             clearInterval(this.cleanupInterval);
@@ -190,7 +175,8 @@ const CLOSE_TIMEOUT_MS = 5_000;
  * Run `op()` and reject if it hasn't settled within {@link CLOSE_TIMEOUT_MS}.
  * Errors and timeouts are logged in the
  * `<label> error: [<sessionId>] <ErrorClassName>` shape the rest of the
- * codebase uses (see CLAUDE.md "Error logging") — no message bodies, so a
+ * codebase uses (see docs/architecture/architecture.md → "Error-Logging
+ * Discipline") — no message bodies, so a
  * misbehaving close cannot leak transport-internal state to stderr.
  */
 async function closeWithTimeout(

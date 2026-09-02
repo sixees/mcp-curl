@@ -18,7 +18,8 @@ import type {
  * index signature relaxes structural enforcement — a value reaching consumers via
  * cast or spread from a less-specific source may not actually have that shape.
  * Consumers that depend on the tuple shape (notably the spotlighting boundary in
- * `tool-wrapper.ts`) MUST runtime-check `content[0]` before using it.
+ * `post-processor.ts`'s `createWrapper`) MUST runtime-check `content[0]` before
+ * using it.
  */
 export interface ToolResult {
     [key: string]: unknown;

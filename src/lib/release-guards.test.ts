@@ -14,7 +14,6 @@ import { dirname, resolve } from "node:path";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const readRepoFile = (p: string) => readFileSync(resolve(repoRoot, p), "utf8");
 
-/** Paths that hold internal work products and must never reach a consumer. */
 /** Every docs/ path the tarball is allowed to contain. */
 const EXPECTED_DOCS = [
     "docs/README.md",

@@ -229,11 +229,10 @@ describe("sanitizeResponse", () => {
 });
 
 describe("sanitizeResponse — extended whitespace-padding class (PR-7 / B7-sub-1)", () => {
-    // The sanitizer used to only collapse runs of ASCII space (U+0020). PR-7
-    // widens the rule to the full visual-space class (tabs, NBSP, en/em-spaces,
-    // NARROW NO-BREAK, MEDIUM MATHEMATICAL, IDEOGRAPHIC) at the same 50+
-    // threshold AND adds a 20+ newline run rule. Each new behaviour gets a
-    // bypass-demonstration test.
+    // Collapses runs of 50+ characters from the full visual-space class (ASCII
+    // space, tab, NBSP, en/em-spaces, NARROW NO-BREAK, MEDIUM MATHEMATICAL,
+    // IDEOGRAPHIC) to a single space, and separately collapses runs of 20+
+    // newlines to one. Each behaviour gets a bypass-demonstration test below.
 
     it("collapses 50 consecutive tabs to a single space", () => {
         const tabs50 = "\t".repeat(50);
@@ -754,9 +753,8 @@ describe("detectInjectionPattern — synonym variants (PR-8 / B7-sub-4)", () => 
     // legitimate ops/safety phrasing where `applying` precedes a benign
     // object (configuration update, brakes, a patch). Detection is
     // observability-only (never an enforcement gate) so this surfaces as
-    // log noise rather than incorrect refusals; master plan §Risks
-    // explicitly acknowledges this trade-off ("false-positive injection
-    // alerts on legitimate content"). Locked here with `toBe(true)`
+    // log noise rather than incorrect refusals — an accepted trade-off
+    // ("false-positive injection alerts on legitimate content"). Locked here with `toBe(true)`
     // (mirrors the Cyrillic-homoglyph `toBe(false)` deferred-gap pattern
     // above): a future PR that narrows `stop\s+(following|obeying|applying)`
     // — e.g. by requiring an instruction-class object word in the same

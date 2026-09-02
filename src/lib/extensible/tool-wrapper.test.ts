@@ -14,7 +14,7 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Defence-in-depth wrap tests (PR-6b / B3)
+// Defence-in-depth wrap tests (PR-6b)
 // ---------------------------------------------------------------------------
 
 describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {

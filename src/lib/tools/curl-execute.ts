@@ -134,7 +134,8 @@ Temp File Lifecycle:
  * This is the core handler logic extracted for reuse by McpCurlServer.
  *
  * @param params - Validated curl_execute parameters
- * @param extra - Additional context (sessionId for rate limiting)
+ * @param extra - Additional context (sessionId for rate limiting; allowLocalhost
+ *   overrides the localhost SSRF guard for this call, from McpCurlConfig)
  * @returns Tool result with response content
  */
 export async function executeCurlRequest(

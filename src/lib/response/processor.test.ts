@@ -143,7 +143,7 @@ describe("processResponse — injection detection", () => {
 
     it("strips Unicode attack chars from output but does not log invisible-char-split phrases (PR-6b S4 trade-off)", async () => {
         // PR-6b moved sanitizeAndDetect to run detection on the **original**
-        // text (S4), so future PR-7/PR-8 stripping passes (HTML <script>,
+        // text, so future PR-7/PR-8 stripping passes (HTML <script>,
         // markdown beacons) cannot silence the per-host injection log by
         // erasing the malicious phrase before detection sees it.
         //
@@ -210,7 +210,7 @@ describe("processResponse — post-jq injection detection", () => {
         // The load-bearing assertion: the zero-width is stripped from the
         // output the LLM receives.
         expect(result.content).not.toContain("\u200B");
-        // PR-6b S4 trade-off: detection runs on the original (post-jq) text
+        // PR-6b trade-off: detection runs on the original (post-jq) text
         // BEFORE sanitisation, so the invisible-char-split phrase is not
         // matched. Output is still clean; the log signal is intentionally
         // lost for this specific case. See the matching describe-block above.

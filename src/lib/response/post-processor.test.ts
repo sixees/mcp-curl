@@ -1,5 +1,5 @@
 // src/lib/response/post-processor.test.ts
-// Tests for createWrapper — the defence-in-depth wrap (PR-6b / B3).
+// Tests for createWrapper — the defence-in-depth wrap (PR-6b).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createWrapper, isWrappedResult } from "./post-processor.js";
@@ -89,9 +89,9 @@ describe("createWrapper — sanitisation & detection", () => {
     });
 
     it("4th asymmetry: sanitises custom-tool text even with spotlighting OFF", () => {
-        // Regression test for the asymmetry surfaced during deep-plan review:
-        // before PR-6b, custom-tool / YAML-tool text output bypassed
-        // sanitise+detect entirely when spotlighting was off.
+        // Sanitise + detect must run on custom-tool / YAML-tool text output
+        // regardless of the enableSpotlighting flag — only the spotlighting
+        // sentinel step is gated on it.
         const wrap = createWrapper({ enableSpotlighting: false });
         const out = wrap(
             { content: [{ type: "text", text: "Bidi attack: ‮evil" }] },
@@ -280,12 +280,12 @@ describe("createWrapper — frozen / non-extensible inputs (fail-open)", () => {
         // tag() uses Object.defineProperty which throws on frozen objects.
         // The wrap must catch internally and pass the result through —
         // defence-in-depth must never propagate exceptions to the handler.
-        // (Round-3 note: the wrap now returns a fresh spread for isError
-        // results too, so the freeze check applies to `tag(spread)` rather
-        // than `tag(frozen)`. The spread is never frozen, so tag succeeds.
-        // The remaining failure mode this test exercises is downstream tag
+        // The wrap always returns a fresh spread with the processed content,
+        // so the freeze check here applies to `tag(spread)` rather than
+        // `tag(frozen)`; the spread is never frozen, so tag succeeds. The
+        // remaining failure mode this test exercises is downstream tag
         // attempts on a result that flows through other layers — covered by
-        // the sanitiser-throws-on-frozen test below.)
+        // the sanitiser-throws-on-frozen test below.
         const wrap = createWrapper({});
         const frozen = Object.freeze({
             content: [{ type: "text", text: "boom" }],
@@ -561,11 +561,11 @@ describe("createWrapper — hostile Proxy probe (PR #29 round-4 hardening)", () 
 });
 
 describe("createWrapper — per-item content containment (PR #29 round-6 hardening)", () => {
-    // A hostile Proxy with a throwing `get` trap on `type` or `text` would
-    // previously propagate out of `.map()`, hit the outer catch, and return
-    // the entire result un-sanitised — losing sanitisation for every OTHER
-    // text part in the array because of one bad neighbour. Per-item
-    // containment keeps the failure scoped to that single part.
+    // A hostile Proxy with a throwing `get` trap on `type` or `text` must not
+    // propagate out of `.map()` and hit the outer catch, which would return the
+    // entire result un-sanitised — losing sanitisation for every OTHER text
+    // part in the array because of one bad neighbour. Per-item containment
+    // keeps the failure scoped to that single part.
 
     it("a throwing-get-trap on `text` does NOT abort sanitisation of sibling text parts", () => {
         const wrap = createWrapper({});
@@ -666,14 +666,14 @@ describe("createWrapper — per-item content containment (PR #29 round-6 hardeni
 
 
 // -----------------------------------------------------------------------------
-// The wrap's own defence, and the DEFENDED tag that narrows it.
+// The wrap's own defence.
 //
-// Until this change the wrap ran `sanitizeAndDetect` alone — Step 2 of the five
-// in `processor.ts::defendText`. For a `registerCustomTool()` return, a
-// `beforeRequest` short-circuit and a YAML endpoint result the wrap is the ONLY
-// defence, so those channels reached the model with no markup strip, no
-// `<script>`/`<style>` strip and no markdown-beacon strip. `LESSONS.md` RC-1 is
-// the same class one layer up.
+// The wrap runs the full defence pipeline (`defendForInline`, Steps 2-5 of
+// `processor.ts::defendText`), not `sanitizeAndDetect` alone. For a
+// `registerCustomTool()` return, a `beforeRequest` short-circuit and a YAML
+// endpoint result the wrap is the ONLY defence, so those channels must not
+// reach the model with unstripped markup, `<script>`/`<style>` blocks or
+// markdown beacons. `LESSONS.md` RC-1 is the same class one layer up.
 //
 // Every assertion in the untagged block below is paired with a positive control
 // further down: a wrap that returned `""` would satisfy each absence at once.

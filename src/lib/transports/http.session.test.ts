@@ -142,7 +142,7 @@ describe("POST /mcp session registration", () => {
 
     it("registers the session in SessionManager when onsessioninitialized fires", async () => {
         // This is the regression check for the dead-code session-registration
-        // block we removed in PR-4 review pass 2. If a future change starts
+        // block. If a future change starts
         // reading `transport.sessionId` immediately after `server.connect()`
         // again, this assertion will fail because the SDK only assigns the
         // id inside `handleRequest`.

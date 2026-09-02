@@ -10,7 +10,7 @@ export const JQ = {
     MAX_TOKENS: 50,
     /** Maximum comma-separated filters */
     MAX_FILTERS: 20,
-    /** Parsing timeout to prevent ReDoS (100ms) */
+    /** Parsing timeout to prevent DoS from a pathologically long or complex filter (100ms) */
     MAX_PARSE_TIME_MS: 100,
     /** Maximum file size for jq_query tool (same as response limit) */
     MAX_QUERY_FILE_SIZE: LIMITS.MAX_RESPONSE_SIZE,

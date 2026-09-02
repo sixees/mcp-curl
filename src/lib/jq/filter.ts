@@ -18,7 +18,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * @param data - The parsed JSON data
  * @param filter - A single filter expression (e.g., ".data.items[0]")
- * @returns The extracted value, undefined for missing keys, or null for type mismatches
+ * @returns The extracted value; `undefined` only when the FINAL path segment is
+ *   a missing key or an out-of-range index; `null` for a type mismatch, or for
+ *   any miss earlier in the path (an earlier miss collapses to `null` via the
+ *   loop's own null/undefined guard before the final segment is reached)
  * @throws Error for empty/invalid filters
  */
 export function applySingleJqFilter(data: unknown, filter: string): unknown {

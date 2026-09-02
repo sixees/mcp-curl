@@ -194,9 +194,8 @@ describe("createHttpOnlyUrlSchema", () => {
         });
 
         it("emits 'Must be a valid URL' on URL-format failure", () => {
-            // Locks the base z.url() error message restored after the helper
-            // consolidation. MCP clients render this string verbatim, so a
-            // change here is user-visible.
+            // Locks the base z.url() error message. MCP clients render this
+            // string verbatim, so a change here is user-visible.
             const result = schema.safeParse("not-a-url");
             expect(result.success).toBe(false);
             if (!result.success) {

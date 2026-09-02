@@ -58,7 +58,7 @@ const RESPONSE_SANITIZE_PATTERN = new RegExp(
 // [\s\S]{0,n} instead of .{0,n} so bounded wildcards match across newlines,
 // catching multi-line injection phrases like "Ignore\nprevious\ninstructions".
 //
-// **Bounded-wildcard sizing (PR-8 / B7-sub-4).** Multi-keyword phrase
+// **Bounded-wildcard sizing.** Multi-keyword phrase
 // matchers use the shared `INJECTION_PHRASE_GAP` fragment (currently
 // `[\s\S]{0,80}`). 80 chars covers all observed gap-padding bypass attempts
 // in the wild (`ignore<N spaces>previous instructions` and similar) while
@@ -79,7 +79,7 @@ const INJECTION_PATTERNS = new RegExp(
         `disregard${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|system)${INJECTION_PHRASE_GAP}(instructions?|directives?|rules?)`,
         `forget${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|everything|instructions?)`,
         `override${INJECTION_PHRASE_GAP}(your|the|all|previous)${INJECTION_PHRASE_GAP}(instructions?|settings?|behavior|config|directives?|rules?)`,
-        // Synonym families for the explicit-override class (PR-8 / B7-sub-4)
+        // Synonym families for the explicit-override class
         // — paraphrases that the four canonical verbs above miss
         // ("stop following your instructions", "cease compliance with the
         // rules", "bypass your safety filters"). Each family carries at
@@ -88,8 +88,8 @@ const INJECTION_PATTERNS = new RegExp(
         // **Known false-positive class** — `stop\s+applying` over-triggers
         // on legitimate ops/safety phrasing ("stop applying this patch",
         // "stop applying the brakes"). Detection is observability-only so
-        // the cost is log noise, not blocked content; per master plan
-        // §Risks. Locked by the `documented FP class` test in
+        // the cost is log noise, not blocked content. Locked by the
+        // `documented FP class` test in
         // `sanitize.test.ts` so a future narrowing PR (e.g. requiring an
         // instruction-class object word in the same shape
         // `bypass\s+(your|all|the)\s+(...)` uses) updates implementation
@@ -132,7 +132,7 @@ const INJECTION_PATTERNS = new RegExp(
  * and all printable characters.
  *
  * @param input - String to sanitize (null/undefined returns "")
- * @returns Sanitized string with attack characters replaced by space
+ * @returns Sanitized string with attack characters replaced by space, then trimmed
  */
 export function sanitizeDescription(input: string | null | undefined): string {
     if (input == null) return "";
@@ -262,17 +262,17 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * Prefer the `sanitizeAndDetect(text, label)` composer (re-exported from the
  * public barrel) over hand-wiring the primitives — it locks the project's
  * canonical detect-then-sanitise ordering: detection runs on the **original**
- * text (so signals the sanitiser would later strip — e.g. the
- * U+2026-prefixed payloads PR-7 added to the attack-range — still fire the
+ * text (so signals the sanitiser would later strip — e.g. Unicode-attack
+ * payloads such as bidi overrides or zero-width characters — still fire the
  * per-host log) and sanitisation produces the bytes the LLM actually sees
- * (see PR-6b S4 in `detection-logger.ts → sanitizeAndDetect`). Calling this
+ * (see `detection-logger.ts → sanitizeAndDetect`). Calling this
  * matcher directly on **already-sanitised** text trades that signal-
  * preservation for invisible-char-split coverage instead: phrases like
  * "Ig​nore" (zero-width space splitting `ignore`) collapse to `Ignore`
  * after sanitisation and become detectable. Both call shapes are
  * legitimate; pick based on which class you care about preserving.
  *
- * **Normalisation (PR-8 / B7-sub-4).** The matcher normalises its input
+ * **Normalisation.** The matcher normalises its input
  * before testing the pattern set, currently via
  * `String.prototype.normalize("NFKC")`. NFKC collapses compatibility
  * variants — full-width letters (`ｉｇｎｏｒｅ`), ligatures (`ﬁ`), and
@@ -312,8 +312,8 @@ function isWhitespacePaddingMatch(match: string): boolean {
  *   directly, passing content already through `sanitizeResponse` improves
  *   coverage of invisible-char-split phrases (e.g. `Ig`+ZWSP+`nore` →
  *   `Ignore`), at the cost of the pre-sanitise signal class. Both shapes
- *   are valid; pick based on which class you care about. See PR-6b S4
- *   in `detection-logger.ts` for the ordering rationale.
+ *   are valid; pick based on which class you care about. See
+ *   `detection-logger.ts → sanitizeAndDetect` for the ordering rationale.
  * @returns true if any injection pattern matched
  */
 export function detectInjectionPattern(input: string): boolean {
@@ -326,7 +326,7 @@ export function detectInjectionPattern(input: string): boolean {
 
 /**
  * Sentinel prefix shared by `applySpotlighting` and the idempotence guard
- * in `extensible/tool-wrapper.ts`. Centralised here so the wrap-detection
+ * in `response/post-processor.ts`. Centralised here so the wrap-detection
  * regex stays in lock-step with the wrap-emission template.
  */
 export const SPOTLIGHT_SENTINEL_PREFIX = "---EXTERNAL-CONTENT-BEGIN-";
@@ -372,10 +372,11 @@ const SPOTLIGHT_HEADER_PATTERN = /^---EXTERNAL-CONTENT-BEGIN-([0-9a-f-]{32,36})-
  * ~26 prepended bytes to ~120 bytes plus consistent UUID at both ends).
  *
  * Content-based idempotence is fundamentally vulnerable to attacker forgery
- * because the attacker controls the bytes; metadata-based tagging on the
- * `CallToolResult` object (Symbol-keyed property) is the proper fix and is
- * tracked in PR-6b of the hardening plan. This stricter check is the
- * defence-in-depth interim.
+ * because the attacker controls the bytes. `response/post-processor.ts →
+ * createWrapper` avoids that class entirely for whole-result re-wrapping by
+ * tagging the `CallToolResult` object with a module-private Symbol instead;
+ * this content-based check remains the guard for `applySpotlighting` itself,
+ * where no such object-level tag is available.
  *
  * Implementation is two `String.prototype` methods plus one bounded regex
  * scan against the header — no `[\s\S]*` backreferences over 10 MB inputs.
@@ -409,8 +410,8 @@ export function isSpotlightEnvelope(text: string): boolean {
  * (`isSpotlightEnvelope(content)` returns `true`), the function returns it
  * unchanged. The check requires both the begin sentinel AND a matching end
  * sentinel with the same UUID — an attacker prepending only the public begin
- * prefix cannot bypass spotlighting. The `extensible/tool-wrapper` also
- * short-circuits when the inner result is already wrapped — both layers
+ * prefix cannot bypass spotlighting. `response/post-processor.ts → createWrapper`
+ * also short-circuits when the inner result is already wrapped — both layers
  * defend against double-wrapping (which would otherwise nest two different
  * UUID sentinels and confuse the LLM about where the trust boundary lies).
  *
@@ -425,7 +426,8 @@ export function isSpotlightEnvelope(text: string): boolean {
  *
  * @param content - Response content to wrap
  * @param requestId - Unique identifier for this response (caller should pass randomUUID());
- *                   must match `/^[0-9a-f-]{32,36}$/i` so a degraded sentinel cannot ship
+ *                   must match `SPOTLIGHT_REQUEST_ID_PATTERN` (32-hex or RFC 4122
+ *                   8-4-4-4-12 UUID shape) so a degraded sentinel cannot ship
  * @returns Content wrapped in opaque sentinel delimiters, or `content` unchanged if it is already wrapped
  */
 export function applySpotlighting(content: string, requestId: string): string {

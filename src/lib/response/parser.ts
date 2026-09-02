@@ -233,7 +233,8 @@ export function sanitizeErrorMessage(message: string, includeDetails: boolean): 
     // Remove response previews (could contain sensitive API data)
     let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
     // Remove filesystem paths - handles both Unix (/path/to/file) and Windows (C:\path\to\file)
-    // Requires at least two path segments to avoid matching URL paths like /v1/users
+    // Requires at least two path segments, so a bare "/users" is left alone — a
+    // two-segment path such as "/v1/users" still matches and is replaced.
     sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
     // Add hint about getting more details
     if (sanitized !== message) {

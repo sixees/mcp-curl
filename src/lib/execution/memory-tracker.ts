@@ -37,9 +37,9 @@ export function allocateMemory(bytes: number): boolean {
         return false; // Invalid input, refuse allocation
     }
     // Compute newTotal before assignment for clarity.
-    // Note: This doesn't fix race conditions in async contexts since check-and-assign
-    // remain separate operations. True atomicity would require locks, but Node.js's
-    // single-threaded event loop makes the race window extremely small in practice.
+    // This function is fully synchronous — Node's single-threaded,
+    // run-to-completion model means no other call can execute between the check
+    // and the assignment, so no lock is needed here; the window is zero.
     const newTotal = totalResponseMemory + bytes;
     if (newTotal > LIMITS.MAX_TOTAL_RESPONSE_MEMORY) {
         return false;

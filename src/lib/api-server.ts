@@ -47,7 +47,8 @@ function configureServerFromSchema(
     }
 
     // Generate and register custom tools from endpoints
-    // Merge user config overrides (baseUrl, allowLocalhost) into generator config
+    // Merge user config overrides (baseUrl, allowLocalhost, defaultUserAgent,
+    // defaultReferer, enableSpotlighting) into generator config
     const mergedConfig = { ...schemaConfig, ...options.config };
     const generatorConfig: GeneratorConfig = {
         defaultHeaders: schema.defaults?.headers,
@@ -186,7 +187,7 @@ export async function createApiServer(
         // Re-run the validator on caller-supplied schemas. The plain
         // `ApiSchema` type can be constructed/cast without ever passing
         // through `ApiSchemaValidator`, so without this call the runtime
-        // sanitisation invariant (PR-6a / B9) would have a public bypass —
+        // sanitisation invariant (PR-6a) would have a public bypass —
         // bidi/zero-width bytes in the supplied schema would flow into MCP
         // tool advertisement unchecked.
         schema = validateApiSchema(options.schema);

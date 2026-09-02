@@ -1,7 +1,7 @@
 // src/lib/schema/validator.ts
 // Zod schema for validating API definitions loaded from YAML.
 //
-// Sanitisation invariant (PR-6a / B9 + review fixes):
+// Sanitisation invariant (PR-6a + review fixes):
 // `ApiSchemaValidator` wraps `RawApiSchema` in a `z.preprocess()` step that
 // recursively sanitises every user-facing string field on the raw input
 // BEFORE Zod validates structure. Three consequences:
@@ -137,8 +137,8 @@ function sanitiseStringField(obj: Record<string, unknown>, key: string): void {
  *     interpolated values.
  *
  * **Pure / clone-based.** `structuredClone` strips the prototype, defeating
- * `__proto__: {polluted: true}` payloads and obeying the project style guide
- * (rules 26 — pure functions / 52 — structured clone for untrusted data). The
+ * `__proto__: {polluted: true}` payloads, consistent with `CONVENTIONS.md`'s
+ * guidance on pure functions and cloning untrusted data before mutating it. The
  * clone is also what Zod ends up validating, so a caller who calls
  * `validateApiSchema(input)` and then re-uses `input` sees the original bytes
  * unchanged.
@@ -289,7 +289,7 @@ function reportDuplicatePresetNames(schema: ParsedSchema, ctx: z.RefinementCtx):
 /**
  * Complete API schema validator.
  *
- * **Runtime sanitisation invariant (PR-6a / B9):** the raw input is sanitised
+ * **Runtime sanitisation invariant (PR-6a):** the raw input is sanitised
  * by `z.preprocess(sanitiseRawSchemaInPlace, …)` BEFORE any Zod check fires.
  * Every public entry point that produces a parsed `ApiSchema` — including the
  * directly-re-exported `ApiSchemaValidator.parse()` — therefore yields a

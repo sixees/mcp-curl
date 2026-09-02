@@ -103,8 +103,7 @@ export async function executeJqQuery(
         // Read the file using the validated real path
         const content = await readFile(validatedFilePath, { encoding: "utf-8" });
 
-        // Apply jq filter
-        const filtered = applyJqFilter(content, params.jq_filter);
+            const filtered = applyJqFilter(content, params.jq_filter);
 
         // Defend after filtering — jq may concentrate injection strings from
         // sparse input. Detection logging is throttled per label inside the helper.

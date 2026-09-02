@@ -260,6 +260,7 @@ export class McpCurlServer {
      * @throws Error if called after start()
      * @throws Error if tool name conflicts with built-in tools
      * @throws Error if tool name format is invalid
+     * @throws Error if the tool name is already registered
      *
      * @example
      * ```typescript
@@ -284,21 +285,18 @@ export class McpCurlServer {
     ): this {
         this.ensureNotStarted("registerCustomTool()");
 
-        // Validate tool name format
         if (!/^[a-z][a-z0-9_]*$/.test(name)) {
             throw new Error(
                 `Invalid tool name "${name}": must start with a lowercase letter and contain only lowercase letters, digits, and underscores.`
             );
         }
 
-        // Check for conflicts with built-in tools
         if (name === "curl_execute" || name === "jq_query") {
             throw new Error(
                 `Cannot register custom tool "${name}": built-in tool names are reserved and cannot be overridden, even if disabled.`
             );
         }
 
-        // Check for duplicate custom tools
         if (this._customTools.some((t) => t.name === name)) {
             throw new Error(`Custom tool "${name}" is already registered`);
         }
@@ -453,10 +451,8 @@ export class McpCurlServer {
             this._injectionCleanupInterval = startInjectionCleanup();
             this._wrapErrorCleanupInterval = startWrapErrorCleanup();
 
-            // Create and configure MCP server
             this._server = this.createConfiguredServer();
 
-            // Start appropriate transport
             if (transport === "http") {
                 await this.startHttp(httpAuthToken);
             } else {
@@ -728,7 +724,8 @@ export class McpCurlServer {
 
 /**
  * Stderr logger for shutdown-path failures, in the project-wide minimal
- * shape (`<label> error: <ErrorClassName>` — see CLAUDE.md "Error logging").
+ * shape (`<label> error: <ErrorClassName>` — see docs/architecture/architecture.md
+ * → "Error-Logging Discipline").
  * Shutdown errors have no per-request context, so the bracketed
  * `[<context>]` slot the per-tool / per-session sites use is omitted; the
  * label itself identifies which sub-tear-down failed (e.g.
