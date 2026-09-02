@@ -424,3 +424,70 @@ named in `ARCHITECTURE.md` invariant 15.
 **codex: "Didn't find any major issues"** on `c0878c7` — the first clean
 reviewer return on this branch. coderabbitai raised no new inline findings.
 The only new entries were the two CodeQL alerts declined above.
+
+## Review Comments Addressed — 2026-09-02 (round 4, PR #33)
+
+Requested from both bots. **CodeRabbit did not review this round** — rate
+limited under its fair-usage policy on three attempts, most recently 16 minutes
+out. So round 4's coverage is Codex only, and that is a gap, not a clean return
+from both.
+
+### Prose reconciliation, before the round was requested (`7caedd7`)
+
+A sweep of every comment on the changed call chain, up and down. Fourteen
+contradictions, one of them a defect rather than a stale sentence: **the
+`defendText` docblock had been detached from its function** — `isDefinitelyJson`
+landed between the two, so the published API's contract documented a private
+helper. The rest were mechanism claims the scan-based strip had outlived: the
+iteration cap still credited with neutralising splices, the deleted `|$)` arm
+described as live in three places, the post-processor header claiming the wrap
+runs sanitise-and-detect, and a docblock referring to a `key` parameter that a
+reverted edit of mine had left behind.
+
+### Fixed
+
+| Comment | Reviewer | Severity | Disposition |
+|---|---|---|---|
+| "Bound openers that borrow the closing tag's terminator" | codex | **P1** (theirs: P1) | **Fixed in `58bc175`.** Reproduced first: `"<script".repeat(30000) + "</script>"` measured **2881 ms** at 205 KB, `<style` 2460 ms; now 9 ms. `withinClosableRegion` guarantees a closer lies *ahead* of every attempt, which is not the same as the attempt being able to *reach* it — the opener's `[^>]*` crossed `<` and ate the region's only closer as its own tag terminator. Both attribute runs are now `[^<>]*`, matching `lastTagCloserEnd`'s walk. **Round 2 fixed this class on the closer and wrote down that the asymmetry was safe**, which is why nobody checked the opener: K-11, one round after RC-13 named it. RC-14 |
+
+### Escalated in rounds 1–3, decided by the director in round 4
+
+| Comment | Reviewer | Severity | Disposition |
+|---|---|---|---|
+| Reapply `max_result_size` after the outer defence pass | codex (r1) + coderabbitai (r2) | P2, in scope | **Fixed in `5698ebb`.** Director chose "plumb the cap into the wrap". Implemented as the goal rather than the location, on evidence: at the wrap the body is sealed inside `formatResponse`'s JSON envelope, and a **compliant** 1000-byte body arrives there as a **1057-byte** text part under `include_metadata` — a wrap-side cap truncates correct responses mid-JSON, and the wrap has no file to save to. `processor.ts::exceedsInlineCap` weighs the defended form and both size gates call it. RC-15 |
+
+### Notes on the fix that are worth a reviewer's attention
+
+- **`processResponse`'s return is unchanged.** It is a published entry point
+  documented as returning the origin's grammar. The defended text is computed as
+  a measurement and discarded; only the gate consumes it. An earlier attempt
+  moved the strict pass into `processResponse` and broke seven contract tests —
+  correctly.
+- **The measurement is skipped where it cannot change the answer**, because it
+  calls `sanitizeAndDetect`, which logs. Running it unconditionally silently
+  converted the documented detect-on-original trade-off into a log line; the
+  suite caught it. Two cheap arms answer first.
+- **The first jq regression guard was toothless — the fifth on this branch.** It
+  derived the cap with `JSON.stringify` while jq pretty-prints, so the assumed
+  530 bytes were really 642, the result was already over cap on its own size,
+  and it passed with the fix reverted. Rewritten to take the cap from a real
+  uncapped call.
+
+### Outstanding Todos
+
+**0 filed this round.** The four in `docs/todos/` are the pre-existing backlog
+and none carries `pr: "#33"`. `docs/todos/005` gained one acceptance criterion —
+the class sweep RC-14 prescribes.
+
+### Files Modified
+
+`src/lib/response/strip-blocks.ts`, `src/lib/response/processor.ts`,
+`src/lib/response/post-processor.ts`, `src/lib/tools/jq-query.ts`,
+`src/lib/response/index.ts`, `src/lib.ts`, the four test files above,
+`ARCHITECTURE.md`, `LESSONS.md`, `CHANGELOG.md`, `docs/custom-tools.md`,
+`docs/todos/005-bracketed-label-defeats-beacon-strip.md`, and this handoff.
+
+### Status
+
+**No escalations remain open.** Merge authorisation is the director's, on
+GitHub — nothing in this workflow merges.
