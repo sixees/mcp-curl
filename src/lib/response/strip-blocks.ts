@@ -141,9 +141,13 @@ const HTML_COMMENT_ORPHAN_PATTERN = /<!--/g;
  * revision of this comment reasoned from the per-match property to "the 256 KB
  * cap guarantees wall-clock < 100 ms on any adversarial input"; that was wrong
  * by roughly 800× (4.5 s here, 82 s for the markdown patterns below).
- * Cost is bounded by construction instead: `[^>]*` can only scan within the
- * region a `>` closes (see `stripTagBlocks`), so a failing attempt cannot walk
- * to end-of-input. Same input, same patterns: 0.1 ms. `LESSONS.md` RC-11.
+ *
+ * Cost is bounded by construction instead — see {@link withinClosableRegion},
+ * which every pass in this file goes through. **The first attempt at that bound
+ * keyed on the last `>` and was wrong**: `</script>` needs the tag name, not an
+ * angle bracket, so `"<script>".repeat(32000)` kept the whole input in scope
+ * and still took 1.1 s. The bound now keys on each pattern's own closing token.
+ * `LESSONS.md` RC-11.
  */
 const SCRIPT_BLOCK_PATTERN =
     /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^>]*>/gi;
@@ -166,11 +170,15 @@ const STYLE_ORPHAN_TAG_PATTERN = /<\/?\s*style\b[^>]*>/gi;
 /**
  * Markdown image / link beacon patterns. Both:
  *   - Use `[^\]\[\n]*` (unbounded) for the alt/label portion. Neither `]`
- *     nor `[` may appear in a label, and both exclusions are load-bearing:
- *     `]` because it is the label's terminator, and **`[` because it is what
- *     keeps the pattern linear.** Without it a failing attempt scans forward
- *     to end-of-input from every `[` in the body — 256 KB of `[` measured
- *     82 seconds, synchronously (ARCHITECTURE.md invariant 15).
+ *     nor `[` may appear in a label. `]` is the label's terminator; `[` is
+ *     excluded so a failing attempt cannot scan forward from every `[` in the
+ *     body — 256 KB of `[` measured 82 seconds, synchronously.
+ *
+ *     **That exclusion is not on its own what makes the pass linear, and an
+ *     earlier revision of this docblock said it was.** It bounds the LABEL;
+ *     the URL class `[^)\n]+` was left free to scan to end-of-input, so
+ *     `"[a](https://x".repeat(19000)` still took 2.9 s. Linearity comes from
+ *     the `)` bound in `stripMarkdownBeacons` (ARCHITECTURE.md invariant 15).
  *
  *     **Known cost of the `[` exclusion:** a CommonMark-legal label that
  *     itself contains brackets — `[see [1]](https://host/x)` — matches none
@@ -327,52 +335,141 @@ export function stripBlocksFixedPoint(
 }
 
 /**
- * One pass of the script/style strip, bounded to the region where a tag can
- * actually close.
+ * Run `pass` over only the prefix of `text` in which a match can complete,
+ * returning everything beyond it untouched.
  *
- * **Why the bound is needed.** Every pattern here ends at a literal `>`, and
- * `[^>]*` scans forward to find one. On input with no `>` after an opener each
- * attempt scans to end-of-input and fails — and with a `g`-flagged replace the
- * start positions are themselves O(n), so the pass is O(n²). Measured on the
- * old patterns: 256 KB of `<script` with no `>` took 4.5 seconds, synchronously,
- * on the thread serving every session.
+ * **This is the one mechanism that keeps this file linear, and every pattern
+ * here goes through it.** A `g`-flagged replace starts a match attempt at every
+ * position. An attempt that SUCCEEDS consumes forward, so those are amortised
+ * linear; an attempt that FAILS after scanning to end-of-input is what costs
+ * O(n) each and O(n²) per pass. Every pattern in this file must consume a
+ * literal closing token — `-->`, `</script…>`, `)` — so within a prefix ending
+ * at the last such token, every start position has a closer ahead of it and
+ * cannot fail that way.
  *
- * **Why the bound is sound.** No match can begin after the last `>`: the opener
- * needs one, the balanced closer needs one, and the orphan-tag sweep needs one.
- * So text beyond it cannot contain any part of a match, and skipping it is
- * exactly equivalent rather than an approximation. That equivalence is what
- * makes this a bound and not a cap — `STRIP_PATH_MAX_BYTES` limits the input,
- * this limits the search to where an answer could be.
+ * **Sound, not approximate.** No match can BEGIN after the last closer, because
+ * every match contains one. Text beyond it therefore cannot hold any part of a
+ * match, and skipping it changes no output. That is what makes this a bound and
+ * not a cap: `STRIP_PATH_MAX_BYTES` limits the input, this limits the search to
+ * where an answer could be.
  *
- * The removal of the old `|$)` open-to-EOF arm (`LESSONS.md` RC-11) is what
- * makes it true. With that arm a match could begin before the last `>` and run
- * past it to end-of-input, so the tail was reachable and could not be skipped.
+ * `end <= 0` means no closer exists at all, so the pass has no work to do.
+ *
+ * @param end - index just past the last closing token, from one of the
+ *              `…CloserEnd` helpers below
+ */
+function withinClosableRegion(text: string, end: number, pass: (s: string) => string): string {
+    if (end <= 0) return text;
+    if (end >= text.length) return pass(text);
+    return pass(text.slice(0, end)) + text.slice(end);
+}
+
+/**
+ * Single whitespace character. No `g`/`y` flag, so `.test()` does not consult
+ * `lastIndex` and reuse across calls is safe — see the safety contract above.
+ */
+const WHITESPACE_CHAR_PATTERN = /\s/;
+
+/** Index just past the last `closer`, or 0 when the input holds none. */
+function lastCloserEnd(text: string, closer: string): number {
+    const i = text.lastIndexOf(closer);
+    return i === -1 ? 0 : i + closer.length;
+}
+
+/**
+ * Index just past the `>` terminating the last `</tag` in the input, or 0.
+ *
+ * **A bare `>` is not a sound bound here and used to be one.** `</script>`
+ * needs the tag name, not just an angle bracket, so `"<script>".repeat(32000)`
+ * — every character before a `>` — left the whole input in scope and each
+ * opener scanned to end-of-input for a closer that was never there: 1.1 s
+ * measured. `"<script></x>".repeat(20000)` broke a `</`-only bound the same
+ * way at 1.7 s.
+ *
+ * **The walk back over whitespace is required, not a nicety.** The closer
+ * pattern allows `</ script>` and `</\nscript>`, so a literal `</script` search
+ * misses them — the balanced pass would then be skipped on input it should
+ * match, and an existing guard for exactly that shape fails.
+ *
+ * **Deliberately conservative when the last complete closer has no `>`:** it
+ * returns 0 and the balanced pass is skipped entirely rather than searching
+ * further back, since a backward search that re-scans for `>` each time is
+ * itself the quadratic shape being removed. The cost is only that a block the
+ * orphan sweep already handles keeps its body as inert text — no tag survives
+ * either way, which is the property that matters (`LESSONS.md` RC-11).
+ *
+ * Linear: the loop visits each occurrence of the tag name once, and the
+ * whitespace walks are disjoint spans of the input.
+ */
+function lastTagCloserEnd(text: string, lowerText: string, tag: string): number {
+    for (let from = lowerText.length; from >= 0; ) {
+        const name = lowerText.lastIndexOf(tag, from);
+        if (name === -1) return 0;
+        let j = name - 1;
+        while (j >= 0 && WHITESPACE_CHAR_PATTERN.test(text[j]!)) j--;
+        if (j >= 1 && text[j] === "/" && text[j - 1] === "<") {
+            const gt = text.indexOf(">", name);
+            return gt === -1 ? 0 : gt + 1;
+        }
+        from = name - 1;
+    }
+    return 0;
+}
+
+/**
+ * One pass of the script/style strip.
+ *
+ * Three separately-bounded stages, because their closing tokens differ: the
+ * balanced patterns end at `</script…>` / `</style…>`, while the orphan sweeps
+ * end at any `>`.
  */
 function stripTagBlocks(text: string): string {
-    const lastGt = text.lastIndexOf(">");
-    if (lastGt === -1) return text;
-    const head = text
-        .slice(0, lastGt + 1)
-        .replace(SCRIPT_BLOCK_PATTERN, "")
-        .replace(STYLE_BLOCK_PATTERN, "")
-        .replace(SCRIPT_ORPHAN_TAG_PATTERN, "")
-        .replace(STYLE_ORPHAN_TAG_PATTERN, "");
-    return head + text.slice(lastGt + 1);
+    const lower = text.toLowerCase();
+    let out = withinClosableRegion(text, lastTagCloserEnd(text, lower, "script"), (s) =>
+        s.replace(SCRIPT_BLOCK_PATTERN, "")
+    );
+    out = withinClosableRegion(out, lastTagCloserEnd(out, out.toLowerCase(), "style"), (s) =>
+        s.replace(STYLE_BLOCK_PATTERN, "")
+    );
+    return withinClosableRegion(out, lastCloserEnd(out, ">"), (s) =>
+        s.replace(SCRIPT_ORPHAN_TAG_PATTERN, "").replace(STYLE_ORPHAN_TAG_PATTERN, "")
+    );
 }
 
 /**
  * Strip HTML comments (`<!-- … -->`) from input. Exported as a separate
  * step so the caller can sequence it as part of the response pipeline.
  *
- * Two passes: balanced comments are removed whole, then any orphan `<!--`
- * token is removed on its own, leaving the text after it intact. Both are
- * linear — the balanced pattern's lazy body ends at a fixed `-->`, and the
- * orphan sweep is a literal.
+ * Balanced comments are removed whole, then any orphan `<!--` token is removed
+ * on its own, leaving the text after it intact.
+ *
+ * **The balanced pass is bounded at the last `-->`** (see
+ * {@link withinClosableRegion}). Without that bound `"<!--".repeat(65536)` —
+ * every opener failing to find a closer — took **5.5 seconds** synchronously.
+ * That was a regression introduced with the `|$)` arm's removal: the old
+ * open-to-EOF form matched at the first opener and consumed the rest in one
+ * scan, so it was fast and destructive, and replacing it addressed the
+ * destruction while leaving the cost unbounded.
+ *
+ * **The orphan sweep iterates**, because deleting a literal can splice a new
+ * one out of its neighbours: `<!<!----` loses the inner `<!--` and the
+ * surviving `<!` and `--` join into a fresh `<!--`. A single pass therefore
+ * returns a live comment opener, which is what CodeQL's incomplete
+ * multi-character sanitisation rule flags. Same fixed-point cap as the block
+ * strip, and for the same reason — each pass is linear, so the cap bounds
+ * contrived nesting rather than ordinary input.
  */
 export function stripHtmlComments(input: string): string {
-    return input
-        .replace(HTML_COMMENT_PATTERN, "")
-        .replace(HTML_COMMENT_ORPHAN_PATTERN, "");
+    const balanced = withinClosableRegion(input, lastCloserEnd(input, "-->"), (s) =>
+        s.replace(HTML_COMMENT_PATTERN, "")
+    );
+    let curr = balanced;
+    for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
+        const next = curr.replace(HTML_COMMENT_ORPHAN_PATTERN, "");
+        if (next === curr) return next;
+        curr = next;
+    }
+    return curr;
 }
 
 /**
@@ -400,12 +497,21 @@ export function stripHtmlComments(input: string): string {
  *      scheme" survives unscathed.
  */
 export function stripMarkdownBeacons(input: string): string {
-    return input
-        .replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER)
-        .replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER)
-        .replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER)
-        .replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER)
-        .replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "");
+    // Bounded at the last `)`, the closing token every pattern here must
+    // consume. Excluding `[` from the LABEL class left the URL class
+    // `[^)\n]+` free to scan forward without limit, so
+    // `"[a](https://x".repeat(19000)` — no `)` anywhere — still took 2.9 s.
+    // All five passes share one region: none of the replacements contains a
+    // `)`, so the boundary cannot move underneath them, and the tail holds no
+    // `)` at all so no match can occur there.
+    return withinClosableRegion(input, lastCloserEnd(input, ")"), (s) =>
+        s
+            .replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER)
+            .replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER)
+            .replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER)
+            .replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER)
+            .replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "")
+    );
 }
 
 /**

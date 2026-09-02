@@ -15,9 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   synchronously, on the thread serving every session — on stdio the server is dead for the duration,
   on HTTP every session stalls. The `<script`/`<style` openers had the same shape at 4.5 s. The
   patterns' own docblock claimed the 256 KB cap guaranteed "wall-clock < 100 ms on any adversarial
-  input"; it was wrong by ~800×, because a byte cap bounds the input and never the cost. Now linear
-  by construction: 82.9 s → 1.4 ms and 4.5 s → 0.1 ms. The ReDoS guard that should have caught it
-  fed a single opener, which the pattern consumed in one match, so it could not fail.
+  input"; it was wrong by ~800×, because a byte cap bounds the input and never the cost. The ReDoS
+  guard that should have caught it fed a single opener, which the pattern consumed in one match, so
+  it could not fail.
+
+  Every pass now runs over only the prefix ending at that pattern's own closing token, so a failing
+  attempt cannot scan to end-of-input. **The first attempt at this bound keyed on the wrong tokens
+  and closed only part of the class** — a bare `>` does not bound a closer of `</script>`, and
+  excluding `[` from a markdown label does not bound a URL class ending at `)`. Review of this PR
+  measured what remained: `"<script>".repeat(32000)` 1.1 s, `"<script></x>".repeat(20000)` 1.7 s,
+  `"[a](https://x".repeat(19000)` 2.9 s, and `"<!--".repeat(65536)` **5.5 s** — the last a
+  regression this branch introduced by removing the open-to-EOF arm without bounding what replaced
+  it. All now run in 1–2 ms. The replacement flood tests were themselves toothless at a 2 s budget,
+  which is recorded beside them.
 - **Custom tools, hook short-circuits and YAML endpoints now get the full response defence.** The
   post-processor wrap ran `sanitizeAndDetect` alone — Step 2 of the five in `defendText` — so a
   `registerCustomTool()` handler returning remote markdown or HTML reached the model with
@@ -56,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were optional and absence resolved to the *permissive* arm, so `defendText(text, { hostname })`
   compiled, looked defended, and ran Step 2 alone. Pass `false` when you know the content type —
   including knowing the origin sent none — and `true` when you could not determine it.
+
+  **Omission now resolves to the strictest grammar at runtime as well.** A required field binds
+  TypeScript callers and does nothing to a JavaScript one, and this release publishes the function —
+  so the type alone left the permissive arm reachable by exactly the consumer it was added to
+  protect. Reported independently by two reviewers on PR #33.
 - Markdown link and image syntax in a `text/plain` or `text/html` tool result is now rewritten to
   `[link removed]` / `[image removed]` at the wrap. Previously this depended on `include_metadata`:
   with it true the body sat inside a JSON envelope that the exemption protected, with it false it

@@ -44,11 +44,16 @@ export interface DefendTextOptions {
      * **Required, not optional, and that is the whole point.** Both fields that
      * select the grammar are absent-able, and absence resolved to the
      * PERMISSIVE arm — so `defendText(text, { hostname })` compiled, looked
-     * defended, and ran Step 2 alone. Internal callers all passed one; making
-     * it required is what stops a consumer of the published export from
-     * omitting it, since 3.4.0 puts this type on the public API. Pass `false`
-     * when you know the content type (including knowing the origin sent none),
-     * `true` when you could not determine it.
+     * defended, and ran Step 2 alone. Pass `false` when you know the content
+     * type (including knowing the origin sent none), `true` when you could not
+     * determine it.
+     *
+     * **The type is only half the fix, because a type is not a runtime check.**
+     * 3.4.0 publishes this function, and a JavaScript consumer can omit the
+     * field whatever the declaration says. So omission resolves to the
+     * strictest grammar at runtime as well — see the destructuring default in
+     * `defendText`. Both halves are needed: the type tells a TypeScript caller
+     * to decide, and the default decides safely for a caller who did not.
      */
     contentTypeUndetermined: boolean;
     /**
@@ -134,7 +139,14 @@ function isDefinitelyJson(text: string): boolean {
 
 export function defendText(text: string, options: DefendTextOptions): string {
     let content = text;
-    const { hostname, contentTypeUndetermined = false, decodeEntities = true } = options;
+    // Omission resolves to the STRICTEST grammar, not the permissive one. The
+    // type makes this field required, which binds TypeScript callers and does
+    // nothing at runtime — and 3.4.0 publishes this function, so a JavaScript
+    // consumer calling `defendText(text, { hostname })` would otherwise get
+    // Step 2 alone and a returned beacon, which is the exact behaviour the
+    // required field was added to prevent. Failing closed costs a caller who
+    // omits it some over-stripping; failing open costs them the defence.
+    const { hostname, contentTypeUndetermined = true, decodeEntities = true } = options;
 
     // An UNDETERMINED content type selects the strictest grammar rather than
     // the loosest: a remote must not be able to disable a stage by making our

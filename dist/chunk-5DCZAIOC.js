@@ -1471,17 +1471,68 @@ function stripBlocksFixedPoint(input, options = {}) {
   }
   return curr;
 }
+function withinClosableRegion(text, end, pass) {
+  if (end <= 0) return text;
+  if (end >= text.length) return pass(text);
+  return pass(text.slice(0, end)) + text.slice(end);
+}
+var WHITESPACE_CHAR_PATTERN = /\s/;
+function lastCloserEnd(text, closer) {
+  const i = text.lastIndexOf(closer);
+  return i === -1 ? 0 : i + closer.length;
+}
+function lastTagCloserEnd(text, lowerText, tag2) {
+  for (let from = lowerText.length; from >= 0; ) {
+    const name = lowerText.lastIndexOf(tag2, from);
+    if (name === -1) return 0;
+    let j = name - 1;
+    while (j >= 0 && WHITESPACE_CHAR_PATTERN.test(text[j])) j--;
+    if (j >= 1 && text[j] === "/" && text[j - 1] === "<") {
+      const gt = text.indexOf(">", name);
+      return gt === -1 ? 0 : gt + 1;
+    }
+    from = name - 1;
+  }
+  return 0;
+}
 function stripTagBlocks(text) {
-  const lastGt = text.lastIndexOf(">");
-  if (lastGt === -1) return text;
-  const head = text.slice(0, lastGt + 1).replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "").replace(SCRIPT_ORPHAN_TAG_PATTERN, "").replace(STYLE_ORPHAN_TAG_PATTERN, "");
-  return head + text.slice(lastGt + 1);
+  const lower = text.toLowerCase();
+  let out = withinClosableRegion(
+    text,
+    lastTagCloserEnd(text, lower, "script"),
+    (s) => s.replace(SCRIPT_BLOCK_PATTERN, "")
+  );
+  out = withinClosableRegion(
+    out,
+    lastTagCloserEnd(out, out.toLowerCase(), "style"),
+    (s) => s.replace(STYLE_BLOCK_PATTERN, "")
+  );
+  return withinClosableRegion(
+    out,
+    lastCloserEnd(out, ">"),
+    (s) => s.replace(SCRIPT_ORPHAN_TAG_PATTERN, "").replace(STYLE_ORPHAN_TAG_PATTERN, "")
+  );
 }
 function stripHtmlComments(input) {
-  return input.replace(HTML_COMMENT_PATTERN, "").replace(HTML_COMMENT_ORPHAN_PATTERN, "");
+  const balanced = withinClosableRegion(
+    input,
+    lastCloserEnd(input, "-->"),
+    (s) => s.replace(HTML_COMMENT_PATTERN, "")
+  );
+  let curr = balanced;
+  for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
+    const next = curr.replace(HTML_COMMENT_ORPHAN_PATTERN, "");
+    if (next === curr) return next;
+    curr = next;
+  }
+  return curr;
 }
 function stripMarkdownBeacons(input) {
-  return input.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "");
+  return withinClosableRegion(
+    input,
+    lastCloserEnd(input, ")"),
+    (s) => s.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "")
+  );
 }
 var MARKUP_SHAPE_PATTERN = /<(?:!doctype\b|html\b|svg\b|script\b|style\b|iframe\b|\?xml\b|[a-z][a-z0-9-]{0,16}[\s>/])/i;
 function looksLikeMarkupShape(content) {
@@ -1835,7 +1886,7 @@ function isDefinitelyJson(text) {
 }
 function defendText(text, options) {
   let content = text;
-  const { hostname, contentTypeUndetermined = false, decodeEntities = true } = options;
+  const { hostname, contentTypeUndetermined = true, decodeEntities = true } = options;
   const excludeJsonDocuments = options.excludeJsonDocuments ?? true;
   const jsonExemptionCouldApply = excludeJsonDocuments && (contentTypeUndetermined || isSniffableContentType(options.contentType));
   const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);

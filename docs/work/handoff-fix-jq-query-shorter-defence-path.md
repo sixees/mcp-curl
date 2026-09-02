@@ -84,8 +84,9 @@ describes the real pipeline with a 3.4.0 upgrade note.
 | Fix the wrap, decline the `jq_query` half | `jq_query` can only return JSON, and `defendText` on JSON *is* what it already ran. The gap was JSON-vs-everything, not this tool. | Strip inside JSON everywhere; document and close nothing |
 | **Reversed:** strip inside JSON at the wrap after all | Review showed RC-8's justification is about a PERSISTED artefact and does not reach a channel with no disk artefact. Director's call. RC-10. | Keep the exemption everywhere (leaves a live beacon vector on the wrap's channels) |
 | **Reversed:** the `DEFENDED` tag, then removed | Its claim rested on a field the origin controls, and the `include_metadata` incoherence it was built to fix did not survive it either. RC-10. | Make the claim true by having `defendText` report whether the strip ran; drop the tag (chosen) |
-| Exclude `[` from the beacon label class rather than capping it | The docblock records that a 256-char cap was removed *because* padding past it defeated all four patterns. A cap is a settled reversal. Excluding `[` partitions the input, so the pass is linear by construction, not merely faster. | Cap the label (rejected: reinstates a known bypass); linear left-to-right scan (larger rewrite, and todo 005 will need it) |
-| Bound the block scan to the region a `>` closes | Provably equivalent — every pattern ends at a literal `>`, so no match can begin past the last one. Only possible once the `|$)` arm was gone. | Exclude `<` from the attribute run (rejected: `<script foo="<">` bypasses); cap the run (same settled reversal) |
+| Exclude `[` from the beacon label class rather than capping it | The docblock records that a 256-char cap was removed *because* padding past it defeated all four patterns. A cap is a settled reversal. **Revised during review — the claim "linear by construction" was wrong:** the exclusion bounds the LABEL, and the URL class `[^)\n]+` still scanned to end-of-input (2.9 s measured). The exclusion stays; linearity now comes from the `)` bound. Based on @chatgpt-codex-connector's feedback. | Cap the label (rejected: reinstates a known bypass); linear left-to-right scan (larger rewrite, and todo 005 will need it) |
+| ~~Bound the block scan to the region a `>` closes~~ | **Revised during review — changed to bounding at each pattern's own closing token.** `>` is not the token a `</script>` closer needs, so `"<script>".repeat(32000)` kept the whole input in scope: 1.1 s measured, and `"<script></x>".repeat(20000)` 1.7 s. Based on @chatgpt-codex-connector's feedback. The soundness argument was right and applied to the wrong token. | Exclude `<` from the attribute run (rejected: `<script foo="<">` bypasses); cap the run (same settled reversal) |
+| Bound every strip pass at its own closing token | One helper, `withinClosableRegion`, rather than a per-pattern argument — the class is *a failing attempt can scan to end-of-input*, and it recurred because each fix was aimed at an instance. Escalation-ladder rung 1: put the invariant where no pattern can forget it. | Per-pattern bounds (how it failed twice); a hand-written scanner (larger, and the bound is provably equivalent) |
 | Neutralise an orphan opener instead of deleting to EOF | CodeQL's rule is about the residual TOKEN, which removal satisfies. Deleting the caller's payload was never the requirement. | Keep the arm and add a byte-count notice (see below) |
 | **Declined:** the `[mcp-curl] N bytes removed` notice | You approved it alongside the P1-B fix, and its justification was the *silent unbounded* loss. That loss is gone — every remaining removal is a bounded substitution that announces itself (`[link removed]`) or leaves the body visible. A byte counter on every stripped response would be noise. Flagging rather than burying, since you asked for it. | Add it anyway |
 | **Reverted:** the RC-3 scratch-copy decode | Built it; the commit rule cannot serve both channels. See RC-12 and todo 004. The half that is unambiguous — never entity-decode a JSON document — did land. | Ship the naive version (loses the detector and the sanitiser on masked payloads) |
@@ -94,9 +95,15 @@ describes the real pipeline with a 3.4.0 upgrade note.
 
 ## What to pay attention to during review
 
-- **`markDefended` is the one thing here that can weaken a defence.** Every
-  other change adds. Check both call sites against the claim in its docblock,
-  and check that neither error return acquired it.
+- **Nothing in the final diff weakens a defence** — `markDefended` was the one
+  thing that could, and it was removed before the PR opened (RC-10). What is
+  left to check is the opposite direction: whether the strip is now *too*
+  aggressive on server-authored text, which is what codex's declined
+  file-path finding is about.
+- **The strip bounds are the highest-risk code here**, and review round 1 found
+  the first version of them incomplete on three inputs. If you change a pattern,
+  change the token its bound keys on in the same edit, and add a flood that
+  omits that token — see `REDOS_BUDGET_MS`.
 - **The `contentTypeUndetermined: true` blast radius.** It is the strictest
   grammar on all non-JSON tool output. A custom tool returning `text/plain`-ish
   prose with markdown link syntax now gets `[link removed]`. That is the
@@ -260,3 +267,56 @@ dropped, and 005 is a P1 that needs your decision before this branch merges.
 | File (removed) | Title | Summary | By | Date |
 |---|---|---|---|---|
 | `docs/todos/001-jq-query-shorter-defence-path.md` | Two text channels still take a shorter defence path than defendText | One instance fixed at the shared layer (`processTextPart` → full `defendText`); one refuted and declined with evidence (`jq_query` was never on a shorter path). Recommended remedy found inert. See RC-7, RC-8. | `/sixees-workflow:work` | 2026-09-02 |
+
+## Review Comments Addressed — 2026-09-02 (round 1, PR #33)
+
+Surface 3. Reviewers: `chatgpt-codex-connector`, `coderabbitai`,
+`github-advanced-security` (CodeQL, unrequested — it runs on push).
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Bound incomplete HTML-comment matching (P1) | codex + CodeQL | Fix needed | `stripHtmlComments` bounded at the last `-->`. Measured 5.5 s → 1.0 ms |
+| Bound searches for missing script/style closers (P1) | codex | Fix needed | `lastTagCloserEnd` keys on `</tag…>`, not a bare `>`. 1.1 s → 0.9 ms |
+| Bound failed markdown URL scans (P1) | codex | Fix needed | All five beacon passes bounded at the last `)`. 2.9 s → 0.2 ms |
+| Fail closed when JS callers omit the grammar selector (P2) | codex + coderabbitai | Fix needed | Destructuring default in `defendText` is now `true` (strictest). Regression test through the public barrel |
+| Incomplete multi-character sanitization ×6 | CodeQL | Fix needed | Orphan `<!--` sweep now iterates: deleting a literal can splice a new one out of its neighbours (`<!<!----`). Script/style were already covered by the fixed-point loop |
+
+Three findings are one class — *a failing match attempt can scan to
+end-of-input* — and are fixed at one layer, `withinClosableRegion`, rather than
+per-pattern. Instances outside the diff: none; the sweep is the whole file.
+
+**Two things this round proved about the previous one, both worth recording:**
+
+1. **The bound shipped in the PR closed only part of its class.** It keyed on
+   `>` and on excluding `[` from a label — neither of which is the token the
+   pattern must consume. Sound reasoning applied to the wrong token.
+2. **The replacement flood tests were toothless, in the mirror image of the
+   guard they replaced.** Every case omitted `>` or `)` entirely, which is the
+   shape the bound already handled. With the fix removed, four of the new floods
+   still passed at the 2 s budget. `REDOS_BUDGET_MS` is now 100 ms, calibrated
+   against a probe: 1–2 ms passing, 243 ms – 10.3 s regressed.
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| "Do not return unclosed raw-text element bodies to the model" — remove the body of an unclosed `<script>` rather than keeping it as inert text | coderabbitai | P2 (theirs: Major) | In scope | **Re-litigates RC-11**, which is the P1 this branch was largely written to fix, and brings nothing that decision did not weigh. RC-11 explicitly considered the model-facing reading and found the courier case dominates. Substantively: the phrase `ignore previous instructions` reaches the model identically when it is *not* wrapped in a tag, so removing the body buys nothing against it — what the strip owes is that no live tag survives, and it does not. Detection logs it and spotlighting wraps it. Flagged to the director rather than silently closed, per `.claude/rules/03-divergence.md` |
+| "Preserve generated file paths through the wrapper" — a save path like `/workspace/[report](file:notes)` is rewritten to `[link removed]` | codex | P3 (theirs: P2) | In scope | Real, and requires an output directory whose *name* contains markdown link syntax with a dangerous scheme — a path this deployment creates itself. Demoted from P2 on consequence: no stated failing case that occurs in practice. The fix means re-introducing a per-field exemption at the wrap, which is the `DEFENDED` tag the director removed this branch (RC-10). Not worth reversing a settled decision for a directory name we control |
+
+### Escalated — needs your decision before merge
+
+| Comment | Reviewer | Severity | Why it is not mine to close |
+|---|---|---|---|
+| "Reapply `max_result_size` after the outer defense" | codex | P2, in scope, **not contained** | Genuine, and it violates **invariant 14** verbatim: *"the cap is applied after the defence pipeline as well as before it, since `[link removed]` is longer than some of the forms it replaces."* This PR adds a second defence pass at the wrap, after `processResponse`'s size gate, so a `text/plain` body of `"[a](file:)".repeat(100)` returns 1400 bytes under a 1000-byte `max_result_size`. The fix needs `max_result_size` plumbed into the post-processor wrap, which has no access to tool params — that reaches outside this PR's diff. Three ways out, all yours: plumb the cap through, amend invariant 14 to acknowledge wrap-side growth, or accept a bounded overshoot and say so in the invariant |
+
+### Outstanding Todos
+
+No new todos filed this round. 0 filed, 0 open against this PR.
+
+### Files Modified
+
+`src/lib/response/strip-blocks.ts`, `src/lib/response/processor.ts`,
+`src/lib/response/strip-blocks.test.ts`, `src/lib.test.ts`,
+`ARCHITECTURE.md`, `CHANGELOG.md`, and this handoff.

@@ -163,8 +163,23 @@ what a violation looks like, it does not belong on this list.
     patterns 4.5, synchronously, on the thread serving every session. A
     violation looks like a failing match attempt that can scan an unbounded
     distance forward — so the test is whether the character classes and anchors
-    make a failure O(1), not whether a cap exists. `LESSONS.md` RC-11 and the
-    ReDoS floods in `strip-blocks.test.ts`.
+    make a failure O(1), not whether a cap exists.
+
+    **Enforced in one place:** `strip-blocks.ts`'s `withinClosableRegion` runs
+    each pass over only the prefix ending at that pattern's own closing token,
+    so within it every attempt has a closer ahead and cannot fail by scanning
+    to the end. **Keying that bound on the wrong token is how this has failed
+    twice** — a bare `>` does not bound a pattern whose closer is `</script>`,
+    and excluding `[` from a markdown label does not bound a URL class that
+    ends at `)`. Both shipped past a review and a flood test; measurement
+    caught them at 1.1 s and 2.9 s for a 256 KB body. Name the token the
+    pattern must consume, and bound on that one.
+
+    **A flood test is a guard only if it omits the token the pattern needs.**
+    Two generations of guard here fed inputs the then-current bound already
+    handled, so both passed while the defect was live. `REDOS_BUDGET_MS` in
+    `strip-blocks.test.ts` carries the calibration, and why a 2 s budget was
+    worthless against a 1.1 s regression. `LESSONS.md` RC-11.
 
 ## Environments
 

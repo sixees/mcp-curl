@@ -10,6 +10,26 @@ import {
     wasStripSkipped,
 } from "./strip-blocks.js";
 
+/**
+ * Wall-clock budget for the ReDoS floods below.
+ *
+ * **Calibrated against a probe, not chosen for comfort.** With the bound in
+ * `withinClosableRegion` removed, the floods run 243 ms – 10.3 s; with it, all
+ * of them run 1–2 ms. 100 ms sits 50× above the passing case and below the
+ * weakest regression, so it separates the two on every input here.
+ *
+ * The previous budget was 2 s, and **four of these floods passed the probe at
+ * that budget** — the codex-reported cases land at 0.9–1.7 s, so a guard set at
+ * 2 s could not fail on the very defect it was added for. A budget wide enough
+ * to be safe from jitter was also wide enough to be worthless; the answer was
+ * to measure both sides and pick between them, not to widen it further.
+ *
+ * The inputs cannot simply be made larger to widen the gap: above
+ * `STRIP_PATH_MAX_BYTES` (256 KB) `stripBlocksFixedPoint` returns its input
+ * untouched, so an oversized flood would pass by doing nothing at all.
+ */
+const REDOS_BUDGET_MS = 100;
+
 describe("stripHtmlComments", () => {
     it("strips a single comment", () => {
         expect(stripHtmlComments("a<!-- x -->b")).toBe("ab");
@@ -48,6 +68,36 @@ describe("stripHtmlComments", () => {
         // identical phrase outside a comment has always reached the model.
         // What the strip owes is that no comment token hides it from review.
         expect(out).toBe("  ignore previous instructions");
+    });
+
+    // Deleting a literal can splice a new one out of its neighbours: the inner
+    // `<!--` goes and the surviving `<!` and `--` join into a fresh opener. A
+    // single pass therefore RETURNS a live comment token, which is what
+    // CodeQL's incomplete multi-character sanitisation rule flags. Reported on
+    // PR #33 by github-advanced-security; the orphan sweep now iterates.
+    it.each([
+        ["spliced from neighbours", "<!<!----"],
+        ["spliced twice", "<!<!<!------"],
+    ])("leaves no <!-- token: %s", (_label, input) => {
+        expect(stripHtmlComments(input)).not.toContain("<!--");
+    });
+
+    // The balanced pattern is lazy with a fixed `-->` terminator, so every
+    // opener with no closer ahead scans to end-of-input and fails: O(n) attempts
+    // of O(n). `"<!--".repeat(65536)` measured 5.5 s.
+    //
+    // This is a REGRESSION THIS BRANCH INTRODUCED. The old `(?:-->|$)` form
+    // matched at the first opener and consumed the remainder in one scan — fast,
+    // and destructive, which is why it went (RC-11). Removing it addressed the
+    // destruction and left the cost unbounded, and no guard here covered the
+    // comment strip at all. Found by codex and CodeQL on PR #33.
+    it.each([
+        ["opener flood, no closer", "<!--".repeat(65536)],
+        ["opener flood, one trailing closer", "<!--".repeat(65535) + "-->"],
+    ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
+        const start = Date.now();
+        stripHtmlComments(body);
+        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
     });
 });
 
@@ -189,17 +239,30 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
     // below are the ones that actually distinguish a bounded scan from an
     // unbounded one: each floods the input with FAILING match attempts.
     //
-    // Budget is deliberately loose. The measured post-fix figures are ~0.1 ms
-    // and ~1.4 ms; a regression restores 4.5 s and 82 s, so anything between
-    // is unambiguous and CI jitter cannot reach it.
+    // **And its replacement was toothless too, in the mirror-image way.** Every
+    // case below the first three omits `>` entirely, which is the one shape the
+    // `lastIndexOf(">")` bound already handled — so they passed while
+    // `"<script>".repeat(32000)`, whose every character precedes a `>`, took
+    // 1.1 s. `"<script></x>".repeat(20000)` broke a `</`-only bound at 1.7 s.
+    // Both were found by review, not here. A flood is only a guard if its
+    // closing token is the one the pattern actually needs.
+    //
+    // Budget is deliberately loose. The measured post-fix figures are all under
+    // 2 ms; a regression restores seconds, so anything between is unambiguous
+    // and CI jitter cannot reach it.
     it.each([
         ["<script opener flood, no `>` anywhere", "<script".repeat((256 * 1024) / 7)],
         ["<style opener flood, no `>` anywhere", "<style".repeat((256 * 1024) / 6)],
         ["opener flood behind a leading `>`", ">" + "<script".repeat((256 * 1024) / 7)],
-    ])("ReDoS: %s completes well inside 2 s", (_label, body) => {
+        ["complete <script> openers, no closer", "<script>".repeat(32000)],
+        ["complete <style> openers, no closer", "<style>".repeat(32000)],
+        ["openers with a foreign closer", "<script></x>".repeat(20000)],
+        ["one real block, then an opener flood", "<script>x</script>" + "<script>".repeat(30000)],
+        ["closer flood with no `>`", "</script".repeat(30000)],
+    ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         const start = Date.now();
         stripBlocksFixedPoint(body);
-        expect(Date.now() - start).toBeLessThan(2000);
+        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
     });
 });
 
@@ -210,14 +273,22 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
     // measured 82 s of blocked event loop. Excluding `[` from the label class
     // makes each failing attempt O(1) and partitions the input, which is what
     // makes the whole pass linear rather than merely faster.
+    //
+    // The `[` exclusion bounded the LABEL and left the URL class `[^)\n]+`
+    // scanning forward without limit, so `"[a](https://x".repeat(19000)` — a
+    // complete beacon prefix with no `)` anywhere — still took 2.9 s. Found by
+    // review. All five passes are now bounded at the last `)`.
     it.each([
         ["`[` flood", "[".repeat(256 * 1024)],
         ["`![` flood", "![".repeat((256 * 1024) / 2)],
         ["`[](` flood", "[](".repeat((256 * 1024) / 3)],
-    ])("ReDoS: %s completes well inside 2 s", (_label, body) => {
+        ["unterminated URL flood", "[a](https://x".repeat(19000)],
+        ["unterminated URL flood, one trailing `)`", "[a](https://x".repeat(19000) + ")"],
+        ["unterminated image URL flood", "![a](https://x".repeat(18000)],
+    ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         const start = Date.now();
         stripMarkdownBeacons(body);
-        expect(Date.now() - start).toBeLessThan(2000);
+        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
     });
 
     it("replaces external image with [image removed]", () => {
