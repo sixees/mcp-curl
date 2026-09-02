@@ -2,11 +2,11 @@
 // Defence-in-depth wrap for tool results (PR-6b / B3).
 //
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
-// the three response-side defences (sanitise + detect + optional spotlight)
-// over each text content part of a `CallToolResult`. Server-scope config (the
-// spotlighting flag) is bound once at server creation; request-scope hostname
-// is passed per call so the per-host injection-detection throttle keys
-// correctly.
+// the full response-side defence — `defendText` (Steps 2-5), then optional
+// spotlighting — over each text content part of a `CallToolResult`.
+// Server-scope config (the spotlighting flag) is bound once at server
+// creation; request-scope hostname is passed per call so the per-host
+// injection-detection throttle keys correctly.
 //
 // Design notes:
 //
@@ -17,12 +17,13 @@
 //    short-circuit return path in `extensible/hook-executor.ts`. Symbol-tag
 //    idempotence (see point 3) lets these compose freely.
 //
-// 2. **Detect-on-original ordering (S4).** The wrap delegates the
-//    sanitise/detect step to `sanitizeAndDetect()` in
-//    `security/detection-logger.ts`, which now detects on the **original**
-//    text before sanitisation. Future PRs (B7/B8) will add stripping passes
-//    that erase the very byte sequences the detector looks for; running
-//    detection first preserves the log signal.
+// 2. **Detect-on-original ordering (S4).** The wrap delegates the whole
+//    pipeline to `defendText()` in `processor.ts`, whose Step 2 detects on
+//    the **original** text before sanitisation. That ordering is load-bearing
+//    here precisely because Steps 3-5 strip the byte sequences the detector
+//    looks for; running detection first preserves the log signal.
+//    `processTextPart` below states which options this boundary passes,
+//    and what each one costs.
 //
 // 3. **Idempotence via a module-private `Symbol("mcp-curl.wrapped")`.** A
 //    `CallToolResult` that has already passed through wrap carries a
@@ -76,8 +77,8 @@ const WRAPPED = Symbol("mcp-curl.wrapped");
  * Server-scope config bound once at wrapper creation.
  *
  * `enableSpotlighting` mirrors `McpCurlConfig.enableSpotlighting` — when
- * `true`, sanitised text parts are also wrapped in spotlighting sentinels;
- * when `false`/`undefined`, sanitise + detect still run.
+ * `true`, defended text parts are also wrapped in spotlighting sentinels;
+ * when `false`/`undefined`, the defence pipeline still runs.
  */
 export interface WrapperConfig {
     enableSpotlighting?: boolean;
@@ -113,7 +114,7 @@ export interface WrappableResult {
 }
 
 /**
- * Safe own-property probe for one of this module's symbol tags.
+ * Safe own-property probe for the WRAPPED tag.
  *
  * `Object.hasOwn` triggers the target's `getOwnPropertyDescriptor` trap on a
  * Proxy. A hostile or buggy custom-tool author can return a Proxy whose trap
@@ -123,7 +124,7 @@ export interface WrappableResult {
  * un-probable result is treated as untagged, so the wrap pipeline runs
  * normally and the outer try/catch handles any subsequent failure.
  *
- * Also reads the symbol value defensively — accessing `result[key]` on a
+ * Also reads the symbol value defensively — accessing `result[WRAPPED]` on a
  * Proxy invokes the `get` trap, which can also throw.
  */
 function hasOwnWrappedTag(result: object): boolean {
@@ -166,10 +167,11 @@ export function isWrappedResult(result: unknown): boolean {
  * or Proxy-blocked). Defence-in-depth must never propagate exceptions to the
  * handler boundary, so we swallow the defineProperty failure here. The
  * trade-off: a downstream wrap on the same frozen result will re-run the
- * pipeline. That is semantically harmless because `sanitizeResponse` is
- * idempotent on already-sanitised text and `applySpotlighting` short-circuits
- * on already-wrapped envelopes — the worst case is one extra O(n) pass over
- * the body, never a correctness issue.
+ * pipeline. That is semantically harmless: `defendText` is idempotent on this
+ * boundary's options — the entity decode is off, and every remaining stage
+ * rewrites to a form it no longer matches — and `applySpotlighting`
+ * short-circuits on already-wrapped envelopes. The worst case is one extra
+ * linear pass over the body, never a correctness issue.
  *
  * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
  * Proxy whose `getOwnPropertyDescriptor` / `get` trap throws cannot break
@@ -232,7 +234,7 @@ function processTextPart(
     // Defensive: a single null/undefined or non-object content entry must
     // not throw out of `.map()` and abort the wrap for the entire result.
     // Non-text parts (and malformed entries) pass through unchanged so the
-    // valid text parts still get sanitise + detect + spotlight.
+    // valid text parts still get the full defence + spotlight.
     if (part === null || typeof part !== "object") return part;
     const contentPart = part as WrappableContentPart;
 

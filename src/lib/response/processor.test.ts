@@ -278,11 +278,10 @@ describe("processResponse — HTML <script>/<style> stripping (PR-7 / B8)", () =
         expect(result.content.toLowerCase()).not.toContain("<style");
     });
 
-    it("neutralises a self-healing payload via fixed-point iteration", async () => {
-        // The "<scr<script>ipt>alert(1)</scr</script>ipt>" payload requires
-        // ≥2 strip passes: the inner <script>...</script> goes first, then
-        // the residue reconstructs `<script>...</script>` which the second
-        // pass removes.
+    it("neutralises a self-healing payload", async () => {
+        // The inner <script>...</script> goes first and its neighbours rejoin
+        // into a fresh `<script>`; the token sweep that follows the balanced
+        // pass removes what the splice produced, in the same pass.
         const html = "<scr<script>ipt>alert(1)</scr</script>ipt>";
         const result = await processResponse(html, {
             url: "http://example.com",
@@ -521,10 +520,11 @@ describe("processResponse — review-pass P1 fixes (round 2)", () => {
     describe("malformed close tag (P1-A)", () => {
         it("strips body when close tag has whitespace before 'script'", async () => {
             // Old balanced pattern required `</script` exactly; whitespace
-            // between `</` and `script` defeated both balanced and orphan
-            // strips, leaving the script body in the output. New
-            // open-to-close-or-EOF pattern absorbs the malformed closer
-            // via `</\s*script\b[^>]*>`.
+            // between `</` and `script` defeated both the balanced and the
+            // token strips, leaving the script body in the output. The closer
+            // is now `</\s*script\b[^<>]*>`, which absorbs the whitespace —
+            // and `lastTagCloserEnd` walks the same whitespace, so the bound
+            // and the pattern agree on what a closer is.
             const html = "<script>STEAL_SECRETS()</ script>";
             const result = await processResponse(html, {
                 url: "http://example.com",
@@ -545,8 +545,9 @@ describe("processResponse — review-pass P1 fixes (round 2)", () => {
 
         it("removes an unclosed <script> tag, keeping its body as text (RC-11)", async () => {
             // HTML5 implicitly accepts unclosed `<script>` (the browser
-            // treats subsequent content as script body). Our pattern's `$`
-            // alternative covers EOF as a valid terminator.
+            // treats subsequent content as script body). No balanced pattern
+            // matches this, so `stripTagTokens` is what handles it: the TAG
+            // goes and the body stays, per RC-11.
             const html = "preamble <script>STEAL_NO_CLOSER()";
             const result = await processResponse(html, {
                 url: "http://example.com",

@@ -129,7 +129,7 @@ export async function executeJqQuery(
         // is stripped before the model reads it while the persisted artefact
         // keeps it. Persisted keeps the exemption; returned does not
         // (ARCHITECTURE.md invariant 1a).
-        const sanitized = defendText(filtered, {
+        const defended = defendText(filtered, {
             contentType: JSON_MIME,
             contentTypeUndetermined: false,
             hostname: basename(validatedFilePath),
@@ -137,7 +137,7 @@ export async function executeJqQuery(
 
         // Handle result size and file saving
         const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-        const contentBytes = Buffer.byteLength(sanitized, "utf8");
+        const contentBytes = Buffer.byteLength(defended, "utf8");
         const shouldSave = params.save_to_file || contentBytes > maxSize;
 
         if (shouldSave) {
@@ -148,14 +148,14 @@ export async function executeJqQuery(
             const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
             const filepath = join(targetDir, filename);
 
-            await writeFile(filepath, sanitized, { encoding: "utf-8", mode: 0o600 });
+            await writeFile(filepath, defended, { encoding: "utf-8", mode: 0o600 });
 
             // Server-authored: a byte count and a path this process built from
             // a validated directory and a sanitised basename. No remote text.
             return successResult(`Result (${contentBytes} bytes) saved to: ${filepath}`);
         }
 
-        return successResult(sanitized);
+        return successResult(defended);
     } catch (error) {
         const errorMessage = getErrorMessage(error);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";

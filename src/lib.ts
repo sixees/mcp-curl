@@ -114,7 +114,7 @@ export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/u
 //
 // **`defendText(text, options)` is the whole pipeline, and it is what the
 // built-in tools run.** Sanitise-and-detect is Step 2 of five; Steps 3-5 —
-// markup comments, the `<script>`/`<style>` fixed point, markdown beacon
+// markup comments, the `<script>`/`<style>` strip, markdown beacon
 // removal and the numeric-entity re-detect — are what remove exfiltration
 // beacons and script blocks. Reach for the lower-level composers below only
 // when you specifically want one stage; if you want "the defence", it is this.

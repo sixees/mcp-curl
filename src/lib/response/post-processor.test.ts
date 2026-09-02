@@ -166,8 +166,10 @@ describe("createWrapper — idempotence", () => {
         expect((first.content as { text: string }[])[0].text).toBe("hello");
         expect(isWrappedResult(first)).toBe(true);
 
-        // A second wrap on the already-wrapped object must not re-run
-        // sanitizeAndDetect (which is what the symbol guard short-circuits).
+        // A second wrap on the already-wrapped object must not re-run the
+        // defence pipeline. `sanitizeAndDetect` is `defendText`'s Step 2 and
+        // runs on every text part, so it is the observable proxy for "the
+        // pipeline ran" — which is what the symbol guard short-circuits.
         const spy = vi.spyOn(detectionLogger, "sanitizeAndDetect");
         const second = wrap(first, "host.com");
         expect(spy).not.toHaveBeenCalled();
@@ -242,9 +244,10 @@ describe("createWrapper — error handling", () => {
     });
 
     it("wrap-internal exceptions return original + log [wrap-error]", () => {
-        // Force sanitizeAndDetect to throw — this is the only realistic
-        // injection point inside the wrap pipeline (sanitise/detect is the
-        // only thing that touches text bytes).
+        // Force sanitizeAndDetect to throw. It is `defendText`'s Step 2 and
+        // runs unconditionally on every text part, so it is the one point
+        // inside the wrap pipeline where a throw is reachable from a test
+        // without reaching past the wrap's own boundary.
         const spy = vi.spyOn(detectionLogger, "sanitizeAndDetect")
             .mockImplementation(() => {
                 throw new TypeError("simulated regex backtrack abort");

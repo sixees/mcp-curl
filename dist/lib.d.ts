@@ -330,6 +330,37 @@ interface DefendTextOptions {
      */
     decodeEntities?: boolean;
 }
+/**
+ * Run the full defensive pipeline over one piece of remote-origin text.
+ *
+ * **This is the single defence path for anything returned to the LLM, and it
+ * exists as a shared function so that no caller can assemble a shorter one.**
+ * It was extracted after `include_headers` split header text out of the body:
+ * the header path kept only `sanitizeAndDetect` (Step 2) and silently lost
+ * Steps 3-5, so markdown beacons, `<script>`/`<style>` blocks and
+ * numeric-entity-masked injections reached the model through the header
+ * channel after being stripped from the body for years.
+ *
+ * The stages, in order, and the order is load-bearing:
+ *
+ * - **Step 2** — sanitise + detect, ALWAYS, on the ORIGINAL text. Detection
+ *   runs before the sanitiser strips anything, so the log signals on what the
+ *   attacker actually sent.
+ * - **Steps 3-4** — markup comments, the `<script>`/`<style>` strip, and (for
+ *   declared markdown) beacon removal. Gated on the strip-path cap so the cost
+ *   stays bounded on adversarial input.
+ * - **Step 5** — re-sanitise + detect, because the strip path's numeric-entity
+ *   decoder unmasks `&#x69;gnore previous instructions` into a real injection
+ *   phrase that Step 2 could not see.
+ *
+ * Callers that need size capping or file-saving want {@link processResponse},
+ * which wraps this. Call `defendText` directly only for a text channel that
+ * genuinely is not the body — response headers being the one such channel.
+ *
+ * @param text - Remote-origin text to defend
+ * @param options - Content-type (selects strip stages) and hostname (logging)
+ * @returns The defended text; never suppressed, only rewritten
+ */
 declare function defendText(text: string, options: DefendTextOptions): string;
 
 /**

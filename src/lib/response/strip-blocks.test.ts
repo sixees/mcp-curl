@@ -74,11 +74,12 @@ describe("stripHtmlComments", () => {
     // `<!--` goes and the surviving `<!` and `--` join into a fresh opener. A
     // single pass therefore RETURNS a live comment token, which is what
     // CodeQL's incomplete multi-character sanitisation rule flags. Reported on
-    // PR #33 by github-advanced-security; the orphan sweep now iterates.
+    // PR #33 by github-advanced-security.
     // **Depth matters and the first version of this guard did not test it.** The
-    // fix was an iterated `replace` capped at four passes, and each pass exposes
-    // exactly one new layer — so five layers survived it. Round 2 reported that;
-    // the scan tests the OUTPUT tail, so convergence no longer depends on a cap.
+    // first fix was an iterated `replace` capped at four passes, and each pass
+    // exposes exactly one new layer — so five layers survived it. Round 2
+    // reported that; the scan tests the OUTPUT tail, so convergence no longer
+    // depends on a cap and these cases hold at any depth.
     it.each([
         ["spliced from neighbours", "<!<!----"],
         ["spliced twice", "<!<!<!------"],
@@ -109,7 +110,7 @@ describe("stripHtmlComments", () => {
     });
 });
 
-describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
+describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
     it("strips a balanced <script> block", () => {
         expect(stripBlocksFixedPoint("a<script>x()</script>b")).toBe("ab");
     });
@@ -170,9 +171,11 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
         expect(stripBlocksFixedPoint("a<script>x()</script foo>b")).toBe("ab");
     });
 
-    it("neutralises a self-healing payload via fixed-point iteration", () => {
-        // After iter 1: balanced inner removes, residue is `<script>` with
-        // no closer. After iter 2: open-to-EOF pattern strips the residue.
+    it("neutralises a self-healing payload in one pass", () => {
+        // The balanced pass removes the inner block and its neighbours rejoin
+        // into a fresh `<script>`; `stripTagTokens` runs unconditionally after
+        // it, over the whole string, and takes the spliced token out. No
+        // iteration is involved — see the depth cases below.
         const out = stripBlocksFixedPoint("<scr<script>ipt>alert(1)</scr</script>ipt>");
         expect(out.toLowerCase()).not.toContain("<script");
         expect(out).not.toContain("alert(1)");
@@ -193,7 +196,7 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
         // Iter 1 decode: `&#x26;` → `&`, exposing `&#x3c;script&#x3e;...`.
         // Iter 2 decode: `&#x3c;` → `<`, `&#x3e;` → `>`, exposing real
         // `<script>alert(1)`.
-        // Iter 2 strip: open-to-EOF pattern removes the unclosed script.
+        // Iter 2 strip: the token sweep removes the unclosed script's tag.
         const out = stripBlocksFixedPoint(
             "&#x26;#x3c;script&#x26;#x3e;alert(1)&#x26;#x3c;/script&#x26;#x3e;"
         );

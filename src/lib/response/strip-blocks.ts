@@ -3,15 +3,19 @@
 //
 // Threat model: attacker controls HTTP response bytes; the strip path
 // neutralises `<script>` / `<style>` blocks (HTML / XHTML / SVG / *+xml /
-// markdown) and markdown beacon URLs (image / link / dangerous-scheme)
-// before sanitiseAndDetect runs downstream.
+// markdown) and markdown beacon URLs (image / link / dangerous-scheme).
+// The caller sequences these: `processor.ts` sanitises and detects FIRST
+// (Step 2, so padding cannot inflate a body past the cap below), strips
+// here (Steps 3-4), then sanitises and detects again (Step 5) because the
+// entity decode can unmask an injection phrase Step 2 could not see.
 //
 // Cost is bounded by the patterns, not by the 256 KB cap: a `g`-flagged
 // replace starts a match attempt at every position, so a failing attempt
 // that can scan forward without limit is quadratic however small the input
 // is (ARCHITECTURE.md invariant 15). The cap is a circuit-breaker and the
-// 4-iteration fixed-point loop is a termination guarantee; neither is what
-// makes this path linear.
+// 4-iteration fixed-point loop bounds the numeric-entity decode; neither is
+// what makes this path linear, and neither is what makes the tag and comment
+// strips converge — those scan the output tail and need no iteration at all.
 //
 // **Best-effort textual sanitisation, not a full HTML sandbox.** We
 // considered `parse5` (zero false positives, no ReDoS class) but rejected
@@ -59,12 +63,19 @@ export const LINK_REMOVED_PLACEHOLDER = "[link removed]";
 export const STRIP_PATH_MAX_BYTES = 256 * 1024;
 
 /**
- * Fixed-point iteration cap. Self-healing payloads like
- * `<scr<script>ipt>alert(1)</scr</script>ipt>` need ≥2 passes to fully
- * neutralise after the inner balanced match removes; cap at 4 to
- * guarantee termination on contrived nesting. The loop exits early when
- * the strip passes converge (`next === curr`) — 4 is the soft termination
- * guarantee, not a theoretical max nesting depth.
+ * Fixed-point iteration cap for {@link stripBlocksFixedPoint}.
+ *
+ * **What it bounds is the numeric-entity decode, and only that.** Each
+ * iteration peels one encoding layer, so `&#x26;#x3c;script&#x26;#x3e;` needs
+ * two and 4 caps how deep a nested encoding this path will chase. The loop
+ * exits early when the passes converge (`next === curr`).
+ *
+ * **It is not what neutralises a self-healing payload, and reading it as that
+ * is what made the same decline wrong twice.** A cap on an iterated `replace`
+ * only moves the surviving splice depth to the cap, and the attacker picks the
+ * depth (`LESSONS.md` RC-13). {@link stripTagTokens} and
+ * {@link stripHtmlComments} converge by scanning the output tail instead, so
+ * splice depth costs no iteration here at all.
  *
  * Imported from `config/limits.ts` so this cap and the parallel sanitiser
  * cap (`utils/sanitize.ts → SANITIZE_FIXED_POINT_MAX_ITERATIONS`) cannot
@@ -98,13 +109,13 @@ const STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
  *   `[^<>]*` rather than `[^>]*`: a closer that swallows `<` swallows OPENERS,
  *   which is how `"</script " + "<script".repeat(35000) + ">"` stayed
  *   quadratic at 9 s. A closing tag takes no attributes anyway, and one this
- *   rejects still loses both its tags to the orphan sweep.
+ *   rejects still loses both its tags to {@link stripTagTokens}.
  * - **Word boundary** `\b` after the tag name avoids matching
  *   `<scriptlike>` / `<stylesheet>` etc.
  *
  * **Unclosed forms are NOT handled here.** These patterns carried an `|$)`
  * open-to-end-of-input arm until 3.4.0; it deleted the rest of the payload on
- * any orphan opener, so it was replaced by the orphan-tag sweep below. Between
+ * any orphan opener, so it was replaced by {@link stripTagTokens} below. Between
  * the two, no `<script` / `</script` / `<style` / `</style` token survives a
  * pass — the property the `|$)` arm was actually carrying. `LESSONS.md` RC-11.
  *
@@ -261,10 +272,14 @@ function decodeNumericHtmlEntities(input: string): string {
 }
 
 /**
- * Strip `<script>` and `<style>` blocks (tag + content) with fixed-point
- * iteration so self-healing payloads cannot reconstruct around an inner
- * removal. Bodies above {@link STRIP_PATH_MAX_BYTES} skip the strip path
- * entirely — the caller's sanitiser is the only defence above the cap.
+ * Strip `<script>` and `<style>` blocks (tag + content). Bodies above
+ * {@link STRIP_PATH_MAX_BYTES} skip the strip path entirely — the caller's
+ * sanitiser is the only defence above the cap.
+ *
+ * **The loop is for the decode, not for the strip.** A self-healing payload is
+ * neutralised inside {@link stripTagBlocks}, whose token sweep converges on its
+ * own; iterating a `replace` would only move the surviving splice depth to the
+ * cap (`LESSONS.md` RC-13).
  *
  * **Numeric-entity decode runs INSIDE the loop**, not once at entry, so
  * nested encodings like `&#x26;#x3c;script&#x26;#x3e;` (where `&#x26;`
@@ -381,7 +396,7 @@ function lastCloserEnd(text: string, closer: string): number {
  *    pattern's own closer is `[^<>]*` for the same reason, so the two agree.
  *    Excluding `<` from a CLOSER is safe in a way it is not for an opener: a
  *    closing tag takes no attributes, and a closer this rejects still has both
- *    its tags removed by the orphan sweep.
+ *    its tags removed by {@link stripTagTokens}.
  *
  * All three reported on PR #33 by chatgpt-codex-connector, rounds 1 and 2.
  *
