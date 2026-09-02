@@ -102,5 +102,12 @@ rg -n 'MARKDOWN_.*_PATTERN =' -A2 src/lib/response/strip-blocks.ts
       case OMITS that token. Two generations of guard here passed while the
       defect they were named for was live, because each fed input the
       then-current bound already handled.
+- [ ] **The class sweep, run over every pattern the fix touches:** for each
+      character class in the pattern, does it exclude the first character of
+      the token the match must next reach? A class that does not can consume
+      that token and send the attempt scanning past it. This is mechanical and
+      takes a minute; it is written down because the region bound alone looked
+      like a proof of linearity for three review rounds and was not one
+      (`LESSONS.md` RC-14, `ARCHITECTURE.md` invariant 15).
 - [ ] A positive control asserts legitimate prose with brackets and parentheses
       is untouched.

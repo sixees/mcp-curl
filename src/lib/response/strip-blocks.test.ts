@@ -326,6 +326,27 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         expect(stripBlocksFixedPoint("<script>x</scripture>")).toBe("x</scripture>");
     });
 
+    it("still removes the body of a balanced block after the round-4 fix", () => {
+        // The opener's attribute run went from `[^>]*` to `[^<>]*`. These are
+        // the shapes that must keep working — if the balanced pass stops
+        // matching them, the token sweep leaves their bodies as inert text and
+        // this file quietly stops removing script content.
+        expect(stripBlocksFixedPoint("<script>alert(1)</script>")).toBe("");
+        expect(stripBlocksFixedPoint('<script type="text/javascript">a()</script>')).toBe("");
+        expect(stripBlocksFixedPoint("<style>body{}</style>")).toBe("");
+        expect(stripBlocksFixedPoint("a<script>x()</script foo>b")).toBe("ab");
+    });
+
+    it("keeps the body of an opener whose attribute value contains `<` (round 4)", () => {
+        // The stated cost of excluding `<` from the opener's attribute run. A
+        // literal `<` inside a quoted attribute value is legal HTML and now
+        // stops the BALANCED match, so the tags go by the token sweep and the
+        // body survives as inert text. That is the RC-11 posture the closer has
+        // had since round 2 — the two classes now agree — and no tag survives
+        // either way, which is the property that matters here.
+        expect(stripBlocksFixedPoint('<script foo="a<b">alert(1)</script>')).toBe("alert(1)");
+    });
+
     // **And its replacement was toothless too, in the mirror-image way.** Every
     // case below the first three omits `>` entirely, which is the one shape the
     // `lastIndexOf(">")` bound already handled — so they passed while
@@ -354,6 +375,17 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // Round 3: the scan must not trade the cap for a quadratic.
         ["deep script splice", "<scr".repeat(30000) + "<script>" + "ipt>".repeat(30000)],
         ["deep style splice", "<sty".repeat(30000) + "<style>" + "le>".repeat(30000)],
+        // Round 4, and the axis every case above misses. All of them either
+        // omit the closer — so the region is empty and the pass never runs —
+        // or give each opener a `>` of its own. These do neither: one real
+        // closer at the end puts the whole body in scope, and no opener has
+        // its own terminator, so each borrows the closer's `>` and then hunts
+        // for a second closer that does not exist. Measured 2881 ms / 2460 ms
+        // before the opener class excluded `<`. Reported by
+        // chatgpt-codex-connector on PR #33 round 4.
+        ["openers borrowing the closer's `>`", "<script".repeat(30000) + "</script>"],
+        ["style openers borrowing the closer's `>`", "<style".repeat(30000) + "</style>"],
+        ["openers borrowing a whitespace closer's `>`", "<script".repeat(30000) + "</ script>"],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         const start = Date.now();
         stripBlocksFixedPoint(body);

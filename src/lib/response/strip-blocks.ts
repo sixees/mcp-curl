@@ -97,7 +97,7 @@ const STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 /**
  * Strip patterns for BALANCED `<script>` / `<style>` blocks.
  *
- * Shape: `<tag\b[^>]*>[\s\S]*?</\s*tag\b[^<>]*>`
+ * Shape: `<tag\b[^<>]*>[\s\S]*?</\s*tag\b[^<>]*>`
  *
  * - **Body** uses lazy `[\s\S]*?` rather than the older negative-lookahead
  *   `(?:(?!<\/?tag\b)[\s\S])*?` — each lazy expansion does an O(1) check of
@@ -105,11 +105,23 @@ const STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
  *   older form left a `<script>` orphan in the residue.
  * - **Closer** allows whitespace-or-newline between `</` and `tag` (`\s*`
  *   absorbs `</ script>`, `</\nscript>`), accepts attributes after the
- *   tag name, and is case-insensitive (`i` flag). That attribute run is
- *   `[^<>]*` rather than `[^>]*`: a closer that swallows `<` swallows OPENERS,
- *   which is how `"</script " + "<script".repeat(35000) + ">"` stayed
- *   quadratic at 9 s. A closing tag takes no attributes anyway, and one this
- *   rejects still loses both its tags to {@link stripTagTokens}.
+ *   tag name, and is case-insensitive (`i` flag).
+ * - **BOTH attribute runs are `[^<>]*`, never `[^>]*`, and each half of that
+ *   was learned separately.** On the closer, a run that swallows `<` swallows
+ *   the OPENERS after it, which left
+ *   `"</script " + "<script".repeat(35000) + ">"` quadratic at 9 s. On the
+ *   opener, a run that crosses `<` reaches the CLOSER's own `>` and consumes
+ *   it as the opening tag's terminator — so `"<script".repeat(30000) +
+ *   "</script>"` put every opener in a region whose only closer it had just
+ *   eaten, and each then scanned to end-of-input looking for a second one:
+ *   2881 ms measured. Round 2 fixed the closer and left the opener; round 4
+ *   found the mirror (`.claude/rules/01-known-shapes.md` K-11).
+ *
+ *   **What excluding `<` costs, stated rather than buried:** a literal `<`
+ *   inside a quoted attribute value is legal HTML and now stops the BALANCED
+ *   match, so `<script foo="a<b">alert(1)</script>` keeps `alert(1)` as inert
+ *   text. Both tags still go, via {@link stripTagTokens} — this is the RC-11
+ *   posture the closer has had since round 2, and the two now agree.
  * - **Word boundary** `\b` after the tag name avoids matching
  *   `<scriptlike>` / `<stylesheet>` etc.
  *
@@ -132,11 +144,17 @@ const STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
  * angle bracket, so `"<script>".repeat(32000)` kept the whole input in scope
  * and still took 1.1 s. The bound now keys on each pattern's own closing token.
  * `LESSONS.md` RC-11.
+ *
+ * **The region bound is necessary and it is not sufficient, which is round 4's
+ * lesson.** Being inside the region only guarantees a closer lies AHEAD; it
+ * says nothing about whether the attempt can reach it without eating it first.
+ * The character classes are what carry that, so the two are one mechanism and a
+ * change to either has to be argued against both.
  */
 const SCRIPT_BLOCK_PATTERN =
-    /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^<>]*>/gi;
+    /<script\b[^<>]*>[\s\S]*?<\/\s*script\b[^<>]*>/gi;
 const STYLE_BLOCK_PATTERN =
-    /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^<>]*>/gi;
+    /<style\b[^<>]*>[\s\S]*?<\/\s*style\b[^<>]*>/gi;
 
 /**
  * Markdown image / link beacon patterns. Both:
@@ -322,11 +340,21 @@ export function stripBlocksFixedPoint(
  * at the last such token, every start position has a closer ahead of it and
  * cannot fail that way.
  *
- * **Sound, not approximate.** No match can BEGIN after the last closer, because
- * every match contains one. Text beyond it therefore cannot hold any part of a
- * match, and skipping it changes no output. That is what makes this a bound and
- * not a cap: `STRIP_PATH_MAX_BYTES` limits the input, this limits the search to
- * where an answer could be.
+ * **Sound as a bound on the REGION, and that is all it is.** No match can BEGIN
+ * after the last closer, because every match contains one — so text beyond it
+ * cannot hold any part of a match and skipping it changes no output. That makes
+ * this a bound rather than a cap: `STRIP_PATH_MAX_BYTES` limits the input, this
+ * limits the search to where an answer could be.
+ *
+ * **It does not on its own make an attempt succeed, and reading it that way is
+ * how this file went quadratic a third time.** A closer ahead is not a closer
+ * the attempt can REACH: with the opener written `[^>]*`, an attribute run
+ * crossing `<` ate the region's only closer as its own terminator, and
+ * `"<script".repeat(30000) + "</script>"` took 2881 ms inside a correctly
+ * computed bound (`LESSONS.md` RC-14). **The character classes are the other
+ * half of this mechanism** — each must exclude the first character of the token
+ * the match has to reach. Neither half is sufficient; change either and argue
+ * it against both.
  *
  * `end <= 0` means no closer exists at all, so the pass has no work to do.
  *
@@ -391,12 +419,14 @@ function lastCloserEnd(text: string, closer: string): number {
  *    not a script closer, and accepting it as one put
  *    `"<script></scripture>".repeat(13000)` back in scope at 1.9 s.
  * 3. **The attribute run may not contain `<`.** A closer whose `[^>]*` suffix
- *    spans openers puts them inside the bound with no closer of their own after
- *    them — `"</script " + "<script".repeat(35000) + ">"` measured 9 s. The
- *    pattern's own closer is `[^<>]*` for the same reason, so the two agree.
- *    Excluding `<` from a CLOSER is safe in a way it is not for an opener: a
- *    closing tag takes no attributes, and a closer this rejects still has both
- *    its tags removed by {@link stripTagTokens}.
+ *    spans openers puts them inside the bound with no closer of their own
+ *    after them — `"</script " + "<script".repeat(35000) + ">"` measured 9 s.
+ *    This walk, the pattern's closer and the pattern's opener are therefore
+ *    all `[^<>]*`, and the three have to agree: round 4 reopened the class
+ *    from the opener's side, where a run crossing `<` ate the closer's `>`.
+ *    A tag either class rejects still loses both its tags to
+ *    {@link stripTagTokens}, so what the exclusion costs is a surviving
+ *    body, never a surviving tag.
  *
  * All three reported on PR #33 by chatgpt-codex-connector, rounds 1 and 2.
  *

@@ -165,15 +165,27 @@ what a violation looks like, it does not belong on this list.
     distance forward — so the test is whether the character classes and anchors
     make a failure O(1), not whether a cap exists.
 
-    **Enforced in one place:** `strip-blocks.ts`'s `withinClosableRegion` runs
-    each pass over only the prefix ending at that pattern's own closing token,
-    so within it every attempt has a closer ahead and cannot fail by scanning
-    to the end. **Keying that bound on the wrong token is how this has failed
+    **Enforced in two places that only work together.** `strip-blocks.ts`'s
+    `withinClosableRegion` runs each pass over only the prefix ending at that
+    pattern's own closing token, so within it every attempt has a closer
+    ahead. **Keying that bound on the wrong token is how this has failed
     twice** — a bare `>` does not bound a pattern whose closer is `</script>`,
     and excluding `[` from a markdown label does not bound a URL class that
     ends at `)`. Both shipped past a review and a flood test; measurement
     caught them at 1.1 s and 2.9 s for a 256 KB body. Name the token the
     pattern must consume, and bound on that one.
+
+    **The region bound is necessary and not sufficient, and that is the third
+    failure.** A closer ahead is not a closer the attempt can REACH: with the
+    opener written `<script\b[^>]*>`, an attribute run crossing `<` consumed
+    the region's only closer as its own terminator, and every one of
+    `"<script".repeat(30000) + "</script>"`'s openers then scanned to
+    end-of-input for a second closer — 2881 ms, inside a correctly-computed
+    bound. **The character classes carry what the region cannot.** Every class
+    on either side of a match must exclude the first character of the token
+    the match has to reach, which is why the tag opener, the tag closer and
+    `lastTagCloserEnd`'s walk are all `[^<>]*` and the markdown URL class is
+    `[^)\n]+`. Change one and argue it against both mechanisms.
 
     **A removal can splice a new token out of its neighbours**, so a strip that
     deletes is not finished when its pattern stops matching. Iterating a

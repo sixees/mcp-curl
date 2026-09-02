@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regression this branch introduced by removing the open-to-EOF arm without bounding what replaced
   it. All now run in 1–2 ms. The replacement flood tests were themselves toothless at a 2 s budget,
   which is recorded beside them.
+
+  **A fourth review round found the class open from the opposite side, inside a bound that was
+  computed correctly.** The region bound guarantees a closer lies ahead of every attempt; it does
+  not guarantee the attempt can reach one. The opener `<script\b[^>]*>` had an attribute run that
+  crossed `<`, so on `"<script".repeat(30000) + "</script>"` each opener consumed the region's only
+  closer as its own tag terminator and then scanned to end-of-input for a second — **2881 ms on a
+  205 KB body**. Round 2 had fixed exactly this on the *closer* and argued in writing that the
+  asymmetry was safe. Both attribute runs are now `[^<>]*`. The cost of the exclusion is stated
+  rather than buried: a literal `<` inside a quoted attribute value stops the balanced match, so
+  the body survives as inert text — both tags still go, which is the RC-11 posture the closer has
+  had since round 2. `LESSONS.md` RC-14.
 - **Custom tools, hook short-circuits and YAML endpoints now get the full response defence.** The
   post-processor wrap ran `sanitizeAndDetect` alone — Step 2 of the five in `defendText` — so a
   `registerCustomTool()` handler returning remote markdown or HTML reached the model with

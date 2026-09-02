@@ -581,3 +581,42 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   K-11, the mirror side of a two-sided claim. **When a fix is applied to one
   member of a set, re-open every finding already declined about the other
   members**, because the decline was written before the fix existed.
+
+---
+
+### RC-14 — A bound was proved sound for the region and not for the attempt
+
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-11, K-4 — *class-id:* `unbounded-growth`
+
+- **The plan said:** after round 3, `strip-blocks.ts` was linear. The argument
+  was written into `withinClosableRegion`'s docblock as **"sound, not
+  approximate"**: no match can begin after the last closer, so bounding the
+  pass at that closer changes no output and every attempt inside the region has
+  a closer ahead of it and cannot fail by scanning to the end.
+- **Reality was:** the second half of that sentence does not follow from the
+  first. *Having* a closer ahead is not the same as being able to *reach* it.
+  The opener `<script\b[^>]*>` has an attribute run that crosses `<`, so on
+  `"<script".repeat(30000) + "</script>"` each opener consumed the region's one
+  and only closer as its own opening-tag terminator, then searched to
+  end-of-input for a second closer that did not exist. **2881 ms measured on a
+  205 KB body, inside a bound that was computed correctly.** Reported by
+  `chatgpt-codex-connector` on review round 4, against `7caedd7`.
+- **What changed:** the opener's attribute run is now `[^<>]*`, matching the
+  closer's and `lastTagCloserEnd`'s. Three ReDoS cases added — the axis every
+  earlier flood structurally could not produce, since each either omitted the
+  closer (empty region, pass never runs) or gave every opener its own `>`.
+  2881 ms → 9 ms. All three verified to fail with the class reverted.
+- **What this costs next time:** **round 2 fixed this exact class on the closer
+  and left the opener, and the round-2 note explicitly argued the asymmetry was
+  safe** — *"excluding `<` from a CLOSER is safe in a way it is not for an
+  opener"*. That sentence was written while looking at the defect from one
+  side, and it is the reason nobody checked the other. K-11 again, one round
+  after RC-13 named it, which is what makes this worth a second entry rather
+  than a footnote on the first: **naming a shape does not make the next
+  instance visible, and both instances here were found by a reviewer rather
+  than by the sweep the previous RC prescribed.** The sweep that would have
+  found it is mechanical and takes a minute — *for every character class in a
+  pattern, does it exclude the first character of the token the match must
+  reach?* — and it is now the acceptance criterion in `docs/todos/005`.
