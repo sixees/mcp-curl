@@ -18,17 +18,19 @@ for `registerCustomTool()` returns, `beforeRequest` short-circuits and YAML
 endpoint results, ran `sanitizeAndDetect` alone. Those channels reached the
 model with markdown exfiltration beacons and `<script>` blocks intact.
 
-The wrap now runs the full pipeline. A module-private `DEFENDED` tag keeps that
-from double-processing text `curl_execute` and `jq_query` already defended under
-a real Content-Type. `defendText` became a public export, because the published
-guidance for non-MCP consumers pointed at Step 2 and called it the whole thing.
+The wrap now runs the full pipeline on every text part, with no exemption —
+including text `curl_execute` and `jq_query` already defended under a real
+Content-Type, which therefore takes a second, less-informed pass. (A `DEFENDED`
+tag to suppress that was built and then removed; see below.) `defendText` became
+a public export, because the published guidance for non-MCP consumers pointed at
+Step 2 and called it the whole thing.
 
 ## What was implemented
 
 ### The defence (`src/lib/response/post-processor.ts`)
 
 `processTextPart` calls `defendText(text, { hostname, contentTypeUndetermined:
-true, decodeEntities: false })` for untagged results. `contentTypeUndetermined`
+true, excludeJsonDocuments: false, decodeEntities: false })` on every text part. `contentTypeUndetermined`
 is not a stand-in for "no content type" — it is literally true here, and it
 selects the strictest grammar so that losing the metadata can never be how a
 stage gets switched off. `decodeEntities: false` follows the header channel's

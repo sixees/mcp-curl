@@ -56,9 +56,9 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 ### Key Workflows
 
 1. **`curl_execute`** — Zod parse → cross-field validation → URL parse + DNS resolve + SSRF check → per-host & per-client rate limit → output-dir validate → unique metadata separator → `buildCurlArgs` (with `--resolve`, `--proto`, `--max-filesize`) → `spawn("curl", …)` no-shell → streamed buffer (memory tracked) → metadata split (yields `%{size_header}`) → header/body split at that offset (when `include_headers`) → `defendText` on each of body and header text → optional jq → inline-vs-save decision → MCP `text` result.
-2. **`jq_query`** — Path validation (`realpath`, allowed-roots check, traversal reject) → read file → tokenize → time-boxed parse → walk → sanitize + injection-detect → inline-vs-save.
+2. **`jq_query`** — Path validation (`realpath`, allowed-roots check, traversal reject) → read file → tokenize → time-boxed parse → walk → `defendText` (declared `application/json`, so the JSON grammar: sanitise + injection-detect, no strip stages) → inline-vs-save.
 3. **Hook lifecycle (built-in tools only).** `beforeRequest` (sequential, may short-circuit or merge params) → tool body → on success `afterResponse`, on throw `onError`. **Custom tools and schema-generated tools both bypass this wrapper** — see Workflow #4. All hooks run with a frozen config snapshot.
-4. **YAML → tools.** `loadApiSchema()` (safe `JSON_SCHEMA`, no `!!js/function`) → `validateApiSchema` → `generateToolDefinitions` produces handlers that close over `executeCurlRequest` directly. `api-server.ts` then registers each via `server.registerCustomTool(…)`, **so schema-generated tools bypass `executeWithHooks` in the same way custom tools do.** SSRF, rate limit, sanitize, and injection-detect defenses still apply because they live inside `executeCurlRequest`, not in the hook layer. Operators relying on hooks for observability of *all* tool traffic must wrap their schema/custom handlers themselves.
+4. **YAML → tools.** `loadApiSchema()` (safe `JSON_SCHEMA`, no `!!js/function`) → `validateApiSchema` → `generateToolDefinitions` produces handlers that close over `executeCurlRequest` directly. `api-server.ts` then registers each via `server.registerCustomTool(…)`, **so schema-generated tools bypass `executeWithHooks` in the same way custom tools do.** SSRF, rate limit and the full `defendText` response defence still apply because they live inside `executeCurlRequest`, not in the hook layer — and since 3.4.0 the `registerCustomTool` wrap runs `defendText` too, so the handler's own returned text is defended as well. Operators relying on hooks for observability of *all* tool traffic must wrap their schema/custom handlers themselves.
 5. **HTTP session lifecycle.** `POST /mcp` with no session id → enforce `MAX_SESSIONS=100` → new `McpServer` + `StreamableHTTPServerTransport(randomUUID)` → store with `lastActivity` → idle reaper (`setInterval`, `unref`) closes sessions older than 1 h; client disconnect or `DELETE /mcp` reaps explicitly.
 
 ### Business Rules / Invariants
@@ -104,7 +104,7 @@ flowchart LR
     G --> H[spawn 'curl' no-shell<br/>AbortController timeout]
     H --> I[stdout stream<br/>allocateMemory per chunk]
     I --> J[parseResponseWithMetadata]
-    J --> K[sanitize + injection-detect]
+    J --> K[defendText<br/>sanitise + detect, then<br/>strip stages by grammar]
     K --> L{jq_filter?}
     L -- yes --> M[JSON.parse + applyJqFilter<br/>+ re-sanitize/detect]
     L -- no --> N{size > max_result_size<br/>or save_to_file?}

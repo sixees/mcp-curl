@@ -56,6 +56,32 @@ surrounding label and URL.
 That is a rewrite of the beacon stage, on the branch that has just rewritten it
 once, with no further review round scheduled. Filing it is the honest call.
 
+## Severity in this deployment — read before scheduling this
+
+The P1 above rates the defect against the stage's stated purpose. Rated against
+how this server is actually deployed it is much lower, and the difference is
+worth stating rather than leaving for whoever picks this up:
+
+- **The consumers are our own team, over stdio, into Claude Code.** There is no
+  untrusted tenant and no multi-user blast radius. The attacker is a remote host
+  we chose to `curl`, not a user of this server.
+- **A beacon needs a renderer that fetches the URL.** A terminal MCP client does
+  not auto-load remote images, so the exfiltration step needs a human to click.
+  The file header already scopes this subsystem as "best-effort textual
+  sanitisation, not a full HTML sandbox — content reaches an LLM, not a
+  renderer."
+- **Both plausible fixes are bad trades here.** A real CommonMark parser is the
+  wheel not to reinvent, but `parse5` was already evaluated and rejected in this
+  file's header (60 KB, 2× slower on small bodies, a runtime dependency). A
+  fifth hand-rolled pattern is the option that has already failed four times.
+
+**Recommendation: leave open, do not schedule.** Reopen if the deployment
+changes — a hosted or shared instance, an HTTP transport exposed beyond the
+team, or a client that renders markdown images eagerly — or if a markdown
+parser lands in the dependency tree for another reason and the fix becomes
+free. The limitation is documented at the pattern definitions in
+`strip-blocks.ts` so the next reader meets it there.
+
 ## Sweep
 
 ```bash

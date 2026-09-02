@@ -128,7 +128,8 @@ export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/u
 // gets returned, so on such a channel it manufactures live markup from inert
 // bytes.
 //
-// Prefer `sanitizeAndDetect(text, label)` over hand-wiring `sanitizeResponse`
+// Among the lower-level composers, prefer `sanitizeAndDetect(text, label)`
+// over hand-wiring `sanitizeResponse`
 // + `detectInjectionPattern` + `logInjectionDetected`. Since PR-6b the
 // helper detects on the **original** text *before* sanitisation: a malicious
 // pattern that the sanitiser would otherwise strip (e.g. content inside a

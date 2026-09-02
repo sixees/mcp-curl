@@ -271,14 +271,14 @@ export async function executeCurlRequest(
             }
         );
 
-        return ({
+        return {
             content: [
                 {
                     type: "text",
                     text: output,
                 },
             ],
-        });
+        };
     } catch (error) {
         const rawMessage = getErrorMessage(error);
         const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);

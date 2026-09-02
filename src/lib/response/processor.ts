@@ -155,8 +155,6 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // beacon through unstripped. Parsing is the only thing that answers the
     // question being asked, so it is what gets asked.
     //
-    // Bounded deliberately: only attempted below the strip-path cap, because
-    // above it Steps 3-5 do not run and the distinction cannot change anything.
     // Evaluated only where it can change an outcome. Both consumers below are
     // already decided when the caller declares a grammar that neither sniffs
     // nor takes the strictest path — `jq_query` passes `application/json` on

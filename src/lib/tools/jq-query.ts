@@ -122,6 +122,13 @@ export async function executeJqQuery(
         // Calling `defendText` rather than reproducing its JSON arm is what
         // keeps that true: if the JSON grammar's treatment ever changes, this
         // channel follows instead of silently staying behind.
+        //
+        // This governs what gets WRITTEN under `save_to_file`. The copy
+        // returned inline takes a second pass at the post-processor wrap,
+        // which does not exempt JSON — so a beacon inside a JSON string value
+        // is stripped before the model reads it while the persisted artefact
+        // keeps it. Persisted keeps the exemption; returned does not
+        // (ARCHITECTURE.md invariant 1a).
         const sanitized = defendText(filtered, {
             contentType: JSON_MIME,
             contentTypeUndetermined: false,
