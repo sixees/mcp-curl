@@ -78,16 +78,31 @@ const STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
  *
  * `g` flag — see safety contract above. Used only with `.replace()`.
  *
- * Shape: `<!--[\s\S]*?(?:-->|$)` — open-to-closer-or-EOF.
+ * Shape: balanced `<!--[\s\S]*?-->`, plus a separate literal sweep for an
+ * orphan `<!--` token.
  *
- * The naive `<!--[\s\S]*?-->` pattern leaves an orphan `<!--` opener in
- * inputs like `<!-- a --> <!--` (the first comment matches and removes,
- * the second has no closer so single-pass replace can't match). CodeQL's
- * "Incomplete multi-character sanitization" rule flags exactly this
- * residue. The `$` alternative absorbs unclosed openers — mirrors the
- * script/style strip pattern's open-to-EOF shape and stays linear-time.
+ * The naive balanced pattern alone leaves an orphan `<!--` opener in inputs
+ * like `<!-- a --> <!--` (the first comment matches and removes, the second
+ * has no closer so single-pass replace can't match). CodeQL's "Incomplete
+ * multi-character sanitization" rule flags exactly that residue, and an
+ * earlier revision absorbed it with an `|$)` alternative — open-to-EOF.
+ *
+ * **That alternative deleted the remainder of the input**, and on a channel
+ * this library is only a courier for that is silent, unrecoverable data loss:
+ * one unclosed `<!--` in a custom tool's HTML turned `before <!-- x\nafter`
+ * into `before `, with no marker, no `isError` and no observable length delta.
+ * Removing the OPENER TOKEN satisfies CodeQL's residue rule just as well — the
+ * token a renderer would honour is gone — without deleting text the caller
+ * asked for. See `LESSONS.md` RC-11.
  */
-const HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
+const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+
+/**
+ * Orphan `<!--` with no closer. A literal, so the sweep is O(n) with no
+ * forward scan — which is also why it can run over the whole input while the
+ * block patterns below are bounded.
+ */
+const HTML_COMMENT_ORPHAN_PATTERN = /<!--/g;
 
 /**
  * Strip patterns for `<script>` and `<style>` blocks. These match either:
@@ -116,15 +131,36 @@ const HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
  * one pass because the open-to-close-or-EOF form always consumes the
  * open and everything after it.
  *
- * Linear-time per match: lazy `[\s\S]*?` extends one position at a time;
- * each step does an O(1) check of the alternation `(closer|$)`. Combined
- * with the 256 KB cap this guarantees wall-clock < 100 ms on any
- * adversarial input.
+ * **Linear per match is not linear per pass, and reading it as such is what
+ * this docblock used to do.** Each lazy expansion costs O(1), so one match
+ * attempt is linear — but a `g`-flagged replace starts an attempt at every
+ * position, so O(n) failing attempts of O(n) each is O(n²). An earlier revision
+ * of this comment concluded from the per-match property that the 256 KB cap
+ * "guarantees wall-clock < 100 ms on any adversarial input". That was wrong by
+ * roughly 800×: the pure-opener flood measured 4.5 s, and the markdown patterns
+ * below measured 82 s. A byte cap bounds the input, never the cost.
+ *
+ * Cost is now bounded by construction instead: `[^>]*` can only scan within the
+ * region a `>` closes (see `stripTagBlocks`), so failing attempts cannot each
+ * walk to end-of-input. Same input, same patterns: 0.1 ms.
  */
 const SCRIPT_BLOCK_PATTERN =
-    /<script\b[^>]*>[\s\S]*?(?:<\/\s*script\b[^>]*>|$)/gi;
+    /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^>]*>/gi;
 const STYLE_BLOCK_PATTERN =
-    /<style\b[^>]*>[\s\S]*?(?:<\/\s*style\b[^>]*>|$)/gi;
+    /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^>]*>/gi;
+
+/**
+ * Orphan `<script>` / `<style>` tags — an opener with no closer, or a closer
+ * with no opener. Removing the TAG leaves its body as inert text instead of
+ * deleting to end of input.
+ *
+ * Both halves are required: an orphan opener is what a renderer would honour,
+ * and an orphan closer is the residue CodeQL's incomplete-sanitisation rule
+ * flags. Between them no `<script` / `</script` / `<style` / `</style` token
+ * survives a pass, which is the property the old `|$)` arm was carrying.
+ */
+const SCRIPT_ORPHAN_TAG_PATTERN = /<\/?\s*script\b[^>]*>/gi;
+const STYLE_ORPHAN_TAG_PATTERN = /<\/?\s*style\b[^>]*>/gi;
 
 /**
  * Markdown image / link beacon patterns. Both:
@@ -159,9 +195,9 @@ const STYLE_BLOCK_PATTERN =
  * versions support negative lookbehind.
  */
 const MARKDOWN_EXTERNAL_IMAGE_PATTERN =
-    /!\[[^\]\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
+    /!\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
 const MARKDOWN_EXTERNAL_LINK_PATTERN =
-    /(?<!!)\[[^\]\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
+    /(?<!!)\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
 
 /**
  * Dangerous-scheme blocklist for markdown URLs (S5). Strips links and
@@ -178,9 +214,9 @@ const MARKDOWN_EXTERNAL_LINK_PATTERN =
  *     {@link MARKDOWN_EXTERNAL_IMAGE_PATTERN}.
  */
 const MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN =
-    /!\[[^\]\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+    /!\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
 const MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN =
-    /(?<!!)\[[^\]\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+    /(?<!!)\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
 
 /**
  * Residual dangerous-scheme cleanup pattern. Strips `(scheme:…)` URL
@@ -274,11 +310,45 @@ export function stripBlocksFixedPoint(
     let curr = input;
     for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
         const decoded = decodeEntities ? decodeNumericHtmlEntities(curr) : curr;
-        const next = decoded.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
+        const next = stripTagBlocks(decoded);
         if (next === curr) return next;
         curr = next;
     }
     return curr;
+}
+
+/**
+ * One pass of the script/style strip, bounded to the region where a tag can
+ * actually close.
+ *
+ * **Why the bound is needed.** Every pattern here ends at a literal `>`, and
+ * `[^>]*` scans forward to find one. On input with no `>` after an opener each
+ * attempt scans to end-of-input and fails — and with a `g`-flagged replace the
+ * start positions are themselves O(n), so the pass is O(n²). Measured on the
+ * old patterns: 256 KB of `<script` with no `>` took 4.5 seconds, synchronously,
+ * on the thread serving every session.
+ *
+ * **Why the bound is sound.** No match can begin after the last `>`: the opener
+ * needs one, the balanced closer needs one, and the orphan-tag sweep needs one.
+ * So text beyond it cannot contain any part of a match, and skipping it is
+ * exactly equivalent rather than an approximation. That equivalence is what
+ * makes this a bound and not a cap — `STRIP_PATH_MAX_BYTES` limits the input,
+ * this limits the search to where an answer could be.
+ *
+ * The removal of the old `|$)` open-to-EOF arm is what makes it true. With that
+ * arm a match could begin before the last `>` and run past it to end-of-input,
+ * so the tail was reachable and could not be skipped. See `LESSONS.md` RC-11.
+ */
+function stripTagBlocks(text: string): string {
+    const lastGt = text.lastIndexOf(">");
+    if (lastGt === -1) return text;
+    const head = text
+        .slice(0, lastGt + 1)
+        .replace(SCRIPT_BLOCK_PATTERN, "")
+        .replace(STYLE_BLOCK_PATTERN, "")
+        .replace(SCRIPT_ORPHAN_TAG_PATTERN, "")
+        .replace(STYLE_ORPHAN_TAG_PATTERN, "");
+    return head + text.slice(lastGt + 1);
 }
 
 /**
@@ -288,7 +358,9 @@ export function stripBlocksFixedPoint(
  * gives no catastrophic-backtracking shape).
  */
 export function stripHtmlComments(input: string): string {
-    return input.replace(HTML_COMMENT_PATTERN, "");
+    return input
+        .replace(HTML_COMMENT_PATTERN, "")
+        .replace(HTML_COMMENT_ORPHAN_PATTERN, "");
 }
 
 /**

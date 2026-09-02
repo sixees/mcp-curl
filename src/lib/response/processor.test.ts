@@ -543,7 +543,7 @@ describe("processResponse — review-pass P1 fixes (round 2)", () => {
             expect(result.content).not.toContain("STEAL()");
         });
 
-        it("strips body of an unclosed <script> (no closer at all)", async () => {
+        it("removes an unclosed <script> tag, keeping its body as text (RC-11)", async () => {
             // HTML5 implicitly accepts unclosed `<script>` (the browser
             // treats subsequent content as script body). Our pattern's `$`
             // alternative covers EOF as a valid terminator.
@@ -553,18 +553,22 @@ describe("processResponse — review-pass P1 fixes (round 2)", () => {
                 contentType: "text/html",
             });
             expect(result.content).not.toContain("<script");
-            expect(result.content).not.toContain("STEAL_NO_CLOSER");
+            // The tag is removed; its body stays as inert text. Deleting to
+            // end-of-input is what RC-11 removed — it silently truncated
+            // caller-owned payloads on every channel that reached this path.
+            expect(result.content).toContain("STEAL_NO_CLOSER");
             expect(result.content).toContain("preamble");
         });
 
-        it("strips body of unclosed <style> at end-of-string", async () => {
+        it("removes an unclosed <style> tag, keeping its text (RC-11)", async () => {
             const html = "before <style>body{display:none}";
             const result = await processResponse(html, {
                 url: "http://example.com",
                 contentType: "text/html",
             });
             expect(result.content).not.toContain("<style");
-            expect(result.content).not.toContain("display:none");
+            // Tag removed, declaration text retained — see RC-11.
+            expect(result.content).toContain("display:none");
         });
     });
 
