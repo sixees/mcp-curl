@@ -40,8 +40,17 @@ export interface DefendTextOptions {
      * the content type is unknown the strictest grammar applies, so every strip
      * stage runs — the opposite of the permissive default, which let a remote
      * disable beacon stripping by making the metadata unreadable.
+     *
+     * **Required, not optional, and that is the whole point.** Both fields that
+     * select the grammar are absent-able, and absence resolved to the
+     * PERMISSIVE arm — so `defendText(text, { hostname })` compiled, looked
+     * defended, and ran Step 2 alone. Internal callers all passed one; making
+     * it required is what stops a consumer of the published export from
+     * omitting it, since 3.4.0 puts this type on the public API. Pass `false`
+     * when you know the content type (including knowing the origin sent none),
+     * `true` when you could not determine it.
      */
-    contentTypeUndetermined?: boolean;
+    contentTypeUndetermined: boolean;
     /**
      * Whether a text that parses as a JSON document is exempt from the markup
      * and markdown strip stages. Defaults true.
@@ -217,6 +226,25 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // strip-path predicate as one source of truth — Steps 3, 4, and 5
     // share the gate.
     if (needsStripPath && !exceedsStripCap) {
+        // A JSON document is never entity-decoded, whatever the origin
+        // declared. The decode's output is what gets RETURNED and, through
+        // `processResponse`, what gets WRITTEN TO DISK — and `&#x22;` decodes
+        // to `"`, which ends a JSON string. Measured: `{"q":"a &#x22;b&#x22;"}`
+        // served as `text/html` became `{"q":"a "b"}`, which no longer parses,
+        // and `save_to_file` persisted it for `jq_query` to fail on.
+        //
+        // The sniffed arm already excluded JSON bodies; the DECLARED-markup arm
+        // did not, so a single mislabelled Content-Type was enough. Gating the
+        // decode here rather than at each caller is what makes the two arms
+        // agree. `LESSONS.md` RC-12.
+        //
+        // `looksLikeJsonBody` is reused when it was already computed; otherwise
+        // the parse costs nothing on markup, which fails `isDefinitelyJson`'s
+        // leading-character gate immediately.
+        const decodeEntities =
+            (options.decodeEntities ?? true) &&
+            !(looksLikeJsonBody || isDefinitelyJson(content));
+
         // Step 3 — markup comments + script/style blocks. Fires on any
         // markup-shaped body (declared OR sniffed).
         content = stripHtmlComments(content);
@@ -312,7 +340,7 @@ export async function processResponse(
     // channel takes the identical path; see `defendText`.
     let content = defendText(response, {
         contentType: options.contentType,
-        contentTypeUndetermined: options.contentTypeUndetermined,
+        contentTypeUndetermined: options.contentTypeUndetermined ?? false,
         hostname,
     });
 

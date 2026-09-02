@@ -57,6 +57,7 @@ export function extractHeaderChannel(
     // instruction the origin only ever sent as inert text (LESSONS.md RC-3).
     const defended = defendText(split.headerText, {
         contentType: MARKDOWN_MIME,
+        contentTypeUndetermined: false,
         hostname: safeHostname(url),
         decodeEntities: false,
     });

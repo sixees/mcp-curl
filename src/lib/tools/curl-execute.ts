@@ -243,6 +243,7 @@ export async function executeCurlRequest(
         const defendedStderr = result.stderr
             ? defendText(result.stderr, {
                   contentType: MARKDOWN_MIME,
+                  contentTypeUndetermined: false,
                   hostname: safeHostname(params.url),
                   decodeEntities: false,
               })

@@ -425,3 +425,129 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   finding is *named* after is not always the one that matters.** This todo's
   title, id and P1 rating all pointed at `jq_query`; the live defect was in the
   paragraph underneath, and it stayed open for the round that fixed the title.
+
+### RC-9 — The agreed fix was dropped after the code argued against it
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** `docs/todos/001-jq-query-shorter-defence-path.md`
+
+**Class:** K-11 — *class-id:* `fail-open-default`
+
+- **The plan said:** the kickoff option the director chose included widening
+  `processor.ts::isDefinitelyJson` to recognise every JSON root — string, number,
+  boolean, null — not just `{` and `[`, so that jq output would be classified
+  consistently rather than by which path the caller happened to select.
+- **Reality was:** `isDefinitelyJson` also gates the **body** path in
+  `processResponse`, where the input is attacker-controlled. Widening it to
+  string roots would let a remote escape the strictest grammar by sending a body
+  that is exactly `"…beacon…"`, quotes included — one more spelling of an
+  already-accepted bypass, added to close a coherence problem that had a cheaper
+  answer. The predicate has two callers and the fix was designed against one.
+- **What changed:** nothing. `isDefinitelyJson` was left as it is. For an
+  untagged channel the narrow predicate errs *strict*, which is the safe
+  direction, and the coherence goal was met elsewhere.
+- **What this costs next time:** **before changing a shared predicate, name its
+  other callers and ask which direction each of them fails in.** The same
+  widening is safe on one side of this seam and a bypass on the other, and
+  nothing about the function says so. This is K-11 in its plainest form — the
+  fix landed on the defect's mirror — and the tell was that the predicate is
+  called from both a channel we own and a channel a remote fills.
+
+### RC-10 — A settled decision was reversed by an argument that had not been made when it was settled
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-5 — *class-id:* `fail-open-default`
+
+- **The plan said:** RC-8, filed three hours earlier in this same run, declined
+  to strip markdown beacons inside JSON string values. Its reasoning:
+  `processResponse` writes post-strip content to disk and `jq_query` reads it
+  back, so stripping would silently alter a persisted document.
+- **Reality was:** that reasoning is sound and does not reach the
+  post-processor wrap. **The wrap's channels have no disk artefact** — a
+  `registerCustomTool()` return goes straight to the model — and a model renders
+  a beacon inside a JSON string value exactly as it renders one outside it.
+  RC-8 had reasoned about one call site's consequences and applied the
+  conclusion to all three. The same review also showed the exemption made the
+  defence depend on `include_metadata`: with it true the body sits inside a JSON
+  envelope the exemption protects, with it false it does not, so the same bytes
+  got two different treatments selected by an output-format flag.
+- **What changed:** `defendText` gained `excludeJsonDocuments`; the wrap passes
+  `false`. The split is now explicit — what is PERSISTED keeps the exemption,
+  what is RETURNED does not. `markDefended` and the `DEFENDED` symbol were
+  removed entirely in the same commit, because the incoherence they were built
+  to fix does not survive this change and their claim was worth less than it
+  looked (see the commit body).
+- **What this costs next time:** **a decision recorded with its reasoning can be
+  reopened by showing the reasoning does not reach a site; a decision recorded as
+  a verdict cannot.** RC-8 was reversed within hours precisely because it wrote
+  down *why* rather than *what*, which let a reviewer test the why against a
+  third call site and find it did not hold there. Per `03-divergence.md` a
+  reversal goes to the director rather than being applied — it did, and this RC
+  is the answer. **RC-8 stands for the body path and is not superseded**; only
+  its reach was wrong.
+
+### RC-11 — A guard's escape hatch was deleting the payload it was guarding
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-2, K-5 — *class-id:* `silent-data-loss`
+
+- **The plan said:** nothing about this. `strip-blocks.ts` had carried
+  `<!--[\s\S]*?(?:-->|$)` since the strip path was written, and the docblock
+  explains the `|$)` arm as absorbing orphan openers to satisfy CodeQL's
+  "incomplete multi-character sanitization" rule. It reads as a completeness fix.
+- **Reality was:** the replacement is the empty string, so on an opener with no
+  closer that arm **deletes everything from the opener to end of input**.
+  Measured: `"before <!-- unclosed\nafter, real content"` → `"before "`. Silent —
+  no marker, no `isError`, no observable length delta, so a truncated result and
+  a genuinely short one are the same bytes. Same shape for unclosed `<script>`
+  and `<style>`. Pre-existing on the header and stderr channels; this branch
+  added the custom-tool channel, where unclosed markup in HTML is ordinary and
+  payloads are large.
+- **What changed:** balanced blocks are still removed whole; an orphan opener has
+  its TOKEN removed and its body stays as inert text. A test asserts no
+  `<script`/`</script`/`<style`/`</style`/`<!--` token survives any unclosed
+  shape, which is the property the `|$)` arm was actually carrying.
+- **What this costs next time:** **when a sanitiser's fallback arm is "consume
+  everything", ask what it consumes on a channel you are only a courier for.**
+  Deleting to end-of-input is a defensible reading for a body being neutralised
+  before a model reads it and indefensible for a payload the caller asked for,
+  and the same code served both. The general form: a guard written for one
+  channel's threat model gets reused as a primitive, and its most aggressive arm
+  is the one that travels worst.
+
+### RC-12 — Two channels' opposite needs were resolved by a per-caller flag, so every caller had to choose wrong
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-13, K-11 — *class-id:* `unescaped-sink`
+
+- **The plan said:** RC-3 established `decodeEntities: false` for channels whose
+  consumer does not itself decode, because the decode's output is *returned* and
+  would manufacture live markup from inert bytes. The director chose to retire
+  the trade with a scratch copy: strip and detect see decoded text, the returned
+  text stays undecoded.
+- **Reality was:** the scratch copy does not resolve it, and finding out took
+  building it. The commit rule has to decide what counts as the decode having
+  "revealed" something. Keep it only when **markup was stripped**, and an
+  entity-masked injection phrase never reaches Step 5's detector and an
+  entity-masked `&#x200B;` never reaches the sanitiser — eight existing guards
+  fail, correctly. Widen it to "commit when detection fires", and RC-3 returns
+  exactly: the header case decodes an inert `&#x49;&#x67;nore…` into a live
+  phrase in returned text. The two channels want opposite things from the same
+  stage, and no single commit rule serves both.
+- **What changed:** the scratch-decode attempt was **reverted**, preserved in the
+  session scratchpad, and filed as `docs/todos/004`. What did land is the half
+  that is unambiguous: a JSON document is never entity-decoded, whatever the
+  origin declared. The sniffed arm already excluded JSON bodies; the
+  declared-markup arm did not, so one mislabelled `Content-Type` turned
+  `{"q":"a &#x22;b&#x22;"}` into `{"q":"a "b"}` — which no longer parses, and
+  which `save_to_file` persisted for `jq_query` to fail on.
+- **What this costs next time:** **a per-caller flag on a shared stage is a
+  record that the design question was not answered.** `decodeEntities` looked
+  like configuration and was actually two unreconciled requirements wearing one
+  parameter — K-13, the wording got more precise while the layer went unnamed.
+  The second lesson is about this run rather than the code: **an option accepted
+  as "costs nothing either way" is a claim, and mine was wrong.** I relayed a
+  reviewer's framing to the director without building it first. Prototype the
+  option you are about to recommend, or say plainly that you have not.

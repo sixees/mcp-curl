@@ -1,6 +1,12 @@
 # Work Handoff: Route every undefended tool channel through defendText
 
-**Date:** 2026-09-02 | **Branch:** `fix/defend-undefended-tool-output` | **Plan:** `docs/todos/001-jq-query-shorter-defence-path.md` (removed; see *Resolved Todos*) | **Status:** complete
+**Date:** 2026-09-02 | **Branch:** `fix/defend-undefended-tool-output` | **Plan:** `docs/todos/001-jq-query-shorter-defence-path.md` (removed; see *Resolved Todos*) | **Status:** complete, with two P1s found in review and one design question deferred — see *Reality Corrections* and *Outstanding Todos*
+
+> **Review round 1 changed this branch substantially.** Six reviewers found
+> three P1s, two of them in code this branch introduced, and the director
+> reversed one decision the branch had made three hours earlier. Everything
+> below the *Summary* has been updated to the post-review state; the
+> *Reality Corrections* section is where the changes of mind are recorded.
 
 ## Summary
 
@@ -29,7 +35,17 @@ stage gets switched off. `decodeEntities: false` follows the header channel's
 precedent (RC-3): the decode's output is returned, so on a channel whose
 consumer does not decode it manufactures live markup from inert bytes.
 
-### The `DEFENDED` tag (same file, `markDefended()` exported)
+### The `DEFENDED` tag — introduced, then removed in the same branch
+
+**It is not in the final diff.** It was added to stop the wrap double-processing
+text `curl_execute` and `jq_query` had already defended, and review showed its
+claim was worth less than it looked: "took `defendText` under the origin's
+Content-Type" is true for `application/json` and `text/plain` while meaning
+Step 2 and no strip stage at all. The origin picks the Content-Type, so the
+origin picked whether the exemption applied. RC-1's shape, in code written by
+the same run that quoted RC-1. Removed in full — see RC-10.
+
+<details><summary>What it was, for the reader tracing the commit history</summary>
 
 Module-private `Symbol()`, mirroring the existing `WRAPPED` tag and reusing its
 hostile-Proxy probe — `hasOwnWrappedTag` was generalised to `hasOwnTag(result,
@@ -41,6 +57,8 @@ type the origin declared.* Claimed by `curl_execute`'s and `jq_query`'s **succes
 returns only. Both **error** returns keep the untagged default — that text is
 assembled from exception messages, and `applyJqFilter`'s invalid-JSON error
 quotes a preview of the file it was reading.
+
+</details>
 
 ### `jq_query` (`src/lib/tools/jq-query.ts`)
 
@@ -61,11 +79,16 @@ describes the real pipeline with a 3.4.0 upgrade note.
 
 | Decision | Reasoning | Alternatives considered |
 |---|---|---|
-| Fix the wrap, decline the `jq_query` half | `jq_query` can only return JSON, and `defendText` on JSON *is* what it already ran. The gap was JSON-vs-everything, not this tool. | Strip inside JSON string values everywhere (bigger, touches the primary tool, and governs bytes `save_to_file` persists); document and close nothing (leaves the live instance open) |
-| A `DEFENDED` tag rather than accepting the double-pass | Without it the defence a body gets depends on `include_metadata`: with it true the body sits in a JSON envelope the strictest grammar excludes, with it false it does not. Two defences for the same bytes, chosen by an output-format flag. | Accept the behaviour change (would newly rewrite markdown syntax in every `text/plain` and `text/html` body); thread the Content-Type through the wrap (changes a four-call-site contract) |
-| **Did not** widen `isDefinitelyJson` to all JSON roots | Agreed in the kickoff, then dropped — see RC-9. It would have added a bypass spelling on the body path, and tagging `jq_query` reaches the same coherence without it. | Widen it as planned |
-| `decodeEntities: false` at the wrap | RC-3, and here it also corrupts JSON: `'"a &#x22;q&#x22; b"'` decodes to `'"a "q" b"'`, which no longer parses. Measured. | Leave the default |
-| Bump to 3.4.0 | Additive public export, no breaking change. The changelog carries no BREAKING heading, so `release-guards.test.ts` is satisfied. | Patch (wrong — new export); major (nothing removed) |
+| Fix the wrap, decline the `jq_query` half | `jq_query` can only return JSON, and `defendText` on JSON *is* what it already ran. The gap was JSON-vs-everything, not this tool. | Strip inside JSON everywhere; document and close nothing |
+| **Reversed:** strip inside JSON at the wrap after all | Review showed RC-8's justification is about a PERSISTED artefact and does not reach a channel with no disk artefact. Director's call. RC-10. | Keep the exemption everywhere (leaves a live beacon vector on the wrap's channels) |
+| **Reversed:** the `DEFENDED` tag, then removed | Its claim rested on a field the origin controls, and the `include_metadata` incoherence it was built to fix did not survive it either. RC-10. | Make the claim true by having `defendText` report whether the strip ran; drop the tag (chosen) |
+| Exclude `[` from the beacon label class rather than capping it | The docblock records that a 256-char cap was removed *because* padding past it defeated all four patterns. A cap is a settled reversal. Excluding `[` partitions the input, so the pass is linear by construction, not merely faster. | Cap the label (rejected: reinstates a known bypass); linear left-to-right scan (larger rewrite, and todo 005 will need it) |
+| Bound the block scan to the region a `>` closes | Provably equivalent — every pattern ends at a literal `>`, so no match can begin past the last one. Only possible once the `|$)` arm was gone. | Exclude `<` from the attribute run (rejected: `<script foo="<">` bypasses); cap the run (same settled reversal) |
+| Neutralise an orphan opener instead of deleting to EOF | CodeQL's rule is about the residual TOKEN, which removal satisfies. Deleting the caller's payload was never the requirement. | Keep the arm and add a byte-count notice (see below) |
+| **Declined:** the `[mcp-curl] N bytes removed` notice | You approved it alongside the P1-B fix, and its justification was the *silent unbounded* loss. That loss is gone — every remaining removal is a bounded substitution that announces itself (`[link removed]`) or leaves the body visible. A byte counter on every stripped response would be noise. Flagging rather than burying, since you asked for it. | Add it anyway |
+| **Reverted:** the RC-3 scratch-copy decode | Built it; the commit rule cannot serve both channels. See RC-12 and todo 004. The half that is unambiguous — never entity-decode a JSON document — did land. | Ship the naive version (loses the detector and the sanitiser on masked payloads) |
+| `contentTypeUndetermined` becomes required | Absence resolved to the permissive arm on a type this release publishes. Not breaking: the type is new in 3.4.0. | Discriminated union (larger, same effect); leave it and document (the doc snippet I wrote had the unsafe arm uncommented) |
+| Bump to 3.4.0 | Additive export, no breaking change. | Major (nothing removed) |
 
 ## What to pay attention to during review
 
@@ -100,46 +123,33 @@ describes the real pipeline with a 3.4.0 upgrade note.
 
 ## Testing summary
 
-- **Added 25 tests**, at the outermost boundary each real input reaches:
-  - `mcp-curl-server.test.ts` — a `registerCustomTool()` handler's return
-    through `registerToolsOnServer` and the real wrap: beacon, script block and
-    markup comment stripped; two positive controls (legitimate prose and a JSON
-    document both byte-identical).
-  - `curl-execute.headers.test.ts` — `executeCurlRequest` through the wrap on
-    both `include_metadata` branches, asserting they agree; plus a
-    `text/markdown` case proving the tag defers rather than disables.
-  - `jq-query.test.ts` — the declined behaviour pinned, naming RC-8, with a
-    Unicode-sanitisation test as its teeth and an error-path test showing the
-    untagged error result IS fully defended.
-  - `post-processor.test.ts` — unit coverage of both arms, the forged
-    `Symbol.for("mcp-curl.defended")` closure, and the spread-loses-the-tag
-    fail-safe direction.
-- **Suite: 1091 passed, 7 skipped, 32 files.** `npm test` (vitest).
-- **Build:** `npm run build` exits 0, DTS included.
-- **Types:** `npx tsc --noEmit` — **0 errors in non-test files.** 12 pre-existing
-  errors remain in test files (`schema.test.ts`, `lib.test.ts:78`,
-  `post-processor.test.ts` deliberate malformed-input casts); none introduced
-  here, all in files whose type errors predate this branch.
-- **Teeth verified against five source mutations**, each backed up with `cp` and
+- **Suite: 1098 passed, 7 skipped, 32 files.** `npm test` (vitest). Build exits
+  0. `npx tsc --noEmit`: **0 errors in non-test files**; 12 pre-existing test-file
+  errors, unchanged in count and location.
+- **Verification mode:** vitest has no trustworthy structured reporter per
+  `/work` §5, so this verdict is the human-readable summary and the per-mutation
+  failures were read by name. **Not a machine-parsed artefact.**
+- **Teeth verified against eight source mutations**, each backed up with `cp` and
   restored from the copy before staging (`diff` confirmed byte-identical):
 
   | Mutation | Named tests that failed |
   |---|---|
-  | `processTextPart` reverts to `sanitizeAndDetect` | 9 — every strip assertion, unit and end-to-end |
+  | wrap reverts to `sanitizeAndDetect` | 9 — every strip assertion, unit and end-to-end |
   | `decodeEntities: false` → `true` | 1 — *does NOT decode numeric HTML entities (RC-3)* |
-  | `alreadyDefended` forced `false` | 2 — both tag-deference tests |
-  | `jq_query` stops tagging | 1 — *the wrap does not strip it either* |
-  | `curl_execute` stops tagging | 1 — *keeps markdown syntax… (include_metadata: false)* |
+  | tag ignored / tag dropped ×3 | the tag-deference tests (all since removed with the tag) |
+  | revert the `>` bound | 3 opener floods, at 8.9 s / 10.5 s / 9.0 s |
+  | revert the `[` exclusion | 2 label floods, at **82,879 ms** and 41,645 ms |
+  | restore the JSON exemption at the wrap | 2 — the direct case and the `include_metadata: true` branch |
 
-  The last one failing on the `false` branch **only** is the D3 incoherence made
-  visible: with `include_metadata: true` the JSON envelope hides the difference.
-
-- **Verification mode:** vitest has no trustworthy structured reporter per
-  `/work` §5, so this verdict is the human-readable summary above and the
-  per-mutation failures were read by name. **Not a machine-parsed artefact.**
-- **Gaps:** no test drives the YAML `createToolHandler` path through the new
-  wrap behaviour; it shares the closure with the custom-tool path, which is
-  covered, but the wiring is asserted only for custom tools.
+- **One mutation did not bite where expected**, recorded because a silent
+  non-failure is the thing worth knowing: restoring the JSON exemption did *not*
+  fail `jq-query.test.ts`'s beacon case, because jq output is a string-root JSON
+  document and `isDefinitelyJson` only recognises `{`/`[` roots — so the
+  exemption never applied to it either way. That test has teeth against the wrap
+  running at all, not against RC-10 specifically.
+- **Gaps:** no test drives the YAML `createToolHandler` path through the new wrap
+  behaviour; it shares the closure with the custom-tool path, which is covered
+  end-to-end, but the wiring is asserted only for custom tools.
 
 ## Commit history
 
@@ -194,27 +204,54 @@ argued against it.**
 - **Files:** `processor.ts::isDefinitelyJson` (unchanged, deliberately);
   `jq-query.ts::defendedResult`.
 
+**RC-10 — A settled decision was reversed by an argument that had not been made
+when it was settled.** RC-8 declined stripping inside JSON on the grounds that
+`processResponse` persists post-strip bytes. That reasoning does not reach the
+wrap, which has no disk artefact. Reversed by the director; `markDefended` and
+the `DEFENDED` symbol removed with it. Files: `processor.ts::defendText`
+(`excludeJsonDocuments`), `post-processor.ts::processTextPart`. **RC-8 stands
+for the body path** — only its reach was wrong.
+
+**RC-11 — A guard's escape hatch was deleting the payload it was guarding.** The
+`|$)` arm in the comment and block patterns replaced everything from an unclosed
+opener to end of input with nothing. `"before <!-- unclosed\nafter"` → `"before "`.
+Pre-existing; this branch added the channel where it bites. Files:
+`strip-blocks.ts` — `HTML_COMMENT_PATTERN`, `SCRIPT_BLOCK_PATTERN`,
+`STYLE_BLOCK_PATTERN`, and the new orphan-tag patterns.
+
+**RC-12 — Two channels' opposite needs were resolved by a per-caller flag, so
+every caller had to choose wrong.** The scratch-copy decode you approved was
+built and reverted: no single commit rule serves both the header channel and the
+wrap. The unambiguous half landed — a JSON document is never entity-decoded.
+Files: `processor.ts::defendText`; attempt preserved in the session scratchpad,
+question in `docs/todos/004`.
+
+**RC-13 is not filed, and the reason is worth stating.** The quadratic scan and
+the truncation are recorded as RC-11 rather than as separate corrections because
+they are one divergence at one site: removing the unbounded arm is what made the
+scan boundable, and neither fix stands without the other.
+
 No POST-AUDIT annotation was added to a plan file: the input was a todo, and it
 is removed by the todo lifecycle below rather than annotated.
 
 ## Follow-up work
 
-- [ ] Decide whether markdown beacons inside JSON string values should be
-      stripped for model-facing text while `save_to_file` persists the original.
-      Declined here (RC-8) — recorded as a decision, not a todo.
 - [ ] `docs/architecture/architecture.md` §59 and the mermaid diagram at §107
       still describe the jq_query and wrap steps as "sanitize + injection-detect".
-      Still true in effect for jq_query; imprecise for the wrap.
+      Imprecise for the wrap since this branch.
 
 ### Outstanding Todos
 
 | File | Priority | Description | Source |
 |---|---|---|---|
-| `docs/todos/002-header-channel-should-not-be-multiplexed.md` | P1 | `-i` multiplexing; the boundary arithmetic has failed three times. `-D <tempfile>` is the move. | PR #32 review round 3 |
-| `docs/todos/003-memory-ceiling-released-before-peak.md` | P2 | Pre-existing. | PR #32 review |
+| `docs/todos/005-bracketed-label-defeats-beacon-strip.md` | **P1** | `[see [1]](https://evil/x)` defeats all four beacon patterns — a complete bypass of the markdown beacon defence. **Pre-existing; found while benchmarking the RC-11 rewrite, not caused by it.** Filed rather than fixed because the fix is a second rewrite of the stage this branch just rewrote, with no review round left. | this run |
+| `docs/todos/004-entity-decode-serves-two-channels.md` | P2 | The entity-decode stage cannot serve the header channel and the wrap with one commit rule. RC-12. | security-sentinel |
+| `docs/todos/002-header-channel-should-not-be-multiplexed.md` | P1 | `-i` multiplexing; the boundary arithmetic has failed three times. | PR #32 |
+| `docs/todos/003-memory-ceiling-released-before-peak.md` | P2 | Pre-existing. | PR #32 |
 
-Neither was opened by this run, and this run opened none of its own — the branch
-is net-neutral on its own todos and net-negative overall (001 removed).
+This run opened two todos of its own (004, 005) and closed one (001), so the
+branch is net +1 on its own todos. Both new ones are recorded rather than
+dropped, and 005 is a P1 that needs your decision before this branch merges.
 
 ### Resolved Todos
 

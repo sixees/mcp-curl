@@ -422,12 +422,15 @@ function createToolHandler(
                 },
                 execExtra
             );
-            // PR-6b: Run sanitise + detect (and optional spotlight) on the
-            // YAML-tool response. processor.ts already sanitised the curl body
-            // for the per-host throttle; the wrap is idempotent on already-
-            // wrapped results, but the request hostname is the right per-call
-            // label here (rather than "custom" if the result then flows
-            // through the registerToolsOnServer adapter).
+            // Run the full response-side defence on the YAML-tool result.
+            // The wrap applies `defendText` under the strictest grammar, not
+            // just sanitise+detect — `executeCurlRequest` already defended the
+            // body under the origin's real Content-Type, so this is a second,
+            // less-informed pass over the same text and is deliberate
+            // defence-in-depth rather than the only defence. The wrap is
+            // idempotent on already-wrapped results, and the request hostname
+            // is the right per-call label here (rather than "custom" if the
+            // result then flows through the registerToolsOnServer adapter).
             return wrap(result, safeHostname(url));
         } catch (error) {
             // Handle authentication errors gracefully

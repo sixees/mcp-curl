@@ -57,6 +57,7 @@ import type {
 // values are never read; only the type position matters for the guard.
 type _PinnedPublicTypes = [
     CustomToolMeta,
+    DefendTextOptions,
     InstanceUtilities,
     ExecuteRequestParams,
     CreateApiServerOptions,
@@ -112,6 +113,7 @@ import {
 } from "./lib/utils/index.js";
 import { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 import { defendText } from "./lib/response/index.js";
+import type { DefendTextOptions } from "./lib/response/index.js";
 
 describe("public barrel (src/lib.ts)", () => {
     describe("re-exports the same reference as the deep import", () => {

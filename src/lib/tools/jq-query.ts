@@ -124,6 +124,7 @@ export async function executeJqQuery(
         // channel follows instead of silently staying behind.
         const sanitized = defendText(filtered, {
             contentType: JSON_MIME,
+            contentTypeUndetermined: false,
             hostname: basename(validatedFilePath),
         });
 
