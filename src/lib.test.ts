@@ -111,6 +111,7 @@ import {
     safeHostname,
 } from "./lib/utils/index.js";
 import { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
+import { defendText } from "./lib/response/index.js";
 
 describe("public barrel (src/lib.ts)", () => {
     describe("re-exports the same reference as the deep import", () => {
@@ -184,6 +185,9 @@ describe("public barrel (src/lib.ts)", () => {
         });
 
         // Section 7 — response-side defence helpers
+        it("defendText", () => {
+            expect(publicApi.defendText).toBe(defendText);
+        });
         it("applySpotlighting", () => {
             expect(publicApi.applySpotlighting).toBe(applySpotlighting);
         });
@@ -233,6 +237,7 @@ describe("public barrel (src/lib.ts)", () => {
             "getMethodAnnotations",
             "sanitizeDescription",
             "MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH",
+            "defendText",
             "applySpotlighting",
             "sanitizeResponse",
             "detectInjectionPattern",

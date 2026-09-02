@@ -3,6 +3,7 @@ import {
   CUSTOM_TOOL_HOSTNAME_LABEL,
   ENV,
   JQ_QUERY_HOSTNAME_LABEL,
+  JSON_MIME,
   JqQuerySchema,
   LIMITS,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
@@ -17,17 +18,18 @@ import {
   createHttpOnlyUrlSchema,
   createSafeFilenameBase,
   createWrapper,
+  defendText,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
   isValidSessionId,
+  markDefended,
   parsePort,
   registerCurlExecuteTool,
   resolveBaseUrl,
   resolveOutputDir,
   safeHostname,
   safeStringCompare,
-  sanitizeAndDetect,
   sanitizeDescription,
   startInjectionCleanup,
   startRateLimitCleanup,
@@ -37,7 +39,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-6BMFJXMO.js";
+} from "./chunk-SXWAFKTG.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -158,6 +160,9 @@ Examples:
     openWorldHint: false
   }
 };
+function defendedResult(text) {
+  return markDefended({ content: [{ type: "text", text }] });
+}
 async function executeJqQuery(params, _extra) {
   try {
     const validatedFilePath = await validateFilePath(params.filepath);
@@ -165,7 +170,10 @@ async function executeJqQuery(params, _extra) {
     const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : void 0;
     const content = await readFile(validatedFilePath, { encoding: "utf-8" });
     const filtered = applyJqFilter(content, params.jq_filter);
-    const sanitized = sanitizeAndDetect(filtered, basename(validatedFilePath));
+    const sanitized = defendText(filtered, {
+      contentType: JSON_MIME,
+      hostname: basename(validatedFilePath)
+    });
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const contentBytes = Buffer.byteLength(sanitized, "utf8");
     const shouldSave = params.save_to_file || contentBytes > maxSize;
@@ -176,23 +184,9 @@ async function executeJqQuery(params, _extra) {
       const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
       const filepath = join(targetDir, filename);
       await writeFile(filepath, sanitized, { encoding: "utf-8", mode: 384 });
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Result (${contentBytes} bytes) saved to: ${filepath}`
-          }
-        ]
-      };
+      return defendedResult(`Result (${contentBytes} bytes) saved to: ${filepath}`);
     }
-    return {
-      content: [
-        {
-          type: "text",
-          text: sanitized
-        }
-      ]
-    };
+    return defendedResult(sanitized);
   } catch (error) {
     const errorMessage = getErrorMessage(error);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";

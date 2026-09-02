@@ -75,20 +75,41 @@ what a violation looks like, it does not belong on this list.
    `sanitizeAndDetect`, and thereby lost Steps 3–5 while still satisfying "goes
    through sanitisation". An invariant that a defect can satisfy is not an
    invariant. **New text channels call `defendText`; they do not assemble their
-   own pipeline**, with one recorded exception: the header channel passes
-   `decodeEntities: false`. That is a deliberate narrowing, not a weakening —
-   the decode stage's output is *returned*, so on a channel whose consumer does
-   not decode it would manufacture live markup from inert bytes (`LESSONS.md`
-   RC-3). What it costs: Step 5 cannot unmask an entity-encoded injection phrase
-   in a header, so detection is blind to that one vector on that one channel.
+   own pipeline**. Two channels narrow it with `decodeEntities: false` — the
+   header channel and the post-processor wrap. That is a deliberate narrowing,
+   not a weakening: the decode stage's output is *returned*, so on a channel
+   whose consumer does not decode it would manufacture live markup from inert
+   bytes (`LESSONS.md` RC-3). What it costs: Step 5 cannot unmask an
+   entity-encoded injection phrase on those two channels, so detection is blind
+   to that one vector there.
 
-   **Coverage today is partial, and saying so is part of the invariant.** Two
-   channels still take the short path: `jq-query.ts::executeJqQuery` and
-   `post-processor.ts::processTextPart`. The second matters most — for
-   `registerCustomTool()` returns and `beforeRequest` short-circuits the wrap is
-   the *only* defence, and it runs sanitise-and-detect alone. Both are tracked in
-   `docs/todos/001`. A claim of universal coverage would be the same defect this
-   invariant was written about: an assertion a reader trusts and stops checking.
+   **Every text channel now calls `defendText`, and what that is worth depends
+   entirely on the sentence after it.** `post-processor.ts::processTextPart` —
+   the wrap, and the *only* defence for `registerCustomTool()` returns,
+   `beforeRequest` short-circuits and YAML endpoint results — takes it with
+   `contentTypeUndetermined: true`, because at that boundary the Content-Type
+   genuinely is gone. `jq-query.ts::executeJqQuery` takes it declaring
+   `JSON_MIME`, which its content is by construction.
+
+   **The grammar a channel declares is where the real coverage question now
+   lives.** `defendText` on a JSON document IS sanitise-and-detect: the markup
+   and markdown stages are excluded, deliberately, because `<script>` and
+   `[a](b)` are legitimate inside JSON string values and `processResponse`
+   writes the post-strip content to disk. So "calls `defendText`" is a weaker
+   statement than it sounds, and reading it as "is fully stripped" is the same
+   mistake this invariant was written about. What the shared call buys is that
+   the exclusion is one decision in one place, reviewable, rather than a
+   subset each caller assembled. `LESSONS.md` RC-8 records why the JSON arm was
+   kept rather than closed.
+
+   **Two results are marked exempt from the wrap's strip stages, and the tag is
+   the only thing that could weaken this invariant.** `curl_execute` and
+   `jq_query` mark their SUCCESS returns via `post-processor.ts::markDefended`,
+   because each already ran this pipeline under the content type the origin
+   declared — better information than the wrap has. Neither ERROR return is
+   marked. Untagged is the safe default: forgetting the tag costs a redundant
+   pass, forging it would cost Steps 3-5, and the symbol is module-private so
+   only the second is out of a consumer's reach.
 
 2. **DNS resolution precedes SSRF validation, and cURL is pinned to the validated
    IP.** Any change that lets cURL resolve a name itself reopens DNS rebinding.
