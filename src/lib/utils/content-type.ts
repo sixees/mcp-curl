@@ -122,6 +122,19 @@ export function supportsMarkupComments(contentType: string | undefined): boolean
  */
 export const MARKDOWN_MIME = "text/markdown" as const;
 
+/**
+ * The canonical JSON MIME type.
+ *
+ * Exported for the mirror of {@link MARKDOWN_MIME}'s reason. A caller that needs
+ * to *declare* JSON — `jq_query`, whose content is JSON by construction —
+ * references the string the predicates match against rather than a bare literal.
+ * The failure a typo causes points the other way here: a misspelt value stops
+ * matching `isSniffableContentType`'s JSON arm, the strip path switches on, and
+ * the markup stages rewrite legitimate `<script>` and `[a](b)` inside JSON
+ * string values.
+ */
+export const JSON_MIME = "application/json" as const;
+
 const MARKDOWN_MIME_EXACT: ReadonlySet<string> = new Set([
     MARKDOWN_MIME,
     "text/x-markdown",
@@ -178,7 +191,7 @@ export function isMarkdownContentType(contentType: string | undefined): boolean 
  */
 export function isSniffableContentType(contentType: string | undefined): boolean {
     const mime = parseMimeType(contentType);
-    if (mime === "application/json") return false;
+    if (mime === JSON_MIME) return false;
     if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return false;
     if (MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix))) return false;
     if (MARKDOWN_MIME_EXACT.has(mime)) return false;

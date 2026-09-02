@@ -9,9 +9,8 @@ import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
-import { getErrorMessage, sanitizeDescription } from "../utils/index.js";
-import { sanitizeAndDetect } from "../security/index.js";
-import { createSafeFilenameBase } from "../response/index.js";
+import { getErrorMessage, sanitizeDescription, JSON_MIME } from "../utils/index.js";
+import { createSafeFilenameBase, defendText, exceedsInlineCap } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
@@ -74,6 +73,11 @@ Examples:
     },
 };
 
+/** One success result shape, so both success branches spell it once. */
+function successResult(text: string): JqQueryResult {
+    return { content: [{ type: "text" as const, text }] };
+}
+
 /**
  * Execute a jq query on a JSON file.
  * This is the core handler logic extracted for reuse by McpCurlServer.
@@ -102,14 +106,44 @@ export async function executeJqQuery(
         // Apply jq filter
         const filtered = applyJqFilter(content, params.jq_filter);
 
-        // Sanitize after filtering — jq may concentrate injection strings from
+        // Defend after filtering — jq may concentrate injection strings from
         // sparse input. Detection logging is throttled per label inside the helper.
-        const sanitized = sanitizeAndDetect(filtered, basename(validatedFilePath));
+        //
+        // Routed through the shared pipeline rather than an assembled subset of
+        // it (invariant 1a). `applyJqFilter` parses its input as JSON and
+        // returns `JSON.stringify(...)`, so this text IS a JSON document and
+        // gets the pipeline's JSON arm: sanitise + detect, no markup or
+        // markdown stripping. That is the same treatment `curl_execute
+        // --jq_filter` gives the identical bytes, and the reason is
+        // `processResponse`'s: `<script>` and `[a](b)` are legitimate inside
+        // JSON string values, and this output is written to disk under
+        // `save_to_file` and read back by this same tool.
+        //
+        // Calling `defendText` rather than reproducing its JSON arm is what
+        // keeps that true: if the JSON grammar's treatment ever changes, this
+        // channel follows instead of silently staying behind.
+        //
+        // This governs what gets WRITTEN under `save_to_file`. Persisted keeps
+        // the exemption; returned does not (ARCHITECTURE.md invariant 1a).
+        const label = basename(validatedFilePath);
+        const persisted = defendText(filtered, {
+            contentType: JSON_MIME,
+            contentTypeUndetermined: false,
+            hostname: label,
+        });
 
-        // Handle result size and file saving
+        // Handle result size and file saving.
+        //
+        // **The gate weighs the bytes the model receives, not the bytes on
+        // disk.** Downstream of here the post-processor wrap applies
+        // `defendForInline`, which does not exempt JSON and so replaces a beacon
+        // inside a JSON string value with a longer placeholder. Weighing
+        // `persisted` would report a size that never reaches the caller and let
+        // an over-cap result stay inline — invariant 14, `LESSONS.md` RC-15. The
+        // measurement is discarded; this function's return keeps the JSON
+        // grammar it documents, and the wrap does the stripping.
         const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-        const contentBytes = Buffer.byteLength(sanitized, "utf8");
-        const shouldSave = params.save_to_file || contentBytes > maxSize;
+        const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
 
         if (shouldSave) {
             // Generate a filename based on the source file (use validated path)
@@ -119,26 +153,16 @@ export async function executeJqQuery(
             const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
             const filepath = join(targetDir, filename);
 
-            await writeFile(filepath, sanitized, { encoding: "utf-8", mode: 0o600 });
+            await writeFile(filepath, persisted, { encoding: "utf-8", mode: 0o600 });
 
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Result (${contentBytes} bytes) saved to: ${filepath}`,
-                    },
-                ],
-            };
+            // Server-authored: a byte count and a path this process built from
+            // a validated directory and a sanitised basename. No remote text.
+            // The count describes the artefact on disk, which is this copy.
+            const persistedBytes = Buffer.byteLength(persisted, "utf8");
+            return successResult(`Result (${persistedBytes} bytes) saved to: ${filepath}`);
         }
 
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: sanitized,
-                },
-            ],
-        };
+        return successResult(persisted);
     } catch (error) {
         const errorMessage = getErrorMessage(error);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";

@@ -22,13 +22,16 @@
 // createToolHandler in schema/generator.ts, custom-tool registration in
 // extensible/mcp-curl-server.ts, and the hook short-circuit in
 // extensible/hook-executor.ts) with idempotence via a module-private Symbol
-// tag. **It is intentionally not exported.** Library consumers interact with
-// it only via `enableSpotlighting` (see McpCurlConfig). Callers building their
-// own non-MCP pipelines should compose the public primitives below
-// (`sanitizeAndDetect`, `applySpotlighting`) directly — they cover the same
-// trust-boundary semantics without coupling to the server's internal
-// post-processor shape. No subpath exports — flat barrel + section comments
-// is the convention.
+// tag. **The wrap factory is intentionally not exported** — its
+// `CallToolResult` shape is coupled to the MCP SDK. Library consumers interact
+// with it via `enableSpotlighting` (see McpCurlConfig).
+//
+// What the wrap DOES to each text part is a separate question, and that half
+// is exported: `defendText` (section 7) is the same pipeline, over a plain
+// string. Callers building a non-MCP pipeline should call it rather than
+// composing `sanitizeAndDetect` by hand — the composer is Step 2 of five, and
+// the difference is whether markdown beacons and `<script>` blocks survive.
+// No subpath exports — flat barrel + section comments is the convention.
 
 // 1. Main server class
 export { McpCurlServer } from "./lib/extensible/index.js";
@@ -106,10 +109,27 @@ export type {
 export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/utils/index.js";
 
 // 7. Response-side defence helpers — callers emitting external content (HTTP body,
-// file content, third-party API response) should sanitise + spotlight to honour
+// file content, third-party API response) should defend + spotlight to honour
 // the same trust boundary the server enforces on built-in tools.
 //
-// Prefer `sanitizeAndDetect(text, label)` over hand-wiring `sanitizeResponse`
+// **`defendText(text, options)` is the whole pipeline, and it is what the
+// built-in tools run.** Sanitise-and-detect is Step 2 of five; Steps 3-5 —
+// markup comments, the `<script>`/`<style>` strip, markdown beacon
+// removal and the numeric-entity re-detect — are what remove exfiltration
+// beacons and script blocks. Reach for the lower-level composers below only
+// when you specifically want one stage; if you want "the defence", it is this.
+// See `ARCHITECTURE.md` invariant 1a for why the distinction has a name.
+//
+// Pass the origin's `contentType` when you know it. When you do not, pass
+// `contentTypeUndetermined: true` rather than omitting it — that selects the
+// STRICTEST grammar, so an unreadable content type can never be the way a
+// stage gets switched off. Pass `decodeEntities: false` on any channel whose
+// consumer does not itself decode HTML entities; the decode's output is what
+// gets returned, so on such a channel it manufactures live markup from inert
+// bytes.
+//
+// Among the lower-level composers, prefer `sanitizeAndDetect(text, label)`
+// over hand-wiring `sanitizeResponse`
 // + `detectInjectionPattern` + `logInjectionDetected`. Since PR-6b the
 // helper detects on the **original** text *before* sanitisation: a malicious
 // pattern that the sanitiser would otherwise strip (e.g. content inside a
@@ -132,6 +152,8 @@ export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/u
 // Spotlight (when used directly) must key on `randomUUID()` per request /
 // per message; nothing else gives the per-call entropy the sentinel
 // boundary depends on. See docs/custom-tools.md.
+export { defendText } from "./lib/response/index.js";
+export type { DefendTextOptions } from "./lib/response/index.js";
 export { applySpotlighting, sanitizeResponse, detectInjectionPattern } from "./lib/utils/index.js";
 export { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 

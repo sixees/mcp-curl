@@ -3,6 +3,7 @@ import {
   CUSTOM_TOOL_HOSTNAME_LABEL,
   ENV,
   JQ_QUERY_HOSTNAME_LABEL,
+  JSON_MIME,
   JqQuerySchema,
   LIMITS,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
@@ -17,6 +18,8 @@ import {
   createHttpOnlyUrlSchema,
   createSafeFilenameBase,
   createWrapper,
+  defendText,
+  exceedsInlineCap,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
@@ -27,7 +30,6 @@ import {
   resolveOutputDir,
   safeHostname,
   safeStringCompare,
-  sanitizeAndDetect,
   sanitizeDescription,
   startInjectionCleanup,
   startRateLimitCleanup,
@@ -37,7 +39,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-6BMFJXMO.js";
+} from "./chunk-4H7SINKU.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -158,6 +160,9 @@ Examples:
     openWorldHint: false
   }
 };
+function successResult(text) {
+  return { content: [{ type: "text", text }] };
+}
 async function executeJqQuery(params, _extra) {
   try {
     const validatedFilePath = await validateFilePath(params.filepath);
@@ -165,34 +170,25 @@ async function executeJqQuery(params, _extra) {
     const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : void 0;
     const content = await readFile(validatedFilePath, { encoding: "utf-8" });
     const filtered = applyJqFilter(content, params.jq_filter);
-    const sanitized = sanitizeAndDetect(filtered, basename(validatedFilePath));
+    const label = basename(validatedFilePath);
+    const persisted = defendText(filtered, {
+      contentType: JSON_MIME,
+      contentTypeUndetermined: false,
+      hostname: label
+    });
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-    const contentBytes = Buffer.byteLength(sanitized, "utf8");
-    const shouldSave = params.save_to_file || contentBytes > maxSize;
+    const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
     if (shouldSave) {
       const sourceBasename = basename(validatedFilePath) || "query_result";
       const safeName = createSafeFilenameBase(sourceBasename, "query_result");
       const filename = `${safeName}_${Date.now()}.txt`;
       const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
       const filepath = join(targetDir, filename);
-      await writeFile(filepath, sanitized, { encoding: "utf-8", mode: 384 });
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Result (${contentBytes} bytes) saved to: ${filepath}`
-          }
-        ]
-      };
+      await writeFile(filepath, persisted, { encoding: "utf-8", mode: 384 });
+      const persistedBytes = Buffer.byteLength(persisted, "utf8");
+      return successResult(`Result (${persistedBytes} bytes) saved to: ${filepath}`);
     }
-    return {
-      content: [
-        {
-          type: "text",
-          text: sanitized
-        }
-      ]
-    };
+    return successResult(persisted);
   } catch (error) {
     const errorMessage = getErrorMessage(error);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";

