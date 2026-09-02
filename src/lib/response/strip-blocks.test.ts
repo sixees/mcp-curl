@@ -75,12 +75,19 @@ describe("stripHtmlComments", () => {
     // single pass therefore RETURNS a live comment token, which is what
     // CodeQL's incomplete multi-character sanitisation rule flags. Reported on
     // PR #33 by github-advanced-security; the orphan sweep now iterates.
+    // **Depth matters and the first version of this guard did not test it.** The
+    // fix was an iterated `replace` capped at four passes, and each pass exposes
+    // exactly one new layer — so five layers survived it. Round 2 reported that;
+    // the scan tests the OUTPUT tail, so convergence no longer depends on a cap.
     it.each([
         ["spliced from neighbours", "<!<!----"],
         ["spliced twice", "<!<!<!------"],
+        ["five layers — defeated the four-pass cap", "<!".repeat(5) + "--".repeat(5)],
+        ["forty layers", "<!".repeat(40) + "--".repeat(40)],
     ])("leaves no <!-- token: %s", (_label, input) => {
         expect(stripHtmlComments(input)).not.toContain("<!--");
     });
+
 
     // The balanced pattern is lazy with a fixed `-->` terminator, so every
     // opener with no closer ahead scans to end-of-input and fails: O(n) attempts
@@ -94,6 +101,7 @@ describe("stripHtmlComments", () => {
     it.each([
         ["opener flood, no closer", "<!--".repeat(65536)],
         ["opener flood, one trailing closer", "<!--".repeat(65535) + "-->"],
+        ["deep splice flood", "<!".repeat(60000) + "--".repeat(60000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         const start = Date.now();
         stripHtmlComments(body);
@@ -239,6 +247,21 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
     // below are the ones that actually distinguish a bounded scan from an
     // unbounded one: each floods the input with FAILING match attempts.
     //
+    it("keeps case-fold offsets aligned with the input (round 2)", () => {
+        // U+0130 lowercases to two UTF-16 units, so an index taken from
+        // `text.toLowerCase()` addresses a different character in `text`. That
+        // silently skipped the balanced block pass for the rest of the body.
+        expect(stripBlocksFixedPoint("\u0130<script>![x](https://evil.test)</script>tail")).toBe(
+            "\u0130tail"
+        );
+    });
+
+    it("does not treat `</scripture>` as a script closer (round 2)", () => {
+        // `\b` is what the pattern requires, so the bound must require it too.
+        // The opener still goes; the non-tag text is left alone.
+        expect(stripBlocksFixedPoint("<script>x</scripture>")).toBe("x</scripture>");
+    });
+
     // **And its replacement was toothless too, in the mirror-image way.** Every
     // case below the first three omits `>` entirely, which is the one shape the
     // `lastIndexOf(">")` bound already handled — so they passed while
@@ -259,6 +282,11 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
         ["openers with a foreign closer", "<script></x>".repeat(20000)],
         ["one real block, then an opener flood", "<script>x</script>" + "<script>".repeat(30000)],
         ["closer flood with no `>`", "</script".repeat(30000)],
+        // Round 2. Each defeats the round-1 bound in a different way: a
+        // non-boundary name accepted as a closer, and a closer whose attribute
+        // run swallows the openers that follow it.
+        ["non-boundary closer name", "<script></scripture>".repeat(13000)],
+        ["openers nested inside the bounding closer", "</script " + "<script".repeat(35000) + ">"],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         const start = Date.now();
         stripBlocksFixedPoint(body);

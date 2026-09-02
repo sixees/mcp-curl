@@ -92,7 +92,15 @@ rg -n 'MARKDOWN_.*_PATTERN =' -A2 src/lib/response/strip-blocks.ts
 
 - [ ] `[see [1]](https://evil.test/x)` has its URL removed.
 - [ ] `![alt [x]](https://evil.test/x)` likewise, and as an IMAGE not a link.
-- [ ] The five ReDoS floods in `strip-blocks.test.ts` still complete inside 2 s,
-      and the teeth check in `LESSONS.md` RC-11 still holds.
+- [ ] Every ReDoS flood in `strip-blocks.test.ts` still completes inside
+      `REDOS_BUDGET_MS`, and the teeth check in `LESSONS.md` RC-11 still holds.
+      **Do not restate the count or the budget here** — both changed under this
+      criterion once already (five floods at 2 s became sixteen at 100 ms across
+      two review rounds), and a copy of a number is a copy that goes stale while
+      still looking satisfiable. The test file is the authority.
+- [ ] The fix keys its bound on a token the pattern must consume, and a flood
+      case OMITS that token. Two generations of guard here passed while the
+      defect they were named for was live, because each fed input the
+      then-current bound already handled.
 - [ ] A positive control asserts legitimate prose with brackets and parentheses
       is untouched.

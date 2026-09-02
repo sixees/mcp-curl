@@ -146,7 +146,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // Step 2 alone and a returned beacon, which is the exact behaviour the
     // required field was added to prevent. Failing closed costs a caller who
     // omits it some over-stripping; failing open costs them the defence.
-    const { hostname, contentTypeUndetermined = true, decodeEntities = true } = options;
+    const { hostname, contentTypeUndetermined = true } = options;
 
     // An UNDETERMINED content type selects the strictest grammar rather than
     // the loosest: a remote must not be able to disable a stage by making our

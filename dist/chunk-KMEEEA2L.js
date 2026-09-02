@@ -1439,10 +1439,8 @@ var IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
 var LINK_REMOVED_PLACEHOLDER = "[link removed]";
 var STRIP_PATH_MAX_BYTES = 256 * 1024;
 var STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
-var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
-var HTML_COMMENT_ORPHAN_PATTERN = /<!--/g;
-var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^>]*>/gi;
-var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^>]*>/gi;
+var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^<>]*>/gi;
+var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^<>]*>/gi;
 var SCRIPT_ORPHAN_TAG_PATTERN = /<\/?\s*script\b[^>]*>/gi;
 var STYLE_ORPHAN_TAG_PATTERN = /<\/?\s*style\b[^>]*>/gi;
 var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
@@ -1477,34 +1475,41 @@ function withinClosableRegion(text, end, pass) {
   return pass(text.slice(0, end)) + text.slice(end);
 }
 var WHITESPACE_CHAR_PATTERN = /\s/;
+var WORD_CHAR_PATTERN = /\w/;
+function matchesTagNameAt(text, at, tag2) {
+  if (at + tag2.length > text.length) return false;
+  for (let k = 0; k < tag2.length; k++) {
+    if ((text.charCodeAt(at + k) | 32) !== tag2.charCodeAt(k)) return false;
+  }
+  return true;
+}
 function lastCloserEnd(text, closer) {
   const i = text.lastIndexOf(closer);
   return i === -1 ? 0 : i + closer.length;
 }
-function lastTagCloserEnd(text, lowerText, tag2) {
-  for (let from = lowerText.length; from >= 0; ) {
-    const name = lowerText.lastIndexOf(tag2, from);
-    if (name === -1) return 0;
-    let j = name - 1;
-    while (j >= 0 && WHITESPACE_CHAR_PATTERN.test(text[j])) j--;
-    if (j >= 1 && text[j] === "/" && text[j - 1] === "<") {
-      const gt = text.indexOf(">", name);
-      return gt === -1 ? 0 : gt + 1;
-    }
-    from = name - 1;
+function lastTagCloserEnd(text, tag2) {
+  let end = 0;
+  for (let i = 0; i + 1 < text.length; i++) {
+    if (text[i] !== "<" || text[i + 1] !== "/") continue;
+    let j = i + 2;
+    while (j < text.length && WHITESPACE_CHAR_PATTERN.test(text[j])) j++;
+    if (!matchesTagNameAt(text, j, tag2)) continue;
+    j += tag2.length;
+    if (j < text.length && WORD_CHAR_PATTERN.test(text[j])) continue;
+    while (j < text.length && text[j] !== ">" && text[j] !== "<") j++;
+    if (text[j] === ">") end = j + 1;
   }
-  return 0;
+  return end;
 }
 function stripTagBlocks(text) {
-  const lower = text.toLowerCase();
   let out = withinClosableRegion(
     text,
-    lastTagCloserEnd(text, lower, "script"),
+    lastTagCloserEnd(text, "script"),
     (s) => s.replace(SCRIPT_BLOCK_PATTERN, "")
   );
   out = withinClosableRegion(
     out,
-    lastTagCloserEnd(out, out.toLowerCase(), "style"),
+    lastTagCloserEnd(out, "style"),
     (s) => s.replace(STYLE_BLOCK_PATTERN, "")
   );
   return withinClosableRegion(
@@ -1514,18 +1519,26 @@ function stripTagBlocks(text) {
   );
 }
 function stripHtmlComments(input) {
-  const balanced = withinClosableRegion(
-    input,
-    lastCloserEnd(input, "-->"),
-    (s) => s.replace(HTML_COMMENT_PATTERN, "")
-  );
-  let curr = balanced;
-  for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
-    const next = curr.replace(HTML_COMMENT_ORPHAN_PATTERN, "");
-    if (next === curr) return next;
-    curr = next;
+  const out = [];
+  let i = 0;
+  let noCloser = false;
+  while (i < input.length) {
+    out.push(input[i]);
+    i++;
+    const n = out.length;
+    if (n < 4 || out[n - 1] !== "-" || out[n - 2] !== "-" || out[n - 3] !== "!" || out[n - 4] !== "<") {
+      continue;
+    }
+    out.length = n - 4;
+    if (noCloser) continue;
+    const close = input.indexOf("-->", i);
+    if (close === -1) {
+      noCloser = true;
+      continue;
+    }
+    i = close + 3;
   }
-  return curr;
+  return out.join("");
 }
 function stripMarkdownBeacons(input) {
   return withinClosableRegion(
@@ -1886,7 +1899,7 @@ function isDefinitelyJson(text) {
 }
 function defendText(text, options) {
   let content = text;
-  const { hostname, contentTypeUndetermined = true, decodeEntities = true } = options;
+  const { hostname, contentTypeUndetermined = true } = options;
   const excludeJsonDocuments = options.excludeJsonDocuments ?? true;
   const jsonExemptionCouldApply = excludeJsonDocuments && (contentTypeUndetermined || isSniffableContentType(options.contentType));
   const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);
@@ -1898,9 +1911,9 @@ function defendText(text, options) {
   const sniffedAsMarkup = !exceedsStripCap && !strictestGrammar && !looksLikeJsonBody && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
   const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
   if (needsStripPath && !exceedsStripCap) {
-    const decodeEntities2 = (options.decodeEntities ?? true) && !(looksLikeJsonBody || isDefinitelyJson(content));
+    const decodeEntities = (options.decodeEntities ?? true) && !(looksLikeJsonBody || isDefinitelyJson(content));
     content = stripHtmlComments(content);
-    content = stripBlocksFixedPoint(content, { decodeEntities: decodeEntities2 });
+    content = stripBlocksFixedPoint(content, { decodeEntities });
     if (isMarkdown) {
       content = stripMarkdownBeacons(content);
     }

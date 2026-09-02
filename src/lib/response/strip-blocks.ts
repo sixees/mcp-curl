@@ -84,40 +84,9 @@ const STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 // -----------------------------------------------------------------------------
 
 /**
- * Strip HTML comments.
- *
- * `g` flag — see safety contract above. Used only with `.replace()`.
- *
- * Shape: balanced `<!--[\s\S]*?-->`, plus a separate literal sweep for an
- * orphan `<!--` token.
- *
- * The naive balanced pattern alone leaves an orphan `<!--` opener in inputs
- * like `<!-- a --> <!--` (the first comment matches and removes, the second
- * has no closer so single-pass replace can't match). CodeQL's "Incomplete
- * multi-character sanitization" rule flags exactly that residue, and an
- * earlier revision absorbed it with an `|$)` alternative — open-to-EOF.
- *
- * **That alternative deleted the remainder of the input**, and on a channel
- * this library is only a courier for that is silent, unrecoverable data loss:
- * one unclosed `<!--` in a custom tool's HTML turned `before <!-- x\nafter`
- * into `before `, with no marker, no `isError` and no observable length delta.
- * Removing the OPENER TOKEN satisfies CodeQL's residue rule just as well — the
- * token a renderer would honour is gone — without deleting text the caller
- * asked for. See `LESSONS.md` RC-11.
- */
-const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
-
-/**
- * Orphan `<!--` with no closer. A literal, so the sweep is O(n) with no
- * forward scan — which is also why it can run over the whole input while the
- * block patterns below are bounded.
- */
-const HTML_COMMENT_ORPHAN_PATTERN = /<!--/g;
-
-/**
  * Strip patterns for BALANCED `<script>` / `<style>` blocks.
  *
- * Shape: `<tag\b[^>]*>[\s\S]*?</\s*tag\b[^>]*>`
+ * Shape: `<tag\b[^>]*>[\s\S]*?</\s*tag\b[^<>]*>`
  *
  * - **Body** uses lazy `[\s\S]*?` rather than the older negative-lookahead
  *   `(?:(?!<\/?tag\b)[\s\S])*?` — each lazy expansion does an O(1) check of
@@ -125,7 +94,11 @@ const HTML_COMMENT_ORPHAN_PATTERN = /<!--/g;
  *   older form left a `<script>` orphan in the residue.
  * - **Closer** allows whitespace-or-newline between `</` and `tag` (`\s*`
  *   absorbs `</ script>`, `</\nscript>`), accepts attributes after the
- *   tag name (`[^>]*`), and is case-insensitive (`i` flag).
+ *   tag name, and is case-insensitive (`i` flag). That attribute run is
+ *   `[^<>]*` rather than `[^>]*`: a closer that swallows `<` swallows OPENERS,
+ *   which is how `"</script " + "<script".repeat(35000) + ">"` stayed
+ *   quadratic at 9 s. A closing tag takes no attributes anyway, and one this
+ *   rejects still loses both its tags to the orphan sweep.
  * - **Word boundary** `\b` after the tag name avoids matching
  *   `<scriptlike>` / `<stylesheet>` etc.
  *
@@ -150,9 +123,9 @@ const HTML_COMMENT_ORPHAN_PATTERN = /<!--/g;
  * `LESSONS.md` RC-11.
  */
 const SCRIPT_BLOCK_PATTERN =
-    /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^>]*>/gi;
+    /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^<>]*>/gi;
 const STYLE_BLOCK_PATTERN =
-    /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^>]*>/gi;
+    /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^<>]*>/gi;
 
 /**
  * Orphan `<script>` / `<style>` tags — an opener with no closer, or a closer
@@ -370,6 +343,34 @@ function withinClosableRegion(text: string, end: number, pass: (s: string) => st
  */
 const WHITESPACE_CHAR_PATTERN = /\s/;
 
+/**
+ * Single `\w` character — the class JS `\b` is defined against.
+ * No `g`/`y` flag, so `.test()` is safe to reuse; see the safety contract above.
+ */
+const WORD_CHAR_PATTERN = /\w/;
+
+/**
+ * Case-insensitive ASCII compare of `tag` against `text` at `at`, WITHOUT
+ * lowercasing the input.
+ *
+ * **`text.toLowerCase()` cannot be used to find offsets into `text`.** Lowercase
+ * mappings can change UTF-16 length — U+0130 (`İ`) lowercases to two units — so
+ * an index taken from the folded copy addresses a different character in the
+ * original. That misaligned every check in {@link lastTagCloserEnd} after any
+ * such character, which on `İ<script>…</script>` skipped the balanced pass
+ * entirely. Reported on PR #33 by chatgpt-codex-connector.
+ *
+ * `| 0x20` folds ASCII letters and leaves everything else unequal to one, which
+ * is all this needs: the tag names it compares are ASCII by construction.
+ */
+function matchesTagNameAt(text: string, at: number, tag: string): boolean {
+    if (at + tag.length > text.length) return false;
+    for (let k = 0; k < tag.length; k++) {
+        if ((text.charCodeAt(at + k) | 0x20) !== tag.charCodeAt(k)) return false;
+    }
+    return true;
+}
+
 /** Index just past the last `closer`, or 0 when the input holds none. */
 function lastCloserEnd(text: string, closer: string): number {
     const i = text.lastIndexOf(closer);
@@ -377,43 +378,44 @@ function lastCloserEnd(text: string, closer: string): number {
 }
 
 /**
- * Index just past the `>` terminating the last `</tag` in the input, or 0.
+ * Index just past the `>` terminating the last COMPLETE `</tag …>` closer, or 0.
  *
- * **A bare `>` is not a sound bound here and used to be one.** `</script>`
- * needs the tag name, not just an angle bracket, so `"<script>".repeat(32000)`
- * — every character before a `>` — left the whole input in scope and each
- * opener scanned to end-of-input for a closer that was never there: 1.1 s
- * measured. `"<script></x>".repeat(20000)` broke a `</`-only bound the same
- * way at 1.7 s.
+ * Three properties are load-bearing and each was learned by getting it wrong:
  *
- * **The walk back over whitespace is required, not a nicety.** The closer
- * pattern allows `</ script>` and `</\nscript>`, so a literal `</script` search
- * misses them — the balanced pass would then be skipped on input it should
- * match, and an existing guard for exactly that shape fails.
+ * 1. **A bare `>` is not this token.** `</script>` needs the tag name, so
+ *    `"<script>".repeat(32000)` — every character before a `>` — left the whole
+ *    input in scope and each opener scanned to end-of-input: 1.1 s measured.
+ * 2. **The name needs the same `\b` the pattern requires.** `</scripture>` is
+ *    not a script closer, and accepting it as one put
+ *    `"<script></scripture>".repeat(13000)` back in scope at 1.9 s.
+ * 3. **The attribute run may not contain `<`.** A closer whose `[^>]*` suffix
+ *    spans openers puts them inside the bound with no closer of their own after
+ *    them — `"</script " + "<script".repeat(35000) + ">"` measured 9 s. The
+ *    pattern's own closer is `[^<>]*` for the same reason, so the two agree.
+ *    Excluding `<` from a CLOSER is safe in a way it is not for an opener: a
+ *    closing tag takes no attributes, and a closer this rejects still has both
+ *    its tags removed by the orphan sweep.
  *
- * **Deliberately conservative when the last complete closer has no `>`:** it
- * returns 0 and the balanced pass is skipped entirely rather than searching
- * further back, since a backward search that re-scans for `>` each time is
- * itself the quadratic shape being removed. The cost is only that a block the
- * orphan sweep already handles keeps its body as inert text — no tag survives
- * either way, which is the property that matters (`LESSONS.md` RC-11).
+ * All three reported on PR #33 by chatgpt-codex-connector, rounds 1 and 2.
  *
- * Linear: the loop visits each occurrence of the tag name once, and the
- * whitespace walks are disjoint spans of the input.
+ * Linear: the outer loop visits each index once, and the whitespace and
+ * attribute walks cover disjoint spans.
  */
-function lastTagCloserEnd(text: string, lowerText: string, tag: string): number {
-    for (let from = lowerText.length; from >= 0; ) {
-        const name = lowerText.lastIndexOf(tag, from);
-        if (name === -1) return 0;
-        let j = name - 1;
-        while (j >= 0 && WHITESPACE_CHAR_PATTERN.test(text[j]!)) j--;
-        if (j >= 1 && text[j] === "/" && text[j - 1] === "<") {
-            const gt = text.indexOf(">", name);
-            return gt === -1 ? 0 : gt + 1;
-        }
-        from = name - 1;
+function lastTagCloserEnd(text: string, tag: string): number {
+    let end = 0;
+    for (let i = 0; i + 1 < text.length; i++) {
+        if (text[i] !== "<" || text[i + 1] !== "/") continue;
+        let j = i + 2;
+        while (j < text.length && WHITESPACE_CHAR_PATTERN.test(text[j]!)) j++;
+        if (!matchesTagNameAt(text, j, tag)) continue;
+        j += tag.length;
+        // The `\b` the pattern requires: `</scripture>` is not a script closer.
+        if (j < text.length && WORD_CHAR_PATTERN.test(text[j]!)) continue;
+        // The attribute run, which may not contain `<`. See the note above.
+        while (j < text.length && text[j] !== ">" && text[j] !== "<") j++;
+        if (text[j] === ">") end = j + 1;
     }
-    return 0;
+    return end;
 }
 
 /**
@@ -424,11 +426,10 @@ function lastTagCloserEnd(text: string, lowerText: string, tag: string): number 
  * end at any `>`.
  */
 function stripTagBlocks(text: string): string {
-    const lower = text.toLowerCase();
-    let out = withinClosableRegion(text, lastTagCloserEnd(text, lower, "script"), (s) =>
+    let out = withinClosableRegion(text, lastTagCloserEnd(text, "script"), (s) =>
         s.replace(SCRIPT_BLOCK_PATTERN, "")
     );
-    out = withinClosableRegion(out, lastTagCloserEnd(out, out.toLowerCase(), "style"), (s) =>
+    out = withinClosableRegion(out, lastTagCloserEnd(out, "style"), (s) =>
         s.replace(STYLE_BLOCK_PATTERN, "")
     );
     return withinClosableRegion(out, lastCloserEnd(out, ">"), (s) =>
@@ -440,36 +441,56 @@ function stripTagBlocks(text: string): string {
  * Strip HTML comments (`<!-- … -->`) from input. Exported as a separate
  * step so the caller can sequence it as part of the response pipeline.
  *
- * Balanced comments are removed whole, then any orphan `<!--` token is removed
- * on its own, leaving the text after it intact.
+ * **A single left-to-right scan, and deliberately not a regex.** Two defects
+ * killed the regex form and neither had a fix at that layer:
  *
- * **The balanced pass is bounded at the last `-->`** (see
- * {@link withinClosableRegion}). Without that bound `"<!--".repeat(65536)` —
- * every opener failing to find a closer — took **5.5 seconds** synchronously.
- * That was a regression introduced with the `|$)` arm's removal: the old
- * open-to-EOF form matched at the first opener and consumed the rest in one
- * scan, so it was fast and destructive, and replacing it addressed the
- * destruction while leaving the cost unbounded.
+ * - **Cost.** `<!--[\s\S]*?-->` scans to end-of-input from every opener that
+ *   has no closer ahead: `"<!--".repeat(65536)` took 5.5 s.
+ * - **Splicing.** Deleting a literal can form a new one out of its neighbours —
+ *   `<!<!----` loses the inner `<!--` and the surviving `<!` and `--` join into
+ *   a fresh opener. Iterating a `replace` only pushes that out by one layer per
+ *   pass, so `"<!".repeat(5) + "--".repeat(5)` still returned a live `<!--` at
+ *   the four-iteration cap. Both reported on PR #33, by chatgpt-codex-connector
+ *   and CodeQL's incomplete multi-character sanitisation rule.
  *
- * **The orphan sweep iterates**, because deleting a literal can splice a new
- * one out of its neighbours: `<!<!----` loses the inner `<!--` and the
- * surviving `<!` and `--` join into a fresh `<!--`. A single pass therefore
- * returns a live comment opener, which is what CodeQL's incomplete
- * multi-character sanitisation rule flags. Same fixed-point cap as the block
- * strip, and for the same reason — each pass is linear, so the cap bounds
- * contrived nesting rather than ordinary input.
+ * Scanning fixes both at once because it tests the OUTPUT tail rather than the
+ * input: whatever a removal splices together is re-examined on the next
+ * character, so convergence needs no iteration cap and cannot be outrun by
+ * adding layers. Cost is one pass plus, at most, one failed `-->` search — the
+ * `noCloser` latch is what makes that "at most one", since a search that fails
+ * from position i fails from every later position too.
+ *
+ * Balanced comments are removed whole. An orphan opener has its TOKEN removed
+ * and its body kept as inert text, which is the RC-11 property: no comment
+ * token survives, and no text the caller sent is deleted.
  */
 export function stripHtmlComments(input: string): string {
-    const balanced = withinClosableRegion(input, lastCloserEnd(input, "-->"), (s) =>
-        s.replace(HTML_COMMENT_PATTERN, "")
-    );
-    let curr = balanced;
-    for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
-        const next = curr.replace(HTML_COMMENT_ORPHAN_PATTERN, "");
-        if (next === curr) return next;
-        curr = next;
+    const out: string[] = [];
+    let i = 0;
+    let noCloser = false;
+    while (i < input.length) {
+        out.push(input[i]!);
+        i++;
+        const n = out.length;
+        if (
+            n < 4 ||
+            out[n - 1] !== "-" ||
+            out[n - 2] !== "-" ||
+            out[n - 3] !== "!" ||
+            out[n - 4] !== "<"
+        ) {
+            continue;
+        }
+        out.length = n - 4;
+        if (noCloser) continue;
+        const close = input.indexOf("-->", i);
+        if (close === -1) {
+            noCloser = true;
+            continue;
+        }
+        i = close + 3;
     }
-    return curr;
+    return out.join("");
 }
 
 /**

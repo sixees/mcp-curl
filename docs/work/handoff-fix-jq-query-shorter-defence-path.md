@@ -85,8 +85,10 @@ describes the real pipeline with a 3.4.0 upgrade note.
 | **Reversed:** strip inside JSON at the wrap after all | Review showed RC-8's justification is about a PERSISTED artefact and does not reach a channel with no disk artefact. Director's call. RC-10. | Keep the exemption everywhere (leaves a live beacon vector on the wrap's channels) |
 | **Reversed:** the `DEFENDED` tag, then removed | Its claim rested on a field the origin controls, and the `include_metadata` incoherence it was built to fix did not survive it either. RC-10. | Make the claim true by having `defendText` report whether the strip ran; drop the tag (chosen) |
 | Exclude `[` from the beacon label class rather than capping it | The docblock records that a 256-char cap was removed *because* padding past it defeated all four patterns. A cap is a settled reversal. **Revised during review — the claim "linear by construction" was wrong:** the exclusion bounds the LABEL, and the URL class `[^)\n]+` still scanned to end-of-input (2.9 s measured). The exclusion stays; linearity now comes from the `)` bound. Based on @chatgpt-codex-connector's feedback. | Cap the label (rejected: reinstates a known bypass); linear left-to-right scan (larger rewrite, and todo 005 will need it) |
-| ~~Bound the block scan to the region a `>` closes~~ | **Revised during review — changed to bounding at each pattern's own closing token.** `>` is not the token a `</script>` closer needs, so `"<script>".repeat(32000)` kept the whole input in scope: 1.1 s measured, and `"<script></x>".repeat(20000)` 1.7 s. Based on @chatgpt-codex-connector's feedback. The soundness argument was right and applied to the wrong token. | Exclude `<` from the attribute run (rejected: `<script foo="<">` bypasses); cap the run (same settled reversal) |
-| Bound every strip pass at its own closing token | One helper, `withinClosableRegion`, rather than a per-pattern argument — the class is *a failing attempt can scan to end-of-input*, and it recurred because each fix was aimed at an instance. Escalation-ladder rung 1: put the invariant where no pattern can forget it. | Per-pattern bounds (how it failed twice); a hand-written scanner (larger, and the bound is provably equivalent) |
+| ~~Bound the block scan to the region a `>` closes~~ | **Revised during review — changed to bounding at each pattern's own closing token.** `>` is not the token a `</script>` closer needs, so `"<script>".repeat(32000)` kept the whole input in scope: 1.1 s measured, and `"<script></x>".repeat(20000)` 1.7 s. Based on @chatgpt-codex-connector's feedback. The soundness argument was right and applied to the wrong token. | Exclude `<` from the OPENER's attribute run (rejected: `<script foo="<">` bypasses); cap the run (same settled reversal) |
+| Bound every strip pass at its own closing token | One helper, `withinClosableRegion`, rather than a per-pattern argument — the class is *a failing attempt can scan to end-of-input*, and it recurred because each fix was aimed at an instance. Escalation-ladder rung 1: put the invariant where no pattern can forget it. | Per-pattern bounds (how it failed twice); a hand-written scanner |
+| Exclude `<` from the CLOSER's attribute run (round 2) | Not the settled reversal above, which is about the OPENER: a closing tag takes no attributes, so nothing legitimate is lost, and a closer that swallows `<` swallows the openers that follow it — which is what kept `"</script " + "<script".repeat(35000) + \">\"` quadratic at 9 s. The pattern and the bound now agree on it. | Leave the pattern and special-case the bound (rejected: two spellings of one rule, and the pattern is the one that decides) |
+| Replace the comment strip with a scanner, not a third regex bound (round 2) | Escalation-ladder rung 3 — the layer could not answer the question. An iterated `replace` exposes exactly one splice layer per pass, so no iteration cap converges: five layers beat a cap of four. A scan testing the OUTPUT tail converges by construction and removes the ReDoS class from that path entirely. Both comment regexes deleted. | Raise the iteration cap (rejected: the attacker picks the depth); loop to a fixed point uncapped (rejected: O(n²) on `\"<!\".repeat(k) + \"--\".repeat(k)`) |
 | Neutralise an orphan opener instead of deleting to EOF | CodeQL's rule is about the residual TOKEN, which removal satisfies. Deleting the caller's payload was never the requirement. | Keep the arm and add a byte-count notice (see below) |
 | **Declined:** the `[mcp-curl] N bytes removed` notice | You approved it alongside the P1-B fix, and its justification was the *silent unbounded* loss. That loss is gone — every remaining removal is a bounded substitution that announces itself (`[link removed]`) or leaves the body visible. A byte counter on every stripped response would be noise. Flagging rather than burying, since you asked for it. | Add it anyway |
 | **Reverted:** the RC-3 scratch-copy decode | Built it; the commit rule cannot serve both channels. See RC-12 and todo 004. The half that is unambiguous — never entity-decode a JSON document — did land. | Ship the naive version (loses the detector and the sanitiser on masked payloads) |
@@ -313,10 +315,62 @@ per-pattern. Instances outside the diff: none; the sweep is the whole file.
 
 ### Outstanding Todos
 
-No new todos filed this round. 0 filed, 0 open against this PR.
+**0 filed this round.** No finding in either round met the bar for a deferral —
+the only out-of-scope-P1 route — and no decline was converted into one.
+
+**4 open in `docs/todos/`, none claimed by this PR.** They are the pre-existing
+backlog listed under the earlier *Outstanding Todos* table above (002, 003, 004,
+005); none carries `pr: "#33"` frontmatter, so none blocks this merge. The two
+numbers differ because they count different things, and an earlier version of
+this line gave only the first — which read as a claim that the backlog was empty.
 
 ### Files Modified
 
 `src/lib/response/strip-blocks.ts`, `src/lib/response/processor.ts`,
 `src/lib/response/strip-blocks.test.ts`, `src/lib.test.ts`,
 `ARCHITECTURE.md`, `CHANGELOG.md`, and this handoff.
+
+## Review Comments Addressed — 2026-09-02 (round 2, PR #33)
+
+**Every code finding this round was in code round 1 added.** That is the
+expected shape of a second round and it is also the measurement that mattered:
+round 1's bound was correct in argument and wrong in three of its details, and
+only the third pass over the same class removed it.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Keep case-folded search indices aligned (P1) | codex | Fix needed | `text.toLowerCase()` can change UTF-16 length (U+0130 → two units), so offsets taken from the folded copy addressed different characters. Replaced with an in-place ASCII fold, `matchesTagNameAt`. This one was a **correctness** bug, not only a cost one: a single `İ` before a block silently skipped the balanced pass |
+| Reject non-boundary tag names as closers (P1) | codex | Fix needed | `lastTagCloserEnd` now requires the same `\b` the pattern does, so `</scripture>` is not a closer. 1.9 s → 7 ms |
+| Exclude openers nested inside the bounding closer (P1) | codex | Fix needed | The closer's attribute run is `[^<>]*` in both the pattern and the bound. A closer that swallows `<` swallows openers, and those have no closer after them. 9 s → 1.8 ms |
+| Remove every spliced comment opener (P2) | codex | Fix needed | The iterated `replace` exposed one layer per pass, so five layers beat the four-pass cap. `stripHtmlComments` is now a single left-to-right scan testing the OUTPUT tail; convergence no longer depends on a cap. Both comment regexes deleted |
+| Incomplete multi-character sanitization ×1 (`<!--`) | CodeQL | Fix needed | Same defect, fixed by the same scanner |
+| Remove the unused `decodeEntities` binding | coderabbitai | Fix needed | Dead since the strip branch derived its own. Two spellings of one fact |
+| Update the performance acceptance criterion | coderabbitai | Documentation | `docs/todos/005` cited "five floods inside 2 s"; both numbers had changed. Replaced with a pointer to the test file plus the rule that produced the drift |
+| Correct the open-todo count | coderabbitai | Documentation | Round 1's "0 open against this PR" sat above a table listing four. Both numbers now stated, with what each counts |
+
+Four findings, one class again — *the bound does not match the pattern it is
+bounding*. Fixed at the one helper rather than per-pattern.
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Incomplete multi-character sanitization ×4 on `stripTagBlocks` | CodeQL | P3 | In scope | Same disposition as round 1 and for the same reason: `stripTagBlocks` is only reachable from `stripBlocksFixedPoint`, which iterates to a fixed point, so the splice CodeQL describes is removed by the caller. The rule cannot see across the call. Asserted directly by "leaves no script/style TOKEN behind on any unclosed shape". **The equivalent alert on the comment path was NOT declined either round** — that path genuinely lacked the loop, and now needs none |
+
+### Escalated — unchanged from round 1, now raised by both reviewers
+
+| Comment | Reviewer | Severity | Why it is not mine to close |
+|---|---|---|---|
+| Reapply `max_result_size` after the outer defence pass | codex (round 1) + coderabbitai (round 2) | P2, in scope, **not contained** | Two reviewers independently, and coderabbitai found it by reading round 1's own handoff entry. Still the same three options: plumb the cap into the wrap, amend invariant 14, or accept a bounded overshoot and say so. Unchanged and still yours |
+
+### Outstanding Todos
+
+**0 filed this round**, same as round 1. The four in `docs/todos/` are the
+pre-existing backlog and none carries `pr: "#33"`.
+
+### Files Modified
+
+`src/lib/response/strip-blocks.ts`, `src/lib/response/processor.ts`,
+`src/lib/response/strip-blocks.test.ts`, `docs/todos/005-…`, and this handoff.
