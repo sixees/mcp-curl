@@ -247,6 +247,24 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
     // below are the ones that actually distinguish a bounded scan from an
     // unbounded one: each floods the input with FAILING match attempts.
     //
+    // **Depth is the whole test, and two review rounds of this guard did not
+    // have it.** Removing a tag can splice a new one out of its neighbours, and
+    // a `replace` exposes exactly one layer per pass — so the four-iteration
+    // fixed point moved the surviving depth to four rather than removing the
+    // class. CodeQL reported it on both rounds and it was declined both times
+    // on the grounds that the loop handled it; coderabbitai showed the loop's
+    // CAP was the defect. The sweep is now a scan over the output tail, which
+    // converges without iterating.
+    it.each([
+        ["script, depth 4 — beat the four-pass cap", "<scr".repeat(4) + "<script>" + "ipt>".repeat(4)],
+        ["script, depth 5", "<scr".repeat(5) + "<script>" + "ipt>".repeat(5)],
+        ["script, depth 40", "<scr".repeat(40) + "<script>" + "ipt>".repeat(40)],
+        ["style, depth 5", "<sty".repeat(5) + "<style>" + "le>".repeat(5)],
+        ["style, depth 40", "<sty".repeat(40) + "<style>" + "le>".repeat(40)],
+    ])("leaves no script/style token: %s", (_label, input) => {
+        expect(stripBlocksFixedPoint(input)).not.toMatch(/<\/?\s*(?:script|style)\b/i);
+    });
+
     it("keeps case-fold offsets aligned with the input (round 2)", () => {
         // U+0130 lowercases to two UTF-16 units, so an index taken from
         // `text.toLowerCase()` addresses a different character in `text`. That
@@ -287,6 +305,9 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
         // run swallows the openers that follow it.
         ["non-boundary closer name", "<script></scripture>".repeat(13000)],
         ["openers nested inside the bounding closer", "</script " + "<script".repeat(35000) + ">"],
+        // Round 3: the scan must not trade the cap for a quadratic.
+        ["deep script splice", "<scr".repeat(30000) + "<script>" + "ipt>".repeat(30000)],
+        ["deep style splice", "<sty".repeat(30000) + "<style>" + "le>".repeat(30000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         const start = Date.now();
         stripBlocksFixedPoint(body);

@@ -175,6 +175,15 @@ what a violation looks like, it does not belong on this list.
     caught them at 1.1 s and 2.9 s for a 256 KB body. Name the token the
     pattern must consume, and bound on that one.
 
+    **A removal can splice a new token out of its neighbours**, so a strip that
+    deletes is not finished when its pattern stops matching. Iterating a
+    `replace` does not close this: each pass exposes exactly one layer, so a
+    capped fixed point only moves the surviving depth to the cap, and the
+    attacker picks the depth. Both strips here therefore SCAN, testing the
+    OUTPUT tail after every character — convergence by construction, no
+    iteration. This was reported by CodeQL on two consecutive review rounds and
+    declined both times on the strength of the loop; the cap was the defect.
+
     **A flood test is a guard only if it omits the token the pattern needs.**
     Two generations of guard here fed inputs the then-current bound already
     handled, so both passed while the defect was live. `REDOS_BUDGET_MS` in

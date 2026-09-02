@@ -1441,8 +1441,6 @@ var STRIP_PATH_MAX_BYTES = 256 * 1024;
 var STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^<>]*>/gi;
 var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^<>]*>/gi;
-var SCRIPT_ORPHAN_TAG_PATTERN = /<\/?\s*script\b[^>]*>/gi;
-var STYLE_ORPHAN_TAG_PATTERN = /<\/?\s*style\b[^>]*>/gi;
 var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
 var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
 var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
@@ -1512,11 +1510,50 @@ function stripTagBlocks(text) {
     lastTagCloserEnd(out, "style"),
     (s) => s.replace(STYLE_BLOCK_PATTERN, "")
   );
-  return withinClosableRegion(
-    out,
-    lastCloserEnd(out, ">"),
-    (s) => s.replace(SCRIPT_ORPHAN_TAG_PATTERN, "").replace(STYLE_ORPHAN_TAG_PATTERN, "")
-  );
+  return stripTagTokens(out);
+}
+var STRIPPED_TAG_NAMES = ["script", "style"];
+var STRIPPED_TAG_LAST_CHARS = new Set(
+  STRIPPED_TAG_NAMES.map((n) => n.charCodeAt(n.length - 1))
+);
+function tagTokenStart(out) {
+  const last = out[out.length - 1].charCodeAt(0) | 32;
+  if (!STRIPPED_TAG_LAST_CHARS.has(last)) return -1;
+  for (const name of STRIPPED_TAG_NAMES) {
+    const k = out.length - name.length;
+    if (k < 1) continue;
+    let matched = true;
+    for (let m = 0; m < name.length; m++) {
+      if ((out[k + m].charCodeAt(0) | 32) !== name.charCodeAt(m)) {
+        matched = false;
+        break;
+      }
+    }
+    if (!matched) continue;
+    let j = k - 1;
+    while (j >= 0 && WHITESPACE_CHAR_PATTERN.test(out[j])) j--;
+    if (j >= 0 && out[j] === "/") j--;
+    if (j >= 0 && out[j] === "<") return j;
+  }
+  return -1;
+}
+function stripTagTokens(text) {
+  const out = [];
+  let i = 0;
+  let noGt = false;
+  while (i < text.length) {
+    out.push(text[i]);
+    i++;
+    const start = tagTokenStart(out);
+    if (start === -1) continue;
+    if (i < text.length && WORD_CHAR_PATTERN.test(text[i])) continue;
+    out.length = start;
+    if (noGt) continue;
+    const gt = text.indexOf(">", i);
+    if (gt === -1) noGt = true;
+    else i = gt + 1;
+  }
+  return out.join("");
 }
 function stripHtmlComments(input) {
   const out = [];

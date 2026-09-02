@@ -373,4 +373,36 @@ pre-existing backlog and none carries `pr: "#33"`.
 ### Files Modified
 
 `src/lib/response/strip-blocks.ts`, `src/lib/response/processor.ts`,
-`src/lib/response/strip-blocks.test.ts`, `docs/todos/005-…`, and this handoff.
+`src/lib/response/strip-blocks.test.ts`,
+`docs/todos/005-bracketed-label-defeats-beacon-strip.md`, and this handoff.
+
+## Review Comments Addressed — 2026-09-02 (round 3, PR #33)
+
+**This round exists because round 2's tail read showed a decline was wrong.**
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| The script/style orphan sweep still depends on the iteration cap | coderabbitai | Fix needed | Replaced with `stripTagTokens`, an output-tail scan mirroring `stripHtmlComments`. Measured before: `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)` returned a live `<script>` — it broke at depth **4**, one worse than reported. No survival now at any depth to 500, for either tag |
+| Incomplete multi-character sanitization (`<script`) | CodeQL | Fix needed | Same defect. **Declined by me on the two previous rounds**; see RC-13 |
+| Use the complete file path | coderabbitai | Documentation | `docs/todos/005-…` expanded in the round-2 Files Modified list |
+
+### Declined Findings
+
+None this round.
+
+### Decisions Revised
+
+| Original | New approach | Reason | Reviewer |
+|---|---|---|---|
+| CodeQL's `stripTagBlocks` alerts are false positives — the fixed-point loop handles the splice | The loop's CAP was the defect; the sweep is now a scan that converges without iterating | True below the cap and false above it. Declined in rounds 1 and 2, four alerts each time, while the identical defect on the comment path was being fixed one commit earlier. RC-13 | coderabbitai, CodeQL |
+
+### Outstanding Todos
+
+0 filed this round. The four in `docs/todos/` remain pre-existing backlog.
+
+### Files Modified
+
+`src/lib/response/strip-blocks.ts`, `src/lib/response/strip-blocks.test.ts`,
+`ARCHITECTURE.md`, `CHANGELOG.md`, `LESSONS.md`, and this handoff.

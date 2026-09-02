@@ -551,3 +551,33 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   as "costs nothing either way" is a claim, and mine was wrong.** I relayed a
   reviewer's framing to the director without building it first. Prototype the
   option you are about to recommend, or say plainly that you have not.
+
+### RC-13 — A finding was declined twice on a claim that was true only below a cap
+
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+
+**Class:** K-11, K-1 — *class-id:* `fail-open-default`
+
+- **The plan said:** CodeQL's "incomplete multi-character sanitization" alerts on
+  `stripTagBlocks` were false positives, because `stripBlocksFixedPoint` re-runs
+  the pass until the output stops changing. That reply was written in review
+  round 1 and repeated verbatim in round 2, against four alerts each time.
+- **Reality was:** the loop is capped at four iterations, and a splice exposes
+  exactly one layer per pass. `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)`
+  returned a live `<script>` — the cap does not remove the class, it *sets the
+  surviving depth*, and the attacker picks the depth. The decline was true below
+  the cap and false above it, which is why re-reading the code confirmed it twice.
+- **What changed:** both the tag strip and the comment strip are single
+  left-to-right scans testing the OUTPUT tail after every character, so a token
+  spliced out of a removal's neighbours is examined on the next push and
+  convergence needs no iteration. Depth guards at 4, 5 and 40 for both tags,
+  each verified to fail with the scan reverted to a `replace`.
+- **What this costs next time:** **the round-2 fix for the comment path was the
+  same defect, and it was applied one commit before the block-path decline was
+  repeated.** Codex reported "five splice layers beat the four-pass cap" for
+  `<!--`; that was accepted and fixed. CodeQL reported the identical shape for
+  `<script>` in the same round and was declined. One reviewer's phrasing was
+  believed and another's was not, for the same defect, in the same commit —
+  K-11, the mirror side of a two-sided claim. **When a fix is applied to one
+  member of a set, re-open every finding already declined about the other
+  members**, because the decline was written before the fix existed.

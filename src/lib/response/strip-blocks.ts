@@ -128,19 +128,6 @@ const STYLE_BLOCK_PATTERN =
     /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^<>]*>/gi;
 
 /**
- * Orphan `<script>` / `<style>` tags — an opener with no closer, or a closer
- * with no opener. Removing the TAG leaves its body as inert text instead of
- * deleting to end of input.
- *
- * Both halves are required: an orphan opener is what a renderer would honour,
- * and an orphan closer is the residue CodeQL's incomplete-sanitisation rule
- * flags. Between them no `<script` / `</script` / `<style` / `</style` token
- * survives a pass, which is the property the old `|$)` arm was carrying.
- */
-const SCRIPT_ORPHAN_TAG_PATTERN = /<\/?\s*script\b[^>]*>/gi;
-const STYLE_ORPHAN_TAG_PATTERN = /<\/?\s*style\b[^>]*>/gi;
-
-/**
  * Markdown image / link beacon patterns. Both:
  *   - Use `[^\]\[\n]*` (unbounded) for the alt/label portion. Neither `]`
  *     nor `[` may appear in a label. `]` is the label's terminator; `[` is
@@ -432,9 +419,93 @@ function stripTagBlocks(text: string): string {
     out = withinClosableRegion(out, lastTagCloserEnd(out, "style"), (s) =>
         s.replace(STYLE_BLOCK_PATTERN, "")
     );
-    return withinClosableRegion(out, lastCloserEnd(out, ">"), (s) =>
-        s.replace(SCRIPT_ORPHAN_TAG_PATTERN, "").replace(STYLE_ORPHAN_TAG_PATTERN, "")
-    );
+    return stripTagTokens(out);
+}
+
+/** Tag names this file neutralises. The set and its handlers are one site. */
+const STRIPPED_TAG_NAMES = ["script", "style"] as const;
+
+/**
+ * Last character of each name in {@link STRIPPED_TAG_NAMES}, as the fold used
+ * for comparison. Cheap rejection: {@link tagTokenStart} runs after every
+ * character, and only a `t` or an `e` can complete one of these names.
+ */
+const STRIPPED_TAG_LAST_CHARS = new Set(
+    STRIPPED_TAG_NAMES.map((n) => n.charCodeAt(n.length - 1))
+);
+
+/**
+ * If `out` ends with a `<tag` / `</tag` token, the index where it starts;
+ * otherwise -1. Whitespace after `</` is allowed, matching the closer form the
+ * block patterns accept.
+ */
+function tagTokenStart(out: string[]): number {
+    const last = out[out.length - 1]!.charCodeAt(0) | 0x20;
+    if (!STRIPPED_TAG_LAST_CHARS.has(last)) return -1;
+    for (const name of STRIPPED_TAG_NAMES) {
+        const k = out.length - name.length;
+        if (k < 1) continue;
+        let matched = true;
+        for (let m = 0; m < name.length; m++) {
+            if ((out[k + m]!.charCodeAt(0) | 0x20) !== name.charCodeAt(m)) {
+                matched = false;
+                break;
+            }
+        }
+        if (!matched) continue;
+        let j = k - 1;
+        while (j >= 0 && WHITESPACE_CHAR_PATTERN.test(out[j]!)) j--;
+        if (j >= 0 && out[j] === "/") j--;
+        if (j >= 0 && out[j] === "<") return j;
+    }
+    return -1;
+}
+
+/**
+ * Remove every `<script>` / `<style>` / `</script>` / `</style>` TAG, keeping
+ * whatever sat between them as inert text (`LESSONS.md` RC-11).
+ *
+ * **A scan rather than a `replace`, for the reason the comment strip is one.**
+ * Deleting a tag can splice a new one out of its neighbours — removing the
+ * inner tag from `<scr<script>ipt>` rejoins `<scr` and `ipt>` into `<script>` —
+ * and a `replace` exposes exactly ONE layer per pass. Wrapping it in
+ * `stripBlocksFixedPoint`'s four-iteration loop therefore does not converge: it
+ * moves the surviving depth to four, and an attacker picks the depth.
+ * `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)` returned a live
+ * `<script>`.
+ *
+ * **This was declined twice before it was fixed.** CodeQL reported it as
+ * incomplete multi-character sanitisation on both of the first two review
+ * rounds, and both times the reply was that the fixed-point loop handles the
+ * splice — true only below the cap, which is the part the rule was pointing at.
+ * The comment path had the identical defect fixed one commit earlier, so the
+ * decline survived a round in which its mirror image was being repaired.
+ * Reported as a class by coderabbitai on PR #33.
+ *
+ * Scanning removes the cap from the argument: the token test runs against the
+ * OUTPUT tail after every character, so anything a removal splices together is
+ * examined on the next push and convergence needs no iteration at all. One
+ * pass, and at most one failed `>` search — the `noGt` latch makes it at most
+ * one, since a search failing from `i` fails from every later position.
+ */
+function stripTagTokens(text: string): string {
+    const out: string[] = [];
+    let i = 0;
+    let noGt = false;
+    while (i < text.length) {
+        out.push(text[i]!);
+        i++;
+        const start = tagTokenStart(out);
+        if (start === -1) continue;
+        // The `\b` the block patterns require: `<scriptlike>` is not a tag.
+        if (i < text.length && WORD_CHAR_PATTERN.test(text[i]!)) continue;
+        out.length = start;
+        if (noGt) continue;
+        const gt = text.indexOf(">", i);
+        if (gt === -1) noGt = true;
+        else i = gt + 1;
+    }
+    return out.join("");
 }
 
 /**

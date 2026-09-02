@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `<script>` or `<style>` tag no longer survives a nested-splice payload.** Removing a tag can
+  rejoin its neighbours into a new one — `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)` returned
+  a live `<script>` — and iterating the strip exposes only one layer per pass, so the four-iteration
+  fixed point moved the surviving depth to four rather than removing the class. Both the tag strip
+  and the comment strip are now single left-to-right scans that test the output tail, which
+  converges without iterating. Reported by CodeQL on two rounds and by CodeRabbit as a class.
 - **An unclosed `<!--`, `<script>` or `<style>` no longer deletes the rest of the payload.** The
   open-to-end-of-input arm replaced with an empty string, so one unclosed opener truncated
   everything after it — silently, with no marker, no `isError` and no observable length delta.
