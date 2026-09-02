@@ -289,8 +289,30 @@ interface DefendTextOptions {
      * the content type is unknown the strictest grammar applies, so every strip
      * stage runs — the opposite of the permissive default, which let a remote
      * disable beacon stripping by making the metadata unreadable.
+     *
+     * **Required, not optional, and that is the whole point.** Both fields that
+     * select the grammar are absent-able, and absence resolved to the
+     * PERMISSIVE arm — so `defendText(text, { hostname })` compiled, looked
+     * defended, and ran Step 2 alone. Internal callers all passed one; making
+     * it required is what stops a consumer of the published export from
+     * omitting it, since 3.4.0 puts this type on the public API. Pass `false`
+     * when you know the content type (including knowing the origin sent none),
+     * `true` when you could not determine it.
      */
-    contentTypeUndetermined?: boolean;
+    contentTypeUndetermined: boolean;
+    /**
+     * Whether a text that parses as a JSON document is exempt from the markup
+     * and markdown strip stages. Defaults true.
+     *
+     * **The exemption is about the artefact, not the model.** `processResponse`
+     * writes post-strip content to disk and `jq_query` reads it back, so
+     * rewriting `<script>` or `[a](b)` inside a JSON string value there would
+     * silently alter a persisted document. That argument is the whole basis for
+     * the exemption — and it does not reach the post-processor wrap, whose
+     * channels have no disk artefact: a custom tool's return goes straight to
+     * the model. The wrap therefore passes `false`. See `LESSONS.md` RC-10.
+     */
+    excludeJsonDocuments?: boolean;
     /**
      * Whether to decode numeric HTML entities during the block strip.
      *

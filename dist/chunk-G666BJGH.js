@@ -23,7 +23,6 @@ import {
   getErrorMessage,
   getOrCreateTempDir,
   isValidSessionId,
-  markDefended,
   parsePort,
   registerCurlExecuteTool,
   resolveBaseUrl,
@@ -39,7 +38,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-SXWAFKTG.js";
+} from "./chunk-KUZKRT34.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -160,8 +159,8 @@ Examples:
     openWorldHint: false
   }
 };
-function defendedResult(text) {
-  return markDefended({ content: [{ type: "text", text }] });
+function successResult(text) {
+  return { content: [{ type: "text", text }] };
 }
 async function executeJqQuery(params, _extra) {
   try {
@@ -172,6 +171,7 @@ async function executeJqQuery(params, _extra) {
     const filtered = applyJqFilter(content, params.jq_filter);
     const sanitized = defendText(filtered, {
       contentType: JSON_MIME,
+      contentTypeUndetermined: false,
       hostname: basename(validatedFilePath)
     });
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
@@ -184,9 +184,9 @@ async function executeJqQuery(params, _extra) {
       const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
       const filepath = join(targetDir, filename);
       await writeFile(filepath, sanitized, { encoding: "utf-8", mode: 384 });
-      return defendedResult(`Result (${contentBytes} bytes) saved to: ${filepath}`);
+      return successResult(`Result (${contentBytes} bytes) saved to: ${filepath}`);
     }
-    return defendedResult(sanitized);
+    return successResult(sanitized);
   } catch (error) {
     const errorMessage = getErrorMessage(error);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";

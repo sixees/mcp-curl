@@ -1439,13 +1439,16 @@ var IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
 var LINK_REMOVED_PLACEHOLDER = "[link removed]";
 var STRIP_PATH_MAX_BYTES = 256 * 1024;
 var STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
-var HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
-var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?(?:<\/\s*script\b[^>]*>|$)/gi;
-var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?(?:<\/\s*style\b[^>]*>|$)/gi;
-var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
-var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
-var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
-var MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN = /(?<!!)\[[^\]\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+var HTML_COMMENT_ORPHAN_PATTERN = /<!--/g;
+var SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>[\s\S]*?<\/\s*script\b[^>]*>/gi;
+var STYLE_BLOCK_PATTERN = /<style\b[^>]*>[\s\S]*?<\/\s*style\b[^>]*>/gi;
+var SCRIPT_ORPHAN_TAG_PATTERN = /<\/?\s*script\b[^>]*>/gi;
+var STYLE_ORPHAN_TAG_PATTERN = /<\/?\s*style\b[^>]*>/gi;
+var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
+var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
+var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+var MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN = /(?<!!)\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
 var MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN = /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
 function decodeNumericHtmlEntities(input) {
   return input.replace(/&#(x[0-9a-f]+|\d+);?/gi, (_, body) => {
@@ -1462,14 +1465,20 @@ function stripBlocksFixedPoint(input, options = {}) {
   let curr = input;
   for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
     const decoded = decodeEntities ? decodeNumericHtmlEntities(curr) : curr;
-    const next = decoded.replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "");
+    const next = stripTagBlocks(decoded);
     if (next === curr) return next;
     curr = next;
   }
   return curr;
 }
+function stripTagBlocks(text) {
+  const lastGt = text.lastIndexOf(">");
+  if (lastGt === -1) return text;
+  const head = text.slice(0, lastGt + 1).replace(SCRIPT_BLOCK_PATTERN, "").replace(STYLE_BLOCK_PATTERN, "").replace(SCRIPT_ORPHAN_TAG_PATTERN, "").replace(STYLE_ORPHAN_TAG_PATTERN, "");
+  return head + text.slice(lastGt + 1);
+}
 function stripHtmlComments(input) {
-  return input.replace(HTML_COMMENT_PATTERN, "");
+  return input.replace(HTML_COMMENT_PATTERN, "").replace(HTML_COMMENT_ORPHAN_PATTERN, "");
 }
 function stripMarkdownBeacons(input) {
   return input.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "");
@@ -1827,7 +1836,9 @@ function isDefinitelyJson(text) {
 function defendText(text, options) {
   let content = text;
   const { hostname, contentTypeUndetermined = false, decodeEntities = true } = options;
-  const looksLikeJsonBody = isDefinitelyJson(content);
+  const excludeJsonDocuments = options.excludeJsonDocuments ?? true;
+  const jsonExemptionCouldApply = excludeJsonDocuments && (contentTypeUndetermined || isSniffableContentType(options.contentType));
+  const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);
   const strictestGrammar = contentTypeUndetermined && !looksLikeJsonBody;
   const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
   const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
@@ -1836,8 +1847,9 @@ function defendText(text, options) {
   const sniffedAsMarkup = !exceedsStripCap && !strictestGrammar && !looksLikeJsonBody && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
   const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
   if (needsStripPath && !exceedsStripCap) {
+    const decodeEntities2 = (options.decodeEntities ?? true) && !(looksLikeJsonBody || isDefinitelyJson(content));
     content = stripHtmlComments(content);
-    content = stripBlocksFixedPoint(content, { decodeEntities });
+    content = stripBlocksFixedPoint(content, { decodeEntities: decodeEntities2 });
     if (isMarkdown) {
       content = stripMarkdownBeacons(content);
     }
@@ -1858,7 +1870,7 @@ async function processResponse(response, options) {
   const hostname = safeHostname(options.url);
   let content = defendText(response, {
     contentType: options.contentType,
-    contentTypeUndetermined: options.contentTypeUndetermined,
+    contentTypeUndetermined: options.contentTypeUndetermined ?? false,
     hostname
   });
   if (options.jqFilter) {
@@ -1916,6 +1928,7 @@ function extractHeaderChannel(bodyBytes, headerBytes, url, maxResultSize) {
   }
   const defended = defendText(split.headerText, {
     contentType: MARKDOWN_MIME,
+    contentTypeUndetermined: false,
     hostname: safeHostname(url),
     decodeEntities: false
   });
@@ -1989,25 +2002,21 @@ ${stdout}` : stdout);
 // src/lib/response/post-processor.ts
 import { randomUUID } from "crypto";
 var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
-var DEFENDED = /* @__PURE__ */ Symbol("mcp-curl.defended");
-function markDefended(result) {
-  return setTag(result, DEFENDED);
-}
-function hasOwnTag(result, key) {
+function hasOwnWrappedTag(result) {
   try {
-    return Object.hasOwn(result, key) && result[key] === true;
+    return Object.hasOwn(result, WRAPPED) && result[WRAPPED] === true;
   } catch {
     return false;
   }
 }
 function isWrappedResult(result) {
   if (result === null || typeof result !== "object") return false;
-  return hasOwnTag(result, WRAPPED);
+  return hasOwnWrappedTag(result);
 }
-function setTag(result, key) {
-  if (hasOwnTag(result, key)) return result;
+function tag(result) {
+  if (hasOwnWrappedTag(result)) return result;
   try {
-    Object.defineProperty(result, key, {
+    Object.defineProperty(result, WRAPPED, {
       value: true,
       enumerable: false,
       configurable: true,
@@ -2017,7 +2026,7 @@ function setTag(result, key) {
   }
   return result;
 }
-function processTextPart(part, hostname, requestId, alreadyDefended) {
+function processTextPart(part, hostname, requestId) {
   if (part === null || typeof part !== "object") return part;
   const contentPart = part;
   let type;
@@ -2029,9 +2038,10 @@ function processTextPart(part, hostname, requestId, alreadyDefended) {
     return part;
   }
   if (type !== "text" || typeof text !== "string") return part;
-  const defended = alreadyDefended ? sanitizeAndDetect(text, hostname) : defendText(text, {
+  const defended = defendText(text, {
     hostname,
     contentTypeUndetermined: true,
+    excludeJsonDocuments: false,
     decodeEntities: false
   });
   const finalText = requestId ? applySpotlighting(defended, requestId) : defended;
@@ -2046,16 +2056,15 @@ function createWrapper(config) {
     if (result === null || typeof result !== "object") return result;
     if (isWrappedResult(result)) return result;
     try {
-      if (!Array.isArray(result.content)) return setTag(result, WRAPPED);
+      if (!Array.isArray(result.content)) return tag(result);
       const requestId = config.enableSpotlighting && !result.isError ? randomUUID() : void 0;
-      const alreadyDefended = hasOwnTag(result, DEFENDED);
       const newContent = result.content.map(
-        (part) => processTextPart(part, hostname, requestId, alreadyDefended)
+        (part) => processTextPart(part, hostname, requestId)
       );
-      return setTag({ ...result, content: newContent }, WRAPPED);
+      return tag({ ...result, content: newContent });
     } catch (err) {
       logWrapError(hostname, err);
-      return setTag(result, WRAPPED);
+      return tag(result);
     }
   };
 }
@@ -2433,6 +2442,7 @@ async function executeCurlRequest(params, extra = {}) {
     });
     const defendedStderr = result.stderr ? defendText(result.stderr, {
       contentType: MARKDOWN_MIME,
+      contentTypeUndetermined: false,
       hostname: safeHostname(params.url),
       decodeEntities: false
     }) : result.stderr;
@@ -2457,14 +2467,14 @@ async function executeCurlRequest(params, extra = {}) {
         undetermined: params.include_headers && headersUndetermined
       }
     );
-    return markDefended({
+    return {
       content: [
         {
           type: "text",
           text: output
         }
       ]
-    });
+    };
   } catch (error) {
     const rawMessage = getErrorMessage(error);
     const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
@@ -2532,7 +2542,6 @@ export {
   applyJqFilter,
   createSafeFilenameBase,
   defendText,
-  markDefended,
   createWrapper,
   CURL_EXECUTE_TOOL_META,
   executeCurlRequest,
