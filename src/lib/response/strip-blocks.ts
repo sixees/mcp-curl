@@ -408,9 +408,16 @@ function lastTagCloserEnd(text: string, tag: string): number {
 /**
  * One pass of the script/style strip.
  *
- * Three separately-bounded stages, because their closing tokens differ: the
- * balanced patterns end at `</script…>` / `</style…>`, while the orphan sweeps
- * end at any `>`.
+ * Two balanced `replace` passes, each bounded at its own closing token, then
+ * {@link stripTagTokens} over the whole string.
+ *
+ * **The order is what makes the balanced passes safe.** They can splice — a
+ * removal rejoins its neighbours, so `<scr<script>x</script>ipt>` becomes
+ * `<script>` — and the scan that follows is unconditional and covers the whole
+ * string, so any token they leave behind is removed. CodeQL flags both replaces
+ * for that residue; the decline stands on this ordering, and NOT on the
+ * iteration cap that made the same decline wrong twice (`LESSONS.md` RC-13).
+ * A seeded fuzz over the token alphabet asserts the property directly.
  */
 function stripTagBlocks(text: string): string {
     let out = withinClosableRegion(text, lastTagCloserEnd(text, "script"), (s) =>

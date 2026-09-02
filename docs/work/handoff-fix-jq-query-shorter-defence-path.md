@@ -388,9 +388,21 @@ pre-existing backlog and none carries `pr: "#33"`.
 | Incomplete multi-character sanitization (`<script`) | CodeQL | Fix needed | Same defect. **Declined by me on the two previous rounds**; see RC-13 |
 | Use the complete file path | coderabbitai | Documentation | `docs/todos/005-…` expanded in the round-2 Files Modified list |
 
+| Two remaining CodeQL alerts on the balanced replaces | CodeQL | — | Declined, with evidence — see below |
+
 ### Declined Findings
 
-None this round.
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Incomplete multi-character sanitization on `SCRIPT_BLOCK_PATTERN` / `STYLE_BLOCK_PATTERN` (lines 417, 420) | CodeQL | P3 | In scope | The balanced passes CAN splice, and this decline does not deny that. They are followed **unconditionally**, in the same function, by `stripTagTokens` over the whole string — so the residue is removed by an ordering property, not by an iteration cap. That distinction is exactly what RC-13 records getting wrong, so this one is backed by measurement rather than by reading: a seeded fragment fuzz plus explicit balanced-splice cases at depths 1–40, both of which fail if the scan is removed |
+
+**And the first version of that fuzz was itself toothless.** It drew single
+characters from the token alphabet, so spelling `<script` by chance was about
+one in 4e8 per position and it passed with the fix removed. A teeth probe caught
+it; it now draws tag halves and splice fragments, and fails against both the
+no-scan mutation and the pre-round-3 `replace`. **That is the fourth guard on
+this branch whose name was a claim it could not fail** — the pattern is now
+named in `ARCHITECTURE.md` invariant 15.
 
 ### Decisions Revised
 
@@ -406,3 +418,9 @@ None this round.
 
 `src/lib/response/strip-blocks.ts`, `src/lib/response/strip-blocks.test.ts`,
 `ARCHITECTURE.md`, `CHANGELOG.md`, `LESSONS.md`, and this handoff.
+
+### Round 3 outcome
+
+**codex: "Didn't find any major issues"** on `c0878c7` — the first clean
+reviewer return on this branch. coderabbitai raised no new inline findings.
+The only new entries were the two CodeQL alerts declined above.

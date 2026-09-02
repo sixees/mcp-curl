@@ -265,6 +265,49 @@ describe("stripBlocksFixedPoint — balanced + open-to-EOF", () => {
         expect(stripBlocksFixedPoint(input)).not.toMatch(/<\/?\s*(?:script|style)\b/i);
     });
 
+    // **The guard RC-13 says should have existed.** Every other check here
+    // asserts a shape someone thought of, and the defect was always the shape
+    // nobody thought of. This asserts the PROPERTY — no script/style token
+    // survives, whatever the input.
+    //
+    // **It samples FRAGMENTS, not characters, and that is the whole design.**
+    // A first version drew single characters from the token alphabet and passed
+    // with the fix removed: spelling `<script` by chance is about one in 4e8 per
+    // position, so it never generated the thing it was asserting about. Drawing
+    // tag halves and splice pieces makes tokens and splices the common case.
+    // Caught by a teeth probe, which is the only reason it is not still here
+    // looking like coverage.
+    //
+    // Seeded, so a failure is reproducible and this cannot flake.
+    it("leaves no script/style token for any input over the token fragments", () => {
+        const fragments = [
+            "<scr", "ipt>", "<sty", "le>", "<script", "</script", "<style", "</style",
+            "<", ">", "</", "/", " ", "\n", "a", "!", "--", "script", "style", "<b>",
+        ];
+        let seed = 20260902;
+        const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+        const survived: string[] = [];
+        for (let n = 0; n < 20000; n++) {
+            let input = "";
+            const parts = 2 + Math.floor(rnd() * 12);
+            for (let k = 0; k < parts; k++) input += fragments[Math.floor(rnd() * fragments.length)];
+            if (/<\/?\s*(?:script|style)\b/i.test(stripBlocksFixedPoint(input))) survived.push(input);
+        }
+        expect(survived.slice(0, 5)).toEqual([]);
+    });
+
+    // The balanced `replace` passes can splice too — removing
+    // `<script>x</script>` from `<scr…ipt>` rejoins its neighbours. They are
+    // followed unconditionally by `stripTagTokens` over the whole string, which
+    // is why CodeQL's alerts on those two lines are declined. Unlike the
+    // decline RC-13 records, this one does not rest on an iteration cap.
+    it.each([1, 2, 4, 5, 40])("balanced-block splice at depth %i leaves no token", (d) => {
+        for (const [pre, post, tag] of [["scr", "ipt", "script"], ["sty", "le", "style"]] as const) {
+            const input = `<${pre}`.repeat(d) + `<${tag}>x</${tag}>` + `${post}>`.repeat(d);
+            expect(stripBlocksFixedPoint(input), input).not.toMatch(/<\/?\s*(?:script|style)\b/i);
+        }
+    });
+
     it("keeps case-fold offsets aligned with the input (round 2)", () => {
         // U+0130 lowercases to two UTF-16 units, so an index taken from
         // `text.toLowerCase()` addresses a different character in `text`. That
