@@ -1,9 +1,15 @@
 // src/lib/security/rate-limiter.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { checkRateLimits, clearRateLimitMaps, rateLimitMapSizes } from "./rate-limiter.js";
-import { RATE_LIMIT, THROTTLE } from "../config/session.js";
+import { RATE_LIMIT } from "../config/session.js";
 
-const CAP = THROTTLE.MAX_TRACKED_KEYS;
+const CAP = RATE_LIMIT.MAX_TRACKED_KEYS;
+
+// Fewer requests per client than its quota, so the client gate never fires
+// while a case is filling the HOST map. Rotating the client id on every call
+// saturates the client gate first and leaves the host cap unreached — the host
+// map peaks below CAP and its refusal branch never runs.
+const PER_CLIENT = RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE - 50;
 
 beforeEach(() => {
     clearRateLimitMaps();
@@ -16,12 +22,18 @@ afterEach(() => {
     clearRateLimitMaps();
 });
 
-/** One admitted request per call: a fresh host AND a fresh client each time. */
-function admitDistinct(i: number): void {
-    checkRateLimits(`host-${i}.example.test`, `client-${i}`);
+/** One admitted request against a fresh host, sharing clients in blocks. */
+function admitHost(i: number): void {
+    checkRateLimits(`host-${i}.example.test`, `client-${Math.floor(i / PER_CLIENT)}`);
 }
 
-describe("checkRateLimits — limits", () => {
+/** Fill the host map to exactly CAP, asserting nothing was refused on the way. */
+function fillHostMapToCap(): void {
+    for (let i = 0; i < CAP; i++) admitHost(i);
+    expect(rateLimitMapSizes().hosts).toBe(CAP);
+}
+
+describe("checkRateLimits — quotas", () => {
     it("throws once a host passes its per-minute ceiling", () => {
         for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) {
             checkRateLimits("target.example.test", `client-${i}`);
@@ -39,66 +51,53 @@ describe("checkRateLimits — limits", () => {
     });
 });
 
-describe("checkRateLimits — tracking capacity (bounded without the cleanup interval)", () => {
-    // No interval is started here, which is the embedder's situation:
-    // `registerEndpointTools` and `executeCurlRequest` are exported, and neither
-    // starts `startRateLimitCleanup`. Before the cap these maps grew one entry
-    // per distinct hostname for the life of the process.
+describe("checkRateLimits — tracking capacity", () => {
+    // Nothing starts the cleanup interval here, which is the embedder's
+    // situation: `registerEndpointTools` and `executeCurlRequest` are exported
+    // and neither starts it. The cap at the write is the only bound.
 
-    it("never tracks more keys than the cap, however many distinct pairs arrive", () => {
-        let rejected = 0;
-        for (let i = 0; i < CAP + 500; i++) {
-            try {
-                admitDistinct(i);
-            } catch {
-                rejected++;
-            }
-        }
-        const { hosts, clients } = rateLimitMapSizes();
-        expect(hosts).toBeLessThanOrEqual(CAP);
-        expect(clients).toBeLessThanOrEqual(CAP);
-        expect(rejected).toBeGreaterThan(0);
+    it("stops at exactly the cap and says why", () => {
+        fillHostMapToCap();
+        expect(() => checkRateLimits("one-too-many.example.test", "client-0"))
+            .toThrow(/tracking is at capacity .* Refusing an untracked host/);
+        expect(rateLimitMapSizes().hosts).toBe(CAP);
     });
 
-    it("REFUSES an untracked key rather than evicting a tracked one", () => {
-        // This is the assertion that fails if someone reaches for the evicting
-        // helper in `bounded-throttle.ts`. Evicting would reset a counter, which
-        // hands the evicted host a fresh budget mid-window — a bypass of the
-        // limit, dressed as a memory fix.
+    it("refuses an untracked key rather than evicting a tracked one", () => {
+        // The victim is the FIRST key inserted, so under an evicting policy it
+        // is exactly `map.keys().next().value` and is the first thing dropped —
+        // its counter would restart at 1 and this case would not throw.
         const victim = "victim.example.test";
-
-        // Put the victim most of the way to its ceiling.
-        const nearLimit = RATE_LIMIT.MAX_PER_HOST_PER_MINUTE - 1;
-        for (let i = 0; i < nearLimit; i++) {
-            checkRateLimits(victim, `victim-client-${i}`);
+        checkRateLimits(victim, "victim-client");
+        for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE - 2; i++) {
+            checkRateLimits(victim, "victim-client");
         }
 
-        // Now flood past the tracking cap with other hosts. If any of this
-        // evicted the victim, its counter would restart at 1.
-        for (let i = 0; i < CAP + 200; i++) {
-            try {
-                admitDistinct(i);
-            } catch {
-                /* refusals are the point */
-            }
+        for (let i = 0; i < CAP; i++) {
+            try { admitHost(i); } catch { /* refusals past the cap are expected */ }
         }
+        expect(rateLimitMapSizes().hosts).toBe(CAP);
 
-        // The victim's counter survived: one more admits, the next is refused.
-        // Probe with a client that is ALREADY tracked — at capacity a new
-        // client id is refused at the client gate, which is the intended
-        // fail-closed behaviour and would mask what this case is measuring.
-        checkRateLimits(victim, "victim-client-0");
-        expect(() => checkRateLimits(victim, "victim-client-0"))
+        // The victim's counter survived the flood: one more admits, the next does not.
+        checkRateLimits(victim, "victim-client");
+        expect(() => checkRateLimits(victim, "victim-client"))
             .toThrow(/Rate limit exceeded for host/);
     });
 
-    it("frees capacity again once the window has passed", () => {
-        for (let i = 0; i < CAP; i++) {
-            try { admitDistinct(i); } catch { /* fill to the cap */ }
-        }
+    it("frees capacity once the window has passed", () => {
+        fillHostMapToCap();
         vi.setSystemTime(Date.now() + RATE_LIMIT.WINDOW_MS + 1_000);
-        // Every tracked entry is now expired, so the inline sweep makes room.
         expect(() => checkRateLimits("fresh.example.test", "fresh-client")).not.toThrow();
+    });
+
+    it("frees capacity when the wall clock jumps BACKWARDS", () => {
+        // An NTP correction, a VM resume or a snapshot restore leaves every
+        // entry stamped in the future. Treated naively those never expire, and
+        // since expiry is the only route to freeing capacity the map wedges and
+        // refuses every new key until the clock catches up.
+        fillHostMapToCap();
+        vi.setSystemTime(Date.now() - 30 * 60_000);
+        expect(() => checkRateLimits("after-backstep.example.test", "fresh-client")).not.toThrow();
     });
 });
 
@@ -109,9 +108,6 @@ describe("checkRateLimits — check order", () => {
         }
         const before = rateLimitMapSizes().hosts;
 
-        // Over quota. The host write must not happen: it used to, because the
-        // host limiter ran first and `checkRateLimitInternal` writes before it
-        // can throw — putting the growth upstream of the thing that bounds it.
         expect(() => checkRateLimits("never-tracked.example.test", "noisy-client"))
             .toThrow(/Client rate limit exceeded/);
 

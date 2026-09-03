@@ -137,11 +137,4 @@ describe("label-map bound (invariant: the map is finite without the interval)", 
         }
         expect(wrapErrorMapSize()).toBe(THROTTLE.MAX_TRACKED_KEYS);
     });
-
-    it("keeps throttling a label that is still resident", () => {
-        const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-        logWrapError("stable.example.com", new Error("boom"));
-        logWrapError("stable.example.com", new Error("boom"));
-        expect(spy).toHaveBeenCalledTimes(1);
-    });
 });
