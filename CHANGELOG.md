@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-09-03
+
+### Changed — `include_headers` no longer shares a stream with the body
+
+- **cURL writes the response header block to its own file descriptor.** The flag is
+  `--dump-header /dev/fd/3`, pointing at a pipe the server opens as a fourth stdio slot, so
+  headers and body never travel on one stream and there is no boundary to recover from the
+  response bytes. `ARCHITECTURE.md` invariant 13 leads with the strong form because of this:
+  two remote-controlled regions do not share a channel. Three prior attempts to derive that
+  boundary arithmetically each failed differently — a forgeable status-line scan (RC-1), a wire
+  byte count applied to lossily decoded text (RC-2), and an octet index that chunked trailers
+  land past (RC-17).
+- **`include_headers` requires macOS.** libuv backs the extra stdio slot with `socketpair(2)`,
+  so the child's fd 3 is an `AF_UNIX` socket; macOS serves `/dev/fd/N` from `fdescfs` and can
+  reopen it, while Linux resolves `/dev/fd` to `/proc/self/fd`, where a socket cannot be opened
+  at all. On any other platform the flag is never added: the request keeps its body and the
+  result reports `headers_unsupported`. Every other tool parameter stays platform-neutral.
+- **`include_headers` composes with `save_to_file` and `jq_filter` unconditionally.** The
+  refusal that fired when the header boundary could not be determined is gone, because what
+  those two receive is body bytes on every path — including the one where no header block
+  arrived.
+
+### Added
+
+- `headers_unsupported` metadata field (and the matching `[mcp-curl]` notice on the plain
+  branch): this host cannot capture headers. **A fact about the host, deliberately distinct
+  from `headers_undetermined`, which says the origin sent no header block.** Collapsing the two
+  would tell a caller auditing an origin's security headers that it sends none, on every URL.
+- `header_bytes_returned`: how many origin octets survived a truncation, reported beside
+  `header_bytes_received`. **Absent where the defence grew the text past the ceiling**, because
+  the surviving count then cannot be stated in origin units — `headers_truncated` still reports
+  the cut, and no ratio is invented. Both cuts land on a byte boundary, so header text cut
+  mid-sequence ends in U+FFFD.
+
+### Fixed
+
+- **Response header bytes are bounded on acceptance as well as on retention.** Retention is
+  capped at `LIMITS.MAX_HEADER_TEXT_BYTES` and acceptance at `LIMITS.MAX_RESPONSE_SIZE`, counted
+  across stdout, stderr and the header descriptor against one memory ceiling. A redirect chain
+  was measured putting 2.5 MB on this descriptor against a 64 KB usable ceiling.
+- **A non-zero cURL exit is reported on the plain (non-metadata) branch.** Without it a failed
+  request is byte-identical to an empty successful one. The "the body below is unaffected"
+  reassurance is claimed only on a clean exit, because cURL can emit partial output before a
+  non-zero exit — it writes what it has already received, and only some failures precede the
+  first body byte. A non-zero exit therefore says nothing about whether the bytes below it are
+  complete, which is exactly why the reassurance cannot be keyed on anything weaker.
+
+### Removed
+
+- `splitResponseHeaders`, the `SplitResponse` type, and `ParsedResponse.headerBytes` /
+  `ParsedResponse.bodyBytes`. Nothing separates headers from body, so the offset-based split has
+  no caller. **None of these were on a package entry point** — `mcp-curl` and `mcp-curl/lib`
+  export only `defendText` and `DefendTextOptions` from the response module — so this is an
+  internal removal, not a breaking change under `ARCHITECTURE.md` invariant 11.
+- The `include_headers` + `save_to_file` / `jq_filter` refusal, and the
+  "Response header boundary could not be determined" error it raised. **A caller matching on
+  that message will no longer see it**, because the condition it guarded cannot occur.
+
 ## [3.4.0] - 2026-09-02
 
 ### Security

@@ -152,6 +152,12 @@ restating an existing class under a new name with its own counter.
 _(superseded by the line above; retained as filed)_ **Class:** `lost-code-path`, `fail-open-default` — aliases `unescaped-sink`,
 `oversized-payload`, `injectable-input`, `repeated-computation`
 
+**Mechanism superseded:** RC-17 (2026-09-03). The pipeline half of this entry is
+unchanged and still load-bearing. The *boundary* half no longer describes HEAD:
+`splitResponseHeaders` is deleted and response headers arrive on their own file
+descriptor, so nothing derives the split at all. Rule 2 below is what survived
+and generalised — it is now invariant 13's strong form.
+
 - **The plan said:** splitting response headers out of the body was a contained
   fix. The code comment at `curl-execute.ts::executeCurlRequest` stated the
   intent correctly — *"splitting it out must not route it around that"* — and
@@ -196,6 +202,11 @@ _(superseded by the line above; retained as filed)_ **Class:** `lost-code-path`,
 **Class:** K-11, K-10 — *class-id:* `broken-contract`, `untyped-boundary`
 
 _(superseded by the line above; retained as filed)_ **Class:** `broken-contract`, `untyped-boundary`
+
+**Mechanism superseded:** RC-17 (2026-09-03). No wire offset is applied to stdout
+at HEAD, so this specific defect cannot recur. `stdoutBytes` remains a Buffer
+deliberately, so that reintroducing an offset is a type change rather than a
+silent one. Both rules below stand unchanged.
 
 - **The plan said:** taking the header/body split from cURL's `%{size_header}`
   removed the class, because the offset now comes from a channel the origin
@@ -743,3 +754,123 @@ invariant 16 is where the general form now lives.
 
 Reported by chatgpt-codex-connector on PR #33 round 5, graded P1 by them and
 confirmed P1 here on the data-loss calibration.
+
+### RC-17 — Three correct fixes in a row, because the layer could not answer the question
+
+**Date:** 2026-09-03 · **PR:** — (todo 002) · **Plan:** `docs/todos/002-header-channel-should-not-be-multiplexed.md`
+
+**Class:** K-12, K-11 — *class-id:* `broken-contract`
+
+- **The plan said:** replace `curl -i` with `--dump-header <tempfile>`, read the
+  file back in `executeCurlRequest`, and accept "one temp file per
+  `include_headers` request, plus a cleanup path that must hold on the error and
+  timeout branches." The todo named that lifecycle as the reason the work had
+  been deferred out of review round 3.
+- **Reality was:** two things, one about the mechanism and one about the sweep.
+
+  **The mechanism did not need a file.** cURL's `-D` takes a path, and on a
+  POSIX host `/dev/fd/3` names an inherited descriptor — so Node can hand the
+  child a fourth pipe and read the header block off it directly.
+
+  > **Scope corrected:** RC-18 (2026-09-03). "On a POSIX host" is the assumption
+  > this entry shipped with, and it is false — libuv backs the slot with
+  > `socketpair(2)`, and Linux cannot reopen a socket through `/proc/self/fd`.
+  > The mechanism stands; its platform reach is macOS only. Left as written
+  > because the over-broad claim is what RC-18 exists to record.
+
+  Measured before committing to it: stdout carried `HELLO` alone while the descriptor
+  carried the block including the chunked trailer, and both header blocks of a
+  redirect chain arrived on it with no intermediate body on stdout. That
+  retires the cleanup path *entirely* rather than getting it right — the kernel
+  reclaims a pipe on exit, timeout and kill alike — and it stops response
+  headers (`Set-Cookie`, echoed `Authorization`) transiting the filesystem,
+  which the temp file would have newly introduced. **The todo's stated risk was
+  the argument against its own prescription**, and reading it as a constraint to
+  satisfy rather than a cost to remove is what nearly bought the worse design.
+
+  **The instance list was a third of the real one.** The todo recorded "6
+  non-test hits → 3 confirmed instances"; the same sweep returned 17 hits across
+  5 non-test files. It missed `response/header-channel.ts` — created in
+  `fefc1af`, the todo's *own* source PR — which is the composition layer the
+  whole feature runs through.
+- **What changed:** `command-executor.ts` gained `HEADER_DUMP_FD` /
+  `HEADER_DUMP_PATH`, `ExecuteCommandOptions.captureHeaders`, a conditional
+  fourth stdio pipe drained on attach, and `CommandResult.headerBytes`. Its two
+  near-copies of the memory guard became one `accountFor` before the header
+  stream made a third. `buildCurlArgs` pushes `--dump-header` and no longer
+  emits `%{size_header}`. `parser.ts` lost `splitResponseHeaders`,
+  `SplitResponse` and `headerBytes` (244 → 143 lines). `header-channel.ts` takes
+  header octets and no longer splits anything. The `save_to_file`/`jq_filter`
+  refusal in `curl-execute.ts` is gone, because the body it protected is now
+  body bytes on every path. `ARCHITECTURE.md` invariant 13 leads with the strong
+  form; `docs/architecture/architecture.md` and the tool description follow.
+- **What this costs next time:** three rules.
+  1. **A cost a plan states honestly is still a cost, and the plan is not the
+     place that decides whether it must be paid.** This one named its own
+     lifecycle risk, in writing, and had been deferred once because of it — and
+     the mechanism that removed the risk outright was one probe away. **Read a
+     stated cost as a question, not a settled term.**
+  2. **An instance list ages faster than the finding it belongs to.** This one
+     was already incomplete on the day it was filed, because the sweep ran mid-PR
+     and the composition layer landed in the same commit that closed it. **Re-run
+     the sweep before trusting the count** — it is the cheapest step in the audit
+     and it was the one that moved the scope by 2×.
+  3. **When a layer has produced three correct-and-wrong fixes, the finding is
+     the layer.** Each of RC-1, RC-2 and this one was right about its
+     predecessor. What ended it was not a better fix at that layer but moving the
+     precondition so the layer had nothing to answer — `skill: pr-resolver-safety`
+     → the escalation ladder, rung 3.
+
+### RC-18 — The measurement was real; its scope was assumed
+
+**Date:** 2026-09-03 · **PR:** — (todo 002, review round 1) · **Plan:** `docs/todos/002-header-channel-should-not-be-multiplexed.md`
+
+**Class:** K-9, K-3 — *class-id:* `stale-observation`
+
+- **The plan said:** RC-17, filed hours earlier in this same run, recorded
+  `--dump-header /dev/fd/3` as verified — *"Measured before committing to it"* —
+  and `ARCHITECTURE.md` stated the mechanism depends on `/dev/fd/N` naming an
+  inherited descriptor, *"true on macOS and Linux, false on Windows."*
+- **Reality was:** the measurement was taken on macOS only, and the Linux half
+  was reasoning presented as observation. It is also **false**. libuv backs an
+  extra `"pipe"` stdio slot with `socketpair(2)`, so the child's fd 3 is an
+  `AF_UNIX` socket — confirmed here, `[ -S /dev/fd/3 ]` reports `TYPE=SOCKET`
+  and `ls -lL` shows `srw-rw-rw-`. macOS serves `/dev/fd/N` from `fdescfs` and
+  dups the descriptor, so cURL opens it. Linux resolves `/dev/fd` to
+  `/proc/self/fd`, where a socket appears as `socket:[inode]` and cannot be
+  opened at all — cURL would have exited 23 on **every** `include_headers`
+  request, returning an empty body. There is no `.github/workflows/` in this
+  repository, so nothing would have caught it.
+- **Compounding, and worse than either half:** the same change had rewritten the
+  degraded-path notice to read *"the body below is unaffected"*, keyed only on
+  whether headers arrived. On Linux that would have labelled every empty
+  failed body as intact — the exact corruption the `save_to_file`/`jq_filter`
+  refusal had existed to prevent, reintroduced by the change that deleted the
+  refusal as no longer necessary.
+- **What changed:** the operator ruled the deployment macOS-only, so the
+  mechanism stands. `platformSupportsHeaderDump()` guards the flag so an
+  unsupported host keeps its body instead of failing outright; the notice is
+  gated on `exitCode === 0` and a non-zero exit is now surfaced on the plain
+  branch at all; `ARCHITECTURE.md` → *Environments* and the published
+  `docs/architecture/architecture.md` state macOS and say why.
+- **What this costs next time:** three rules.
+  1. **A measurement carries the platform it was taken on, and nothing else.**
+     Writing "measured" beside a claim wider than the measurement is worse than
+     writing nothing: it is the sentence that stops the next reader checking.
+     **Say where you measured, in the same breath as what you measured.**
+  2. **When a mechanism depends on an object another layer creates, the
+     question is its TYPE, not its name.** `/dev/fd/3` resolved fine; what did
+     not was that libuv had made it a socket rather than a pipe. The premise
+     sat on the far side of an interface this code does not own — which is
+     exactly where a premise is cheapest to state and most expensive to assume.
+  3. **Deleting a guard on the grounds that its precondition is gone requires
+     proving the precondition is gone on every platform the guard covered.**
+     The refusal was removed because "the body is always body bytes now". That
+     was true on the platform it was tested on, and the untested platform is
+     precisely where the guard would still have been earning its place.
+
+**Found by review, before merge.** Two independent reviewers — `security-sentinel`
+and `data-integrity-guardian` — reached it through different lenses and graded it
+P1. That convergence is the signal; either alone would have been easier to argue
+down. `ARCHITECTURE.md` invariant 13 and RC-17 remain otherwise correct, and
+RC-17's mechanism is **not** superseded — only its verification claim was wrong.

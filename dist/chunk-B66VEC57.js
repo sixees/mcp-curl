@@ -174,7 +174,7 @@ var INJECTION_PATTERNS = new RegExp(
     `disregard${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|system)${INJECTION_PHRASE_GAP}(instructions?|directives?|rules?)`,
     `forget${INJECTION_PHRASE_GAP}(previous|prior|all|your|above|everything|instructions?)`,
     `override${INJECTION_PHRASE_GAP}(your|the|all|previous)${INJECTION_PHRASE_GAP}(instructions?|settings?|behavior|config|directives?|rules?)`,
-    // Synonym families for the explicit-override class (PR-8 / B7-sub-4)
+    // Synonym families for the explicit-override class
     // — paraphrases that the four canonical verbs above miss
     // ("stop following your instructions", "cease compliance with the
     // rules", "bypass your safety filters"). Each family carries at
@@ -183,8 +183,8 @@ var INJECTION_PATTERNS = new RegExp(
     // **Known false-positive class** — `stop\s+applying` over-triggers
     // on legitimate ops/safety phrasing ("stop applying this patch",
     // "stop applying the brakes"). Detection is observability-only so
-    // the cost is log noise, not blocked content; per master plan
-    // §Risks. Locked by the `documented FP class` test in
+    // the cost is log noise, not blocked content. Locked by the
+    // `documented FP class` test in
     // `sanitize.test.ts` so a future narrowing PR (e.g. requiring an
     // instruction-class object word in the same shape
     // `bypass\s+(your|all|the)\s+(...)` uses) updates implementation
@@ -597,7 +597,7 @@ var JQ = {
   MAX_TOKENS: 50,
   /** Maximum comma-separated filters */
   MAX_FILTERS: 20,
-  /** Parsing timeout to prevent ReDoS (100ms) */
+  /** Parsing timeout to prevent DoS from a pathologically long or complex filter (100ms) */
   MAX_PARSE_TIME_MS: 100,
   /** Maximum file size for jq_query tool (same as response limit) */
   MAX_QUERY_FILE_SIZE: LIMITS.MAX_RESPONSE_SIZE,
@@ -899,40 +899,17 @@ function parseResponseWithMetadata(rawResponse, separator) {
   if (separatorIndex === -1) {
     return {
       body: raw.toString("utf8"),
-      bodyBytes: raw,
       metadataFound: false
     };
   }
   const bodyBytes = raw.subarray(0, separatorIndex);
   const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
-  const sizeMatch = /^(\d+) ?/.exec(metadata);
-  const parsedBytes = sizeMatch ? Number(sizeMatch[1]) : void 0;
-  const contentType = (sizeMatch ? metadata.slice(sizeMatch[0].length) : metadata).trim();
+  const contentType = metadata.trim();
   return {
     body: bodyBytes.toString("utf8"),
-    bodyBytes,
     contentType: contentType || void 0,
-    headerBytes: Number.isSafeInteger(parsedBytes) ? parsedBytes : void 0,
     metadataFound: true
   };
-}
-function splitResponseHeaders(bodyBytes, headerBytes) {
-  if (headerBytes === void 0 || !Number.isSafeInteger(headerBytes) || headerBytes <= 0) {
-    return { body: bodyBytes.toString("utf8") };
-  }
-  if (headerBytes > bodyBytes.length) {
-    return { body: bodyBytes.toString("utf8") };
-  }
-  const terminator = bodyBytes.subarray(Math.max(0, headerBytes - 4), headerBytes).toString("latin1");
-  if (!terminator.endsWith("\r\n\r\n") && !terminator.endsWith("\n\n")) {
-    return { body: bodyBytes.toString("utf8") };
-  }
-  const body = bodyBytes.subarray(headerBytes).toString("utf8");
-  const capped = headerBytes > LIMITS.MAX_HEADER_TEXT_BYTES;
-  const sliceEnd = capped ? LIMITS.MAX_HEADER_TEXT_BYTES : headerBytes;
-  const headerText = bodyBytes.subarray(0, sliceEnd).toString("utf8").replace(/\r?\n\r?\n$/, "");
-  if (!headerText) return { body };
-  return { headerText, body, headerBytesReceived: headerBytes, truncated: capped };
 }
 function sanitizeErrorMessage(message, includeDetails) {
   if (includeDetails) {
@@ -1735,7 +1712,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "3.4.0" : "0.0.0"
+  VERSION: true ? "3.5.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -2080,37 +2057,76 @@ async function processResponse(response, options) {
 }
 
 // src/lib/response/header-channel.ts
-function extractHeaderChannel(bodyBytes, headerBytes, url, maxResultSize) {
-  const split = splitResponseHeaders(bodyBytes, headerBytes);
-  if (!split.headerText) {
-    return { body: split.body, undetermined: true, truncated: false };
+function extractHeaderChannel(headerBytes, bytesReceived, url, maxResultSize) {
+  if (!headerBytes || headerBytes.length === 0) {
+    return { undetermined: true, truncated: false };
   }
-  const defended = defendText(split.headerText, {
+  const totalReceived = bytesReceived ?? headerBytes.length;
+  const droppedByExecutor = totalReceived > headerBytes.length;
+  const inlineCeiling = Math.min(
+    LIMITS.MAX_HEADER_TEXT_BYTES,
+    maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
+  );
+  const inputConsumed = Math.min(headerBytes.length, inlineCeiling);
+  const raw = headerBytes.subarray(0, inputConsumed).toString("utf8").replace(/\r?\n\r?\n$/, "");
+  if (!raw) {
+    return { undetermined: true, truncated: false };
+  }
+  const defended = defendText(raw, {
     contentType: MARKDOWN_MIME,
     contentTypeUndetermined: false,
     hostname: safeHostname(url),
     decodeEntities: false
   });
-  const inlineCeiling = Math.min(
-    LIMITS.MAX_HEADER_TEXT_BYTES,
-    maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
-  );
   const defendedBytes = Buffer.byteLength(defended, "utf8");
-  const overCeiling = defendedBytes > inlineCeiling;
+  const grewPastCeiling = defendedBytes > inlineCeiling;
+  const responseHeaders = grewPastCeiling ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8") : defended;
+  const inputWasCut = inputConsumed < headerBytes.length;
+  const truncated = droppedByExecutor || inputWasCut || grewPastCeiling;
   return {
-    body: split.body,
-    responseHeaders: overCeiling ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8") : defended,
+    responseHeaders,
     undetermined: false,
-    truncated: split.truncated === true || overCeiling,
-    bytesReceived: split.headerBytesReceived
+    truncated,
+    bytesReceived: totalReceived,
+    // Origin octets, or nothing. Never the returned text's own length.
+    bytesReturned: truncated && !grewPastCeiling ? inputConsumed : void 0
   };
 }
 
 // src/lib/response/formatter.ts
+function applyHeaderFields(output, responseHeaders, headerInfo, stderr) {
+  if (responseHeaders) output.headers = responseHeaders;
+  if (responseHeaders && headerInfo?.truncated) {
+    output.headers_truncated = true;
+    output.header_bytes_received = headerInfo.bytesReceived;
+    output.header_bytes_returned = headerInfo.bytesReturned;
+  }
+  if (headerInfo?.undetermined) output.headers_undetermined = true;
+  if (headerInfo?.unsupported) output.headers_unsupported = true;
+  if (stderr) output.stderr = stderr;
+}
 function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
-  const plainNotice = !includeMetadata && headerInfo ? [
-    headerInfo.truncated ? `[mcp-curl] response headers truncated at ${LIMITS.MAX_HEADER_TEXT_BYTES} of ${headerInfo.bytesReceived} bytes` : null,
-    headerInfo.undetermined ? "[mcp-curl] response header boundary undetermined; headers are NOT separated from the body below" : null
+  const plainNotice = !includeMetadata ? [
+    // A non-zero exit has no field to land in on this branch, so
+    // without this line a FAILED request is byte-identical to an
+    // empty successful one — the shape the reassurance below would
+    // otherwise make worse by naming the body sound.
+    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete` : null,
+    // Two arms, because the pair is only sometimes statable. Where
+    // the defence grew the text past the ceiling, how many origin
+    // octets survived is genuinely unknown — so the fact of the cut
+    // is reported and the ratio is not invented.
+    headerInfo?.truncated ? headerInfo.bytesReturned !== void 0 ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used` : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received` : null,
+    // A fact about this host, so it is stated whatever the exit code
+    // was: the flag is never added here, which is a decision taken
+    // before the request and independent of how the request went.
+    headerInfo?.unsupported ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent" : null,
+    // The reassurance is claimed only on a CLEAN exit. Keyed on
+    // `undetermined` alone it asserts the body is sound on every cURL
+    // failure after connect — exit 23, 35, 56, 63 — where the body is
+    // empty precisely BECAUSE the request failed. This flag's domain
+    // cannot answer a question about the body; `exitCode` can.
+    headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
   ].filter(Boolean).join("\n") : "";
   const withNotice = (text) => plainNotice ? `${plainNotice}
 
@@ -2124,13 +2140,7 @@ ${text}` : text;
         filepath: fileSaveInfo.filepath,
         message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
       };
-      if (responseHeaders) output.headers = responseHeaders;
-      if (responseHeaders && headerInfo?.truncated) {
-        output.headers_truncated = true;
-        output.header_bytes_received = headerInfo.bytesReceived;
-      }
-      if (headerInfo?.undetermined) output.headers_undetermined = true;
-      if (stderr) output.stderr = stderr;
+      applyHeaderFields(output, responseHeaders, headerInfo, stderr);
       return JSON.stringify(output, null, 2);
     }
     const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
@@ -2144,13 +2154,7 @@ ${message}` : message);
       exit_code: exitCode,
       response: stdout
     };
-    if (responseHeaders) output.headers = responseHeaders;
-    if (responseHeaders && headerInfo?.truncated) {
-      output.headers_truncated = true;
-      output.header_bytes_received = headerInfo.bytesReceived;
-    }
-    if (headerInfo?.undetermined) output.headers_undetermined = true;
-    if (stderr) output.stderr = stderr;
+    applyHeaderFields(output, responseHeaders, headerInfo, stderr);
     return JSON.stringify(output, null, 2);
   }
   return withNotice(responseHeaders ? `${responseHeaders}
@@ -2233,6 +2237,7 @@ function generateMetadataSeparator() {
 
 // src/lib/execution/command-executor.ts
 import { spawn } from "child_process";
+import { Readable } from "stream";
 
 // src/lib/execution/memory-tracker.ts
 var totalResponseMemory = 0;
@@ -2259,6 +2264,11 @@ function releaseMemory(bytes) {
 
 // src/lib/execution/command-executor.ts
 var ALLOWED_COMMANDS = ["curl"];
+var HEADER_DUMP_FD = 3;
+var HEADER_DUMP_PATH = `/dev/fd/${HEADER_DUMP_FD}`;
+function platformSupportsHeaderDump() {
+  return process.platform === "darwin";
+}
 async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS) {
   if (!ALLOWED_COMMANDS.includes(command)) {
     throw new Error(`Command not allowed: ${command}. Only ${ALLOWED_COMMANDS.join(", ")} can be executed.`);
@@ -2266,6 +2276,8 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
   if (!Number.isFinite(timeout) || timeout <= 0) {
     timeout = LIMITS.DEFAULT_TIMEOUT_MS;
   }
+  const dumpFlagIndex = args.indexOf("--dump-header");
+  const captureHeaders = dumpFlagIndex !== -1 && args[dumpFlagIndex + 1] === HEADER_DUMP_PATH;
   let requestMemoryUsage = 0;
   return new Promise((resolve4, reject) => {
     const abortController = new AbortController();
@@ -2273,9 +2285,13 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
       abortController.abort();
     }, timeout);
     const childProcess = spawn(command, args, {
-      signal: abortController.signal
+      signal: abortController.signal,
+      stdio: captureHeaders ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"]
     });
     const stdoutChunks = [];
+    const headerChunks = [];
+    let headerBytesReceived = 0;
+    let headerBytesRetained = 0;
     let stderr = "";
     let stderrMemoryUsage = 0;
     let killed = false;
@@ -2283,55 +2299,61 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
       releaseMemory(requestMemoryUsage);
       requestMemoryUsage = 0;
     };
-    childProcess.stdout?.on("data", (data) => {
-      if (killed) return;
-      const dataSize = data.length;
+    const abortWith = (message) => {
+      killed = true;
+      clearTimeout(timeoutId);
+      releaseRequestMemory();
+      childProcess.kill();
+      reject(new Error(message));
+    };
+    const accountFor = (dataSize) => {
       if (!allocateMemory(dataSize)) {
-        killed = true;
-        clearTimeout(timeoutId);
-        releaseRequestMemory();
-        childProcess.kill();
-        reject(new Error(
-          "Server memory limit reached due to concurrent requests. Please try again later."
-        ));
-        return;
+        abortWith("Server memory limit reached due to concurrent requests. Please try again later.");
+        return false;
       }
-      stdoutChunks.push(data);
       requestMemoryUsage += dataSize;
       if (requestMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
-        killed = true;
-        clearTimeout(timeoutId);
-        releaseRequestMemory();
-        childProcess.kill();
-        reject(new Error(
+        abortWith(
           `Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. Consider using a more specific API endpoint or adding query parameters to reduce response size.`
-        ));
+        );
+        return false;
       }
+      return true;
+    };
+    childProcess.stdout?.on("data", (data) => {
+      if (killed) return;
+      if (!accountFor(data.length)) return;
+      stdoutChunks.push(data);
     });
+    if (captureHeaders) {
+      const headerStream = childProcess.stdio[HEADER_DUMP_FD];
+      if (headerStream instanceof Readable) {
+        headerStream.on("data", (data) => {
+          if (killed) return;
+          headerBytesReceived += data.length;
+          if (headerBytesReceived > LIMITS.MAX_RESPONSE_SIZE) {
+            abortWith(
+              `Response headers exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. The origin sent an unreasonable header block, possibly across a redirect chain.`
+            );
+            return;
+          }
+          const room = LIMITS.MAX_HEADER_TEXT_BYTES - headerBytesRetained;
+          if (room <= 0) return;
+          const slice = data.length <= room ? data : data.subarray(0, room);
+          if (!accountFor(slice.length)) return;
+          headerChunks.push(slice);
+          headerBytesRetained += slice.length;
+        });
+      } else {
+        abortWith(
+          "Internal error: the response-header descriptor was not readable. Retry without include_headers."
+        );
+      }
+    }
     childProcess.stderr?.on("data", (data) => {
       if (killed) return;
       const dataSize = data.length;
-      if (!allocateMemory(dataSize)) {
-        killed = true;
-        clearTimeout(timeoutId);
-        releaseRequestMemory();
-        childProcess.kill();
-        reject(new Error(
-          "Server memory limit reached due to concurrent requests. Please try again later."
-        ));
-        return;
-      }
-      requestMemoryUsage += dataSize;
-      if (requestMemoryUsage > LIMITS.MAX_RESPONSE_SIZE) {
-        killed = true;
-        clearTimeout(timeoutId);
-        releaseRequestMemory();
-        childProcess.kill();
-        reject(new Error(
-          `Response exceeded maximum processing size of ${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. Consider using a more specific API endpoint or adding query parameters to reduce response size.`
-        ));
-        return;
-      }
+      if (!accountFor(dataSize)) return;
       if (stderrMemoryUsage < LIMITS.MAX_RESPONSE_SIZE) {
         const dataStr = data.toString();
         stderr += dataStr;
@@ -2351,8 +2373,12 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
       if (!killed) {
         const stdoutBytes = Buffer.concat(stdoutChunks);
         stdoutChunks.length = 0;
+        const headerBytes = headerChunks.length > 0 ? Buffer.concat(headerChunks) : void 0;
+        headerChunks.length = 0;
         resolve4({
           stdoutBytes,
+          headerBytes,
+          headerBytesReceived: headerBytes ? headerBytesReceived : void 0,
           stderr,
           // null code means process was killed by signal — report as failure (not 0)
           exitCode: code ?? (signal ? 1 : 0)
@@ -2423,8 +2449,8 @@ function buildCurlArgs(params) {
   if (params.verbose) {
     args.push("-v");
   }
-  if (params.include_headers) {
-    args.push("-i");
+  if (params.include_headers && platformSupportsHeaderDump()) {
+    args.push("--dump-header", HEADER_DUMP_PATH);
   }
   if (params.compressed) {
     args.push("--compressed");
@@ -2432,7 +2458,7 @@ function buildCurlArgs(params) {
   if (params.silent !== false) {
     args.push("-s");
   }
-  const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{size_header} %{content_type}";
+  const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
   if (params.output_format) {
     args.push("-w", params.output_format + metadataSuffix);
   } else {
@@ -2471,13 +2497,18 @@ Args:
   - verbose (boolean): Include verbose request/response details
   - include_headers (boolean): Report response headers. With include_metadata they
     arrive under a separate "headers" key; without it they are prefixed to the returned
-    text followed by a blank line, so that result is NOT JSON-parseable. On both
-    branches headers never reach the saved file and never reach jq_filter, which is
-    what makes this safe to combine with save_to_file and jq_filter \u2014 and if the
-    header/body boundary cannot be determined, those two are refused rather than
-    performed on unseparated bytes. Header text is capped at
+    text followed by a blank line, so that result is NOT JSON-parseable. cURL writes
+    the headers to their own descriptor, so they are never part of the body: they
+    cannot reach the saved file or jq_filter, and combining this with save_to_file or
+    jq_filter is safe unconditionally. Header text is capped at
     min(64KB, max_result_size); truncation is reported as headers_truncated under
-    include_metadata, and as a leading [mcp-curl] notice otherwise
+    include_metadata, and as a leading [mcp-curl] notice otherwise. If headers were
+    asked for and none arrived, that is reported as headers_undetermined (or a leading
+    [mcp-curl] notice) rather than guessed at. Requires macOS; elsewhere no headers are
+    captured and that is reported as headers_unsupported, which is a fact about the host
+    and NOT a statement that the origin sent none. Note that response headers routinely
+    carry credential material (Set-Cookie, and Authorization where an origin echoes it)
+    and this text is returned verbatim
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -2562,28 +2593,27 @@ async function executeCurlRequest(params, extra = {}) {
     const result = await executeCommand("curl", args, timeoutMs);
     let headerTruncated = false;
     let headerBytesReceived;
+    let headerBytesReturned;
     const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
-    const { contentType, headerBytes, metadataFound } = parsed;
+    const { contentType, metadataFound } = parsed;
+    const body = parsed.body;
     let responseHeaders;
     let headersUndetermined = false;
-    let body = parsed.body;
-    if (params.include_headers) {
+    let headersUnsupported = false;
+    if (params.include_headers && !platformSupportsHeaderDump()) {
+      headersUnsupported = true;
+    } else if (params.include_headers) {
       const channel = extractHeaderChannel(
-        parsed.bodyBytes,
-        headerBytes,
+        result.headerBytes,
+        result.headerBytesReceived,
         params.url,
         params.max_result_size
       );
-      body = channel.body;
       responseHeaders = channel.responseHeaders;
       headersUndetermined = channel.undetermined;
       headerTruncated = channel.truncated;
       headerBytesReceived = channel.bytesReceived;
-    }
-    if (headersUndetermined && (params.save_to_file || params.jq_filter)) {
-      throw new Error(
-        "Response header boundary could not be determined, so the body cannot be separated from the header block. Refusing save_to_file/jq_filter rather than writing or filtering unseparated bytes. Retry without include_headers to operate on the raw response."
-      );
+      headerBytesReturned = channel.bytesReturned;
     }
     const processed = await processResponse(body, {
       url: params.url,
@@ -2614,11 +2644,14 @@ async function executeCurlRequest(params, extra = {}) {
       {
         truncated: headerTruncated,
         bytesReceived: headerBytesReceived,
+        bytesReturned: headerBytesReturned,
         // The caller asked for headers and provably did not get them.
-        // Reporting it is the point: silence is what made the pre-fix
-        // corruption invisible, because the degraded path returned bytes
-        // indistinguishable from the success path.
-        undetermined: params.include_headers && headersUndetermined
+        // Reporting it is the point: a degraded path that stays silent
+        // returns bytes indistinguishable from the success path, so the
+        // caller reads "no security headers" off a request that never
+        // captured any.
+        undetermined: headersUndetermined,
+        unsupported: headersUnsupported
       }
     );
     return {

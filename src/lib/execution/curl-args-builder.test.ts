@@ -1,8 +1,9 @@
 // src/lib/execution/curl-args-builder.test.ts
 // Tests for cURL CLI argument building
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { buildCurlArgs, type CurlArgsParams } from "./curl-args-builder.js";
+import { HEADER_DUMP_PATH } from "./command-executor.js";
 import { LIMITS } from "../config/index.js";
 
 function makeParams(overrides: Partial<CurlArgsParams> = {}): CurlArgsParams {
@@ -14,30 +15,96 @@ function makeParams(overrides: Partial<CurlArgsParams> = {}): CurlArgsParams {
 }
 
 describe("buildCurlArgs", () => {
+    // The contract between buildCurlArgs and command-executor: the flag names
+    // the descriptor the executor opens. Drop the flag and cURL writes no
+    // headers anywhere, so `include_headers` reports "none received" on every
+    // request — a green suite with the feature silently gone. Point it at a
+    // different descriptor and cURL exits 23 on every header request. Both are
+    // failures this block turns into test failures.
+    describe("--dump-header", () => {
+        // `buildCurlArgs` reads the real `process.platform`, so on a Linux
+        // runner every assertion below would hold vacuously — no flag is
+        // emitted, so "does not contain `-i`" passes without the builder having
+        // decided anything. Pinning the platform is what makes each assertion
+        // about the branch it names.
+        const real = process.platform;
+        const setPlatform = (value: string) =>
+            Object.defineProperty(process, "platform", { value, configurable: true });
+        afterEach(() => setPlatform(real));
+
+        it("dumps headers to the descriptor the executor opens", () => {
+            setPlatform("darwin");
+            const args = buildCurlArgs(makeParams({ include_headers: true }));
+            const i = args.indexOf("--dump-header");
+            expect(i).toBeGreaterThan(-1);
+            expect(args[i + 1]).toBe(HEADER_DUMP_PATH);
+        });
+
+        it("never multiplexes headers onto stdout with -i", () => {
+            setPlatform("darwin");
+            const args = buildCurlArgs(makeParams({ include_headers: true }));
+            expect(args).not.toContain("-i");
+            expect(args).not.toContain("--include");
+        });
+
+        it("asks for no header dump when include_headers is absent", () => {
+            const args = buildCurlArgs(makeParams());
+            expect(args).not.toContain("--dump-header");
+        });
+
+        // The guard exists entirely for platforms this suite cannot run on, so
+        // without a stub it has no teeth at all: on darwin it is always true
+        // and deleting it changes nothing observable. Stubbing `process.platform`
+        // is the only way the degrade-don't-fail behaviour is ever exercised.
+        describe("on a platform that cannot serve the descriptor", () => {
+            it("omits the flag rather than asking cURL to fail", () => {
+                setPlatform("linux");
+                const args = buildCurlArgs(makeParams({ include_headers: true }));
+                expect(args).not.toContain("--dump-header");
+                expect(args).not.toContain(HEADER_DUMP_PATH);
+                // The request itself is untouched: the caller keeps its body.
+                expect(args).toContain("https://example.com/api");
+            });
+
+            it("still emits the flag on darwin", () => {
+                setPlatform("darwin");
+                const args = buildCurlArgs(makeParams({ include_headers: true }));
+                expect(args).toContain("--dump-header");
+            });
+        });
+    });
+
     describe("-w metadata block", () => {
-        // This block is the contract between buildCurlArgs and
-        // parseResponseWithMetadata/splitResponseHeaders. Drop %{size_header}
-        // and the split has no boundary to use, so it fails closed and
-        // `include_headers` silently reports nothing — green suite, missing
-        // feature. These assertions are what make that a test failure.
-        it("emits size_header before content_type, after the separator", () => {
+        // %{content_type} is remote-echoed and is safe as the block's whole
+        // content only while nothing follows it. A second field appended here
+        // would give a crafted Content-Type a delimiter to spoof, so this
+        // asserts the shape rather than merely the presence.
+        it("emits content_type as the entire metadata block", () => {
             const args = buildCurlArgs(makeParams());
             const w = args[args.indexOf("-w") + 1];
-            expect(w).toContain("%{size_header}");
             expect(w).toContain("%{content_type}");
-            expect(w.indexOf("%{size_header}")).toBeLessThan(w.indexOf("%{content_type}"));
+            expect(w.endsWith("%{content_type}")).toBe(true);
+        });
+
+        // The boundary is structural, so no byte count rides this channel. One
+        // here would put a header/body offset on a stream the parse then has to
+        // interpret — the shape RC-1, RC-2 and RC-17 each failed on.
+        it("carries no header byte count", () => {
+            const args = buildCurlArgs(makeParams({ include_headers: true }));
+            const w = args[args.indexOf("-w") + 1];
+            expect(w).not.toContain("%{size_header}");
         });
 
         it("puts the whole metadata block after the escaped separator", () => {
             const args = buildCurlArgs(makeParams());
             const w = args[args.indexOf("-w") + 1];
-            expect(w).toBe("\\n---SEP---\\n%{size_header} %{content_type}");
+            expect(w).toBe("\\n---SEP---\\n%{content_type}");
         });
 
         it("appends the metadata block to a caller's output_format", () => {
             const args = buildCurlArgs(makeParams({ output_format: "%{http_code}" }));
             const w = args[args.indexOf("-w") + 1];
-            expect(w).toBe("%{http_code}\\n---SEP---\\n%{size_header} %{content_type}");
+            expect(w).toBe("%{http_code}\\n---SEP---\\n%{content_type}");
         });
     });
 
