@@ -1,12 +1,12 @@
-import { d as ApiSchema } from '../../generator-D-A-xhiq.js';
-export { A as ApiDefaults, c as ApiInfo, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from '../../generator-D-A-xhiq.js';
+import { d as ApiSchema } from '../../generator-D8UcXYG6.js';
+export { A as ApiDefaults, c as ApiInfo, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from '../../generator-D8UcXYG6.js';
 import { ZodIssue, z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
  * Complete API schema validator.
  *
- * **Runtime sanitisation invariant (PR-6a / B9):** the raw input is sanitised
+ * **Runtime sanitisation invariant (PR-6a):** the raw input is sanitised
  * by `z.preprocess(sanitiseRawSchemaInPlace, …)` BEFORE any Zod check fires.
  * Every public entry point that produces a parsed `ApiSchema` — including the
  * directly-re-exported `ApiSchemaValidator.parse()` — therefore yields a

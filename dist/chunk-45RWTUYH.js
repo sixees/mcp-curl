@@ -39,7 +39,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-4H7SINKU.js";
+} from "./chunk-KTQVZ43K.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -562,15 +562,9 @@ var SessionManager = class {
   }
   sessions = /* @__PURE__ */ new Map();
   cleanupInterval = null;
-  /**
-   * Check if a session exists.
-   */
   has(id) {
     return this.sessions.has(id);
   }
-  /**
-   * Get a session by ID.
-   */
   get(id) {
     return this.sessions.get(id);
   }
@@ -595,15 +589,9 @@ var SessionManager = class {
   delete(id) {
     this.sessions.delete(id);
   }
-  /**
-   * Get the number of active sessions.
-   */
   get size() {
     return this.sessions.size;
   }
-  /**
-   * Iterate over all sessions.
-   */
   entries() {
     return this.sessions.entries();
   }
@@ -637,9 +625,6 @@ var SessionManager = class {
     }, SESSION.CLEANUP_INTERVAL_MS);
     this.cleanupInterval.unref();
   }
-  /**
-   * Stop the cleanup interval.
-   */
   stopCleanup() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
@@ -1130,6 +1115,7 @@ var McpCurlServer = class {
    * @throws Error if called after start()
    * @throws Error if tool name conflicts with built-in tools
    * @throws Error if tool name format is invalid
+   * @throws Error if the tool name is already registered
    *
    * @example
    * ```typescript

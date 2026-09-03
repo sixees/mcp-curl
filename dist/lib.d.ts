@@ -1,5 +1,5 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-DP1_eKrs.js';
-export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-D-A-xhiq.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-ClXa7H2C.js';
+export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-D8UcXYG6.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
@@ -101,7 +101,7 @@ declare const MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1000;
  * and all printable characters.
  *
  * @param input - String to sanitize (null/undefined returns "")
- * @returns Sanitized string with attack characters replaced by space
+ * @returns Sanitized string with attack characters replaced by space, then trimmed
  */
 declare function sanitizeDescription(input: string | null | undefined): string;
 /**
@@ -182,17 +182,17 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  * Prefer the `sanitizeAndDetect(text, label)` composer (re-exported from the
  * public barrel) over hand-wiring the primitives — it locks the project's
  * canonical detect-then-sanitise ordering: detection runs on the **original**
- * text (so signals the sanitiser would later strip — e.g. the
- * U+2026-prefixed payloads PR-7 added to the attack-range — still fire the
+ * text (so signals the sanitiser would later strip — e.g. Unicode-attack
+ * payloads such as bidi overrides or zero-width characters — still fire the
  * per-host log) and sanitisation produces the bytes the LLM actually sees
- * (see PR-6b S4 in `detection-logger.ts → sanitizeAndDetect`). Calling this
+ * (see `detection-logger.ts → sanitizeAndDetect`). Calling this
  * matcher directly on **already-sanitised** text trades that signal-
  * preservation for invisible-char-split coverage instead: phrases like
  * "Ig​nore" (zero-width space splitting `ignore`) collapse to `Ignore`
  * after sanitisation and become detectable. Both call shapes are
  * legitimate; pick based on which class you care about preserving.
  *
- * **Normalisation (PR-8 / B7-sub-4).** The matcher normalises its input
+ * **Normalisation.** The matcher normalises its input
  * before testing the pattern set, currently via
  * `String.prototype.normalize("NFKC")`. NFKC collapses compatibility
  * variants — full-width letters (`ｉｇｎｏｒｅ`), ligatures (`ﬁ`), and
@@ -232,8 +232,8 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  *   directly, passing content already through `sanitizeResponse` improves
  *   coverage of invisible-char-split phrases (e.g. `Ig`+ZWSP+`nore` →
  *   `Ignore`), at the cost of the pre-sanitise signal class. Both shapes
- *   are valid; pick based on which class you care about. See PR-6b S4
- *   in `detection-logger.ts` for the ordering rationale.
+ *   are valid; pick based on which class you care about. See
+ *   `detection-logger.ts → sanitizeAndDetect` for the ordering rationale.
  * @returns true if any injection pattern matched
  */
 declare function detectInjectionPattern(input: string): boolean;
@@ -252,8 +252,8 @@ declare function detectInjectionPattern(input: string): boolean;
  * (`isSpotlightEnvelope(content)` returns `true`), the function returns it
  * unchanged. The check requires both the begin sentinel AND a matching end
  * sentinel with the same UUID — an attacker prepending only the public begin
- * prefix cannot bypass spotlighting. The `extensible/tool-wrapper` also
- * short-circuits when the inner result is already wrapped — both layers
+ * prefix cannot bypass spotlighting. `response/post-processor.ts → createWrapper`
+ * also short-circuits when the inner result is already wrapped — both layers
  * defend against double-wrapping (which would otherwise nest two different
  * UUID sentinels and confuse the LLM about where the trust boundary lies).
  *
@@ -268,7 +268,8 @@ declare function detectInjectionPattern(input: string): boolean;
  *
  * @param content - Response content to wrap
  * @param requestId - Unique identifier for this response (caller should pass randomUUID());
- *                   must match `/^[0-9a-f-]{32,36}$/i` so a degraded sentinel cannot ship
+ *                   must match `SPOTLIGHT_REQUEST_ID_PATTERN` (32-hex or RFC 4122
+ *                   8-4-4-4-12 UUID shape) so a degraded sentinel cannot ship
  * @returns Content wrapped in opaque sentinel delimiters, or `content` unchanged if it is already wrapped
  */
 declare function applySpotlighting(content: string, requestId: string): string;

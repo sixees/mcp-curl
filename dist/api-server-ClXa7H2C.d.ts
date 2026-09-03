@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, d as ApiSchema } from './generator-D-A-xhiq.js';
+import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, d as ApiSchema } from './generator-D8UcXYG6.js';
 
 /**
  * Configuration options for McpCurlServer.
@@ -33,8 +33,8 @@ interface McpCurlConfig {
     defaultReferer?: string;
     /**
      * Wrap responses in per-request sentinel tags to resist prompt injection
-     * (spotlighting). Independent of the always-on sanitise + detect pass —
-     * see the **defence-in-depth wrap** below.
+     * (spotlighting). Independent of the always-on defence pass — see the
+     * **defence-in-depth wrap** below.
      *
      * **Defence-in-depth wrap (PR-6b).** Every tool result returned by this
      * server — `curl_execute`, `jq_query`, YAML-driven endpoints registered
@@ -42,16 +42,22 @@ interface McpCurlConfig {
      * `registerCustomTool()`, and synthesised results returned by a
      * `beforeRequest` short-circuit hook — is routed through a single
      * post-processor wrap (`src/lib/response/post-processor.ts`). The wrap
-     * runs three steps in order on each text content part:
+     * runs the full response-side defence pipeline on each text content part,
+     * under the strictest grammar (this boundary's content type is always
+     * undetermined), then optionally spotlights the result:
      *
      *   1. **Detect** injection patterns against the **original** text and
      *      emit a throttled `[injection-defense]` log line per hostname.
      *   2. **Sanitise** the text (strip Unicode attack chars, collapse
      *      whitespace runs).
-     *   3. **Spotlight** the sanitised text (only when this flag is `true`)
+     *   3. **Strip** markup comments, `<script>`/`<style>` blocks and markdown
+     *      beacons (image / link / dangerous-scheme).
+     *   4. **Re-sanitise and re-detect**, because the strip stage's entity
+     *      decode can unmask an injection phrase the first pass could not see.
+     *   5. **Spotlight** the defended text (only when this flag is `true`)
      *      using a fresh per-message UUID.
      *
-     * Steps 1 and 2 always run regardless of this flag — only step 3
+     * Steps 1-4 always run regardless of this flag — only step 5
      * (spotlighting sentinels) is gated. The wrap is idempotent via a
      * module-private, non-enumerable `Symbol` tag with an own-property check
      * (so the tag cannot be forged from outside the wrap module and an
@@ -303,6 +309,7 @@ declare class McpCurlServer {
      * @throws Error if called after start()
      * @throws Error if tool name conflicts with built-in tools
      * @throws Error if tool name format is invalid
+     * @throws Error if the tool name is already registered
      *
      * @example
      * ```typescript
