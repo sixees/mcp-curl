@@ -304,10 +304,21 @@ protocol support and its `-w` field set vary by version, and a check that passes
 here may not hold on a consumer's machine. Anything depending on a specific cURL
 feature must degrade legibly rather than assume.
 
-**`include_headers` requires a POSIX host.** It passes `--dump-header
-/dev/fd/3` and reads the descriptor the server opened, so it depends on
-`/dev/fd/N` naming an inherited descriptor — true on macOS and Linux, false on
-Windows. The failure is loud rather than silent: with no such descriptor cURL
-exits 23 and writes nothing to stdout, so the request fails instead of folding
-the header block back onto the body. Every other tool parameter is
-platform-neutral.
+**`include_headers` requires macOS, and the reason is the descriptor's TYPE
+rather than the path syntax.** It passes `--dump-header /dev/fd/3` and reads the
+descriptor the server opened. libuv backs an extra `"pipe"` stdio slot with
+`socketpair(2)`, so fd 3 in the child is an `AF_UNIX` socket. macOS serves
+`/dev/fd/N` from `fdescfs`, which dups the descriptor, so cURL can open it.
+**Linux resolves `/dev/fd` to `/proc/self/fd`, where a socket appears as
+`socket:[inode]` and cannot be opened at all** — cURL would exit 23 on every
+request.
+
+**An earlier version of this paragraph claimed the mechanism worked "on macOS
+and Linux". It was written from a measurement taken only on macOS**, which is
+the whole of why it is spelled out here now: the observation was real and its
+scope was not. `LESSONS.md` RC-17.
+
+`command-executor.ts::platformSupportsHeaderDump` is the guard. On an
+unsupported host the flag is never added, so the request keeps its body and
+reports that no headers arrived, rather than failing outright for a feature the
+caller merely asked to include. Every other tool parameter is platform-neutral.

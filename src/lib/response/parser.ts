@@ -13,15 +13,6 @@ export interface ParsedResponse {
     /** Content-Type header value, if found */
     contentType?: string;
     /**
-     * The body as exact octets, with the metadata suffix removed.
-     *
-     * Kept alongside `body` because `body` is a lossy UTF-8 view in which an
-     * invalid byte becomes U+FFFD and re-encodes to three bytes where the wire
-     * had one. Anything measuring or slicing this response on wire byte counts
-     * must use these octets.
-     */
-    bodyBytes: Buffer;
-    /**
      * Whether the `-w` metadata block was located at all.
      *
      * **Distinct from `contentType === undefined`**, and the distinction is
@@ -63,9 +54,15 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * request. Adding a second field here would reintroduce that hazard, so a new
  * field goes BEFORE the content type, never after it.
  *
+ * Returns the body as a string only. The exact octets were carried alongside it
+ * while a wire byte count was indexed into this response; nothing indexes it
+ * now, and a spare Buffer whose doc-block says "measure with these" but which
+ * nothing measures reads as a guarantee in force. Anything that needs octets
+ * should slice `rawResponse` at the separator itself, deliberately.
+ *
  * @param rawResponse - The raw response from cURL including metadata suffix
  * @param separator - The unique per-request separator used in -w format
- * @returns ParsedResponse with the body octets and the optional contentType
+ * @returns ParsedResponse with the decoded body and the optional contentType
  */
 export function parseResponseWithMetadata(
     rawResponse: Buffer,
@@ -93,7 +90,6 @@ export function parseResponseWithMetadata(
     if (separatorIndex === -1) {
         return {
             body: raw.toString("utf8"),
-            bodyBytes: raw,
             metadataFound: false,
         };
     }
@@ -108,7 +104,6 @@ export function parseResponseWithMetadata(
 
     return {
         body: bodyBytes.toString("utf8"),
-        bodyBytes,
         contentType: contentType || undefined,
         metadataFound: true,
     };

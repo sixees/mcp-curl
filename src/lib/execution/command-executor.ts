@@ -2,7 +2,7 @@
 // Execute allowed commands with memory tracking, timeout, and size limits
 
 import { spawn, ChildProcess } from "child_process";
-import type { Readable } from "node:stream";
+import { Readable } from "node:stream";
 import { LIMITS, BYTES_PER_MB } from "../config/limits.js";
 import { allocateMemory, releaseMemory } from "./memory-tracker.js";
 
@@ -25,12 +25,33 @@ export const HEADER_DUMP_FD = 3;
 /**
  * The path cURL is given for `--dump-header`, naming the descriptor above.
  *
- * POSIX-only by construction. When the descriptor is absent or unwritable
- * cURL exits 23 and writes nothing to stdout — measured, and the reason this
- * mechanism is safe: the failure mode is a failed request, never a header
- * block silently folded back onto the body stream.
+ * **macOS only, and the reason is the descriptor's TYPE rather than the path
+ * syntax.** libuv backs an extra `"pipe"` stdio slot with `socketpair(2)`, so
+ * fd 3 in the child is an `AF_UNIX` socket. macOS serves `/dev/fd/N` from
+ * `fdescfs`, which dups the descriptor, so cURL can open it — measured here on
+ * cURL 8.7.1. Linux resolves `/dev/fd` to `/proc/self/fd`, where the entry for
+ * a socket is `socket:[inode]` and cannot be opened at all: cURL would exit 23
+ * on every request. `platformSupportsHeaderDump` is the guard; do not assume
+ * this path works anywhere the guard has not been extended to cover.
+ *
+ * The failure is at least loud: with no openable descriptor cURL exits 23 and
+ * writes nothing to stdout, so a header block is never folded back onto the
+ * body stream.
  */
 export const HEADER_DUMP_PATH = `/dev/fd/${HEADER_DUMP_FD}`;
+
+/**
+ * Whether this host can serve {@link HEADER_DUMP_PATH}.
+ *
+ * Consulted before the flag is added rather than after cURL fails, so an
+ * unsupported host loses the header channel and keeps its response body — the
+ * "degrade legibly rather than assume" rule in `ARCHITECTURE.md` →
+ * *Environments*. Without it the whole request fails on exit 23 and the caller
+ * loses the body too, for a feature they merely asked to include.
+ */
+export function platformSupportsHeaderDump(): boolean {
+    return process.platform === "darwin";
+}
 
 /**
  * Result of executing a command.
@@ -63,25 +84,27 @@ export interface CommandResult {
      * Undefined when capture was not requested, and when it was requested but
      * cURL emitted nothing — `curl_execute` reports the second case rather
      * than guessing, per `ARCHITECTURE.md` invariant 13.
+     *
+     * Bounded at `LIMITS.MAX_HEADER_TEXT_BYTES`. What arrived beyond that is
+     * counted in {@link headerBytesReceived} and dropped: no consumer can
+     * return more than the cap, so retaining more only gives a hostile origin
+     * a memory lever. A redirect chain was measured putting 2.5 MB on this
+     * descriptor against a 64 KB usable ceiling.
      */
     headerBytes?: Buffer;
+    /**
+     * Total header bytes cURL wrote, including any past the retention bound.
+     *
+     * Separate from `headerBytes.length` precisely so the bound above does not
+     * make the "truncated at X of Y" notice describe our own cap instead of
+     * what the origin sent. Counting and retaining are different questions and
+     * this is the field that keeps them apart.
+     */
+    headerBytesReceived?: number;
     /** Standard error from the command */
     stderr: string;
     /** Exit code (0 indicates success) */
     exitCode: number;
-}
-
-/** Options for {@link executeCommand}. */
-export interface ExecuteCommandOptions {
-    /**
-     * Open {@link HEADER_DUMP_FD} so cURL can write the header block to it.
-     *
-     * Derived from the same `include_headers` the args builder reads, so the
-     * pipe exists exactly when `--dump-header` names it. Opening it
-     * unconditionally would cost nothing at runtime but would leave the
-     * descriptor's purpose invisible at the call site.
-     */
-    captureHeaders?: boolean;
 }
 
 /**
@@ -100,15 +123,13 @@ export interface ExecuteCommandOptions {
  * @param command - The command to execute (must be in ALLOWED_COMMANDS)
  * @param args - Arguments for the command
  * @param timeout - Timeout in milliseconds (defaults to LIMITS.DEFAULT_TIMEOUT_MS)
- * @param options - Set `captureHeaders` to open {@link HEADER_DUMP_FD}
  * @returns CommandResult with stdout, the header block, stderr, and exitCode
  * @throws Error if command not allowed, timeout, memory limit, or size limit exceeded
  */
 export async function executeCommand(
     command: AllowedCommand,
     args: string[],
-    timeout: number = LIMITS.DEFAULT_TIMEOUT_MS,
-    options: ExecuteCommandOptions = {}
+    timeout: number = LIMITS.DEFAULT_TIMEOUT_MS
 ): Promise<CommandResult> {
     // Runtime guard: reject commands not in the allowlist (defense-in-depth for JS callers)
     if (!(ALLOWED_COMMANDS as readonly string[]).includes(command)) {
@@ -119,6 +140,15 @@ export async function executeCommand(
     if (!Number.isFinite(timeout) || timeout <= 0) {
         timeout = LIMITS.DEFAULT_TIMEOUT_MS;
     }
+
+    // Whether to open the header descriptor is READ OFF THE ARGUMENTS, never
+    // passed alongside them. Two sites deciding one thing is two sites that can
+    // disagree — and they did: the args builder branched on a truthy
+    // `include_headers` while the caller passed `=== true`, so an untyped
+    // embedder sending `1` got cURL told to write to a descriptor nobody
+    // opened. Derived here, the pipe exists exactly when cURL is told to use
+    // it, and there is nothing left for a caller to get wrong.
+    const captureHeaders = args.includes(HEADER_DUMP_PATH);
 
     // Track this request's memory usage for cleanup
     let requestMemoryUsage = 0;
@@ -135,7 +165,7 @@ export async function executeCommand(
         // `buildCurlArgs` has pointed `--dump-header` at it.
         const childProcess: ChildProcess = spawn(command, args, {
             signal: abortController.signal,
-            stdio: options.captureHeaders
+            stdio: captureHeaders
                 ? ["pipe", "pipe", "pipe", "pipe"]
                 : ["pipe", "pipe", "pipe"],
         });
@@ -146,6 +176,8 @@ export async function executeCommand(
         // by one change.
         const stdoutChunks: Buffer[] = [];
         const headerChunks: Buffer[] = [];
+        let headerBytesReceived = 0;
+        let headerBytesRetained = 0;
         let stderr = "";
         let stderrMemoryUsage = 0;
         let killed = false;
@@ -203,18 +235,42 @@ export async function executeCommand(
         // would hang the request rather than fail it — so the handler is
         // attached here, not lazily where the bytes are wanted.
         //
-        // No cap is applied here on purpose. The header channel's ceiling is
-        // invariant 14's, enforced once in `extractHeaderChannel` where the
-        // caller's `max_result_size` is also in hand; a second cap here would
-        // truncate the count that the "truncated at X of Y" notice reports,
-        // making the notice describe our own limit instead of what arrived.
-        if (options.captureHeaders) {
-            const headerStream = childProcess.stdio[HEADER_DUMP_FD] as Readable | null;
-            headerStream?.on("data", (data: Buffer) => {
-                if (killed) return;
-                if (!accountFor(data.length)) return;
-                headerChunks.push(data);
-            });
+        // Retention is bounded and the count is not, because they answer
+        // different questions: no consumer can return more than
+        // MAX_HEADER_TEXT_BYTES, so bytes past it are pure memory cost, while
+        // the total is what the "truncated at X of Y" notice must report. A
+        // redirect chain was measured putting 2.5 MB here against a 64 KB
+        // usable ceiling.
+        //
+        // Only RETAINED bytes are charged to the request. Charging the
+        // discarded ones would abort a request whose body is fine, with an
+        // error naming a response size the response never had.
+        if (captureHeaders) {
+            const headerStream = childProcess.stdio[HEADER_DUMP_FD];
+            // `instanceof`, not a cast. Node types this slot as
+            // `Readable | Writable | null`, and `.on("data")` typechecks on
+            // both — so a wrong arm would attach a handler that never fires,
+            // leave the descriptor undrained, and surface as a timeout blamed
+            // on the remote. Narrowing makes that a named failure instead.
+            if (headerStream instanceof Readable) {
+                headerStream.on("data", (data: Buffer) => {
+                    if (killed) return;
+                    headerBytesReceived += data.length;
+                    const room = LIMITS.MAX_HEADER_TEXT_BYTES - headerBytesRetained;
+                    if (room <= 0) return;
+                    const slice = data.length <= room ? data : data.subarray(0, room);
+                    if (!accountFor(slice.length)) return;
+                    headerChunks.push(slice);
+                    headerBytesRetained += slice.length;
+                });
+            } else {
+                // Never observed; reported rather than ignored, because the
+                // silent form of this is a 30-second timeout blamed on the origin.
+                abortWith(
+                    "Internal error: the response-header descriptor was not readable. " +
+                    "Retry without include_headers."
+                );
+            }
         }
 
         childProcess.stderr?.on("data", (data: Buffer) => {
@@ -263,6 +319,7 @@ export async function executeCommand(
                 resolve({
                     stdoutBytes,
                     headerBytes,
+                    headerBytesReceived: headerBytes ? headerBytesReceived : undefined,
                     stderr,
                     // null code means process was killed by signal — report as failure (not 0)
                     exitCode: code ?? (signal ? 1 : 0),

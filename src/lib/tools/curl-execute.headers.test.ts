@@ -2,7 +2,8 @@
 // End-to-end guards for the `include_headers` channel at the outermost
 // boundary a real response reaches.
 //
-// These belong here rather than beside `defendText` or `splitResponseHeaders`:
+// These belong here rather than beside `defendText` or the composition in
+// `header-channel.ts`:
 // a unit test on either feeds it the input its author imagined, and cannot see
 // what the caller already did to the value. The defect being guarded was
 // exactly a composition defect — both halves were individually defensible and
@@ -12,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";
+import { HEADER_DUMP_PATH } from "../execution/command-executor.js";
 
 // The real separator length, not a short stand-in: the metadata search window
 // is sized from it, so a shorter mock hides margin the production path lacks.
@@ -62,6 +64,7 @@ function stdoutFor(headerBlock: Buffer | string, body: Buffer | string, contentT
     return {
         stdoutBytes: Buffer.concat([b, meta]),
         headerBytes: h.length > 0 ? h : undefined,
+        headerBytesReceived: h.length > 0 ? h.length : undefined,
         stderr: "",
         exitCode: 0,
     };
@@ -292,6 +295,7 @@ describe("curl_execute include_headers — no header block arrived", () => {
                 Buffer.from(`${SEP}${contentType}`, "utf8"),
             ]),
             headerBytes: undefined,
+            headerBytesReceived: undefined,
             stderr: "",
             exitCode: 0,
         };
@@ -360,6 +364,117 @@ describe("curl_execute include_headers — no header block arrived", () => {
     });
 });
 
+describe("curl_execute include_headers — degraded results stay honest", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    // The plain branch carries no JSON fields, so a failed request and an empty
+    // successful one were the same bytes — and the notice then asserted the
+    // empty body was intact. `undetermined` answers "did headers arrive"; it
+    // cannot answer "is the body sound", and only `exitCode` can.
+    it("does not call the body unaffected when cURL failed", async () => {
+        mockedExecuteCommand.mockResolvedValue({
+            stdoutBytes: Buffer.alloc(0),
+            headerBytes: undefined,
+            headerBytesReceived: undefined,
+            stderr: "curl: (56) Recv failure: Connection reset by peer",
+            exitCode: 56,
+        });
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+        }));
+
+        const text = result.content[0].text;
+        expect(text).not.toContain("the body below is unaffected");
+        // And the failure is surfaced at all, rather than reading as an empty 200.
+        expect(text).toContain("cURL exited 56");
+    });
+
+    it("still calls the body unaffected on a clean exit with no headers", async () => {
+        // The positive control. Without it, deleting the reassurance entirely
+        // would satisfy the assertion above.
+        mockedExecuteCommand.mockResolvedValue({
+            stdoutBytes: Buffer.from(`body${SEP}text/plain`, "utf8"),
+            headerBytes: undefined,
+            headerBytesReceived: undefined,
+            stderr: "",
+            exitCode: 0,
+        });
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+        }));
+
+        expect(result.content[0].text).toContain("the body below is unaffected");
+        expect(result.content[0].text).not.toContain("cURL exited");
+    });
+
+    // The notice used to interpolate MAX_HEADER_TEXT_BYTES rather than the
+    // ceiling that fired, so a smaller `max_result_size` produced
+    // "truncated at 64000 of 5000 bytes" — a cut point larger than the total,
+    // which reads as no truncation at all.
+    it("reports a cut point that cannot exceed what arrived", async () => {
+        const headers = "HTTP/2 200 \r\n" + "x-pad: " + "a".repeat(4_800) + "\r\n\r\n";
+        mockedExecuteCommand.mockResolvedValue(stdoutFor(headers, "ok", "text/plain"));
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            max_result_size: 1000,
+        }));
+
+        const text = result.content[0].text;
+        const m = /response headers truncated: (\d+) of (\d+) bytes returned/.exec(text);
+        expect(m).not.toBeNull();
+        const [returned, received] = [Number(m![1]), Number(m![2])];
+        expect(returned).toBeLessThanOrEqual(received);
+        expect(returned).toBeLessThanOrEqual(1000);
+    });
+
+    it("reports both counts under include_metadata too", async () => {
+        const headers = "HTTP/2 200 \r\n" + "x-pad: " + "a".repeat(4_800) + "\r\n\r\n";
+        mockedExecuteCommand.mockResolvedValue(stdoutFor(headers, "ok", "text/plain"));
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            include_metadata: true,
+            max_result_size: 1000,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.headers_truncated).toBe(true);
+        expect(parsed.header_bytes_returned).toBeLessThanOrEqual(parsed.header_bytes_received);
+    });
+
+    // The executor stops retaining at MAX_HEADER_TEXT_BYTES but keeps counting.
+    // If the two were ever collapsed, the notice would report our own cap back
+    // as though it were what the origin sent.
+    it("reports what the origin sent, not what the executor kept", async () => {
+        const kept = Buffer.from("HTTP/2 200 \r\nx-a: 1\r\n\r\n", "utf8");
+        mockedExecuteCommand.mockResolvedValue({
+            stdoutBytes: Buffer.from(`ok${SEP}text/plain`, "utf8"),
+            headerBytes: kept,
+            headerBytesReceived: 2_500_000,
+            stderr: "",
+            exitCode: 0,
+        });
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            include_metadata: true,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.header_bytes_received).toBe(2_500_000);
+        expect(parsed.headers_truncated).toBe(true);
+        expect(parsed.header_bytes_returned).toBeLessThan(2_500_000);
+    });
+});
+
 describe("curl_execute include_headers — the streams stay separate", () => {
     beforeEach(() => vi.clearAllMocks());
 
@@ -385,10 +500,10 @@ describe("curl_execute include_headers — the streams stay separate", () => {
         expect(parsed.headers).toContain("x-leak: TRAILER_TEXT_HERE");
     });
 
-    // The wiring contract: the descriptor is opened exactly when cURL is told
-    // to write to it. Without this, dropping `captureHeaders` leaves a green
-    // suite in which every header request reports "none received".
-    it("asks the executor to open the header descriptor", async () => {
+    // The wiring contract. `executeCommand` opens the descriptor iff the argv
+    // names it, so there is one decision rather than two that must agree — the
+    // shape that let a truthy non-boolean open one side and not the other.
+    it("names the header descriptor in the arguments when headers are wanted", async () => {
         mockedExecuteCommand.mockResolvedValue(stdoutFor("HTTP/2 200 \r\n\r\n", "ok", "text/plain"));
 
         await executeCurlRequest(params({
@@ -396,19 +511,21 @@ describe("curl_execute include_headers — the streams stay separate", () => {
             include_headers: true,
         }));
 
-        expect(mockedExecuteCommand).toHaveBeenCalledWith(
-            "curl", expect.any(Array), expect.any(Number), { captureHeaders: true }
-        );
+        const args = mockedExecuteCommand.mock.calls[0][1] as string[];
+        expect(args).toContain("--dump-header");
+        expect(args).toContain(HEADER_DUMP_PATH);
+        // No fourth argument: nothing carries this decision beside the argv.
+        expect(mockedExecuteCommand.mock.calls[0]).toHaveLength(3);
     });
 
-    it("does not open it when headers were not asked for", async () => {
+    it("names it nowhere when headers were not asked for", async () => {
         mockedExecuteCommand.mockResolvedValue(stdoutFor("", "ok", "text/plain"));
 
         await executeCurlRequest(params({ url: "https://example.test/x" }));
 
-        expect(mockedExecuteCommand).toHaveBeenCalledWith(
-            "curl", expect.any(Array), expect.any(Number), { captureHeaders: false }
-        );
+        const args = mockedExecuteCommand.mock.calls[0][1] as string[];
+        expect(args).not.toContain("--dump-header");
+        expect(args).not.toContain(HEADER_DUMP_PATH);
     });
 });
 
@@ -427,6 +544,7 @@ describe("curl_execute include_headers — remaining channels", () => {
         return {
             stdoutBytes: Buffer.from(body, "utf8"),
             headerBytes: undefined,
+            headerBytesReceived: undefined,
             stderr: "",
             exitCode: 0,
         };

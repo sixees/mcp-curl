@@ -179,16 +179,13 @@ export async function executeCurlRequest(
 
         // Use timeout from params, or fall back to system default
         const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
-        // `captureHeaders` and the `--dump-header` flag both derive from
-        // `include_headers`, so the descriptor exists exactly when cURL is told
-        // to write to it. If it ever did not, cURL exits 23 rather than folding
-        // the headers back onto stdout — the failure is loud, not silent.
-        const result = await executeCommand("curl", args, timeoutMs, {
-            captureHeaders: params.include_headers === true,
-        });
+        // `executeCommand` reads the header descriptor's presence off `args`,
+        // so nothing here has to agree with `buildCurlArgs` about it.
+        const result = await executeCommand("curl", args, timeoutMs);
 
         let headerTruncated = false;
         let headerBytesReceived: number | undefined;
+        let headerBytesReturned: number | undefined;
 
         // stdout is the body alone — cURL wrote the headers to their own
         // descriptor — so this strips the `-w` metadata suffix and nothing else.
@@ -212,6 +209,7 @@ export async function executeCurlRequest(
         if (params.include_headers) {
             const channel = extractHeaderChannel(
                 result.headerBytes,
+                result.headerBytesReceived,
                 params.url,
                 params.max_result_size
             );
@@ -219,6 +217,7 @@ export async function executeCurlRequest(
             headersUndetermined = channel.undetermined;
             headerTruncated = channel.truncated;
             headerBytesReceived = channel.bytesReceived;
+            headerBytesReturned = channel.bytesReturned;
         }
 
         // Process response with filtering and size handling
@@ -259,11 +258,12 @@ export async function executeCurlRequest(
             {
                 truncated: headerTruncated,
                 bytesReceived: headerBytesReceived,
+                bytesReturned: headerBytesReturned,
                 // The caller asked for headers and provably did not get them.
                 // Reporting it is the point: silence is what made the pre-fix
                 // corruption invisible, because the degraded path returned bytes
                 // indistinguishable from the success path.
-                undetermined: params.include_headers && headersUndetermined,
+                undetermined: headersUndetermined,
             }
         );
 

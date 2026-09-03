@@ -15,6 +15,16 @@ export interface HeaderChannel {
     truncated: boolean;
     /** Total header bytes cURL wrote, when any arrived. */
     bytesReceived?: number;
+    /**
+     * Bytes of header text actually returned, when it was cut.
+     *
+     * Reported rather than the ceiling constant, because two ceilings can fire
+     * — `LIMITS.MAX_HEADER_TEXT_BYTES` and the caller's `max_result_size` — and
+     * naming the wrong one produced `truncated at 64000 of 5000 bytes`: a cut
+     * point larger than the total, which reads as "nothing was cut". A count of
+     * what was returned cannot contradict a count of what arrived.
+     */
+    bytesReturned?: number;
 }
 
 /**
@@ -31,12 +41,17 @@ export interface HeaderChannel {
  * correct and the wiring between them was not. Giving the wiring one home is
  * what lets the ordering constraints below be stated once.
  *
- * @param headerBytes - header octets from cURL, or undefined when none arrived
+ * @param headerBytes - header octets from cURL, bounded by the executor's
+ *   retention cap; undefined when none arrived
+ * @param bytesReceived - total bytes cURL wrote, including any the executor
+ *   dropped past that cap. Passed rather than derived from `headerBytes.length`
+ *   so the reported total describes the origin rather than our own bound
  * @param url - request URL, for the injection-detection log label
  * @param maxResultSize - the caller's inline budget, which header text honours
  */
 export function extractHeaderChannel(
     headerBytes: Buffer | undefined,
+    bytesReceived: number | undefined,
     url: string,
     maxResultSize: number | undefined
 ): HeaderChannel {
@@ -48,13 +63,15 @@ export function extractHeaderChannel(
         return { undetermined: true, truncated: false };
     }
 
-    const bytesReceived = headerBytes.length;
+    // What cURL wrote, which may exceed what the executor kept.
+    const totalReceived = bytesReceived ?? headerBytes.length;
+    const droppedByExecutor = totalReceived > headerBytes.length;
 
     // Cap BEFORE defending so the pipeline never runs over more bytes than can
     // be returned, and re-cap after — see below.
-    const capped = bytesReceived > LIMITS.MAX_HEADER_TEXT_BYTES;
+    const capped = headerBytes.length > LIMITS.MAX_HEADER_TEXT_BYTES;
     const raw = headerBytes
-        .subarray(0, capped ? LIMITS.MAX_HEADER_TEXT_BYTES : bytesReceived)
+        .subarray(0, capped ? LIMITS.MAX_HEADER_TEXT_BYTES : headerBytes.length)
         .toString("utf8")
         .replace(/\r?\n\r?\n$/, "");
 
@@ -85,13 +102,17 @@ export function extractHeaderChannel(
     );
     const defendedBytes = Buffer.byteLength(defended, "utf8");
     const overCeiling = defendedBytes > inlineCeiling;
+    const responseHeaders = overCeiling
+        ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8")
+        : defended;
+
+    const truncated = droppedByExecutor || capped || overCeiling;
 
     return {
-        responseHeaders: overCeiling
-            ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8")
-            : defended,
+        responseHeaders,
         undetermined: false,
-        truncated: capped || overCeiling,
-        bytesReceived,
+        truncated,
+        bytesReceived: totalReceived,
+        bytesReturned: truncated ? Buffer.byteLength(responseHeaders, "utf8") : undefined,
     };
 }

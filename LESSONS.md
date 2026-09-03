@@ -813,3 +813,57 @@ confirmed P1 here on the data-loss calibration.
      predecessor. What ended it was not a better fix at that layer but moving the
      precondition so the layer had nothing to answer — `skill: pr-resolver-safety`
      → the escalation ladder, rung 3.
+
+### RC-18 — The measurement was real; its scope was assumed
+
+**Date:** 2026-09-03 · **PR:** — (todo 002, review round 1) · **Plan:** `docs/todos/002-header-channel-should-not-be-multiplexed.md`
+
+**Class:** K-9, K-3 — *class-id:* `stale-observation`
+
+- **The plan said:** RC-17, filed hours earlier in this same run, recorded
+  `--dump-header /dev/fd/3` as verified — *"Measured before committing to it"* —
+  and `ARCHITECTURE.md` stated the mechanism depends on `/dev/fd/N` naming an
+  inherited descriptor, *"true on macOS and Linux, false on Windows."*
+- **Reality was:** the measurement was taken on macOS only, and the Linux half
+  was reasoning presented as observation. It is also **false**. libuv backs an
+  extra `"pipe"` stdio slot with `socketpair(2)`, so the child's fd 3 is an
+  `AF_UNIX` socket — confirmed here, `[ -S /dev/fd/3 ]` reports `TYPE=SOCKET`
+  and `ls -lL` shows `srw-rw-rw-`. macOS serves `/dev/fd/N` from `fdescfs` and
+  dups the descriptor, so cURL opens it. Linux resolves `/dev/fd` to
+  `/proc/self/fd`, where a socket appears as `socket:[inode]` and cannot be
+  opened at all — cURL would have exited 23 on **every** `include_headers`
+  request, returning an empty body. There is no `.github/workflows/` in this
+  repository, so nothing would have caught it.
+- **Compounding, and worse than either half:** the same change had rewritten the
+  degraded-path notice to read *"the body below is unaffected"*, keyed only on
+  whether headers arrived. On Linux that would have labelled every empty
+  failed body as intact — the exact corruption the `save_to_file`/`jq_filter`
+  refusal had existed to prevent, reintroduced by the change that deleted the
+  refusal as no longer necessary.
+- **What changed:** the operator ruled the deployment macOS-only, so the
+  mechanism stands. `platformSupportsHeaderDump()` guards the flag so an
+  unsupported host keeps its body instead of failing outright; the notice is
+  gated on `exitCode === 0` and a non-zero exit is now surfaced on the plain
+  branch at all; `ARCHITECTURE.md` → *Environments* and the published
+  `docs/architecture/architecture.md` state macOS and say why.
+- **What this costs next time:** three rules.
+  1. **A measurement carries the platform it was taken on, and nothing else.**
+     Writing "measured" beside a claim wider than the measurement is worse than
+     writing nothing: it is the sentence that stops the next reader checking.
+     **Say where you measured, in the same breath as what you measured.**
+  2. **When a mechanism depends on an object another layer creates, the
+     question is its TYPE, not its name.** `/dev/fd/3` resolved fine; what did
+     not was that libuv had made it a socket rather than a pipe. The premise
+     sat on the far side of an interface this code does not own — which is
+     exactly where a premise is cheapest to state and most expensive to assume.
+  3. **Deleting a guard on the grounds that its precondition is gone requires
+     proving the precondition is gone on every platform the guard covered.**
+     The refusal was removed because "the body is always body bytes now". That
+     was true on the platform it was tested on, and the untested platform is
+     precisely where the guard would still have been earning its place.
+
+**Found by review, before merge.** Two independent reviewers — `security-sentinel`
+and `data-integrity-guardian` — reached it through different lenses and graded it
+P1. That convergence is the signal; either alone would have been easier to argue
+down. `ARCHITECTURE.md` invariant 13 and RC-17 remain otherwise correct, and
+RC-17's mechanism is **not** superseded — only its verification claim was wrong.

@@ -1,7 +1,7 @@
 // src/lib/execution/curl-args-builder.test.ts
 // Tests for cURL CLI argument building
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { buildCurlArgs, type CurlArgsParams } from "./curl-args-builder.js";
 import { HEADER_DUMP_PATH } from "./command-executor.js";
 import { LIMITS } from "../config/index.js";
@@ -38,6 +38,32 @@ describe("buildCurlArgs", () => {
         it("asks for no header dump when include_headers is absent", () => {
             const args = buildCurlArgs(makeParams());
             expect(args).not.toContain("--dump-header");
+        });
+
+        // The guard exists entirely for platforms this suite cannot run on, so
+        // without a stub it has no teeth at all: on darwin it is always true
+        // and deleting it changes nothing observable. Stubbing `process.platform`
+        // is the only way the degrade-don't-fail behaviour is ever exercised.
+        describe("on a platform that cannot serve the descriptor", () => {
+            const real = process.platform;
+            const setPlatform = (value: string) =>
+                Object.defineProperty(process, "platform", { value, configurable: true });
+            afterEach(() => setPlatform(real));
+
+            it("omits the flag rather than asking cURL to fail", () => {
+                setPlatform("linux");
+                const args = buildCurlArgs(makeParams({ include_headers: true }));
+                expect(args).not.toContain("--dump-header");
+                expect(args).not.toContain(HEADER_DUMP_PATH);
+                // The request itself is untouched: the caller keeps its body.
+                expect(args).toContain("https://example.com/api");
+            });
+
+            it("still emits the flag on darwin", () => {
+                setPlatform("darwin");
+                const args = buildCurlArgs(makeParams({ include_headers: true }));
+                expect(args).toContain("--dump-header");
+            });
         });
     });
 

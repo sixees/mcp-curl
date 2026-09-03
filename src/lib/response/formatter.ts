@@ -1,6 +1,5 @@
 // src/lib/response/formatter.ts
 // Format response for MCP output
-import { LIMITS } from "../config/limits.js";
 
 /**
  * Information about file saving for response formatting.
@@ -29,7 +28,8 @@ export interface FileSaveInfo {
  * - headers: string (response header text, if include_headers was used)
  *
  * - headers_truncated: boolean (only when header text was cut)
- * - header_bytes_received: number (only when header text was cut)
+ * - header_bytes_received: number (total cURL wrote; only when text was cut)
+ * - header_bytes_returned: number (how much survived; only when text was cut)
  * - headers_undetermined: boolean (include_headers was requested but cURL wrote
  *   no header block, so none is reported. The body is unaffected — it arrives on
  *   its own stream — so this says "no headers", never "contaminated body")
@@ -61,6 +61,39 @@ export interface FileSaveInfo {
  *   sent by the origin.
  * @returns Formatted response string
  */
+/** Out-of-band facts about the header text, reported beside it rather than in it. */
+export interface HeaderInfo {
+    truncated?: boolean;
+    bytesReceived?: number;
+    bytesReturned?: number;
+    undetermined?: boolean;
+}
+
+/**
+ * Attach the header and stderr fields to a metadata object.
+ *
+ * One implementation, because there are two metadata branches — saved-to-file
+ * and inline — and they emit the same fields. They were near-copies, and the
+ * copies drifted the first time a field was added: `header_bytes_returned`
+ * landed on one branch and not the other, so the same response reported
+ * different facts depending on whether it happened to be saved.
+ */
+function applyHeaderFields(
+    output: Record<string, unknown>,
+    responseHeaders: string | undefined,
+    headerInfo: HeaderInfo | undefined,
+    stderr: string
+): void {
+    if (responseHeaders) output.headers = responseHeaders;
+    if (responseHeaders && headerInfo?.truncated) {
+        output.headers_truncated = true;
+        output.header_bytes_received = headerInfo.bytesReceived;
+        output.header_bytes_returned = headerInfo.bytesReturned;
+    }
+    if (headerInfo?.undetermined) output.headers_undetermined = true;
+    if (stderr) output.stderr = stderr;
+}
+
 export function formatResponse(
     stdout: string,
     stderr: string,
@@ -68,7 +101,7 @@ export function formatResponse(
     includeMetadata: boolean,
     fileSaveInfo?: FileSaveInfo,
     responseHeaders?: string,
-    headerInfo?: { truncated?: boolean; bytesReceived?: number; undetermined?: boolean }
+    headerInfo?: HeaderInfo
 ): string {
     // The plain branch has one string and so cannot carry JSON fields — but
     // "no field available" must not become "no signal". A truncated header
@@ -77,13 +110,27 @@ export function formatResponse(
     // Written by us and placed BEFORE the remote text, which is a position an
     // origin cannot occupy, so this does not reintroduce the forgeable marker
     // that was deliberately moved out of band.
-    const plainNotice = !includeMetadata && headerInfo
+    const plainNotice = !includeMetadata
         ? [
-              headerInfo.truncated
-                  ? `[mcp-curl] response headers truncated at ${LIMITS.MAX_HEADER_TEXT_BYTES} of ${headerInfo.bytesReceived} bytes`
+              // A non-zero exit has no field to land in on this branch, so
+              // without this line a FAILED request is byte-identical to an
+              // empty successful one. That is the shape the notice below was
+              // about to make worse.
+              exitCode !== 0
+                  ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete`
                   : null,
-              headerInfo.undetermined
-                  ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected"
+              headerInfo?.truncated
+                  ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes returned`
+                  : null,
+              // Only ever claimed on a CLEAN exit. Keyed on `undetermined`
+              // alone it asserted the body was sound on every cURL failure
+              // after connect — exit 23, 35, 56, 63 — where the body is empty
+              // precisely BECAUSE the request failed. The flag's domain cannot
+              // answer a question about the body; `exitCode` can.
+              headerInfo?.undetermined
+                  ? exitCode === 0
+                      ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected"
+                      : "[mcp-curl] response headers were requested but none were received"
                   : null,
           ].filter(Boolean).join("\n")
         : "";
@@ -99,13 +146,7 @@ export function formatResponse(
                 filepath: fileSaveInfo.filepath,
                 message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents.",
             };
-            if (responseHeaders) output.headers = responseHeaders;
-            if (responseHeaders && headerInfo?.truncated) {
-                output.headers_truncated = true;
-                output.header_bytes_received = headerInfo.bytesReceived;
-            }
-            if (headerInfo?.undetermined) output.headers_undetermined = true;
-            if (stderr) output.stderr = stderr;
+            applyHeaderFields(output, responseHeaders, headerInfo, stderr);
             return JSON.stringify(output, null, 2);
         }
         // Plain text - just return the message or fallback to filepath
@@ -120,13 +161,7 @@ export function formatResponse(
             exit_code: exitCode,
             response: stdout,
         };
-        if (responseHeaders) output.headers = responseHeaders;
-        if (responseHeaders && headerInfo?.truncated) {
-            output.headers_truncated = true;
-            output.header_bytes_received = headerInfo.bytesReceived;
-        }
-        if (headerInfo?.undetermined) output.headers_undetermined = true;
-        if (stderr) output.stderr = stderr;
+        applyHeaderFields(output, responseHeaders, headerInfo, stderr);
         return JSON.stringify(output, null, 2);
     }
     return withNotice(responseHeaders ? `${responseHeaders}\n\n${stdout}` : stdout);

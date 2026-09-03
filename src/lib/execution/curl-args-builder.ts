@@ -4,7 +4,7 @@
 import { validateNoCRLF } from "../security/index.js";
 import { LIMITS } from "../config/index.js";
 import { ALLOWED_URL_SCHEMES_CURL_FLAG } from "../config/security/url-schemes.js";
-import { HEADER_DUMP_PATH } from "./command-executor.js";
+import { HEADER_DUMP_PATH, platformSupportsHeaderDump } from "./command-executor.js";
 
 /**
  * Parameters for building cURL command arguments.
@@ -155,7 +155,13 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
     // index that chunked trailers land past (RC-17). `--dump-header` makes the
     // split structural, so there is no boundary left to infer — ARCHITECTURE.md
     // invariant 13. `command-executor.ts` opens the descriptor.
-    if (params.include_headers) {
+    // Guarded, so an unsupported host loses the header channel and keeps its
+    // response body. Without the guard cURL cannot open the descriptor, exits
+    // 23 and writes nothing at all — the caller loses the body too, for a
+    // feature they merely asked to include. `executeCommand` opens the pipe iff
+    // this flag is present, so skipping it here degrades the whole path
+    // coherently rather than half of it.
+    if (params.include_headers && platformSupportsHeaderDump()) {
         args.push("--dump-header", HEADER_DUMP_PATH);
     }
 

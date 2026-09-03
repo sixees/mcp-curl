@@ -10,6 +10,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import net from "node:net";
 import { executeCommand, HEADER_DUMP_PATH } from "./command-executor.js";
+import { LIMITS } from "../config/limits.js";
 
 let server: net.Server | undefined;
 
@@ -40,6 +41,10 @@ const CHUNKED_WITH_TRAILER =
     "Transfer-Encoding: chunked\r\nTrailer: X-Leak\r\n\r\n" +
     "5\r\nHELLO\r\n0\r\nX-Leak: TRAILER_TEXT_HERE\r\n\r\n";
 
+// cURL's own timeout must stay BELOW vitest's, or a genuine hang fails on the
+// test runner's clock before the abort path this suite exercises can fire.
+const CURL_TIMEOUT_MS = 3_000;
+
 describe("executeCommand — header descriptor", () => {
     it("puts headers on their own stream and the body on stdout", async () => {
         const port = await serveOnce(SIMPLE);
@@ -47,8 +52,7 @@ describe("executeCommand — header descriptor", () => {
         const result = await executeCommand(
             "curl",
             ["-s", "--dump-header", HEADER_DUMP_PATH, `http://127.0.0.1:${port}/`],
-            10_000,
-            { captureHeaders: true }
+            CURL_TIMEOUT_MS
         );
 
         expect(result.exitCode).toBe(0);
@@ -65,8 +69,7 @@ describe("executeCommand — header descriptor", () => {
         const result = await executeCommand(
             "curl",
             ["-s", "--dump-header", HEADER_DUMP_PATH, `http://127.0.0.1:${port}/`],
-            10_000,
-            { captureHeaders: true }
+            CURL_TIMEOUT_MS
         );
 
         expect(result.stdoutBytes.toString("utf8")).toBe("HELLO");
@@ -77,7 +80,7 @@ describe("executeCommand — header descriptor", () => {
     it("reports no header bytes when capture was not requested", async () => {
         const port = await serveOnce(SIMPLE);
 
-        const result = await executeCommand("curl", ["-s", `http://127.0.0.1:${port}/`], 10_000);
+        const result = await executeCommand("curl", ["-s", `http://127.0.0.1:${port}/`], CURL_TIMEOUT_MS);
 
         expect(result.exitCode).toBe(0);
         expect(result.stdoutBytes.toString("utf8")).toBe("body-side!!");
@@ -85,21 +88,71 @@ describe("executeCommand — header descriptor", () => {
     });
 
     // The safety property the whole mechanism rests on. If cURL fell back to
-    // stdout when the descriptor were missing, a dropped `captureHeaders` would
-    // silently re-multiplex the two streams and every guard above would still
-    // pass. It does not: it fails the request instead.
+    // stdout when the descriptor were missing, the two streams would silently
+    // re-multiplex and every guard above would still pass. It does not: it
+    // fails the request instead.
+    //
+    // Reaching that state now takes a descriptor cURL is told to use and the
+    // executor does not open — which the argv derivation makes unreachable
+    // through the real path, so the test names a DIFFERENT descriptor to
+    // recreate it. That the production path can no longer produce this is the
+    // point of the derivation; the guard stays because the fail-closed
+    // behaviour is what makes the whole mechanism safe.
     it("fails the request rather than falling back to stdout when the descriptor is absent", async () => {
         const port = await serveOnce(SIMPLE);
 
         const result = await executeCommand(
             "curl",
-            ["-s", "--dump-header", HEADER_DUMP_PATH, `http://127.0.0.1:${port}/`],
-            10_000,
-            { captureHeaders: false }
+            ["-s", "--dump-header", "/dev/fd/9", `http://127.0.0.1:${port}/`],
+            CURL_TIMEOUT_MS
         );
 
         expect(result.exitCode).not.toBe(0);
         expect(result.stdoutBytes.toString("utf8")).not.toContain("X-Marker");
         expect(result.stdoutBytes.toString("utf8")).not.toContain("body-side");
+    });
+
+    // The executor opens the pipe iff cURL was told to write to it. Two sites
+    // deciding this independently is what let a truthy non-boolean open one and
+    // not the other; deriving it means the test can assert the link directly.
+    it("opens the descriptor from the arguments, not from a separate flag", async () => {
+        const port = await serveOnce(SIMPLE);
+
+        const withDump = await executeCommand(
+            "curl",
+            ["-s", "--dump-header", HEADER_DUMP_PATH, `http://127.0.0.1:${port}/`],
+            CURL_TIMEOUT_MS
+        );
+        expect(withDump.exitCode).toBe(0);
+        expect(withDump.headerBytes).toBeDefined();
+
+        const port2 = await serveOnce(SIMPLE);
+        const without = await executeCommand(
+            "curl", ["-s", `http://127.0.0.1:${port2}/`], CURL_TIMEOUT_MS
+        );
+        expect(without.headerBytes).toBeUndefined();
+    });
+
+    // Retention is bounded; the COUNT is not. A hostile origin was measured
+    // putting 2.5 MB on this descriptor against a 64 KB usable ceiling, so the
+    // buffer must stop growing — but `bytesReceived` must still describe what
+    // arrived, or the truncation notice reports our own cap back to us.
+    it("bounds what it retains while still counting what arrived", async () => {
+        const pad = "x".repeat(1_000);
+        const many = Array.from({ length: 200 }, (_, i) => `X-Pad-${i}: ${pad}`).join("\r\n");
+        const big = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n${many}\r\nContent-Length: 2\r\n\r\nok`;
+        const port = await serveOnce(big);
+
+        const result = await executeCommand(
+            "curl",
+            ["-s", "--dump-header", HEADER_DUMP_PATH, `http://127.0.0.1:${port}/`],
+            CURL_TIMEOUT_MS
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(result.headerBytes!.length).toBeLessThanOrEqual(LIMITS.MAX_HEADER_TEXT_BYTES);
+        // The origin sent more than we kept, and the count says so.
+        expect(result.headerBytesReceived!).toBeGreaterThan(result.headerBytes!.length);
+        expect(result.stdoutBytes.toString("utf8")).toBe("ok");
     });
 });

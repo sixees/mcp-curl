@@ -80,9 +80,11 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
   it is capped at `LIMITS.MAX_HEADER_TEXT_BYTES` because it is surfaced inline even when
   the body was saved. There is no header/body boundary to compute: cURL writes the
   header block to its own file descriptor via `--dump-header`, so headers and body
-  never share a stream and no response byte can move the split. This requires a POSIX
-  host (`/dev/fd/N`); where the descriptor is missing cURL fails the request rather
-  than folding the headers onto stdout. See `ARCHITECTURE.md` invariants 1a, 13 and 14.
+  never share a stream and no response byte can move the split. **This requires
+  macOS** — the descriptor is a socketpair, which only macOS's `/dev/fd` can reopen —
+  and on any other platform the flag is not added at all, so the response body is
+  returned normally and the result reports that no headers arrived. See
+  `ARCHITECTURE.md` invariants 1a, 13 and 14.
 - Both per-host (60/min) **and** per-client (300/min) rate limits apply.
 - `jq_query` reads are confined to `{ tempDir, MCP_CURL_OUTPUT_DIR, cwd-subtree }` after `realpath()` resolution.
 - Responses larger than `max_result_size` (default 500 KB, max 1 MB) auto-save to a `0o600` file.
