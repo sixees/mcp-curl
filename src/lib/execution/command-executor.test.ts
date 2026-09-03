@@ -16,22 +16,38 @@ import { LIMITS } from "../config/limits.js";
 // responses calls `serveOnce` twice, and a single reference would leave the
 // first listener alive for the rest of the worker with nothing holding a handle
 // to close it. Tracked here rather than at the call sites so a test added later
-// cannot forget.
+// cannot forget. Accepted sockets are tracked for the same reason teardown needs
+// them — see below.
 const servers: net.Server[] = [];
+const sockets = new Set<net.Socket>();
 
-afterEach(async () => {
-    await Promise.all(
-        servers.splice(0).map((s) => new Promise<void>((resolve) => s.close(() => resolve())))
-    );
+afterEach(() => {
+    // Sockets first, and nothing here is awaited. `close()` completes only once
+    // every accepted connection has ended, and a cURL run that gives up before
+    // sending its request leaves one that `serveOnce`'s "data" handler never
+    // ends — so a teardown that waited on `close()` would wait on that socket
+    // for the whole test timeout. Destroying first removes what it would wait
+    // for; not waiting at all removes the failure mode outright.
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
+    for (const server of servers.splice(0)) server.close();
 });
 
 /** Serve one raw HTTP response on loopback and return its port. */
 async function serveOnce(payload: string): Promise<number> {
     const server = net.createServer((socket) => {
+        sockets.add(socket);
+        socket.once("close", () => sockets.delete(socket));
         socket.once("data", () => socket.end(Buffer.from(payload, "utf8")));
     });
     servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    // A bind failure emits "error" and never calls the listening callback, so
+    // without this arm the await is on an event that will not arrive and the
+    // setup failure surfaces as a test timeout instead of as itself.
+    await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve());
+    });
     return (server.address() as net.AddressInfo).port;
 }
 

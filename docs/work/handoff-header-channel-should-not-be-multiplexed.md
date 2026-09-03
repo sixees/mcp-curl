@@ -306,3 +306,35 @@ Suite **1173 / 1166 passed / 0 failed / 7 skipped**, `success: true`. The server
 fix is resource hygiene in the test harness and carries no assertion of its own; it is
 verified by reading the reference change plus a green suite, and that is stated rather
 than claimed as covered.
+
+## Review Comments Addressed — 2026-09-03 (Surface 3, round 3)
+
+4 comments, of which **2 findings** — both from CodeRabbit, both on round 2's fix.
+**Codex found nothing** ("Didn't find any major issues", reviewed `7205b348d3`) and
+**Copilot returned nothing**.
+
+### Changes Made
+
+One class, two instances: *a wait on an event that may never arrive*.
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `afterEach` can hang: `server.close()` waits for accepted connections, and a cURL run that aborts before sending leaves a socket no handler ends | coderabbit (Major) | Fix needed | **Round 2 introduced this.** Before it, teardown was a fire-and-forget `server?.close()`, so no wait existed to hang. Accepted sockets are now tracked and destroyed first, and teardown awaits nothing at all — removing the failure mode rather than shortening it |
+| `server.listen` emits `"error"` without calling the listening callback, so a bind failure leaves the promise pending | coderabbit (Minor) | Fix needed | `once("error", reject)` registered before `listen()`. A bind failure now surfaces as itself instead of as a test timeout |
+
+### Declined Findings
+
+None this round.
+
+### Verification
+
+Suite **1173 / 1166 passed / 0 failed / 7 skipped**, `success: true`. `tsc --noEmit`
+unchanged at **12 pre-existing errors**.
+
+**The hang was measured, not accepted on the reviewer's word** — and the first attempt
+to reproduce it returned a false negative because it raced the accept, waiting on the
+client's `connect` rather than the server's `connection`. With the server-side socket
+confirmed accepted, `await server.close()` does not return: probe printed `HUNG` at a
+600 ms cutoff on Node v24.18.0. Recorded because the near-miss is the interesting part
+— a probe that resolves in the reassuring direction reads exactly like a false positive
+(`.claude/rules/01-known-shapes.md` K-2).
