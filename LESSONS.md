@@ -770,8 +770,15 @@ confirmed P1 here on the data-loss calibration.
 
   **The mechanism did not need a file.** cURL's `-D` takes a path, and on a
   POSIX host `/dev/fd/3` names an inherited descriptor — so Node can hand the
-  child a fourth pipe and read the header block off it directly. Measured
-  before committing to it: stdout carried `HELLO` alone while the descriptor
+  child a fourth pipe and read the header block off it directly.
+
+  > **Scope corrected:** RC-18 (2026-09-03). "On a POSIX host" is the assumption
+  > this entry shipped with, and it is false — libuv backs the slot with
+  > `socketpair(2)`, and Linux cannot reopen a socket through `/proc/self/fd`.
+  > The mechanism stands; its platform reach is macOS only. Left as written
+  > because the over-broad claim is what RC-18 exists to record.
+
+  Measured before committing to it: stdout carried `HELLO` alone while the descriptor
   carried the block including the chunked trailer, and both header blocks of a
   redirect chain arrived on it with no intermediate body on stdout. That
   retires the cleanup path *entirely* rather than getting it right — the kernel

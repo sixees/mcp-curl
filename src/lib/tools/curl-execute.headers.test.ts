@@ -9,7 +9,7 @@
 // exactly a composition defect — both halves were individually defensible and
 // the caller wired them together through a shorter pipeline.
 
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll, type Mock } from "vitest";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";
@@ -72,6 +72,19 @@ function stdoutFor(headerBlock: Buffer | string, body: Buffer | string, contentT
 
 /** Parse through the real schema so tests exercise the true input shape. */
 const params = (p: Record<string, unknown>) => CurlExecuteSchema.parse(p);
+
+// `executeCurlRequest` consults `platformSupportsHeaderDump()` before it captures
+// anything, so on a non-darwin runner every suite below would take the
+// `headers_unsupported` branch and assert against a result the feature never
+// produced. Pinned here rather than per suite so a suite added later inherits it;
+// the unsupported-host suite re-pins per test, and this hook restores the pin
+// before the next one.
+const REAL_PLATFORM = process.platform;
+const setPlatform = (value: string) =>
+    Object.defineProperty(process, "platform", { value, configurable: true });
+
+beforeEach(() => setPlatform("darwin"));
+afterAll(() => setPlatform(REAL_PLATFORM));
 
 describe("curl_execute include_headers — defence pipeline", () => {
     beforeEach(() => vi.clearAllMocks());
@@ -522,10 +535,6 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
 
 describe("curl_execute include_headers — an unsupported host says so", () => {
     beforeEach(() => vi.clearAllMocks());
-    const real = process.platform;
-    const setPlatform = (value: string) =>
-        Object.defineProperty(process, "platform", { value, configurable: true });
-    afterEach(() => setPlatform(real));
 
     // "this host cannot" and "the origin sent none" are different facts with
     // different owners. Collapsed, a model auditing an origin's security

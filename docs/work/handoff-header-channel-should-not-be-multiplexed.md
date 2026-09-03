@@ -21,8 +21,9 @@ claimed Linux support from a macOS-only measurement.
 `HEADER_DUMP_FD` / `HEADER_DUMP_PATH`, `platformSupportsHeaderDump()`,
 `CommandResult.headerBytes` and `CommandResult.headerBytesReceived`, and a
 conditional fourth stdio pipe drained at attach. Whether to open it is read off
-the argv (`args.includes(HEADER_DUMP_PATH)`), so no caller has to agree with
-`buildCurlArgs` about it. `curl-args-builder.ts` pushes `--dump-header` in place
+the argv — `--dump-header` must be present *and* the path following it must be
+`HEADER_DUMP_PATH` — so no caller has to agree with `buildCurlArgs` about it, and
+a request body of `/dev/fd/3` cannot open the descriptor by appearing in argv. `curl-args-builder.ts` pushes `--dump-header` in place
 of `-i` and no longer emits `%{size_header}`.
 
 **The deletions (`src/lib/response/`).** `splitResponseHeaders`,
@@ -61,8 +62,9 @@ header-field emission and drifted the moment a field was added; they are one
 
 - **`platformSupportsHeaderDump()` is untestable on this machine except by
   stubbing `process.platform`.** Its whole purpose is behaviour on a platform we
-  cannot run, so the stub in `curl-args-builder.test.ts` is the only thing
-  giving it teeth. Verified: removing the guard fails that test.
+  cannot run, so stubbing is the only thing giving it teeth: the guard's own
+  branches in `curl-args-builder.test.ts`, and the `headers_unsupported` result
+  in `curl-execute.headers.test.ts`. Verified: removing the guard fails both.
 - **`command-executor.test.ts` spawns real cURL against a loopback socket.** It
   is the only such suite in the repo. Its cURL timeout is deliberately below
   vitest's default `testTimeout`, or a genuine hang would fail on the runner's
@@ -76,8 +78,9 @@ header-field emission and drifted the moment a field was added; they are one
 
 ## Known issues and limitations
 
-- **macOS-only.** `include_headers` degrades to "no headers received" elsewhere.
-  The package is published to npm, so a non-mac consumer can install it.
+- **macOS-only.** Elsewhere `include_headers` reports `headers_unsupported` — a
+  fact about the host, distinct from the origin having sent no header block. The
+  package is published to npm, so a non-mac consumer can install it.
 - **No CI exists.** There is no `.github/workflows/` in this repository, which
   is why the platform error survived to review rather than being caught.
 - **cURL stderr is returned inline to the model with no size ceiling** —
@@ -89,7 +92,8 @@ header-field emission and drifted the moment a field was added; they are one
   than left looking like a guarantee.
 - **Response headers reach the model verbatim, `Set-Cookie` included.** Judged a
   decline by the reviewer that raised it — a tool that silently withholds
-  headers is lying about what the origin sent — but it is undocumented.
+  headers is lying about what the origin sent. Documented on the tool
+  description in `curl-execute.ts`.
 
 ## Testing summary
 
@@ -220,7 +224,7 @@ affects a Linux consumer of the published npm package rather than this
 deployment. Both are the dispositioner's call; the macOS-only ruling covers the
 deployment, not the package's consumers.
 
-Declined findings, Declined findings, recorded here rather than filed:
+Declined findings, recorded here rather than filed:
 cURL stderr returned inline with no ceiling (P2, pre-existing, invariant 14,
 measured 6.2 MB); `formatResponse`'s anonymous `headerInfo` bag (P3, signature
 identical at base); `Set-Cookie` forwarded verbatim (P3, declined by the reviewer
@@ -232,3 +236,49 @@ that raised it, but undocumented); `processor.ts`'s stale citation of
 | File (removed) | Title | Summary | By | Date |
 |---|---|---|---|---|
 | `docs/todos/002-header-channel-should-not-be-multiplexed.md` | Stop multiplexing headers and body onto one stream | Replaced `curl -i` with `--dump-header` on a dedicated descriptor; retired the byte arithmetic, `%{size_header}`, the lossy-decode hazard, the trailer ambiguity, the terminator precondition and the save/jq refusal | `/sixees-workflow:work` | 2026-09-03 |
+
+---
+
+## Review Comments Addressed — 2026-09-03 (Surface 3, round 1)
+
+Bots engaged: **Codex** (scoped trigger), **Copilot** (reviewer request; off this
+command's roster, engaged on explicit operator instruction), **CodeRabbit** (its 8
+comments predated the round and were triaged with it). 12 comments → 7 classes.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| New tests assume `process.platform === "darwin"` | codex (P1), copilot, coderabbit ×3 — **one class, five comments** | Fix needed | Real-cURL descriptor tests gated with `itOnDarwin` (`it.skipIf`); the two that never open the descriptor left ungated. Mocked suites in `curl-execute.headers.test.ts` pinned to `darwin` by a module-level `beforeEach`, its near-copy helper in the unsupported-host suite deleted. `curl-args-builder.test.ts`'s platform helper hoisted out of the nested describe so the supported-path tests pin too |
+| Handoff describes `args.includes(HEADER_DUMP_PATH)` | copilot | Documentation | Corrected to the shipped derivation — `--dump-header` present *and* the following path equal to `HEADER_DUMP_PATH`. The handoff described the form the P3 fix replaced |
+| CHANGELOG claims exits 23/35/56/63 produce empty bodies | coderabbit | Fix needed | False: cURL writes what it has received before it fails. Rewritten to state the observed regression, and the clean-exit gate re-justified on the *correct* grounds — a non-zero exit says nothing about completeness |
+| Three stale handoff claims | coderabbit | Documentation | (a) the builder stub is not the only platform-guard coverage — `curl-execute.headers.test.ts` stubs too; (b) unsupported hosts report `headers_unsupported`, not "no headers received"; (c) `Set-Cookie` exposure *is* documented in `curl-execute.ts` |
+| RC-17 asserts `/dev/fd/3` works "on a POSIX host" | coderabbit | Documentation | Forward annotation added in the file's existing supersession style, pointing at RC-18. **Not retro-edited** — the over-broad claim is what RC-18 exists to record (`.claude/rules/03-divergence.md`) |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope | Reason declined |
+|---|---|---|---|---|
+| CHANGELOG should say "the Node parent" opens the pipe, not "the server" | coderabbit | P3 | in scope | **False positive.** The Node parent process *is* the MCP server; the two name one process. No inaccuracy, and no consequence stated |
+| Add direct tests for the header-acceptance ceiling and `accountFor` equivalence | coderabbit | P3 (its own label: Trivial / Heavy lift) | in scope | **Already decided**, with the reasoning in *Testing summary* → *Gaps*: the ceiling needs ~35 redirect hops to reach because cURL caps its own header read near 300 KB, and the fixture was judged too expensive for the value. The gap is disclosed rather than hidden. `accountFor` equivalence is real and out of the contained band |
+
+### Verification
+
+Suite **1173 tests / 1166 passed / 0 failed / 7 skipped** (JSON artefact, `success: true`),
+unchanged from baseline. `tsc --noEmit`: **12 errors, all pre-existing**, in three test
+files this branch does not touch.
+
+**Teeth probe on the new gates**, mutated and restored via `cp` in the same turn:
+inverting `itOnDarwin` moved pending 7 → 11 (the four real-cURL tests skip), and
+pinning the mocked suites to `linux` instead of `darwin` produced **19 failures** in
+`curl-execute.headers.test.ts`. That is the finding measured rather than assumed —
+without the pin, 19 assertions were hostage to the runner's platform.
+
+### Files Modified
+
+`src/lib/execution/command-executor.test.ts`, `src/lib/execution/curl-args-builder.test.ts`,
+`src/lib/tools/curl-execute.headers.test.ts`, `CHANGELOG.md`, `LESSONS.md`,
+`docs/work/handoff-header-channel-should-not-be-multiplexed.md`
+
+**This round filed no todos. 3 remain open against the repo** (003, 004, 005), all
+pre-existing and none created here.

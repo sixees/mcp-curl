@@ -46,9 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   across stdout, stderr and the header descriptor against one memory ceiling. A redirect chain
   was measured putting 2.5 MB on this descriptor against a 64 KB usable ceiling.
 - **A non-zero cURL exit is reported on the plain (non-metadata) branch.** Without it a failed
-  request is byte-identical to an empty successful one, and the "the body below is unaffected"
-  reassurance is now claimed only on a clean exit — the body is empty on exit 23, 35, 56 and 63
-  precisely because the request failed.
+  request is byte-identical to an empty successful one. The "the body below is unaffected"
+  reassurance is claimed only on a clean exit, because cURL writes what it has already received
+  before it fails: exits 23, 56 and 63 all follow a partial transfer. A non-zero exit therefore
+  says nothing about whether the bytes below it are complete, which is exactly why the
+  reassurance cannot be keyed on anything weaker.
 
 ### Removed
 

@@ -22,7 +22,18 @@ describe("buildCurlArgs", () => {
     // different descriptor and cURL exits 23 on every header request. Both are
     // failures this block turns into test failures.
     describe("--dump-header", () => {
+        // `buildCurlArgs` reads the real `process.platform`, so on a Linux
+        // runner every assertion below would hold vacuously — no flag is
+        // emitted, so "does not contain `-i`" passes without the builder having
+        // decided anything. Pinning the platform is what makes each assertion
+        // about the branch it names.
+        const real = process.platform;
+        const setPlatform = (value: string) =>
+            Object.defineProperty(process, "platform", { value, configurable: true });
+        afterEach(() => setPlatform(real));
+
         it("dumps headers to the descriptor the executor opens", () => {
+            setPlatform("darwin");
             const args = buildCurlArgs(makeParams({ include_headers: true }));
             const i = args.indexOf("--dump-header");
             expect(i).toBeGreaterThan(-1);
@@ -30,6 +41,7 @@ describe("buildCurlArgs", () => {
         });
 
         it("never multiplexes headers onto stdout with -i", () => {
+            setPlatform("darwin");
             const args = buildCurlArgs(makeParams({ include_headers: true }));
             expect(args).not.toContain("-i");
             expect(args).not.toContain("--include");
@@ -45,11 +57,6 @@ describe("buildCurlArgs", () => {
         // and deleting it changes nothing observable. Stubbing `process.platform`
         // is the only way the degrade-don't-fail behaviour is ever exercised.
         describe("on a platform that cannot serve the descriptor", () => {
-            const real = process.platform;
-            const setPlatform = (value: string) =>
-                Object.defineProperty(process, "platform", { value, configurable: true });
-            afterEach(() => setPlatform(real));
-
             it("omits the flag rather than asking cURL to fail", () => {
                 setPlatform("linux");
                 const args = buildCurlArgs(makeParams({ include_headers: true }));

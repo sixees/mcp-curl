@@ -45,8 +45,15 @@ const CHUNKED_WITH_TRAILER =
 // test runner's clock before the abort path this suite exercises can fire.
 const CURL_TIMEOUT_MS = 3_000;
 
+// cURL can only open `/dev/fd/3` where `platformSupportsHeaderDump()` is true.
+// The tests below that spawn it and expect success are skipped elsewhere rather
+// than stubbed: no stub makes a Linux kernel reopen a socket through
+// `/proc/self/fd`, so a stubbed run would assert against cURL exit 23 and prove
+// nothing. The two tests left ungated do not open the descriptor at all.
+const itOnDarwin = it.skipIf(process.platform !== "darwin");
+
 describe("executeCommand — header descriptor", () => {
-    it("puts headers on their own stream and the body on stdout", async () => {
+    itOnDarwin("puts headers on their own stream and the body on stdout", async () => {
         const port = await serveOnce(SIMPLE);
 
         const result = await executeCommand(
@@ -63,7 +70,7 @@ describe("executeCommand — header descriptor", () => {
         expect(result.headerBytes?.toString("utf8")).not.toContain("body-side");
     });
 
-    it("keeps a chunked trailer out of the body", async () => {
+    itOnDarwin("keeps a chunked trailer out of the body", async () => {
         const port = await serveOnce(CHUNKED_WITH_TRAILER);
 
         const result = await executeCommand(
@@ -115,7 +122,7 @@ describe("executeCommand — header descriptor", () => {
     // The executor opens the pipe iff cURL was told to write to it. Two sites
     // deciding this independently is what let a truthy non-boolean open one and
     // not the other; deriving it means the test can assert the link directly.
-    it("opens the descriptor from the arguments, not from a separate flag", async () => {
+    itOnDarwin("opens the descriptor from the arguments, not from a separate flag", async () => {
         const port = await serveOnce(SIMPLE);
 
         const withDump = await executeCommand(
@@ -137,7 +144,7 @@ describe("executeCommand — header descriptor", () => {
     // putting 2.5 MB on this descriptor against a 64 KB usable ceiling, so the
     // buffer must stop growing — but `bytesReceived` must still describe what
     // arrived, or the truncation notice reports our own cap back to us.
-    it("bounds what it retains while still counting what arrived", async () => {
+    itOnDarwin("bounds what it retains while still counting what arrived", async () => {
         const pad = "x".repeat(1_000);
         const many = Array.from({ length: 200 }, (_, i) => `X-Pad-${i}: ${pad}`).join("\r\n");
         const big = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n${many}\r\nContent-Length: 2\r\n\r\nok`;
