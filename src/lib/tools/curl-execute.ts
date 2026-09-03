@@ -184,7 +184,8 @@ export async function executeCurlRequest(
         // Use timeout from params, or fall back to system default
         const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
         // `executeCommand` reads the header descriptor's presence off `args`,
-        // so nothing here has to agree with `buildCurlArgs` about it.
+        // so nothing here has to agree with `buildCurlArgs` about it — one
+        // decision, taken from the argument list both sides already share.
         const result = await executeCommand("curl", args, timeoutMs);
 
         let headerTruncated = false;
@@ -198,16 +199,16 @@ export async function executeCurlRequest(
         const body = parsed.body;
 
         // Defending and bounding the header text is one concern with one home —
-        // see `extractHeaderChannel`. Every defect this channel has produced was
+        // see `extractHeaderChannel`. Every defect this channel has produced is
         // a composition defect, so the wiring has a name rather than living
         // inline here.
         //
-        // No save_to_file / jq_filter refusal accompanies this any more, and its
-        // absence is the point: the body reaching those two is body bytes on
-        // every path, including the one where no header block arrived. The
-        // refusal existed because the boundary could be undetermined *and the
-        // headers would then still be on the front of the body*. There is no
-        // such path now.
+        // Nothing below refuses `save_to_file` or `jq_filter`, and that is a
+        // property of the split rather than an omission: what those two receive
+        // is body bytes on EVERY path, including the one where no header block
+        // arrived, because the header block never travels on stdout. A refusal
+        // would only be needed if an undetermined boundary could leave headers
+        // on the front of the body, and no such path exists (invariant 13).
         let responseHeaders: string | undefined;
         let headersUndetermined = false;
         let headersUnsupported = false;
@@ -272,9 +273,10 @@ export async function executeCurlRequest(
                 bytesReceived: headerBytesReceived,
                 bytesReturned: headerBytesReturned,
                 // The caller asked for headers and provably did not get them.
-                // Reporting it is the point: silence is what made the pre-fix
-                // corruption invisible, because the degraded path returned bytes
-                // indistinguishable from the success path.
+                // Reporting it is the point: a degraded path that stays silent
+                // returns bytes indistinguishable from the success path, so the
+                // caller reads "no security headers" off a request that never
+                // captured any.
                 undetermined: headersUndetermined,
                 unsupported: headersUnsupported,
             }

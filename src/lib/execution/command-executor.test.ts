@@ -92,12 +92,12 @@ describe("executeCommand — header descriptor", () => {
     // re-multiplex and every guard above would still pass. It does not: it
     // fails the request instead.
     //
-    // Reaching that state now takes a descriptor cURL is told to use and the
-    // executor does not open — which the argv derivation makes unreachable
-    // through the real path, so the test names a DIFFERENT descriptor to
-    // recreate it. That the production path can no longer produce this is the
-    // point of the derivation; the guard stays because the fail-closed
-    // behaviour is what makes the whole mechanism safe.
+    // Reaching that state takes a descriptor cURL is told to use and the
+    // executor does not open. The argv derivation in `executeCommand` makes
+    // that unreachable through the real path, so this test names a DIFFERENT
+    // descriptor to construct it — the guard is asserted on its own merits
+    // because the fail-closed behaviour, not the derivation, is what makes the
+    // mechanism safe.
     it("fails the request rather than falling back to stdout when the descriptor is absent", async () => {
         const port = await serveOnce(SIMPLE);
 

@@ -79,10 +79,9 @@ describe("buildCurlArgs", () => {
             expect(w.endsWith("%{content_type}")).toBe(true);
         });
 
-        // The boundary is structural now, so no byte count rides this channel.
-        // Reintroducing one would put a header/body offset back on a stream the
-        // parse would then have to interpret — the shape RC-1, RC-2 and RC-17
-        // each failed on.
+        // The boundary is structural, so no byte count rides this channel. One
+        // here would put a header/body offset on a stream the parse then has to
+        // interpret — the shape RC-1, RC-2 and RC-17 each failed on.
         it("carries no header byte count", () => {
             const args = buildCurlArgs(makeParams({ include_headers: true }));
             const w = args[args.indexOf("-w") + 1];

@@ -313,12 +313,14 @@ descriptor the server opened. libuv backs an extra `"pipe"` stdio slot with
 `socket:[inode]` and cannot be opened at all** — cURL would exit 23 on every
 request.
 
-**An earlier version of this paragraph claimed the mechanism worked "on macOS
-and Linux". It was written from a measurement taken only on macOS**, which is
-the whole of why it is spelled out here now: the observation was real and its
-scope was not. `LESSONS.md` RC-17.
+**The platform list is measured, not inferred, and it is spelled out because a
+measurement taken on one platform says nothing about the others.** `LESSONS.md`
+RC-17 is where that cost was paid; widening this claim requires a run on the
+platform being added, not a reading of the path syntax.
 
 `command-executor.ts::platformSupportsHeaderDump` is the guard. On an
-unsupported host the flag is never added, so the request keeps its body and
-reports that no headers arrived, rather than failing outright for a feature the
-caller merely asked to include. Every other tool parameter is platform-neutral.
+unsupported host the flag is never added, so the request keeps its body and the
+result reports `headers_unsupported` — **a fact about the host, and deliberately
+not `headers_undetermined`, which is a fact about the origin.** Collapsing the
+two would tell a caller auditing an origin's security headers that it sends
+none, on every URL. Every other tool parameter is platform-neutral.

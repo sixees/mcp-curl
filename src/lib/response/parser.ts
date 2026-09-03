@@ -43,21 +43,24 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * Parse cURL response to extract body and content-type.
  *
  * The separator must be the same unique value used in the -w format string.
- * As a defense-in-depth measure, we only search for the separator near the
- * end of the response (within MAX_METADATA_TAIL_LENGTH bytes). The unique
+ * As a defence-in-depth measure the search covers only the tail of the
+ * response — the separator's own length plus MAX_METADATA_TAIL_LENGTH for the
+ * fields, never a flat budget the two share (see the window below). The unique
  * per-request separator is the primary protection against injection.
  *
  * The metadata block is `<separator><content_type>`. `%{content_type}` is
  * echoed from the remote and may contain anything, which is safe only because
  * it is the block's whole content: there is no field beside it to shift and no
  * trailing delimiter to spoof, and the separator ahead of it is unguessable per
- * request. Adding a second field here would reintroduce that hazard, so a new
- * field goes BEFORE the content type, never after it.
+ * request. A second field would end that, so a new field goes BEFORE the
+ * content type, never after it — `ARCHITECTURE.md` invariant 13 states the rule
+ * and `curl-args-builder.ts` is the writing half of it.
  *
- * Returns the body as a string only. The exact octets were carried alongside it
- * while a wire byte count was indexed into this response; nothing indexes it
- * now, and a spare Buffer whose doc-block says "measure with these" but which
- * nothing measures reads as a guarantee in force.
+ * Returns the body as a string only. Nothing indexes a wire byte count into
+ * this response — the header/body split is structural, not derived — so no
+ * octet copy is returned beside it: a spare Buffer whose doc-block says
+ * "measure with these" but which nothing measures reads as a guarantee in
+ * force.
  *
  * **The decode is lossy and currently unavoidable downstream.** A byte that is
  * not valid UTF-8 becomes U+FFFD here, and `saveResponseToFile` takes a
@@ -76,18 +79,18 @@ export function parseResponseWithMetadata(
     rawResponse: Buffer,
     separator: string
 ): ParsedResponse {
-    // Buffer only, deliberately. A `string | Buffer` union left the lossy arm —
-    // the one RC-2 was about — one character away at every call site, with no
-    // compiler objection. Tests convert at the call site instead.
+    // Buffer only, deliberately. A `string | Buffer` union would leave the
+    // lossy arm — the one RC-2 is about — one character away at every call
+    // site, with no compiler objection. Tests convert at the call site instead.
     const raw = rawResponse;
     const sep = Buffer.from(separator, "utf8");
 
     // The window is the separator's own length PLUS the field allowance, not a
-    // flat constant the two share. Sharing one budget let a long, entirely
+    // flat constant the two share. One shared budget lets a long, entirely
     // legal, remote-chosen Content-Type push the separator out of the window —
-    // at which point the block read as absent and the response fell back to the
-    // strictest grammar on a perfectly ordinary reply. See
-    // LIMITS.MAX_METADATA_TAIL_LENGTH.
+    // at which point the block reads as absent and the response falls back to
+    // the strictest grammar on a perfectly ordinary reply. The measured case is
+    // in LIMITS.MAX_METADATA_TAIL_LENGTH, which owns the sizing.
     const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
     const searchStart = Math.max(0, raw.length - windowBytes);
     // Search only the window, so the scan stays bounded rather than walking a

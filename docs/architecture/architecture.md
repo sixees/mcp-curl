@@ -83,8 +83,9 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
   never share a stream and no response byte can move the split. **This requires
   macOS** — the descriptor is a socketpair, which only macOS's `/dev/fd` can reopen —
   and on any other platform the flag is not added at all, so the response body is
-  returned normally and the result reports that no headers arrived. See
-  `ARCHITECTURE.md` invariants 1a, 13 and 14.
+  returned normally and the result reports `headers_unsupported`: a fact about the
+  host, distinct from `headers_undetermined`, which says the origin sent no header
+  block. See `ARCHITECTURE.md` invariants 1a, 13 and 14.
 - Both per-host (60/min) **and** per-client (300/min) rate limits apply.
 - `jq_query` reads are confined to `{ tempDir, MCP_CURL_OUTPUT_DIR, cwd-subtree }` after `realpath()` resolution.
 - Responses larger than `max_result_size` (default 500 KB, max 1 MB) auto-save to a `0o600` file.

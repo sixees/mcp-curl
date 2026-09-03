@@ -13,6 +13,42 @@ export interface FileSaveInfo {
     message?: string;
 }
 
+/** Out-of-band facts about the header text, reported beside it rather than in it. */
+export interface HeaderInfo {
+    truncated?: boolean;
+    bytesReceived?: number;
+    bytesReturned?: number;
+    undetermined?: boolean;
+    /** True when this host cannot capture headers at all — a local fact, not one about the origin. */
+    unsupported?: boolean;
+}
+
+/**
+ * Attach the header and stderr fields to a metadata object.
+ *
+ * One implementation, because the two metadata branches — saved-to-file and
+ * inline — emit the same fields. Written as near-copies they drift the moment a
+ * field is added to one and not the other, and the symptom is a response
+ * reporting different facts depending on whether it happened to be saved. The
+ * branches differ in the body they carry, never in these fields.
+ */
+function applyHeaderFields(
+    output: Record<string, unknown>,
+    responseHeaders: string | undefined,
+    headerInfo: HeaderInfo | undefined,
+    stderr: string
+): void {
+    if (responseHeaders) output.headers = responseHeaders;
+    if (responseHeaders && headerInfo?.truncated) {
+        output.headers_truncated = true;
+        output.header_bytes_received = headerInfo.bytesReceived;
+        output.header_bytes_returned = headerInfo.bytesReturned;
+    }
+    if (headerInfo?.undetermined) output.headers_undetermined = true;
+    if (headerInfo?.unsupported) output.headers_unsupported = true;
+    if (stderr) output.stderr = stderr;
+}
+
 /**
  * Format the response for MCP output.
  *
@@ -25,11 +61,16 @@ export interface FileSaveInfo {
  *   true AND fileSaveInfo.filepath is set — absent otherwise, never emitted as false)
  * - filepath: string (path to saved file; present only alongside saved_to_file)
  * - message: string (informational message; present only alongside saved_to_file)
- * - headers: string (response header text, if include_headers was used)
+ * - headers: string (defended header text; present only when there is text to
+ *   report, so absent on both the undetermined and the unsupported paths)
  *
  * - headers_truncated: boolean (only when header text was cut)
  * - header_bytes_received: number (total cURL wrote; only when text was cut)
- * - header_bytes_returned: number (how much survived; only when text was cut)
+ * - header_bytes_returned: number (origin octets used; only when text was cut AND
+ *   that count is knowable. Absent where the defence grew the text past the
+ *   ceiling, because the surviving octet count cannot be stated in origin units
+ *   — see `HeaderChannel.bytesReturned`. Reporting the pair is optional; the
+ *   `headers_truncated` flag beside it is not)
  * - headers_undetermined: boolean (include_headers was requested but cURL wrote
  *   no header block, so none is reported. The header channel cannot have
  *   contaminated the body — it arrives on its own stream — but whether the body
@@ -65,42 +106,6 @@ export interface FileSaveInfo {
  *   sent by the origin.
  * @returns Formatted response string
  */
-/** Out-of-band facts about the header text, reported beside it rather than in it. */
-export interface HeaderInfo {
-    truncated?: boolean;
-    bytesReceived?: number;
-    bytesReturned?: number;
-    undetermined?: boolean;
-    /** True when this host cannot capture headers at all — a local fact, not one about the origin. */
-    unsupported?: boolean;
-}
-
-/**
- * Attach the header and stderr fields to a metadata object.
- *
- * One implementation, because there are two metadata branches — saved-to-file
- * and inline — and they emit the same fields. They were near-copies, and the
- * copies drifted the first time a field was added: `header_bytes_returned`
- * landed on one branch and not the other, so the same response reported
- * different facts depending on whether it happened to be saved.
- */
-function applyHeaderFields(
-    output: Record<string, unknown>,
-    responseHeaders: string | undefined,
-    headerInfo: HeaderInfo | undefined,
-    stderr: string
-): void {
-    if (responseHeaders) output.headers = responseHeaders;
-    if (responseHeaders && headerInfo?.truncated) {
-        output.headers_truncated = true;
-        output.header_bytes_received = headerInfo.bytesReceived;
-        output.header_bytes_returned = headerInfo.bytesReturned;
-    }
-    if (headerInfo?.undetermined) output.headers_undetermined = true;
-    if (headerInfo?.unsupported) output.headers_unsupported = true;
-    if (stderr) output.stderr = stderr;
-}
-
 export function formatResponse(
     stdout: string,
     stderr: string,
@@ -115,14 +120,14 @@ export function formatResponse(
     // block is byte-identical to a complete one, so a caller reading it
     // concludes a security header is absent when it was merely cut off.
     // Written by us and placed BEFORE the remote text, which is a position an
-    // origin cannot occupy, so this does not reintroduce the forgeable marker
-    // that was deliberately moved out of band.
+    // origin cannot occupy — so this is a server-authored prefix rather than
+    // the forgeable in-band marker the out-of-band fields exist to avoid.
     const plainNotice = !includeMetadata
         ? [
               // A non-zero exit has no field to land in on this branch, so
               // without this line a FAILED request is byte-identical to an
-              // empty successful one. That is the shape the notice below was
-              // about to make worse.
+              // empty successful one — the shape the reassurance below would
+              // otherwise make worse by naming the body sound.
               exitCode !== 0
                   ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete`
                   : null,
@@ -135,14 +140,17 @@ export function formatResponse(
                       ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used`
                       : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received`
                   : null,
-              // Only ever claimed on a CLEAN exit. Keyed on `undetermined`
-              // alone it asserted the body was sound on every cURL failure
-              // after connect — exit 23, 35, 56, 63 — where the body is empty
-              // precisely BECAUSE the request failed. The flag's domain cannot
-              // answer a question about the body; `exitCode` can.
+              // A fact about this host, so it is stated whatever the exit code
+              // was: the flag is never added here, which is a decision taken
+              // before the request and independent of how the request went.
               headerInfo?.unsupported
                   ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent"
                   : null,
+              // The reassurance is claimed only on a CLEAN exit. Keyed on
+              // `undetermined` alone it asserts the body is sound on every cURL
+              // failure after connect — exit 23, 35, 56, 63 — where the body is
+              // empty precisely BECAUSE the request failed. This flag's domain
+              // cannot answer a question about the body; `exitCode` can.
               headerInfo?.undetermined
                   ? exitCode === 0
                       ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected"

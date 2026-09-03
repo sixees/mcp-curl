@@ -77,9 +77,10 @@ describe("curl_execute include_headers — defence pipeline", () => {
     beforeEach(() => vi.clearAllMocks());
 
     it("strips an exfiltration beacon carried in a response header", async () => {
-        // The vector: header text used to be concatenated into the body and so
-        // went through the strip stages. Splitting it out routed it around
-        // them, and this is the assertion that fails if that regresses.
+        // Header text takes the SAME strip stages as the body (invariant 1a).
+        // Its own descriptor is what routes it around them if the pipeline is
+        // ever short-circuited for this channel, and this is the assertion that
+        // fails when that happens.
         const headers =
             "HTTP/2 200 \r\n" +
             "content-type: text/markdown\r\n" +
@@ -210,11 +211,10 @@ describe("curl_execute include_headers — boundary fidelity", () => {
     beforeEach(() => vi.clearAllMocks());
 
     it("keeps the body intact when a header carries non-UTF-8 bytes", () => {
-        // Kept from the era when a wire byte count was indexed into lossily
-        // decoded stdout (RC-2): an invalid byte became U+FFFD, three bytes for
-        // one, and the split landed early. The streams are separate now so no
-        // offset can drift — this asserts the property still holds, and would
-        // fail again the moment anything reintroduced a shared stream.
+        // The property RC-2 is about: a wire byte count indexed into lossily
+        // decoded stdout lands early, because an invalid byte becomes U+FFFD —
+        // three bytes for one. Separate streams carry no offset that can drift,
+        // and this fails the moment anything puts the two back on one stream.
         const headerBytes = Buffer.concat([
             Buffer.from("HTTP/2 200 \r\ncontent-type: application/json\r\nx-name: caf"),
             Buffer.from([0xe9]),
@@ -243,9 +243,9 @@ describe("curl_execute include_headers — boundary fidelity", () => {
     });
 
     it("still splits and still strips behind a long remote-chosen Content-Type", async () => {
-        // A legal Content-Type this long used to evict the metadata separator
-        // from a fixed window, at which point the strip stages were silently
-        // deselected on an ordinary reply.
+        // A Content-Type this long is legal. Against a fixed window shared with
+        // the separator it evicts it, and the strip stages are then silently
+        // deselected on an ordinary reply — see LIMITS.MAX_METADATA_TAIL_LENGTH.
         const longCt =
             'text/markdown; charset=utf-8; profile="' + "x".repeat(300) + '"';
         const headers =
@@ -301,12 +301,11 @@ describe("curl_execute include_headers — no header block arrived", () => {
         };
     }
 
-    // The mirror of the two tests below. `save_to_file` and `jq_filter` used to
-    // be REFUSED here, because the header block could still be on the front of
-    // the body and writing it to disk was the corruption this feature exists to
-    // remove. cURL writes the body to its own stream now, so there is nothing to
-    // refuse — and asserting the refusal is gone is what stops it being
-    // reinstated as a "safety" measure that only costs the caller a feature.
+    // The mirror of the two tests below, and it asserts an ABSENCE deliberately.
+    // `save_to_file` and `jq_filter` need no refusal on the no-header-block path,
+    // because stdout is body bytes whether or not a header block arrived. Without
+    // this test a refusal can be reinstated as a "safety" measure that protects
+    // against nothing and costs the caller the feature.
     it("saves to file even though no header block arrived", async () => {
         mockedExecuteCommand.mockResolvedValue(withoutHeaders('{"id":1}'));
 
@@ -411,10 +410,10 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
         expect(result.content[0].text).not.toContain("cURL exited");
     });
 
-    // The notice used to interpolate MAX_HEADER_TEXT_BYTES rather than the
-    // ceiling that fired, so a smaller `max_result_size` produced
-    // "truncated at 64000 of 5000 bytes" — a cut point larger than the total,
-    // which reads as no truncation at all.
+    // Interpolating MAX_HEADER_TEXT_BYTES rather than the ceiling that actually
+    // fired gives "truncated at 64000 of 5000 bytes" whenever `max_result_size`
+    // is the smaller of the two — a cut point larger than the total, which reads
+    // as no truncation at all.
     it("reports a cut point that cannot exceed what arrived", async () => {
         const headers = "HTTP/2 200 \r\n" + "x-pad: " + "a".repeat(4_800) + "\r\n\r\n";
         mockedExecuteCommand.mockResolvedValue(stdoutFor(headers, "ok", "text/plain"));
@@ -602,9 +601,10 @@ describe("curl_execute include_headers — an unsupported host says so", () => {
 describe("curl_execute include_headers — the streams stay separate", () => {
     beforeEach(() => vi.clearAllMocks());
 
-    // RC-17: `%{size_header}` does not count chunked trailers, which `curl -i`
-    // wrote to stdout AFTER the body — so trailer text landed inside `response`.
-    // cURL writes trailers to the header dump, so this is now structural.
+    // RC-17: `%{size_header}` does not count chunked trailers, and `curl -i`
+    // writes them to stdout AFTER the body — so any offset-based split leaves
+    // trailer text inside `response`. cURL writes trailers to the header dump,
+    // which is what makes this structural rather than arithmetic.
     it("keeps a chunked trailer out of the body", async () => {
         const headers =
             "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n" +
@@ -712,8 +712,8 @@ describe("curl_execute include_headers — remaining channels", () => {
         // The strictest-grammar posture is for the model; processResponse writes
         // the POST-strip content to disk, so applying it to a JSON body silently
         // rewrites the artefact jq_query later reads back.
-        // stdout is always the body alone now; the metadata block is what is
-        // unreachable here.
+        // stdout is the body alone, so what is unreachable here is the metadata
+        // block, not a header/body boundary.
         const body = '{"note":"see [docs](https://example.com/x)"}';
         mockedExecuteCommand.mockResolvedValue(noMetadataStdout(body));
 

@@ -1,5 +1,6 @@
 // src/lib/execution/command-executor.ts
-// Execute allowed commands with memory tracking, timeout, and size limits
+// Execute allowed commands with memory tracking, timeout, and size limits, and
+// carry the response header block back on its own descriptor
 
 import { spawn, ChildProcess } from "child_process";
 import { Readable } from "node:stream";
@@ -62,12 +63,11 @@ export interface CommandResult {
      *
      * **Octets, not a string, because a decode is not reversible.** Any byte
      * that is not valid UTF-8 becomes U+FFFD and re-encodes to three bytes
-     * where the wire had one, so a decoded copy can no longer be measured or
-     * indexed against anything counted on the wire. Nothing currently applies
-     * a wire offset to this buffer — the header boundary that once did is
-     * structural now — and this stays a Buffer so that reintroducing one is a
-     * type change rather than a silent corruption (`LESSONS.md` RC-2, where a
-     * length guard could never fire because replacement only ever inflates).
+     * where the wire had one, so a decoded copy cannot be measured or indexed
+     * against anything counted on the wire. No wire offset is applied to this
+     * buffer, and it stays a Buffer so that applying one is a type change
+     * rather than a silent corruption (`LESSONS.md` RC-2, where a length guard
+     * could never fire because replacement only ever inflates).
      */
     stdoutBytes: Buffer;
     /**
@@ -75,21 +75,19 @@ export interface CommandResult {
      * for and cURL wrote one.
      *
      * A separate stream, never a prefix of `stdoutBytes`. That is the whole
-     * point: `curl -i` multiplexes both onto stdout, and three successive
-     * attempts to recover the boundary arithmetically each failed in a new way
-     * (`LESSONS.md` RC-1, RC-2, and the chunked-trailer case behind RC-17).
-     * A descriptor cURL cannot write the body to is a boundary the remote
-     * cannot reach.
+     * point: a descriptor cURL cannot write the body to is a boundary the
+     * remote cannot reach, which is what `ARCHITECTURE.md` invariant 13 asks
+     * for and why no code here computes a split. That invariant owns the
+     * reasoning, including why deriving the boundary is not an option.
      *
      * Undefined when capture was not requested, and when it was requested but
      * cURL emitted nothing — `curl_execute` reports the second case rather
-     * than guessing, per `ARCHITECTURE.md` invariant 13.
+     * than guessing, per the same invariant.
      *
-     * Bounded at `LIMITS.MAX_HEADER_TEXT_BYTES`. What arrived beyond that is
+     * Bounded at `LIMITS.MAX_HEADER_TEXT_BYTES`. What arrives beyond that is
      * counted in {@link headerBytesReceived} and dropped: no consumer can
      * return more than the cap, so retaining more only gives a hostile origin
-     * a memory lever. A redirect chain was measured putting 2.5 MB on this
-     * descriptor against a 64 KB usable ceiling.
+     * a memory lever.
      */
     headerBytes?: Buffer;
     /**
@@ -99,6 +97,9 @@ export interface CommandResult {
      * make the "truncated at X of Y" notice describe our own cap instead of
      * what the origin sent. Counting and retaining are different questions and
      * this is the field that keeps them apart.
+     *
+     * Set exactly when {@link headerBytes} is, so a consumer never has to
+     * handle a total with no text beside it.
      */
     headerBytesReceived?: number;
     /** Standard error from the command */
@@ -142,12 +143,13 @@ export async function executeCommand(
     }
 
     // Whether to open the header descriptor is READ OFF THE ARGUMENTS, never
-    // passed alongside them. Two sites deciding one thing is two sites that can
-    // disagree — and they did: the args builder branched on a truthy
-    // `include_headers` while the caller passed `=== true`, so an untyped
-    // embedder sending `1` got cURL told to write to a descriptor nobody
-    // opened. Derived here, the pipe exists exactly when cURL is told to use
-    // it, and there is nothing left for a caller to get wrong.
+    // passed alongside them. Two sites deciding one thing are two sites that
+    // can disagree: a caller testing `include_headers === true` against a
+    // builder testing it for truthiness differ on the `1` an untyped embedder
+    // sends, and the disagreement points cURL at a descriptor nobody opened.
+    // Derived here, the pipe exists exactly when cURL is told to use it, and
+    // there is nothing left for a caller to get wrong.
+    //
     // Bound to the FLAG's own position, never a search of the whole list.
     // `--data-raw` and `-A` carry caller-supplied values verbatim, so a bare
     // `args.includes(HEADER_DUMP_PATH)` lets `data: "/dev/fd/3"` open a
@@ -206,10 +208,10 @@ export async function executeCommand(
         /**
          * Charge bytes to the global pool and the per-request ceiling.
          *
-         * One rule, one implementation, three streams. It was two near-copies
-         * before the header descriptor arrived and would have become three —
-         * and every copy is a place the pool and the ceiling can drift apart
-         * while each site still reads as correct.
+         * One rule, one implementation, three streams — stdout, stderr and the
+         * header descriptor. Written per-stream instead, every copy is a place
+         * the pool and the ceiling can drift apart while each site still reads
+         * as correct.
          *
          * @returns false when the caller must stop accumulating; the promise
          *   has already been rejected by then.
@@ -247,17 +249,18 @@ export async function executeCommand(
         // more than MAX_HEADER_TEXT_BYTES, so retaining past it is pure memory
         // cost — but the count still has to describe what the origin sent, or
         // the "X of Y" notice reports our own cap back as though it were Y.
-        // A redirect chain was measured putting 2.5 MB here against a 64 KB
-        // usable ceiling.
+        // A redirect chain was measured putting 2.5 MB on this descriptor
+        // against that 64 KB usable ceiling, so the gap between the two bounds
+        // is a real one rather than a theoretical one.
         //
         // Discarded bytes are deliberately NOT charged to the memory pool:
         // they occupy no memory, and charging them aborts a request whose body
         // is fine with an error naming a size the response never had. But an
-        // uncharged read is an UNBOUNDED read — the first version of this
-        // returned before any accounting, leaving the abort timer (up to 300s
-        // by schema) as the only limit, and leaving the global pool blind to a
-        // header flood so concurrent requests felt no backpressure. So the
-        // count carries its own ceiling.
+        // uncharged read would be an UNBOUNDED read — with the abort timer (up
+        // to 300s by schema) as the only limit and the global pool blind to a
+        // header flood, so concurrent requests feel no backpressure. That is
+        // why the count carries its own ceiling below rather than relying on
+        // `accountFor`, which only ever sees the retained slice.
         if (captureHeaders) {
             const headerStream = childProcess.stdio[HEADER_DUMP_FD];
             // `instanceof`, not a cast. Node types this slot as
@@ -331,9 +334,9 @@ export async function executeCommand(
             if (!killed) {
                 // Concat INSIDE the accounted window, then drop the chunk
                 // references so only one full-size copy survives. No eager
-                // `.toString()`: it cost a full decode (20MB on a 10MB
+                // `.toString()`: it costs a full decode (20MB on a 10MB
                 // non-UTF-8 response, since U+FFFD forces a two-byte string)
-                // and no production caller ever read it.
+                // for a value every caller reaches through `stdoutBytes`.
                 const stdoutBytes = Buffer.concat(stdoutChunks);
                 stdoutChunks.length = 0;
                 // An empty capture and no capture collapse to `undefined`, so

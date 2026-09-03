@@ -149,18 +149,18 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
 
     // Response headers go to their own descriptor, never onto stdout.
     //
-    // `-i` multiplexes both onto one stream, and recovering the boundary
-    // afterwards failed three times: a scan that a body could forge (RC-1), a
-    // wire byte count applied to lossily-decoded text (RC-2), and an octet
-    // index that chunked trailers land past (RC-17). `--dump-header` makes the
-    // split structural, so there is no boundary left to infer — ARCHITECTURE.md
-    // invariant 13. `command-executor.ts` opens the descriptor.
-    // Guarded, so an unsupported host loses the header channel and keeps its
-    // response body. Without the guard cURL cannot open the descriptor, exits
-    // 23 and writes nothing at all — the caller loses the body too, for a
-    // feature they merely asked to include. `executeCommand` opens the pipe iff
-    // this flag is present, so skipping it here degrades the whole path
-    // coherently rather than half of it.
+    // `-i` would multiplex both onto one stream and leave a boundary to be
+    // recovered from the bytes; `--dump-header` makes the split structural, so
+    // there is none to infer. ARCHITECTURE.md invariant 13 owns that rule and
+    // the three failed attempts at the alternative. `command-executor.ts` opens
+    // the descriptor this path names.
+    //
+    // The platform guard is `platformSupportsHeaderDump`, whose doc-block owns
+    // why an unsupported host must lose the header channel rather than the
+    // request. It belongs on THIS side of the decision because `executeCommand`
+    // opens the pipe iff this flag is present: skipping the flag here degrades
+    // the whole path coherently instead of opening a descriptor nothing writes
+    // to.
     if (params.include_headers && platformSupportsHeaderDump()) {
         args.push("--dump-header", HEADER_DUMP_PATH);
     }
