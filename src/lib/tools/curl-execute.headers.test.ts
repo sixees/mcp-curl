@@ -9,7 +9,7 @@
 // exactly a composition defect — both halves were individually defensible and
 // the caller wired them together through a shorter pipeline.
 
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";
@@ -426,11 +426,57 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
         }));
 
         const text = result.content[0].text;
-        const m = /response headers truncated: (\d+) of (\d+) bytes returned/.exec(text);
+        const m = /response headers truncated: (\d+) of (\d+) bytes used/.exec(text);
         expect(m).not.toBeNull();
-        const [returned, received] = [Number(m![1]), Number(m![2])];
-        expect(returned).toBeLessThanOrEqual(received);
-        expect(returned).toBeLessThanOrEqual(1000);
+        const [used, received] = [Number(m![1]), Number(m![2])];
+        expect(used).toBeLessThanOrEqual(received);
+        expect(used).toBeLessThanOrEqual(1000);
+    });
+
+    // The case the assertion above CANNOT see. Its padding matches no strip
+    // pattern, so the raw block already exceeds the ceiling and any ordering of
+    // the counts satisfies it. Beacon-dense header text is the opposite: it is
+    // SMALLER than the ceiling on the wire and larger after defence, because
+    // `![](data:)` is 10 bytes and `[image removed]` is 15. Reporting the
+    // returned text's own length there produced `1000 of 722` — the same
+    // impossible pair the constant produced, from the other direction.
+    it("never reports more used than arrived, even when defence grows the text", async () => {
+        const headers = "HTTP/2 200 \r\nx-a: " + "![](data:)".repeat(70) + "\r\n\r\n";
+        const wireBytes = Buffer.byteLength(headers, "utf8");
+        expect(wireBytes).toBeLessThan(1000); // the premise: it fits before defence
+
+        mockedExecuteCommand.mockResolvedValue(stdoutFor(headers, "ok", "text/plain"));
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            include_metadata: true,
+            max_result_size: 1000,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.headers_truncated).toBe(true);
+        // Either a pair in origin octets, or no pair at all — never a lie.
+        if (parsed.header_bytes_returned !== undefined) {
+            expect(parsed.header_bytes_returned).toBeLessThanOrEqual(parsed.header_bytes_received);
+        }
+        expect(Buffer.byteLength(parsed.headers, "utf8")).toBeLessThanOrEqual(1000);
+    });
+
+    it("says so in words when the surviving octet count is unknowable", async () => {
+        const headers = "HTTP/2 200 \r\nx-a: " + "![](data:)".repeat(70) + "\r\n\r\n";
+        mockedExecuteCommand.mockResolvedValue(stdoutFor(headers, "ok", "text/plain"));
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            max_result_size: 1000,
+        }));
+
+        const text = result.content[0].text;
+        expect(text).toContain("truncated to fit the inline limit");
+        // And it must not invent a ratio it cannot state.
+        expect(text).not.toMatch(/\d+ of \d+ bytes used/);
     });
 
     it("reports both counts under include_metadata too", async () => {
@@ -472,6 +518,84 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
         expect(parsed.header_bytes_received).toBe(2_500_000);
         expect(parsed.headers_truncated).toBe(true);
         expect(parsed.header_bytes_returned).toBeLessThan(2_500_000);
+    });
+});
+
+describe("curl_execute include_headers — an unsupported host says so", () => {
+    beforeEach(() => vi.clearAllMocks());
+    const real = process.platform;
+    const setPlatform = (value: string) =>
+        Object.defineProperty(process, "platform", { value, configurable: true });
+    afterEach(() => setPlatform(real));
+
+    // "this host cannot" and "the origin sent none" are different facts with
+    // different owners. Collapsed, a model auditing an origin's security
+    // headers is told it sends none — on every URL, permanently, and with
+    // nothing in the response able to falsify it.
+    it("reports a host limitation as a host limitation, not as origin behaviour", async () => {
+        setPlatform("linux");
+        mockedExecuteCommand.mockResolvedValue({
+            stdoutBytes: Buffer.from(`{"id":1}${SEP}application/json`, "utf8"),
+            headerBytes: undefined,
+            headerBytesReceived: undefined,
+            stderr: "",
+            exitCode: 0,
+        });
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            include_metadata: true,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.headers_unsupported).toBe(true);
+        // Must NOT claim the origin sent nothing — it was never asked.
+        expect(parsed.headers_undetermined).toBeUndefined();
+        // And the body survives: losing the feature must not lose the response.
+        expect(JSON.parse(parsed.response)).toEqual({ id: 1 });
+    });
+
+    it("says it in words on the plain branch too", async () => {
+        setPlatform("linux");
+        mockedExecuteCommand.mockResolvedValue({
+            stdoutBytes: Buffer.from(`body${SEP}text/plain`, "utf8"),
+            headerBytes: undefined,
+            headerBytesReceived: undefined,
+            stderr: "",
+            exitCode: 0,
+        });
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+        }));
+
+        const text = result.content[0].text;
+        expect(text).toContain("cannot be captured on this host");
+        expect(text).not.toContain("none were received");
+    });
+
+    it("still reports origin silence as origin silence on a supported host", async () => {
+        // Positive control: without it, always reporting "unsupported" passes.
+        setPlatform("darwin");
+        mockedExecuteCommand.mockResolvedValue({
+            stdoutBytes: Buffer.from(`body${SEP}text/plain`, "utf8"),
+            headerBytes: undefined,
+            headerBytesReceived: undefined,
+            stderr: "",
+            exitCode: 0,
+        });
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            include_metadata: true,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.headers_undetermined).toBe(true);
+        expect(parsed.headers_unsupported).toBeUndefined();
     });
 });
 

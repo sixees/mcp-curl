@@ -16,13 +16,21 @@ export interface HeaderChannel {
     /** Total header bytes cURL wrote, when any arrived. */
     bytesReceived?: number;
     /**
-     * Bytes of header text actually returned, when it was cut.
+     * How many of `bytesReceived`'s octets were used, when the text was cut —
+     * and **`undefined` when that cannot be stated**.
      *
-     * Reported rather than the ceiling constant, because two ceilings can fire
-     * — `LIMITS.MAX_HEADER_TEXT_BYTES` and the caller's `max_result_size` — and
-     * naming the wrong one produced `truncated at 64000 of 5000 bytes`: a cut
-     * point larger than the total, which reads as "nothing was cut". A count of
-     * what was returned cannot contradict a count of what arrived.
+     * Both numbers are origin octets or there is no pair. Reporting the ceiling
+     * constant gave `truncated at 64000 of 5000 bytes`; reporting the returned
+     * *text* length gave `1000 of 722`, because `defendText` is not
+     * length-preserving — `![](data:)` is 10 bytes and `[image removed]` is 15,
+     * so defended text can exceed the octets it came from. Both pairs are
+     * arithmetically impossible and both read as "nothing was cut".
+     *
+     * So the input is capped first, which makes the consumed count knowable in
+     * origin units. When the defence then grows the text past the ceiling and a
+     * second cut is needed, the surviving octet count is genuinely unknown —
+     * and this is `undefined` rather than a guess. `truncated` still says the
+     * text was cut; only the ratio is withheld.
      */
     bytesReturned?: number;
 }
@@ -67,11 +75,20 @@ export function extractHeaderChannel(
     const totalReceived = bytesReceived ?? headerBytes.length;
     const droppedByExecutor = totalReceived > headerBytes.length;
 
-    // Cap BEFORE defending so the pipeline never runs over more bytes than can
-    // be returned, and re-cap after — see below.
-    const capped = headerBytes.length > LIMITS.MAX_HEADER_TEXT_BYTES;
+    // The ceiling honours the caller's inline budget as well as this channel's
+    // own, because header text is returned inline even when the body went to a
+    // file — so `max_result_size` never bounded it otherwise.
+    const inlineCeiling = Math.min(
+        LIMITS.MAX_HEADER_TEXT_BYTES,
+        maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
+    );
+
+    // Cap the INPUT first. That is what makes the consumed count knowable in
+    // the same units as `bytesReceived`, and it also stops the defence
+    // pipeline running over more bytes than could ever be returned.
+    const inputConsumed = Math.min(headerBytes.length, inlineCeiling);
     const raw = headerBytes
-        .subarray(0, capped ? LIMITS.MAX_HEADER_TEXT_BYTES : headerBytes.length)
+        .subarray(0, inputConsumed)
         .toString("utf8")
         .replace(/\r?\n\r?\n$/, "");
 
@@ -93,26 +110,25 @@ export function extractHeaderChannel(
 
     // Re-cap AFTER defence as well as before it: `[link removed]` is longer than
     // some of the forms it replaces, so a cap applied only upstream lets the
-    // documented ceiling be exceeded. The ceiling honours the caller's inline
-    // budget too, because this text is returned inline even when the body went
-    // to a file — so `max_result_size` never bounded it otherwise.
-    const inlineCeiling = Math.min(
-        LIMITS.MAX_HEADER_TEXT_BYTES,
-        maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
-    );
+    // documented ceiling be exceeded (invariant 14 — the gate weighs the
+    // DEFENDED bytes). This second cut is also the one case where the surviving
+    // octet count stops being knowable, which is why it is tracked separately
+    // rather than folded into `truncated`.
     const defendedBytes = Buffer.byteLength(defended, "utf8");
-    const overCeiling = defendedBytes > inlineCeiling;
-    const responseHeaders = overCeiling
+    const grewPastCeiling = defendedBytes > inlineCeiling;
+    const responseHeaders = grewPastCeiling
         ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8")
         : defended;
 
-    const truncated = droppedByExecutor || capped || overCeiling;
+    const inputWasCut = inputConsumed < headerBytes.length;
+    const truncated = droppedByExecutor || inputWasCut || grewPastCeiling;
 
     return {
         responseHeaders,
         undetermined: false,
         truncated,
         bytesReceived: totalReceived,
-        bytesReturned: truncated ? Buffer.byteLength(responseHeaders, "utf8") : undefined,
+        // Origin octets, or nothing. Never the returned text's own length.
+        bytesReturned: truncated && !grewPastCeiling ? inputConsumed : undefined,
     };
 }

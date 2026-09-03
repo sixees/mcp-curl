@@ -31,8 +31,12 @@ export interface FileSaveInfo {
  * - header_bytes_received: number (total cURL wrote; only when text was cut)
  * - header_bytes_returned: number (how much survived; only when text was cut)
  * - headers_undetermined: boolean (include_headers was requested but cURL wrote
- *   no header block, so none is reported. The body is unaffected — it arrives on
- *   its own stream — so this says "no headers", never "contaminated body")
+ *   no header block, so none is reported. The header channel cannot have
+ *   contaminated the body — it arrives on its own stream — but whether the body
+ *   is COMPLETE is `exit_code`'s to answer, not this field's)
+ * - headers_unsupported: boolean (this host cannot capture headers at all; a
+ *   fact about the host, deliberately distinct from headers_undetermined, which
+ *   is a fact about the origin)
  *
  * When includeMetadata is false:
  * - If file was saved: returns the message or filepath
@@ -67,6 +71,8 @@ export interface HeaderInfo {
     bytesReceived?: number;
     bytesReturned?: number;
     undetermined?: boolean;
+    /** True when this host cannot capture headers at all — a local fact, not one about the origin. */
+    unsupported?: boolean;
 }
 
 /**
@@ -91,6 +97,7 @@ function applyHeaderFields(
         output.header_bytes_returned = headerInfo.bytesReturned;
     }
     if (headerInfo?.undetermined) output.headers_undetermined = true;
+    if (headerInfo?.unsupported) output.headers_unsupported = true;
     if (stderr) output.stderr = stderr;
 }
 
@@ -119,14 +126,23 @@ export function formatResponse(
               exitCode !== 0
                   ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete`
                   : null,
+              // Two arms, because the pair is only sometimes statable. Where
+              // the defence grew the text past the ceiling, how many origin
+              // octets survived is genuinely unknown — so the fact of the cut
+              // is reported and the ratio is not invented.
               headerInfo?.truncated
-                  ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes returned`
+                  ? headerInfo.bytesReturned !== undefined
+                      ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used`
+                      : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received`
                   : null,
               // Only ever claimed on a CLEAN exit. Keyed on `undetermined`
               // alone it asserted the body was sound on every cURL failure
               // after connect — exit 23, 35, 56, 63 — where the body is empty
               // precisely BECAUSE the request failed. The flag's domain cannot
               // answer a question about the body; `exitCode` can.
+              headerInfo?.unsupported
+                  ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent"
+                  : null,
               headerInfo?.undetermined
                   ? exitCode === 0
                       ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected"

@@ -8,7 +8,7 @@ import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
 import { getErrorMessage, safeHostname, MARKDOWN_MIME } from "../utils/index.js";
-import { executeCommand, buildCurlArgs } from "../execution/index.js";
+import { executeCommand, buildCurlArgs, platformSupportsHeaderDump } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
     sanitizeErrorMessage,
@@ -66,7 +66,11 @@ Args:
     min(64KB, max_result_size); truncation is reported as headers_truncated under
     include_metadata, and as a leading [mcp-curl] notice otherwise. If headers were
     asked for and none arrived, that is reported as headers_undetermined (or a leading
-    [mcp-curl] notice) rather than guessed at
+    [mcp-curl] notice) rather than guessed at. Requires macOS; elsewhere no headers are
+    captured and that is reported as headers_unsupported, which is a fact about the host
+    and NOT a statement that the origin sent none. Note that response headers routinely
+    carry credential material (Set-Cookie, and Authorization where an origin echoes it)
+    and this text is returned verbatim
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -206,7 +210,15 @@ export async function executeCurlRequest(
         // such path now.
         let responseHeaders: string | undefined;
         let headersUndetermined = false;
-        if (params.include_headers) {
+        let headersUnsupported = false;
+        if (params.include_headers && !platformSupportsHeaderDump()) {
+            // "this host cannot" and "the origin sent none" are different facts
+            // with different owners, and collapsing them tells a caller
+            // auditing an origin's security headers that it sends none — on
+            // every URL, permanently. The capability is known here and nowhere
+            // downstream, so this is where the distinction has to be made.
+            headersUnsupported = true;
+        } else if (params.include_headers) {
             const channel = extractHeaderChannel(
                 result.headerBytes,
                 result.headerBytesReceived,
@@ -264,6 +276,7 @@ export async function executeCurlRequest(
                 // corruption invisible, because the degraded path returned bytes
                 // indistinguishable from the success path.
                 undetermined: headersUndetermined,
+                unsupported: headersUnsupported,
             }
         );
 

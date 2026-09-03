@@ -637,8 +637,8 @@ export async function processResponse(
         // boundary. No notice is written into the text: a truncation notice
         // inside remote-authored text is a control-plane fact in a data-plane
         // string and an origin can send the same words, so the fact travels in
-        // the server-authored `message`. Same reasoning as `parser.ts`'s
-        // `headerBytesReceived`.
+        // the server-authored `message`. Same reasoning as the out-of-band
+        // header facts in `formatter.ts::formatResponse`.
         let displayContent = content;
         if (overCap) {
             displayContent = Buffer.from(defendForInline(content, hostname), "utf8")

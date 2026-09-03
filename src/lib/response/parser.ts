@@ -57,8 +57,16 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * Returns the body as a string only. The exact octets were carried alongside it
  * while a wire byte count was indexed into this response; nothing indexes it
  * now, and a spare Buffer whose doc-block says "measure with these" but which
- * nothing measures reads as a guarantee in force. Anything that needs octets
- * should slice `rawResponse` at the separator itself, deliberately.
+ * nothing measures reads as a guarantee in force.
+ *
+ * **The decode is lossy and currently unavoidable downstream.** A byte that is
+ * not valid UTF-8 becomes U+FFFD here, and `saveResponseToFile` takes a
+ * `string`, so the persisted artefact carries the replacement rather than the
+ * wire byte — and `processResponse` reports the decoded length as the response
+ * size. Restoring octet fidelity is not a matter of reading them off this
+ * function: it needs `saveResponseToFile`'s signature and `processResponse`'s
+ * return type to change with it. Said plainly here so the next reader does not
+ * discover it halfway through.
  *
  * @param rawResponse - The raw response from cURL including metadata suffix
  * @param separator - The unique per-request separator used in -w format

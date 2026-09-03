@@ -148,7 +148,14 @@ export async function executeCommand(
     // embedder sending `1` got cURL told to write to a descriptor nobody
     // opened. Derived here, the pipe exists exactly when cURL is told to use
     // it, and there is nothing left for a caller to get wrong.
-    const captureHeaders = args.includes(HEADER_DUMP_PATH);
+    // Bound to the FLAG's own position, never a search of the whole list.
+    // `--data-raw` and `-A` carry caller-supplied values verbatim, so a bare
+    // `args.includes(HEADER_DUMP_PATH)` lets `data: "/dev/fd/3"` open a
+    // descriptor cURL was never told to write to. Harmless today — one extra
+    // socketpair, released on close — but a spawn decision should not rest on
+    // no future parameter ever equalling one particular string.
+    const dumpFlagIndex = args.indexOf("--dump-header");
+    const captureHeaders = dumpFlagIndex !== -1 && args[dumpFlagIndex + 1] === HEADER_DUMP_PATH;
 
     // Track this request's memory usage for cleanup
     let requestMemoryUsage = 0;
@@ -235,16 +242,22 @@ export async function executeCommand(
         // would hang the request rather than fail it — so the handler is
         // attached here, not lazily where the bytes are wanted.
         //
-        // Retention is bounded and the count is not, because they answer
-        // different questions: no consumer can return more than
-        // MAX_HEADER_TEXT_BYTES, so bytes past it are pure memory cost, while
-        // the total is what the "truncated at X of Y" notice must report. A
-        // redirect chain was measured putting 2.5 MB here against a 64 KB
+        // Retention and acceptance are bounded SEPARATELY, and both are
+        // bounded. They answer different questions: no consumer can return
+        // more than MAX_HEADER_TEXT_BYTES, so retaining past it is pure memory
+        // cost — but the count still has to describe what the origin sent, or
+        // the "X of Y" notice reports our own cap back as though it were Y.
+        // A redirect chain was measured putting 2.5 MB here against a 64 KB
         // usable ceiling.
         //
-        // Only RETAINED bytes are charged to the request. Charging the
-        // discarded ones would abort a request whose body is fine, with an
-        // error naming a response size the response never had.
+        // Discarded bytes are deliberately NOT charged to the memory pool:
+        // they occupy no memory, and charging them aborts a request whose body
+        // is fine with an error naming a size the response never had. But an
+        // uncharged read is an UNBOUNDED read — the first version of this
+        // returned before any accounting, leaving the abort timer (up to 300s
+        // by schema) as the only limit, and leaving the global pool blind to a
+        // header flood so concurrent requests felt no backpressure. So the
+        // count carries its own ceiling.
         if (captureHeaders) {
             const headerStream = childProcess.stdio[HEADER_DUMP_FD];
             // `instanceof`, not a cast. Node types this slot as
@@ -256,6 +269,20 @@ export async function executeCommand(
                 headerStream.on("data", (data: Buffer) => {
                     if (killed) return;
                     headerBytesReceived += data.length;
+
+                    // The acceptance ceiling. Bounded by the same constant the
+                    // body is, because that is what "this response is too big
+                    // to process" means — but named separately, so the message
+                    // says headers rather than blaming the body.
+                    if (headerBytesReceived > LIMITS.MAX_RESPONSE_SIZE) {
+                        abortWith(
+                            `Response headers exceeded maximum processing size of ` +
+                            `${LIMITS.MAX_RESPONSE_SIZE / BYTES_PER_MB}MB. The origin sent an ` +
+                            `unreasonable header block, possibly across a redirect chain.`
+                        );
+                        return;
+                    }
+
                     const room = LIMITS.MAX_HEADER_TEXT_BYTES - headerBytesRetained;
                     if (room <= 0) return;
                     const slice = data.length <= room ? data : data.subarray(0, room);

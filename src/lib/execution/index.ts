@@ -1,7 +1,14 @@
 // src/lib/execution/index.ts
 // Execution module barrel export
 
-export { executeCommand, type AllowedCommand, type CommandResult } from "./command-executor.js";
+export {
+    executeCommand,
+    platformSupportsHeaderDump,
+    HEADER_DUMP_FD,
+    HEADER_DUMP_PATH,
+    type AllowedCommand,
+    type CommandResult,
+} from "./command-executor.js";
 export { buildCurlArgs, type CurlArgsParams } from "./curl-args-builder.js";
 export {
     getCurrentMemoryUsage,
