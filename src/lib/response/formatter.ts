@@ -30,9 +30,9 @@ export interface FileSaveInfo {
  *
  * - headers_truncated: boolean (only when header text was cut)
  * - header_bytes_received: number (only when header text was cut)
- * - headers_undetermined: boolean (include_headers was requested but the
- *   header/body boundary could not be established, so no headers are reported
- *   and the body may still carry the header block)
+ * - headers_undetermined: boolean (include_headers was requested but cURL wrote
+ *   no header block, so none is reported. The body is unaffected — it arrives on
+ *   its own stream — so this says "no headers", never "contaminated body")
  *
  * When includeMetadata is false:
  * - If file was saved: returns the message or filepath
@@ -83,7 +83,7 @@ export function formatResponse(
                   ? `[mcp-curl] response headers truncated at ${LIMITS.MAX_HEADER_TEXT_BYTES} of ${headerInfo.bytesReceived} bytes`
                   : null,
               headerInfo.undetermined
-                  ? "[mcp-curl] response header boundary undetermined; headers are NOT separated from the body below"
+                  ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected"
                   : null,
           ].filter(Boolean).join("\n")
         : "";

@@ -4,9 +4,7 @@
 export {
     parseResponseWithMetadata,
     sanitizeErrorMessage,
-    splitResponseHeaders,
     type ParsedResponse,
-    type SplitResponse,
 } from "./parser.js";
 
 export {

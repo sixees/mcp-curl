@@ -1,53 +1,65 @@
 // src/lib/response/header-channel.ts
-// Extract, defend and bound the `include_headers` text channel.
+// Defend and bound the `include_headers` text channel.
 
 import { LIMITS } from "../config/limits.js";
 import { MARKDOWN_MIME, safeHostname } from "../utils/index.js";
-import { splitResponseHeaders } from "./parser.js";
 import { defendText } from "./processor.js";
 
-/** Result of taking the header channel out of a cURL `-i` response. */
+/** Result of preparing the header channel for return to the model. */
 export interface HeaderChannel {
-    /** The body with the header block removed, or the whole input when the boundary was undetermined. */
-    body: string;
     /** Defended, bounded header text — absent when there is none to report. */
     responseHeaders?: string;
-    /** True when `include_headers` was asked for and the boundary could not be established. */
+    /** True when `include_headers` was asked for and no header bytes arrived. */
     undetermined: boolean;
     /** Whether the reported header text was cut. */
     truncated: boolean;
-    /** Total header bytes cURL reported, when a boundary was determined. */
+    /** Total header bytes cURL wrote, when any arrived. */
     bytesReceived?: number;
 }
 
 /**
- * Take the header block out of a cURL `-i` response and make it safe to return.
+ * Make a cURL header block safe to return to the model.
  *
- * Lives beside the two functions it composes rather than inline in the request
- * handler. That placement is the point: every defect this channel has produced
- * — three of them, recorded as RC-1 through RC-3 — was a *composition* defect,
- * where `splitResponseHeaders` and `defendText` were each correct and the wiring
- * between them was not. Giving the wiring a name and one home is what lets the
- * ordering constraints below be stated once instead of living as inline comments
- * in the middle of a 300-line handler.
+ * Takes the header octets as their own value because that is what the executor
+ * now hands back: cURL writes them to a dedicated descriptor, so nothing here
+ * separates headers from body. Three attempts to do that separation
+ * arithmetically each failed in a new way — `LESSONS.md` RC-1, RC-2 and RC-17 —
+ * and the boundary is structural now.
  *
- * @param bodyBytes - response octets with the `-w` metadata suffix removed
- * @param headerBytes - `%{size_header}`; undefined means undetermined
+ * What remains is a composition, and this function exists because the
+ * composition is where the defects were: `defendText` and the cap were each
+ * correct and the wiring between them was not. Giving the wiring one home is
+ * what lets the ordering constraints below be stated once.
+ *
+ * @param headerBytes - header octets from cURL, or undefined when none arrived
  * @param url - request URL, for the injection-detection log label
  * @param maxResultSize - the caller's inline budget, which header text honours
  */
 export function extractHeaderChannel(
-    bodyBytes: Buffer,
-    headerBytes: number | undefined,
+    headerBytes: Buffer | undefined,
     url: string,
     maxResultSize: number | undefined
 ): HeaderChannel {
-    const split = splitResponseHeaders(bodyBytes, headerBytes);
+    // No bytes and no capture collapse to the same answer, deliberately: both
+    // mean nothing here is provably a header, and invariant 13 requires
+    // "undetermined" and "absent" to resolve the same way rather than the
+    // permissive one.
+    if (!headerBytes || headerBytes.length === 0) {
+        return { undetermined: true, truncated: false };
+    }
 
-    if (!split.headerText) {
-        // Undetermined and "the origin sent none" are deliberately the same
-        // answer here: both mean no bytes are provably headers.
-        return { body: split.body, undetermined: true, truncated: false };
+    const bytesReceived = headerBytes.length;
+
+    // Cap BEFORE defending so the pipeline never runs over more bytes than can
+    // be returned, and re-cap after — see below.
+    const capped = bytesReceived > LIMITS.MAX_HEADER_TEXT_BYTES;
+    const raw = headerBytes
+        .subarray(0, capped ? LIMITS.MAX_HEADER_TEXT_BYTES : bytesReceived)
+        .toString("utf8")
+        .replace(/\r?\n\r?\n$/, "");
+
+    if (!raw) {
+        return { undetermined: true, truncated: false };
     }
 
     // The SAME pipeline as the body, never a shorter one (ARCHITECTURE.md
@@ -55,7 +67,7 @@ export function extractHeaderChannel(
     // runs. `decodeEntities: false` because that stage is ADDITIVE and its
     // result is what gets returned — decoding would hand the model a live
     // instruction the origin only ever sent as inert text (LESSONS.md RC-3).
-    const defended = defendText(split.headerText, {
+    const defended = defendText(raw, {
         contentType: MARKDOWN_MIME,
         contentTypeUndetermined: false,
         hostname: safeHostname(url),
@@ -75,12 +87,11 @@ export function extractHeaderChannel(
     const overCeiling = defendedBytes > inlineCeiling;
 
     return {
-        body: split.body,
         responseHeaders: overCeiling
             ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8")
             : defended,
         undetermined: false,
-        truncated: split.truncated === true || overCeiling,
-        bytesReceived: split.headerBytesReceived,
+        truncated: capped || overCeiling,
+        bytesReceived,
     };
 }

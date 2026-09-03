@@ -59,13 +59,14 @@ Args:
   - verbose (boolean): Include verbose request/response details
   - include_headers (boolean): Report response headers. With include_metadata they
     arrive under a separate "headers" key; without it they are prefixed to the returned
-    text followed by a blank line, so that result is NOT JSON-parseable. On both
-    branches headers never reach the saved file and never reach jq_filter, which is
-    what makes this safe to combine with save_to_file and jq_filter — and if the
-    header/body boundary cannot be determined, those two are refused rather than
-    performed on unseparated bytes. Header text is capped at
+    text followed by a blank line, so that result is NOT JSON-parseable. cURL writes
+    the headers to their own descriptor, so they are never part of the body: they
+    cannot reach the saved file or jq_filter, and combining this with save_to_file or
+    jq_filter is safe unconditionally. Header text is capped at
     min(64KB, max_result_size); truncation is reported as headers_truncated under
-    include_metadata, and as a leading [mcp-curl] notice otherwise
+    include_metadata, and as a leading [mcp-curl] notice otherwise. If headers were
+    asked for and none arrived, that is reported as headers_undetermined (or a leading
+    [mcp-curl] notice) rather than guessed at
   - compressed (boolean): Request compressed response (default: true)
   - include_metadata (boolean): Wrap response in JSON with metadata
   - jq_filter (string): JSON path filter to extract specific data
@@ -178,52 +179,46 @@ export async function executeCurlRequest(
 
         // Use timeout from params, or fall back to system default
         const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
-        const result = await executeCommand("curl", args, timeoutMs);
+        // `captureHeaders` and the `--dump-header` flag both derive from
+        // `include_headers`, so the descriptor exists exactly when cURL is told
+        // to write to it. If it ever did not, cURL exits 23 rather than folding
+        // the headers back onto stdout — the failure is loud, not silent.
+        const result = await executeCommand("curl", args, timeoutMs, {
+            captureHeaders: params.include_headers === true,
+        });
 
         let headerTruncated = false;
         let headerBytesReceived: number | undefined;
 
-        // Parse response using the same unique separator. Byte-exact: the
-        // header boundary below is a WIRE byte count, and `result.stdout` is a
-        // lossy UTF-8 view of those bytes.
+        // stdout is the body alone — cURL wrote the headers to their own
+        // descriptor — so this strips the `-w` metadata suffix and nothing else.
         const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
-        const { contentType, headerBytes, metadataFound } = parsed;
+        const { contentType, metadataFound } = parsed;
+        const body = parsed.body;
 
-        // `-i` prepends the header block to the body on stdout. Taking it off,
-        // defending it and bounding it is one concern with one home — see
-        // `extractHeaderChannel`, which lives beside the functions it composes
-        // because every defect here has been a composition defect.
+        // Defending and bounding the header text is one concern with one home —
+        // see `extractHeaderChannel`. Every defect this channel has produced was
+        // a composition defect, so the wiring has a name rather than living
+        // inline here.
+        //
+        // No save_to_file / jq_filter refusal accompanies this any more, and its
+        // absence is the point: the body reaching those two is body bytes on
+        // every path, including the one where no header block arrived. The
+        // refusal existed because the boundary could be undetermined *and the
+        // headers would then still be on the front of the body*. There is no
+        // such path now.
         let responseHeaders: string | undefined;
         let headersUndetermined = false;
-        let body = parsed.body;
         if (params.include_headers) {
             const channel = extractHeaderChannel(
-                parsed.bodyBytes,
-                headerBytes,
+                result.headerBytes,
                 params.url,
                 params.max_result_size
             );
-            body = channel.body;
             responseHeaders = channel.responseHeaders;
             headersUndetermined = channel.undetermined;
             headerTruncated = channel.truncated;
             headerBytesReceived = channel.bytesReceived;
-        }
-
-        // The body is only PROVEN clean when the boundary was determined. When
-        // it was not, the header block is still on the front of it — so the two
-        // operations that turn it into a durable or parsed artefact are refused
-        // rather than performed on unproven bytes. That is what makes the
-        // "headers never reach the saved file or the jq_filter input" guarantee
-        // true on every path instead of only the happy one, and it is invariant
-        // 13's "claim nothing" applied to the body as well as to the headers.
-        if (headersUndetermined && (params.save_to_file || params.jq_filter)) {
-            throw new Error(
-                "Response header boundary could not be determined, so the body cannot be " +
-                "separated from the header block. Refusing save_to_file/jq_filter rather " +
-                "than writing or filtering unseparated bytes. Retry without include_headers " +
-                "to operate on the raw response."
-            );
         }
 
         // Process response with filtering and size handling

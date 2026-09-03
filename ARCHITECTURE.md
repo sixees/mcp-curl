@@ -150,15 +150,34 @@ what a violation looks like, it does not belong on this list.
     unexported.
 12. **Localhost is denied unless explicitly enabled**, and even then the reserved
     port range stays closed.
-13. **A boundary between remote-controlled regions is never inferred from the
-    bytes themselves.** Where two regions share a channel, the split point comes
-    from a source the remote cannot write to — the per-request metadata separator
-    (`generateMetadataSeparator`) or a cURL-authored `-w` field such as
-    `%{size_header}`. A pattern match cannot do this job: a body may legitimately
-    *be* an HTTP transcript, so a real header block and a forged one are the same
-    bytes. When the boundary cannot be determined, fail closed and claim nothing —
+13. **Two remote-controlled regions do not share a channel. Where one is
+    unavoidable, the split point comes from a source the remote cannot write
+    to.** The strong form leads because it is the one that now holds for the
+    header/body split: cURL writes response headers to their own descriptor
+    (`HEADER_DUMP_FD`) and the body to stdout, so there is no boundary to infer
+    and nothing a crafted body can move. **The boundary is structural, not
+    derived.**
+
+    **Deriving it failed three times, and each fix was right about the one
+    before it.** A scan for status lines could not separate a real header block
+    from a body that legitimately *is* an HTTP transcript, and was quadratic
+    (RC-1). Indexing cURL's `%{size_header}` applied a wire byte count to
+    lossily decoded text (RC-2). Indexing the octets at that same count still
+    missed chunked trailers, which `-i` writes to stdout *after* the body
+    (RC-17). Three mechanisms, one shape: the layer could not answer the
+    question being asked of it, so the precondition moved instead.
+
+    **Where a channel genuinely is shared, the rule is unchanged.** The `-w`
+    metadata block is found by the per-request separator
+    (`generateMetadataSeparator`), which the remote cannot guess. That block
+    carries `%{content_type}` and nothing else, and remote-echoed text is safe
+    only in last position, with no delimiter after it to spoof — so **a new `-w`
+    field goes before the content type, never after it.**
+
+    **When a region cannot be determined, fail closed and claim nothing** —
     "undetermined" and "absent" must resolve the same way, never the permissive
-    way.
+    way. For the header channel that now means one thing only: cURL wrote no
+    header block, so none is reported. It never means the body is suspect.
 14. **Anything surfaced inline to the model is bounded by an explicit limit.**
     `max_result_size` bounds the body; header text is capped at
     `min(LIMITS.MAX_HEADER_TEXT_BYTES, max_result_size)` — its own ceiling AND
@@ -283,5 +302,12 @@ Local, CI and the consumer runtime are described in
 that matters and is hardest to reproduce: **the available `curl` build.** Its
 protocol support and its `-w` field set vary by version, and a check that passes
 here may not hold on a consumer's machine. Anything depending on a specific cURL
-feature must degrade legibly rather than assume — invariant 13's `%{size_header}`
-dependency fails closed for exactly this reason.
+feature must degrade legibly rather than assume.
+
+**`include_headers` requires a POSIX host.** It passes `--dump-header
+/dev/fd/3` and reads the descriptor the server opened, so it depends on
+`/dev/fd/N` naming an inherited descriptor — true on macOS and Linux, false on
+Windows. The failure is loud rather than silent: with no such descriptor cURL
+exits 23 and writes nothing to stdout, so the request fails instead of folding
+the header block back onto the body. Every other tool parameter is
+platform-neutral.

@@ -4,6 +4,7 @@
 import { validateNoCRLF } from "../security/index.js";
 import { LIMITS } from "../config/index.js";
 import { ALLOWED_URL_SCHEMES_CURL_FLAG } from "../config/security/url-schemes.js";
+import { HEADER_DUMP_PATH } from "./command-executor.js";
 
 /**
  * Parameters for building cURL command arguments.
@@ -35,7 +36,7 @@ export interface CurlArgsParams {
     bearer_token?: string;
     /** Include verbose output with request/response details */
     verbose?: boolean;
-    /** Include response headers in output */
+    /** Report response headers, dumped to their own descriptor */
     include_headers?: boolean;
     /** Maximum number of redirects to follow */
     max_redirects?: number;
@@ -64,6 +65,8 @@ export interface CurlArgsParams {
  * - Uses --form-string (not --form) to prevent file reading
  * - DNS pinning with --resolve flag for rebinding prevention
  * - Per-request unique metadata separator for response parsing
+ * - Response headers dumped to a separate descriptor, never multiplexed onto
+ *   stdout, so the header/body boundary is structural (invariant 13)
  *
  * @param params - CurlArgsParams with request configuration
  * @returns Array of command-line arguments for cURL
@@ -144,9 +147,16 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
         args.push("-v");
     }
 
-    // Include response headers
+    // Response headers go to their own descriptor, never onto stdout.
+    //
+    // `-i` multiplexes both onto one stream, and recovering the boundary
+    // afterwards failed three times: a scan that a body could forge (RC-1), a
+    // wire byte count applied to lossily-decoded text (RC-2), and an octet
+    // index that chunked trailers land past (RC-17). `--dump-header` makes the
+    // split structural, so there is no boundary left to infer — ARCHITECTURE.md
+    // invariant 13. `command-executor.ts` opens the descriptor.
     if (params.include_headers) {
-        args.push("-i");
+        args.push("--dump-header", HEADER_DUMP_PATH);
     }
 
     // Compressed response
@@ -161,13 +171,15 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
 
     // Output format: unique per-request separator, then the metadata fields.
     //
-    // Field order is load-bearing — the cURL-authored integer first, the
-    // remote-echoed `%{content_type}` last, so it has no delimiter after it to
-    // spoof. See `parseResponseWithMetadata` for the parse and ARCHITECTURE.md
-    // invariant 13 for why the boundary comes from cURL rather than the bytes.
+    // `%{content_type}` is the only field, and it is remote-echoed. That is
+    // safe here precisely because it is last with nothing after it: there is no
+    // delimiter for a crafted Content-Type to spoof, and the separator ahead of
+    // it is unguessable per request. A second field here would end that: it
+    // would give a crafted Content-Type a delimiter to spoof, so any addition
+    // goes BEFORE the content type (ARCHITECTURE.md invariant 13).
     const metadataSuffix =
         params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") +
-        "%{size_header} %{content_type}";
+        "%{content_type}";
     if (params.output_format) {
         args.push("-w", params.output_format + metadataSuffix);
     } else {

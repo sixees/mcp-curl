@@ -55,7 +55,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 
 ### Key Workflows
 
-1. **`curl_execute`** — Zod parse → cross-field validation → URL parse + DNS resolve + SSRF check → per-host & per-client rate limit → output-dir validate → unique metadata separator → `buildCurlArgs` (with `--resolve`, `--proto`, `--max-filesize`) → `spawn("curl", …)` no-shell → streamed buffer (memory tracked) → metadata split (yields `%{size_header}`) → header/body split at that offset (when `include_headers`) → `defendText` on each of body and header text → optional jq → inline-vs-save decision → MCP `text` result.
+1. **`curl_execute`** — Zod parse → cross-field validation → URL parse + DNS resolve + SSRF check → per-host & per-client rate limit → output-dir validate → unique metadata separator → `buildCurlArgs` (with `--resolve`, `--proto`, `--max-filesize`) → `spawn("curl", …)` no-shell → streamed buffers, stdout and the header descriptor tracked together against one memory ceiling → metadata split (yields `%{content_type}`) → `defendText` on each of body and header text → optional jq → inline-vs-save decision → MCP `text` result.
 2. **`jq_query`** — Path validation (`realpath`, allowed-roots check, traversal reject) → read file → tokenize → time-boxed parse → walk → `defendText` (declared `application/json`, so the JSON grammar: sanitise + injection-detect, no strip stages) → inline-vs-save.
 3. **Hook lifecycle (built-in tools only).** `beforeRequest` (sequential, may short-circuit or merge params) → tool body → on success `afterResponse`, on throw `onError`. **Custom tools and schema-generated tools both bypass this wrapper** — see Workflow #4. All hooks run with a frozen config snapshot.
 4. **YAML → tools.** `loadApiSchema()` (safe `JSON_SCHEMA`, no `!!js/function`) → `validateApiSchema` → `generateToolDefinitions` produces handlers that close over `executeCurlRequest` directly. `api-server.ts` then registers each via `server.registerCustomTool(…)`, **so schema-generated tools bypass `executeWithHooks` in the same way custom tools do.** SSRF, rate limit and the full `defendText` response defence still apply because they live inside `executeCurlRequest`, not in the hook layer — and since 3.4.0 the `registerCustomTool` wrap runs `defendText` too, so the handler's own returned text is defended as well. Operators relying on hooks for observability of *all* tool traffic must wrap their schema/custom handlers themselves.
@@ -78,9 +78,11 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
   server-controlled and takes the **full** defence pipeline (`processor.ts::defendText` —
   sanitise, detect, and the markup/markdown strip stages), not sanitise-and-detect alone;
   it is capped at `LIMITS.MAX_HEADER_TEXT_BYTES` because it is surfaced inline even when
-  the body was saved. The header/body boundary comes from cURL's `%{size_header}` on the
-  `-w` metadata channel, never from pattern-matching the response bytes. See
-  `ARCHITECTURE.md` invariants 1a, 13 and 14.
+  the body was saved. There is no header/body boundary to compute: cURL writes the
+  header block to its own file descriptor via `--dump-header`, so headers and body
+  never share a stream and no response byte can move the split. This requires a POSIX
+  host (`/dev/fd/N`); where the descriptor is missing cURL fails the request rather
+  than folding the headers onto stdout. See `ARCHITECTURE.md` invariants 1a, 13 and 14.
 - Both per-host (60/min) **and** per-client (300/min) rate limits apply.
 - `jq_query` reads are confined to `{ tempDir, MCP_CURL_OUTPUT_DIR, cwd-subtree }` after `realpath()` resolution.
 - Responses larger than `max_result_size` (default 500 KB, max 1 MB) auto-save to a `0o600` file.
