@@ -27,7 +27,7 @@ see them.
 ## Evidence
 
 - `src/lib/execution/curl-args-builder.ts:110-114` — `-L`, `--max-redirs`, `--proto-redir`
-- `src/lib/execution/curl-args-builder.ts:~198` — a single `--resolve` triple
+- `src/lib/execution/curl-args-builder.ts::buildCurlArgs` — a single `--resolve` triple
 - `src/lib/tools/curl-execute.ts:158` — the one and only validation call
 - `rg -n 'isBlockedIp|isBlockedHostname|validateUrlAndResolveDns' src -g '!*.test.ts'`
   — zero per-hop checks anywhere in the tree
@@ -74,3 +74,20 @@ Two options, and the cheap one is honest rather than complete.
       returning the redirect target's body. Fails today.
 - [ ] The same for a 302 to an RFC1918 address and to `169.254.169.254`.
 - [ ] Whichever option is taken, invariant 2's stated reach matches the code.
+
+## Since filed
+
+The **documentation half of option 2 is done**; the code gap is untouched and this
+todo stays open on that.
+
+`docs/architecture/architecture.md` (npm-published) now states that the pin closes
+rebinding on the first hop only and that redirect targets are neither pinned nor
+re-validated, in all three places it previously claimed otherwise: *Threat Model*,
+*Network / SSRF Defense — strategy*, and the design-decision table.
+`curl-args-builder.ts::CurlArgsParams.dnsResolve` says the same and cites this file.
+
+`ARCHITECTURE.md` → *Invariants* is deliberately unchanged. Invariant 2 reads *"Any
+change that lets cURL resolve a name itself reopens DNS rebinding"* — which the
+redirect path does, so the invariant is currently **violated rather than mis-stated**.
+Amending its wording is a decision for whoever takes this todo, not a documentation
+tidy-up: it is the difference between recording the gap and accepting it.

@@ -104,10 +104,10 @@ describe("buildCurlArgs", () => {
     });
 
     describe("--resolve emission (invariant 2, first hop, builder half)", () => {
-        // Scope, because the name used to claim more than the test does: this
-        // asserts the builder EMITS the pin it was handed. That the pin is the
-        // address the SSRF check produced is asserted at the producer, in
-        // curl-execute.headers.test.ts; hops 2..N are docs/todos/007.
+        // Scope: this asserts only that the builder EMITS the pin it is handed.
+        // That the pin carries the address the SSRF check produced is asserted
+        // at the producer in curl-execute.headers.test.ts; hops 2..N are
+        // docs/todos/007.
         it("always emits a pin for the address it was given", () => {
             const args = buildCurlArgs(makeParams());
             const i = args.indexOf("--resolve");

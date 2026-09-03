@@ -335,17 +335,13 @@ export async function executeCommand(
                 // Concat AFTER the release above, then drop the chunk
                 // references so only one full-size copy survives.
                 //
-                // The order is the defect `docs/todos/003` records, not a
-                // choice: this copy and every copy downstream of it are made
-                // with this request's accounting already at zero. Stated here
-                // because the comment used to claim the opposite, which is
-                // worse than silence — it tells the next reader the window
-                // covers work it does not.
+                // This copy, and every copy downstream of it, is made with
+                // this request's accounting already at zero. That ordering is
+                // the defect `docs/todos/003` records, not a choice made here.
                 //
-                // No eager
-                // `.toString()`: it costs a full decode (20MB on a 10MB
-                // non-UTF-8 response, since U+FFFD forces a two-byte string)
-                // for a value every caller reaches through `stdoutBytes`.
+                // No eager `.toString()`: it costs a full decode (20MB on a
+                // 10MB non-UTF-8 response, since U+FFFD forces a two-byte
+                // string) for a value every caller reaches via `stdoutBytes`.
                 const stdoutBytes = Buffer.concat(stdoutChunks);
                 stdoutChunks.length = 0;
                 // An empty capture and no capture collapse to `undefined`, so

@@ -1,5 +1,6 @@
 // src/lib/security/bounded-throttle.ts
-// One implementation of "a process-lifetime throttle map must not grow without bound".
+// The evicting half of "a process-lifetime map must not grow without bound".
+// The rejecting half lives at its two call sites; see setBounded below.
 
 import { THROTTLE } from "../config/session.js";
 
@@ -17,15 +18,12 @@ import { THROTTLE } from "../config/session.js";
  * it is no bound, and the map grows one entry per distinct label for the life
  * of the process.
  *
- * So the cap lives here, where no caller can forget it.
- * `SessionManager.set` is this same rule for sessions and is the precedent
- * this follows; the difference is the policy when full. Sessions **reject**,
- * because admitting one costs a transport. A log throttle **evicts**, because
- * the worst case is a single extra stderr line.
- *
- * **Not for rate-limit or quota maps.** Evicting a counter resets it, which
- * turns a bounded-memory fix into a bypass of the thing the counter enforces.
- * Those need the rejecting policy, not this one.
+ * **Evicting is safe here and nowhere else.** A throttle entry only suppresses
+ * a log line, so dropping one costs at most one extra line of stderr. Two
+ * siblings enforce a cap the same way but *reject* instead, because what they
+ * hold cannot be dropped: `rate-limiter.ts::checkRateLimitInternal`, where
+ * evicting a counter would reset it and bypass the limit, and
+ * `session-manager.ts::SessionManager.set`, where admitting one costs a transport.
  *
  * @param map - the throttle map to write into
  * @param key - the entry key, already normalised by the caller
@@ -38,19 +36,18 @@ export function setBounded<V>(
     value: V,
     pruneExpired: () => void,
 ): void {
-    // Only a new key can grow the map. Re-setting one that is already present
-    // must never evict a bystander to make room for an entry needing no room.
+    // Only a new key can grow the map, so re-setting a resident one must never
+    // cost a bystander its slot.
     if (!map.has(key) && map.size >= THROTTLE.MAX_TRACKED_KEYS) {
         // Expired entries first: the common case is a process whose cleanup
         // interval was never started, so most of what is here is already stale.
         pruneExpired();
         if (map.size >= THROTTLE.MAX_TRACKED_KEYS) {
-            // Still full: more distinct keys inside one window than we track.
-            // Drop the first-inserted key. `Map` preserves insertion order and
-            // re-setting a key keeps its original position, so this is
-            // first-seen rather than least-recently-seen — the right trade for
-            // a throttle, where the cost is one extra log line and never an
-            // unbounded map.
+            // Everything here is live, so something live has to go. `Map`
+            // preserves insertion order and re-setting a key keeps its
+            // position, making this first-seen rather than least-recently-seen
+            // — which is the right victim for a throttle, where the entry is
+            // only a memo and losing it costs one line.
             const oldest = map.keys().next().value;
             if (oldest !== undefined) map.delete(oldest);
         }

@@ -34,8 +34,9 @@ A third spelling, `"UnknownError"`, is what `security/wrap-error-logger.ts` uses
 ## Evidence
 
 `rg -n 'errorClass' src -g '!*.test.ts'` — 6 sites, all confirmed by reading:
-`session-manager.ts:200`, `mcp-curl-server.ts:735`, `http.ts:388`, `http.ts:462`,
-`jq-query.ts:167`, `curl-execute.ts:297`.
+`session-manager.ts::closeWithTimeout`, `mcp-curl-server.ts::logShutdownError`,
+`http.ts::createHttpApp` (twice), `jq-query.ts::executeJqQuery`,
+`curl-execute.ts::executeCurlRequest`.
 
 ## Cost
 

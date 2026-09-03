@@ -33,7 +33,7 @@ identical call on the identical string.
 
 **Altitude:** `formatResponse`'s saved branch **never reads `stdout`**. Under
 `include_metadata` it emits `saved_to_file`/`filepath`/`message` and no `response`
-key; without it, only the message. `curl-execute.ts:261` passes `processed.content`
+key; without it, only the message. `curl-execute.ts::executeCurlRequest` passes `processed.content`
 straight into that parameter. So on the path where `displayContent` is built, the
 consumer discards it — the 91 ms produces nothing the model ever sees.
 
