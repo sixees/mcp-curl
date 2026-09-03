@@ -213,3 +213,45 @@ the throttle eviction and the corrected `headers_unsupported` text.
 
 **No `.d.ts` changed in the rebuild**, which independently confirms the PATCH
 grading: the branch moved no public type.
+
+## Review Comments Addressed — 2026-09-03 (round 3)
+
+Codex re-requested against `48182a5`. **The read returned 2 entries and no
+findings.**
+
+| Entry | Kind | Disposition |
+|---|---|---|
+| `IC_…Sa05QA` — the codex review-summary status table | `issue` | Dispositioned round 1. It carries no finding and has no resolved state, so it returns on every read; its body was **edited in place** to show the `48182a5` review while its `createdAt` stayed at 19:32 |
+| `IC_…SbUmjw` — *"Codex Review: Didn't find any major issues."* against `48182a5` | `issue` | Answered. No finding, nothing to resolve |
+
+No code, docs or tests changed in this round; this section is the only edit.
+
+### Surface 3 close-out
+
+Three rounds, **19 findings, all dispositioned, 0 escalated, 0 outstanding.**
+
+| | Round 1 | Round 2 | Round 3 | Total |
+|---|---|---|---|---|
+| Findings | 13 | 3 | 0 | **16** |
+| Fixed | 7 | 3 | 0 | **10** |
+| Declined | 6 | 0 | 0 | **6** |
+| Todos filed | 0 | 0 | 0 | **0** |
+
+Fixed-to-declined is 10:6. Every thread that could be closed is closed; the two
+`kind: issue` entries have no resolved state and will return on any later read.
+
+**The operator's stop condition is met at round 3** — five or fewer comments and
+no P1s — and the three-round cap is reached.
+
+**Reviewer breakdown.**
+
+| Reviewer | Findings | Fixed | Declined | False positives |
+|---|---|---|---|---|
+| @coderabbitai | 10 | 5 | 5 | 2 — the IPv6 `--resolve` bracket (disproved on curl 8.7.1, and contradicted by the reviewer's own cited web query) and the throttle test whose premise inverts `setBounded`'s eviction order |
+| @chatgpt-codex-connector | 6 | 5 | 1 | 0 — every codex finding was true; two were re-graded P1 → P3 on consequence, and one of those was still worth a comment correction |
+
+Codex's P1 on the stale `dist/` was the single most consequential finding of the
+whole PR: it is the only one that changed what a consumer actually executes.
+
+**What remains untouched, as it has through every round:** `docs/todos/006` and
+`007`. Both P1, both real, neither moved by this branch.
