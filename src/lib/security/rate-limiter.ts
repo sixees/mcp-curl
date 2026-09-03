@@ -1,7 +1,7 @@
 // src/lib/security/rate-limiter.ts
 // Rate limiting with fixed time windows and periodic cleanup
 
-import { RATE_LIMIT } from "../config/session.js";
+import { RATE_LIMIT, THROTTLE } from "../config/session.js";
 import type { RateLimitEntry } from "../types/index.js";
 
 /**
@@ -45,6 +45,26 @@ function checkRateLimitInternal(
 
     // Start new window if none exists or current window expired
     if (!entry || (now - entry.windowStart) >= RATE_LIMIT.WINDOW_MS) {
+        // Only a key not already tracked can grow the map, and the cleanup
+        // interval is started by the three process mains alone — an embedder
+        // reaching here through the exported `registerEndpointTools` or
+        // `executeCurlRequest` starts none of them, so without this the map
+        // grows one entry per distinct hostname for the life of the process.
+        //
+        // **This rejects where `security/bounded-throttle.ts` evicts, and the
+        // difference is the whole reason it is not that helper.** Evicting a
+        // counter resets it, which is a bypass of the very limit this function
+        // exists to enforce. Refusing a key we cannot track fails closed:
+        // a request that cannot be counted is not admitted uncounted.
+        // `SessionManager.set` is this same policy for sessions.
+        if (!map.has(key) && map.size >= THROTTLE.MAX_TRACKED_KEYS) {
+            cleanupExpiredEntries(map);
+            if (map.size >= THROTTLE.MAX_TRACKED_KEYS) {
+                throw new Error(
+                    `${errorPrefix}. Tracking ${THROTTLE.MAX_TRACKED_KEYS} distinct keys already; refusing an untracked one.`
+                );
+            }
+        }
         map.set(key, { count: 1, windowStart: now });
         return;
     }
@@ -64,20 +84,26 @@ function checkRateLimitInternal(
  * @throws Error if either rate limit is exceeded
  */
 export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.STDIO_CLIENT_ID): void {
-    // Check per-hostname limit first (protects target servers)
-    checkRateLimitInternal(
-        hostRateLimitMap,
-        hostname,
-        RATE_LIMIT.MAX_PER_HOST_PER_MINUTE,
-        `Rate limit exceeded for host "${hostname}"`
-    );
-
-    // Check per-client limit (prevents overall abuse)
+    // **Client limit first, and the order is load-bearing.** `checkRateLimitInternal`
+    // writes its entry before it can throw, so checking the host first meant every
+    // request that was about to be rejected for exceeding the client quota still
+    // inserted a host entry — putting the growth upstream of the only thing that
+    // bounds it. Rejecting at the client gate first means an over-quota caller
+    // adds no host keys at all, and the host counter now counts requests that
+    // were actually admitted rather than every one that was attempted.
     checkRateLimitInternal(
         clientRateLimitMap,
         clientId,
         RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE,
         "Client rate limit exceeded"
+    );
+
+    // Then the per-hostname limit, which protects the target server.
+    checkRateLimitInternal(
+        hostRateLimitMap,
+        hostname,
+        RATE_LIMIT.MAX_PER_HOST_PER_MINUTE,
+        `Rate limit exceeded for host "${hostname}"`
     );
 }
 
@@ -118,4 +144,13 @@ export function stopRateLimitCleanup(interval: NodeJS.Timeout): void {
 export function clearRateLimitMaps(): void {
     hostRateLimitMap.clear();
     clientRateLimitMap.clear();
+}
+
+/**
+ * Test-only: tracked-key counts, so a test can assert the caps hold.
+ *
+ * @internal
+ */
+export function rateLimitMapSizes(): { hosts: number; clients: number } {
+    return { hosts: hostRateLimitMap.size, clients: clientRateLimitMap.size };
 }

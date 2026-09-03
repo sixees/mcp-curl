@@ -49,15 +49,21 @@ describe("setBounded", () => {
     it("tries the caller's expiry sweep before evicting anything", () => {
         const map = new Map<string, number>();
         fill(map, MAX);
+        // The sweep must free a key that is NOT the eviction candidate. If it
+        // freed `key-0`, prune-first and evict-first would leave identical
+        // state and this case would pass under both — asserting nothing about
+        // the ordering it is named for.
         const prune = vi.fn(() => {
-            map.delete("key-0");
+            map.delete("key-500");
         });
 
         setBounded(map, "fresh", 1, prune);
 
         expect(prune).toHaveBeenCalledTimes(1);
-        // The sweep made room, so no first-inserted key was dropped beyond it.
-        expect(map.has("key-1")).toBe(true);
+        // Prune-first: the sweep made room, so key-0 was never evicted.
+        // Evict-first: key-0 would be gone.
+        expect(map.has("key-0")).toBe(true);
+        expect(map.has("key-500")).toBe(false);
         expect(map.has("fresh")).toBe(true);
         expect(map.size).toBe(MAX);
     });

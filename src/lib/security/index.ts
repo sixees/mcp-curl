@@ -11,7 +11,7 @@ export {
     checkRateLimits,
     startRateLimitCleanup,
     stopRateLimitCleanup,
-    // Note: clearRateLimitMaps intentionally not exported here (test-only).
+    // Note: clearRateLimitMaps and rateLimitMapSizes intentionally not exported here (test-only).
     // Tests should import directly from "./rate-limiter.js" if needed.
 } from "./rate-limiter.js";
 
@@ -33,7 +33,7 @@ export {
     cleanupInjectionDetectionMap,
     startInjectionCleanup,
     stopInjectionCleanup,
-    // Note: clearInjectionDetectionMap intentionally not exported here (test-only).
+    // Note: clearInjectionDetectionMap and detectionMapSize intentionally not exported here (test-only).
     // Tests should import directly from "./detection-logger.js" if needed.
 } from "./detection-logger.js";
 
@@ -42,6 +42,6 @@ export {
     cleanupWrapErrorMap,
     startWrapErrorCleanup,
     stopWrapErrorCleanup,
-    // Note: clearWrapErrorMap intentionally not exported here (test-only).
+    // Note: clearWrapErrorMap and wrapErrorMapSize intentionally not exported here (test-only).
     // Tests should import directly from "./wrap-error-logger.js" if needed.
 } from "./wrap-error-logger.js";

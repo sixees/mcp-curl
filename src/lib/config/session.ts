@@ -1,5 +1,5 @@
 // src/lib/config/session.ts
-// Session management, rate limiting, and temp directory constants
+// Session management, rate limiting, throttle bounds, and temp directory constants
 
 export const SESSION = {
     /** Maximum concurrent HTTP sessions */
