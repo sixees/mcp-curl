@@ -43,7 +43,7 @@ All five maps are now bounded at the write. `security-sentinel` re-swept in roun
 | Decision | Why |
 |---|---|
 | Two policies, not one seam | A log throttle **evicts** (losing a memo costs one stderr line); a counter **rejects** (evicting one resets it, bypassing the limit). Unifying them would need a policy flag — one function doing two things. `code-simplicity-reviewer` and `typescript-reviewer` both endorsed the split in round 3 |
-| `RATE_LIMIT.MAX_TRACKED_KEYS` derived, not chosen | `SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE` is the most cardinality legitimate load can produce in one window, so the ceiling cannot refuse a caller inside their own quota — and it cannot go stale if either input moves |
+| `RATE_LIMIT.MAX_TRACKED_KEYS` derived, not chosen | `SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE` is what concurrent sessions at full quota produce, and a derived value cannot go stale if either input moves. **Corrected in round 1 of Surface 3:** it is what the ceiling is sized against, not a proven upper bound — see *Declined Findings* |
 | Client gate before host gate | The write happens before either throw, so whichever map is checked first takes a key for requests the other rejects. Hostnames are model-chosen and unbounded; client ids are server-generated and bounded |
 | Kept eviction for the log throttles | See RC-19. Declined with evidence, and its author confirmed the decline |
 
@@ -174,3 +174,42 @@ and the map-growth half is already held by `setBounded`'s cap, which evicts
 whether or not the expiry sweep frees anything. The consequence is log timing,
 not enforcement. Named here so a later round recognises the class rather than
 re-reporting it.
+
+## Review Comments Addressed — 2026-09-03 (round 2)
+
+Codex re-requested against `54719c6`. The read returned **4 entries — 3 findings
+plus the codex review-summary comment**, which is a `kind: issue` entry with no
+resolved state and was dispositioned in round 1. All ten CodeRabbit threads from
+round 1 are closed.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| **Rebuild the committed `dist/`** | @chatgpt-codex-connector | **Fix needed (P1)** | Confirmed and fixed. `dist/` is tracked (15 files, no `.gitignore` entry), `main`/`bin`/`exports`/`npm start` all point at it, and `prepare` is `null` so a git install runs it unbuilt. It was last built at `fc35ee9` — the merge base — so every source change on this branch was absent from it: `MAX_TRACKED_KEYS`, the capacity-refusal guard and the monotonic clock were all missing from the committed artifact. Rebuilt with `npm run build` |
+| `RateLimitEntry.windowStart` documented as a Unix timestamp | @chatgpt-codex-connector | Fix needed (P3) | True, and introduced by round 1 — the clock's semantics changed and the type contract did not. Now states the monotonic source by name and forbids comparison with `Date.now()` |
+| `architecture.md` still carries the no-refusal guarantee | @chatgpt-codex-connector | Fix needed (P3) | True, and npm-published. **Class-swept rather than patched at the cited line**: the claim had three spellings — `session.ts` (fixed round 1), `architecture.md:179`, and this handoff's own Key decisions table. All three now agree |
+
+### Declined Findings
+
+None this round. All three findings were valid and in scope.
+
+### Decisions Revised
+
+| Original | New approach | Reason | Reviewer |
+|---|---|---|---|
+| `dist/` left at the merge base for the life of the branch | Rebuilt and committed alongside the source | Every merged PR in this repo's history refreshes `dist/` in the same PR (`fc35ee9`, `8e81772`, `fefc1af`, …). This branch was the outlier, and the artifact it shipped was the unbounded implementation the branch exists to replace | @chatgpt-codex-connector |
+
+### Files Modified
+
+`src/lib/types/rate-limit.ts`, `docs/architecture/architecture.md`, this handoff,
+and the rebuilt `dist/` (4 chunks replaced, 4 entry files updated).
+
+**Verification:** 1182 passed / 7 skipped / 0 failed. `tsc --noEmit` unchanged at
+12 pre-existing errors. All three library entry points import cleanly from the
+rebuilt `dist/` (27 / 11 / 13 exports) and `dist/index.js` is mode 755. The
+rebuilt artifact was checked to carry the capacity guard, `performance.now()`,
+the throttle eviction and the corrected `headers_unsupported` text.
+
+**No `.d.ts` changed in the rebuild**, which independently confirms the PATCH
+grading: the branch moved no public type.
