@@ -3,42 +3,34 @@
 > Seeded by `/sixees-workflow:init-compound`. **It is yours now** — nothing
 > overwrites it, and nothing refreshes it. Append to it; do not rewrite it.
 
-**This file is the Reality Correction ledger.** Every RC lands here, permanently,
-in addition to the PR handoff it was filed in.
-
-**Why it exists, and it is the whole point of the file.** A handoff is read once,
-by the run that wrote it, and then it is archived. An RC recorded only there is a
-lesson that expires the moment the PR merges — so the next session rediscovers it,
-pays for it again, and files it again under a new number. This file is the one
-place a lesson outlives the run that learned it.
+**This file is the Reality Correction ledger.** Every RC lands here permanently,
+as well as in the PR handoff it was filed in — because a handoff is read once, by
+the run that wrote it, and then archived. An RC recorded only there expires at
+merge, and the next session rediscovers the lesson and files it again under a new
+number. This is the one place a lesson outlives the run that learned it.
 
 It is not a changelog. A changelog says what shipped; this says what reality
-turned out to be, and what it cost to find out.
-
-Read it when a rule looks arbitrary, and **before planning anything that touches a
-surface an RC already names**. Do not read it as a checklist: a new defect that
-looks like none of these still needs its own investigation.
+turned out to be, and what it cost to find out. Read it when a rule looks
+arbitrary, and **before planning anything that touches a surface an RC already
+names** — but never as a checklist: a defect matching none of these still needs
+its own investigation.
 
 ---
 
 ## Filing an RC
 
-**When.** Reality diverges from the plan. What the plan assumed was not true, and
-the work had to change course.
+**When.** The plan said X and reality was Y, and the work had to change course.
+Not this: plan typos go to commit history, requirement pivots to a kickoff update,
+unrelated bugs to the todo system.
 
 **Number.** `RC-N`, sequential across the whole trail. The unit — per project, per
 feature or per theme — is declared in this project's Compound Engineering profile.
-Claim the number at the time; it is durable once assigned.
+Claim it at the time; it is durable once assigned.
 
-**Where.** Two places, both required: inline in the PR handoff beside the work it
-corrected, and appended to the ledger below. Add a one-line `POST-AUDIT`
-annotation in the plan pointing at the RC — and **never retro-edit plan text.** The
-plan is the record of what was believed; correcting it in place destroys the only
-evidence that anything diverged.
-
-**What is not an RC.** Plan typos go to commit history. Requirement pivots go to a
-kickoff update. Unrelated bugs go to the todo system. An RC is specifically: the
-plan said X, reality was Y.
+**Where.** Both of: inline in the PR handoff beside the work it corrected, and
+appended to the ledger below. Add a one-line `POST-AUDIT` annotation in the plan
+pointing at the RC, and **never retro-edit plan text** — the plan records what was
+believed, and correcting it in place destroys the evidence that anything diverged.
 
 ### Entry format
 
@@ -56,39 +48,31 @@ plan said X, reality was Y.
   rule; say so rather than inventing one.
 ```
 
-Name the files and symbols. An RC that says "fixed the auth handling" is a note to
-nobody — the next reader needs to know *where* to be careful.
+Every field is required; `—` fills one that has no value. Name the files and
+symbols — an RC that says "fixed the auth handling" is a note to nobody, because
+the next reader needs to know *where* to be careful. Closing prose after the four
+bullets is fine for who found it and how, but it never stands in for them.
 
-### A near-miss is recorded as caught
+**A near-miss is recorded as caught**, never re-framed as a failure that slipped
+through. A dense ledger is the discipline working; a thin one usually means filing
+stopped, not that diverging did.
 
-An RC found before merge is recorded as **caught**, not re-framed as a failure that
-slipped through. A dense ledger is the discipline working, and a project whose
-ledger is thin is usually one that stopped filing, not one that stopped diverging.
-
-### Settled conflicts stay settled
-
-**A review finding that reverses an earlier round's change is a divergence, and
-gets an RC like any other.** It is not a fix to apply.
-
-When a finding asks you to undo what a previous round did: stop, state both
-positions in one line each, and put it to the director. Record the answer here.
-Then treat that RC as binding — a later round proposing the same reversal is
-answered by citing it, not by re-litigating. Without this, review surfaces with no
-memory of each other oscillate, and round N's fix becomes round N+1's finding.
+**Settled conflicts stay settled** — `.claude/rules/03-divergence.md` owns that
+rule. A finding that reverses an earlier round goes to the director, and the
+answer is recorded here as an RC later rounds cite rather than re-litigate.
 
 ---
 
 ## Shapes
 
-**The `K-` shapes live in `.claude/rules/01-known-shapes.md`, not here**, and
-that placement is the point: rules load at the start of every session, so the
-vocabulary is in context *before* the work — which is the only time a lookout list
-helps. They are also shipped prose, refreshed by
-`/sixees-workflow:refresh-compound`, so they improve for every repo at once; a copy
-in this file would freeze at the day it was seeded. **Do not restate the table here**,
-and do not edit the loaded copy — `.claude/rules/` is a materialisation, so a local
-change to it is lost at the next refresh. A shape you want changed is a change to the
-plugin; a shape that is *yours* goes below.
+**The `K-` shapes live in `.claude/rules/01-known-shapes.md`, not here.** Rules
+load at the start of every session, so the vocabulary is in context *before* the
+work — the only time a lookout list helps. They are shipped prose refreshed by
+`/sixees-workflow:refresh-compound`, so a copy here would freeze at the day it was
+seeded. **Do not restate the table**, and do not edit the loaded copy —
+`.claude/rules/` is a materialisation, so a local change to it is lost at the next
+refresh. A shape you want changed is a change to the plugin; a shape that is
+*yours* goes below.
 
 An entry's `Class:` field cites those ids. Instances are a query, never a list
 maintained by hand:
@@ -98,25 +82,30 @@ grep -n '^\*\*Class:\*\* .*K-9' LESSONS.md          # every entry citing K-9
 grep -c '^\*\*Class:\*\* —$' LESSONS.md              # entries that matched no shape
 ```
 
+The `class-id` half of the field comes from `skill: review-findings` → *The
+class-id vocabulary*, which is append-only and is a cross-run join key. **A noun
+that is not on that list joins nothing** — take the closest one that is, and say
+so on the line.
+
 ### A shape this project earned
 
-**A shape seen three times *here* that the loaded table does not name — number it `C1`,
-`C2`, …, never `K-`.** Different prefixes so a grep for one cannot match the other,
-and so it stays visible which shapes were inherited and which this project paid for
-itself. State the rule once, and let the entries cite it; **a heading never owns the
-list of its instances**, because that copy goes stale on the next entry and then
-reads as the shape being obsolete.
+**A shape seen three times *here* that the loaded table does not name — number it
+`C1`, `C2`, …, never `K-`.** Different prefixes so a grep for one cannot match the
+other, and so it stays visible which shapes were inherited and which this project
+paid for itself. State the rule once and let the entries cite it; **a heading
+never owns the list of its instances**, because that copy goes stale on the next
+entry and then reads as the shape being obsolete.
 
-**`—` is a real answer**, and so is a long-empty section: the inherited table is a
-wide net. But treat a *run* of `—` as a signal the list is missing something rather than
-as a tidy ledger.
+**`—` is a real answer**, and so is a long-empty section — the inherited table is
+a wide net. But treat a *run* of `—` as the list missing something, not as a tidy
+ledger.
 
-**Naming the shape is a step in filing an RC, not a periodic tidy-up** — which is
-why the entry format has a field for it. A blank field is a question the filer has to
-answer; a paragraph of law is not. Measured once, in the project that wrote this
-section: the law was stated and nothing asked the question, so the ledger reached
-RC-45 with nine shapes past the threshold, **one** heading written, and one entry
-restating an existing class under a new name with its own counter.
+**Naming the shape is a step in filing, not a periodic tidy-up**, which is why the
+entry format has a field for it: a blank field is a question the filer has to
+answer, where a paragraph of law is not. Measured once, in the project that wrote
+this section — the law was stated, nothing asked the question, and the ledger
+reached RC-45 with nine shapes past the threshold, **one** heading written, and an
+entry restating an existing class under a new name with its own counter.
 
 ---
 
@@ -125,32 +114,27 @@ restating an existing class under a new name with its own counter.
 > Newest last. Append; never edit an entry once filed. If an RC turns out to be
 > wrong, file a new one that says so and cite it.
 >
-> **Two annotations may be added to a filed entry, and nothing else.** A
+> **Two annotations may be added to a filed entry, and nothing else:** a
 > `**Class:**` line, and a `**Mechanism superseded:**` line naming what no longer
-> exists at HEAD and the RC that replaced it. Both are **additive** — they sit above
-> the body and change no word of it, because the body is the record of what was
-> believed, and correcting it in place destroys the only evidence anything diverged.
+> exists at HEAD and the RC that replaced it. Both are additive — they sit above
+> the body and change no word of it, because the body records what was believed.
 >
-> **The body is frozen; an annotation is maintained.** It points at HEAD, so when HEAD
-> moves again the pointer names the newer RC — an annotation that has itself gone stale
-> is the defect it exists to prevent.
+> **The body is frozen; an annotation is maintained.** It points at HEAD, so when
+> HEAD moves again the pointer names the newer RC — an annotation that has itself
+> gone stale is the defect it exists to prevent.
 >
-> **The second one is required rather than optional, because an entry's lesson
-> outlives its fix and this format states them in one breath.** A reader arriving for
-> the durable half is told the mechanism with equal confidence, and a binding entry is
-> *cited rather than re-litigated* — so a stale mechanism inside one is the most
-> expensive stale prose a repository can hold: the next round is instructed not to
-> check it. Append-only and current are in conflict only if rewriting the entry is the
-> sole way to correct it.
+> **The superseded annotation is required, not optional**, because an entry's
+> lesson outlives its fix and this format states both in one breath. A binding
+> entry is cited rather than re-checked, so stale mechanism prose inside one is
+> the most expensive a repository can hold: the next round is told not to look.
 
 ### RC-1 — An invariant can be satisfied by the bug it was written to prevent
 
 **Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (none; this PR carried no plan)
 
-**Class:** K-1, K-2 — *class-id:* `lost-code-path`, `fail-open-default`
-
-_(superseded by the line above; retained as filed)_ **Class:** `lost-code-path`, `fail-open-default` — aliases `unescaped-sink`,
-`oversized-payload`, `injectable-input`, `repeated-computation`
+**Class:** K-1, K-2 — *class-id:* `lost-code-path`, `fail-open-default` —
+aliases `unescaped-sink`, `oversized-payload`, `injectable-input`,
+`repeated-computation`
 
 **Mechanism superseded:** RC-17 (2026-09-03). The pipeline half of this entry is
 unchanged and still load-bearing. The *boundary* half no longer describes HEAD:
@@ -201,8 +185,6 @@ and generalised — it is now invariant 13's strong form.
 
 **Class:** K-11, K-10 — *class-id:* `broken-contract`, `untyped-boundary`
 
-_(superseded by the line above; retained as filed)_ **Class:** `broken-contract`, `untyped-boundary`
-
 **Mechanism superseded:** RC-17 (2026-09-03). No wire offset is applied to stdout
 at HEAD, so this specific defect cannot recur. `stdoutBytes` remains a Buffer
 deliberately, so that reintroducing an offset is a type change rather than a
@@ -240,8 +222,6 @@ silent one. Both rules below stand unchanged.
 
 **Class:** K-3 — *class-id:* `unescaped-sink`
 
-_(superseded by the line above; retained as filed)_ **Class:** `unescaped-sink`
-
 - **The plan said:** declaring header text `text/markdown` — the strictest
   grammar — was safe, because running extra strip stages on a header value could
   only remove things. The comment said so in terms.
@@ -266,8 +246,6 @@ _(superseded by the line above; retained as filed)_ **Class:** `unescaped-sink`
 **Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 2)
 
 **Class:** K-3 — *class-id:* `missing-validation`, `unretained-pii`
-
-_(superseded by the line above; retained as filed)_ **Class:** `missing-validation`
 
 - **The plan said:** `docs/` is the project's documentation tree, and
   `CONVENTIONS.md` — written in this same PR — states plainly that anything put
@@ -296,9 +274,7 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
 
 **Date:** 2026-09-01 · **PR:** #32 · **Plan:** — (review round 3, self-probe)
 
-**Class:** K-1 — *class-id:* `missing-validation`
-
-_(superseded by the line above; retained as filed)_ **Class:** `missing-validation` — instantiates RC-2's rule 2
+**Class:** K-1 — *class-id:* `missing-validation` — instantiates RC-2's rule 2
 
 - **The plan said:** `src/lib/release-guards.test.ts` closed RC-4 by putting the
   publish-time rules into something that runs. Two guards: nothing internal in
@@ -465,7 +441,7 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
 
 ### RC-10 — A settled decision was reversed by an argument that had not been made when it was settled
 
-**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** —
 
 **Class:** K-5 — *class-id:* `fail-open-default`
 
@@ -499,7 +475,7 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
 
 ### RC-11 — A guard's escape hatch was deleting the payload it was guarding
 
-**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** —
 
 **Class:** K-2, K-5 — *class-id:* `silent-data-loss`
 
@@ -529,7 +505,7 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
 
 ### RC-12 — Two channels' opposite needs were resolved by a per-caller flag, so every caller had to choose wrong
 
-**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`)
+**Date:** 2026-09-02 · **PR:** (branch `fix/defend-undefended-tool-output`) · **Plan:** —
 
 **Class:** K-13, K-11 — *class-id:* `unescaped-sink`
 
@@ -565,7 +541,7 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
 
 ### RC-13 — A finding was declined twice on a claim that was true only below a cap
 
-**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`) · **Plan:** —
 
 **Class:** K-11, K-1 — *class-id:* `fail-open-default`
 
@@ -593,11 +569,9 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   member of a set, re-open every finding already declined about the other
   members**, because the decline was written before the fix existed.
 
----
-
 ### RC-14 — A bound was proved sound for the region and not for the attempt
 
-**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`) · **Plan:** —
 
 **Class:** K-11, K-4 — *class-id:* `unbounded-growth`
 
@@ -646,11 +620,9 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   fix rather than from the fix's *class* inherits the fix's blind spot: K-1, on
   the remedy this time rather than on a test.
 
----
-
 ### RC-15 — A cap measured its input where the pipeline grows its output
 
-**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`) · **Plan:** —
 
 **Class:** K-11 — *class-id:* `broken-contract`
 
@@ -697,7 +669,7 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
 
 ### RC-16 — The defence paired tokens across the boundary it could not see
 
-**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`)
+**Date:** 2026-09-02 · **PR:** #33 (branch `fix/defend-undefended-tool-output`) · **Plan:** —
 
 **Class:** K-5 — *class-id:* `unwrapped-multi-write`
 
@@ -714,7 +686,7 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   `x-trace: a-->b` in the headers returned an envelope with no `headers` key at
   all, and `{"a":"open <!--","b":"close -->","c":"kept"}` — one document, no
   envelope, the `jq_query` shape — came back as `{"a":"open ","c":"kept"}`.
-- **What I did:** `defendForInline` now parses a JSON document and defends each
+- **What changed:** `defendForInline` now parses a JSON document and defends each
   string LEAF, then re-serialises; the undivided scan is the arm for text that
   is not JSON. Invariant 16 states the property. Object keys are left alone
   deliberately — two keys defending to the same string would collapse into one,
@@ -734,23 +706,25 @@ _(superseded by the line above; retained as filed)_ **Class:** `missing-validati
   `defendInlineString`, `defendJsonLeaves`, `parseJsonDocument`),
   `src/lib/response/post-processor.test.ts`, `ARCHITECTURE.md` invariant 16.
 
-**The output stayed valid JSON, and that is the whole reason this survived four
-review rounds and a rewrite of the surrounding prose.** A corruption that
-produces a parse error announces itself; this one produced a smaller,
-well-formed document that every consumer accepted. **Where a defence can delete,
-the test is not "does the result parse" but "are all the parts still there".**
+- **What this costs next time:** three rules.
 
-**RC-15 and RC-16 are the same observation read twice.** Both rest on the
-envelope existing at the wrap; RC-15 asked how big it was and shipped, and
-nobody asked what was inside it. **A fact established for one question is worth
-re-interrogating for the next** — the measurement was already in the ledger.
+  **The output stayed valid JSON, and that is the whole reason this survived four
+  review rounds and a rewrite of the surrounding prose.** A corruption that
+  produces a parse error announces itself; this one produced a smaller,
+  well-formed document that every consumer accepted. **Where a defence can delete,
+  the test is not "does the result parse" but "are all the parts still there".**
 
-**Invariant 13 already stated this property one layer down** and did not reach
-here. It says a boundary between remote-controlled regions never comes from the
-bytes themselves; the header/body split obeys it, and then the reassembled
-envelope was handed to a pass that had no notion of regions at all. **A rule
-stated about one seam does not travel to the next one by itself** — K-13, and
-invariant 16 is where the general form now lives.
+  **RC-15 and RC-16 are the same observation read twice.** Both rest on the
+  envelope existing at the wrap; RC-15 asked how big it was and shipped, and
+  nobody asked what was inside it. **A fact established for one question is worth
+  re-interrogating for the next** — the measurement was already in the ledger.
+
+  **Invariant 13 already stated this property one layer down** and did not reach
+  here. It says a boundary between remote-controlled regions never comes from the
+  bytes themselves; the header/body split obeys it, and then the reassembled
+  envelope was handed to a pass that had no notion of regions at all. **A rule
+  stated about one seam does not travel to the next one by itself** — K-13, and
+  invariant 16 is where the general form now lives.
 
 Reported by chatgpt-codex-connector on PR #33 round 5, graded P1 by them and
 confirmed P1 here on the data-loss calibration.
