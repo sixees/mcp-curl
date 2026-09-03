@@ -20,8 +20,6 @@ export interface CurlArgsParams {
     data?: string;
     /** Form data as key-value pairs (multipart/form-data) */
     form?: Record<string, string>;
-    /** Custom output format string for cURL -w flag */
-    output_format?: string;
     /** Follow HTTP redirects (default: true) */
     follow_redirects?: boolean;
     /** Skip SSL certificate verification */
@@ -47,8 +45,15 @@ export interface CurlArgsParams {
     /**
      * DNS pinning to prevent rebinding attacks.
      * Format: --resolve hostname:port:ip forces cURL to use pre-validated IP
+     *
+     * **Required, and that is invariant 2 enforced by the type rather than by
+     * memory.** Optional, an argument list that omits it is still valid and
+     * still spawnable — cURL then does its own DNS and the pin is silently off,
+     * with nothing to fail. `metadataSeparator` below is required for the same
+     * reason on invariant 13's behalf; the two invariants now get the same
+     * enforcement instead of one relying on every caller remembering.
      */
-    dnsResolve?: { hostname: string; port: number; resolvedIp: string };
+    dnsResolve: { hostname: string; port: number; resolvedIp: string };
     /**
      * Unique per-request separator for extracting metadata.
      * Prevents response injection attacks by using unpredictable separator.
@@ -186,19 +191,13 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
     const metadataSuffix =
         params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") +
         "%{content_type}";
-    if (params.output_format) {
-        args.push("-w", params.output_format + metadataSuffix);
-    } else {
-        args.push("-w", metadataSuffix);
-    }
+    args.push("-w", metadataSuffix);
 
     // DNS pinning with --resolve to prevent DNS rebinding attacks
     // Format: --resolve hostname:port:ip
     // This forces cURL to use our pre-validated IP instead of doing its own DNS lookup
-    if (params.dnsResolve) {
-        const { hostname, port, resolvedIp } = params.dnsResolve;
-        args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
-    }
+    const { hostname, port, resolvedIp } = params.dnsResolve;
+    args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
 
     // Abort early if Content-Length exceeds limit (cURL exit code 63)
     // For chunked/streaming responses, the Node-level kill in command-executor.ts is the backstop

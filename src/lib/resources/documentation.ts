@@ -56,10 +56,17 @@ Files are saved to (in priority order):
 
 \`max_result_size\` bounds the body. Header text from \`include_headers\` is surfaced inline even
 when the body was saved to a file, and is capped at \`min(64KB, max_result_size)\` — it honours
-the caller's inline budget as well as its own ceiling. Truncation is reported out of band as
-\`headers_truncated\` / \`header_bytes_received\` under \`include_metadata\`, and as a leading
-\`[mcp-curl]\` notice otherwise — never as a marker inside the header text, which a server
-could simply send verbatim.
+the caller's inline budget as well as its own ceiling. Three states are reported out of band
+under \`include_metadata\`, and as a leading \`[mcp-curl]\` notice otherwise — never as a marker
+inside the header text, which a server could simply send verbatim:
+
+- \`headers_truncated\` / \`header_bytes_received\` — the text was cut to fit the ceiling.
+- \`headers_undetermined\` — headers were requested and the origin sent no header block.
+- \`headers_unsupported\` — this host cannot capture headers at all (macOS only). A fact about
+  the host, deliberately distinct from \`headers_undetermined\`, which is a fact about the origin.
+
+An absent \`headers\` key is therefore not evidence the origin sent none — check which of the
+three states is set.
 
 ### jq_filter Syntax
 

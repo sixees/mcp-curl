@@ -10,6 +10,7 @@ function makeParams(overrides: Partial<CurlArgsParams> = {}): CurlArgsParams {
     return {
         url: "https://example.com/api",
         metadataSeparator: "\n---SEP---\n",
+        dnsResolve: { hostname: "example.com", port: 443, resolvedIp: "93.184.216.34" },
         ...overrides,
     };
 }
@@ -100,11 +101,17 @@ describe("buildCurlArgs", () => {
             const w = args[args.indexOf("-w") + 1];
             expect(w).toBe("\\n---SEP---\\n%{content_type}");
         });
+    });
 
-        it("appends the metadata block to a caller's output_format", () => {
-            const args = buildCurlArgs(makeParams({ output_format: "%{http_code}" }));
-            const w = args[args.indexOf("-w") + 1];
-            expect(w).toBe("%{http_code}\\n---SEP---\\n%{content_type}");
+    describe("--resolve pin (invariant 2)", () => {
+        // Nothing asserted this before, on either side: the field was optional,
+        // so an argument list with no pin was valid, spawnable, and left cURL
+        // doing its own DNS. The type now refuses that; this is the runtime half.
+        it("always pins the pre-validated IP", () => {
+            const args = buildCurlArgs(makeParams());
+            const i = args.indexOf("--resolve");
+            expect(i).toBeGreaterThan(-1);
+            expect(args[i + 1]).toBe("example.com:443:93.184.216.34");
         });
     });
 
