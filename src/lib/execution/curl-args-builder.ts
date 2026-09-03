@@ -56,8 +56,9 @@ export interface CurlArgsParams {
      * `hostname`/`port` match `url` — a mismatched pin has cURL resolve the name
      * itself with no error, which is why provenance is asserted at the producer
      * in `curl-execute.headers.test.ts`. And it covers the first hop only: with
-     * `-L`, hops 2..N carry no `--resolve` of their own (`docs/todos/007`).
-     * `ARCHITECTURE.md` owns invariant 2's stated reach.
+     * `-L`, hops 2..N carry no `--resolve` of their own. `ARCHITECTURE.md`
+     * invariant 2 does not record that limit, so the redirect path violates it
+     * rather than falling outside it; `docs/todos/007` tracks closing the gap.
      */
     dnsResolve: { hostname: string; port: number; resolvedIp: string };
     /**

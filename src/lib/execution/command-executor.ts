@@ -191,7 +191,6 @@ export async function executeCommand(
         let stderrMemoryUsage = 0;
         let killed = false;
 
-        // Cleanup function to release memory tracking
         const releaseRequestMemory = () => {
             releaseMemory(requestMemoryUsage);
             requestMemoryUsage = 0;
@@ -330,7 +329,7 @@ export async function executeCommand(
 
         childProcess.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
             clearTimeout(timeoutId);
-            releaseRequestMemory(); // Release memory tracking on completion
+            releaseRequestMemory();
             if (!killed) {
                 // Concat AFTER the release above, then drop the chunk
                 // references so only one full-size copy survives.
@@ -364,7 +363,7 @@ export async function executeCommand(
 
         childProcess.on("error", (error: Error) => {
             clearTimeout(timeoutId);
-            releaseRequestMemory(); // Release memory tracking on error
+            releaseRequestMemory();
             // AbortError means our timeout triggered
             if (error.name === "AbortError") {
                 reject(new Error(

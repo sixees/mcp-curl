@@ -58,7 +58,6 @@ function checkRateLimitInternal(
     const now = Date.now();
     const entry = map.get(key);
 
-    // Start new window if none exists or current window expired
     if (!entry || windowClosed(entry, now)) {
         // Only a key we are not already tracking can grow the map, and nothing
         // guarantees the cleanup interval is running: it is started by the
