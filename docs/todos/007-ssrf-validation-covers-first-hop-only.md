@@ -82,7 +82,7 @@ todo stays open on that.
 
 `docs/architecture/architecture.md` (npm-published) now states that the pin closes
 rebinding on the first hop only and that redirect targets are neither pinned nor
-re-validated, in all three places it previously claimed otherwise: *Threat Model*,
+re-validated, in all three places it previously claimed otherwise: *Business Rules / Invariants*,
 *Network / SSRF Defense — strategy*, and the design-decision table.
 `curl-args-builder.ts::CurlArgsParams.dnsResolve` says the same and cites this file.
 

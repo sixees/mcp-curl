@@ -86,18 +86,44 @@ describe("checkRateLimits — tracking capacity", () => {
 
     it("frees capacity once the window has passed", () => {
         fillHostMapToCap();
-        vi.setSystemTime(Date.now() + RATE_LIMIT.WINDOW_MS + 1_000);
+        vi.advanceTimersByTime(RATE_LIMIT.WINDOW_MS + 1_000);
         expect(() => checkRateLimits("fresh.example.test", "fresh-client")).not.toThrow();
     });
+});
 
-    it("frees capacity when the wall clock jumps BACKWARDS", () => {
-        // An NTP correction, a VM resume or a snapshot restore leaves every
-        // entry stamped in the future. Treated naively those never expire, and
-        // since expiry is the only route to freeing capacity the map wedges and
-        // refuses every new key until the clock catches up.
+describe("checkRateLimits — a backward wall-clock step", () => {
+    // An NTP correction, a VM resume or a snapshot restore moves `Date.now()`
+    // backwards. Windows are measured on a monotonic clock, so it is a
+    // non-event — and both directions are asserted because the two failures a
+    // wall clock produces here are mirrors of each other: entries stamped in
+    // the future never expire and wedge the cap, while reading that same
+    // negative age as expiry hands a saturated caller a fresh quota. A fix for
+    // either one alone is the other one shipped.
+
+    it("does not reset a quota that is already spent", () => {
+        const host = "saturated.example.test";
+        for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) {
+            checkRateLimits(host, `client-${i}`);
+        }
+        vi.setSystemTime(Date.now() - 30 * 60_000);
+
+        expect(() => checkRateLimits(host, "client-after-backstep"))
+            .toThrow(/Rate limit exceeded for host/);
+    });
+
+    it("does not wedge tracking capacity", () => {
         fillHostMapToCap();
         vi.setSystemTime(Date.now() - 30 * 60_000);
-        expect(() => checkRateLimits("after-backstep.example.test", "fresh-client")).not.toThrow();
+
+        // Still at capacity, because no window has actually elapsed.
+        expect(() => checkRateLimits("during-backstep.example.test", "fresh-client"))
+            .toThrow(/tracking is at capacity/);
+
+        // And the step did not cost the map its ability to expire: one window
+        // of real elapsed time later, capacity is free again.
+        vi.advanceTimersByTime(RATE_LIMIT.WINDOW_MS + 1_000);
+        expect(() => checkRateLimits("after-backstep.example.test", "fresh-client"))
+            .not.toThrow();
     });
 });
 

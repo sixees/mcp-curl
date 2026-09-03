@@ -50,6 +50,11 @@ alone.
 This moves ownership of memory accounting across a module boundary, which is why
 it wants a review round of its own.
 
+**That release point is an intermediate step, not the boundary.** `executeWithHooks`
+and `wrap()` both run with the pool already at zero — see *Prior attempt, discarded*
+below, which measured it. Reaching the real boundary means threading a release
+handle out of `executeCurlRequest`/`executeJqQuery`, which is a MAJOR bump.
+
 ## Instances
 
 - `src/lib/execution/command-executor.ts::executeCommand` — the `close` handler releases before `resolve` — confirmed, pre-existing

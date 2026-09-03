@@ -107,3 +107,70 @@ layering* to `architecture-strategist`; neither is in `review_agents` nor on the
 floor. This was not theoretical — reviewers routed findings to both across all
 three rounds, and those findings reached no reviewer. Adding them is the operator's
 call, not the review's.
+
+---
+
+## Review Comments Addressed — 2026-09-03
+
+Surface 3, round 1. Codex requested (`@codex review`); CodeRabbit had already
+posted ten comments unprompted across four waves earlier the same day. One read
+after a 15-minute wait returned **14 entries — 13 findings + 1 review summary**.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Backward wall-clock step resets an active quota (`rate-limiter.ts:33`) | @coderabbitai + @chatgpt-codex-connector | Fix needed (P2) | Windows now measure elapsed time on `performance.now()`. The `age < 0` arm is **deleted**, not reinterpreted — both failures it stood between were mirrors of one wrong clock |
+| `MAX_TRACKED_KEYS` is not an upper bound (`session.ts:40`) | @coderabbitai + @chatgpt-codex-connector | Fix needed (P3, claim only) | The **comment** claimed a bound it does not have. Corrected to say what the sizing is against and what churn past it costs. Behaviour unchanged — see Declined |
+| `headers_unsupported` platform qualifier inverted (`documentation.ts:66`) | @coderabbitai | Fix needed (P2) | Said "(macOS only)" against the state **non**-macOS hosts report. This text is served to the model as an MCP resource |
+| `docs/todos/003` Fix section contradicts the section this branch added | @coderabbitai | Documentation | Fix section now marks the `executeCurlRequest` release as intermediate and points at the measurement below it |
+| `docs/todos/007` names a section the caveat was not added to | @coderabbitai | Documentation | *Threat Model* → *Business Rules / Invariants*. Verified against `architecture.md` — the caveat is at lines 76, 171 and 330 |
+| `docs/todos/011` DAG places 13 of the 16 directories it names | @coderabbitai | Documentation | `session/`, `prompts/` and `resources/` added, each placed from what its imports read today |
+| `docs/todos/010` proposed signature drops per-response metadata | @coderabbitai | Fix needed (P2) | `defendChannel(text, channel, hostname)` → `(text, channel, meta)`. `processResponse` passes the origin's `contentType`/`contentTypeUndetermined` (`processor.ts:549-551`) and those select which strip stages run; a channel-only profile would have silently weakened `PERSISTED_BODY` |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Size `MAX_TRACKED_KEYS` for session churn, or add admission control | @chatgpt-codex-connector (**P1**), @coderabbitai (Major) | **P3** (re-derived) | In scope | Re-graded from consequence. The premise is right and the comment now says so. Reaching the cap needs that many distinct hostnames each clearing DNS resolution **and** the SSRF check inside one window — both run *before* `checkRateLimits` (`curl-execute.ts:158-166`) — and the map drains one window later. Bounded refusal, self-healing, no reachable failing case |
+| Avoid a full map sweep on every capacity rejection | @chatgpt-codex-connector (**P1**) | **P3** (re-derived) | In scope | Same unreachable precondition, plus the amplification is not what was claimed: **measured at 0.152 ms** for a full sweep of a 30,000-entry live map. Sustaining one core needs ~6,600 over-cap requests/second, each preceded by a successful DNS resolution. Next-expiry tracking would add state to avoid work in a state that is not reached |
+| Roll back the client increment when the host limiter throws | @coderabbitai | P2 | In scope | Reopened on the new consequence (self-lockout), not declined by citation. Re-declined on the merits: the proposed fix makes retries against a saturated host **free to the client**, and each retry still costs the server a DNS resolution and an SSRF check before `checkRateLimits` runs. Charging the client for them is the safer direction |
+| Bracket IPv6 addresses in `--resolve` | @coderabbitai | P3 | In scope | False positive, and contradicted by the reviewer's own cited evidence. Measured on curl 8.7.1: bare `2001:db8::1` gives `Added example.test:443:2001:db8::1 to DNS cache` → `Trying [2001:db8::1]:443`. A malformed address is rejected with exit 49, so the parse is real |
+| Test that a resident label stays throttled after an eviction | @coderabbitai | P3 | In scope (outdated) | The premise is inverted. `setBounded` evicts **first-inserted**, so a label inserted early is the victim, not the survivor — the proposed test asserts the opposite of the documented design. The bystander case is already covered at the shared seam (`bounded-throttle.test.ts`) |
+
+### Decisions Revised
+
+| Original | New approach | Reason | Reviewer |
+|---|---|---|---|
+| `windowClosed` treats a negative age as closed, to stop a future-stamped entry wedging the cap | Windows measure elapsed time on a monotonic clock; the negative-age arm is gone | The guard fixed one half of a two-sided defect and shipped the other half. Fixing the clock removes both and deletes the special case (K-11) | @coderabbitai, @chatgpt-codex-connector |
+
+### Resolved Todos
+
+None — no `docs/todos/` file claims `pr: "#35"`.
+
+### Outstanding Todos
+
+Unchanged: `docs/todos/006` and `007` remain the branch's stated P1 exposure and
+neither is moved by this round.
+
+### Files Modified
+
+`src/lib/security/rate-limiter.ts`, `src/lib/security/rate-limiter.test.ts`,
+`src/lib/config/session.ts`, `src/lib/resources/documentation.ts`,
+`docs/todos/003`, `007`, `010`, `011`, and this handoff.
+
+**Verification:** 1182 passed / 7 skipped / 0 failed across 35 files (from
+1181/7). `tsc --noEmit` unchanged at 12 pre-existing errors in `lib.test.ts`,
+`post-processor.test.ts` and `schema.test.ts`. Teeth-probed: restoring
+`Date.now()` with the negative-age arm fails both new backward-step cases;
+`rate-limiter.ts` restored from a `cp` backup and verified byte-identical by
+`shasum`.
+
+**Class trace.** The defect's shape is *a process-lifetime elapsed-time window
+measured on the wall clock*. Two siblings exist in this diff and were read:
+`detection-logger.ts` and `wrap-error-logger.ts` both compare `Date.now()`
+deltas. **Not changed** — a backward step there delays or advances a log memo,
+and the map-growth half is already held by `setBounded`'s cap, which evicts
+whether or not the expiry sweep frees anything. The consequence is log timing,
+not enforcement. Named here so a later round recognises the class rather than
+re-reporting it.

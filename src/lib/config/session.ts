@@ -29,9 +29,19 @@ export const RATE_LIMIT = {
      * Ceiling on distinct keys either rate-limit map tracks.
      *
      * **Derived rather than chosen, because exceeding it refuses a request.**
-     * The most key cardinality legitimate load can produce in one window is
-     * every session spending its whole quota on distinct hosts, so a ceiling
-     * at that product cannot refuse a caller who is inside their own quota.
+     * Every concurrent session spending its whole quota on distinct hosts is
+     * the cardinality this ceiling is sized against, so it cannot refuse a
+     * caller inside their own quota at the concurrency the session manager
+     * admits.
+     *
+     * **It is not a proof of an upper bound, and does not claim to be.**
+     * `MAX_SESSIONS` caps sessions held at once, not sessions opened during a
+     * window, so churn can in principle exceed the product. Reaching it needs
+     * that many distinct hostnames each clearing DNS resolution and the SSRF
+     * check inside one window — both run before `checkRateLimits`
+     * (`tools/curl-execute.ts`) — and the map drains one window later, so the
+     * failure is a bounded refusal rather than a wedge. Raising this number
+     * buys nothing that the window does not already give back.
      *
      * Deliberately not {@link THROTTLE.MAX_TRACKED_KEYS}: that one bounds log
      * throttles, where overflow costs a line of stderr. Sharing a value would

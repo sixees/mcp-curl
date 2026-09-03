@@ -59,7 +59,15 @@ the current tree:
 ```
 types/ ← config/ ← utils/ ← security/ ← files/ ← execution/, response/, jq/
       ← tools/ ← schema/, extensible/ ← server/ ← transports/
+
+session/    ← config/, types/            → consumed by server/, transports/
+prompts/    ← utils/                     → consumed by server/, extensible/
+resources/  ← nothing outside itself     → consumed by server/, extensible/
 ```
+
+The second block is the three directories the first one leaves unplaced; each
+position is what the tree's imports read today, not a preference. All sixteen are
+named so the acceptance criterion below can be checked rather than assumed.
 
 Then stop it being prose: `dependency-cruiser`, or `eslint-plugin-import`'s
 `no-restricted-paths`, in CI. `CONVENTIONS.md` → *Structure* already says to work

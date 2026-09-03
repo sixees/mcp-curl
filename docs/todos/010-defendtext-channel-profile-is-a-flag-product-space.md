@@ -56,9 +56,18 @@ Medium refactor across five call sites in the four invariant-carrying directorie
 Rung 1 — name the channels. A closed set in `response/` — `PERSISTED_BODY`,
 `INLINE`, `DIAGNOSTIC` — with the option matrix stated once and an exhaustiveness
 check per `CONVENTIONS.md` → *Structure* ("exhaustiveness over defaults"). Add
-`defendChannel(text, channel, hostname)` and route all five sites through it.
+`defendChannel(text, channel, meta)` and route all five sites through it.
 The wrong combination then is not constructible and the diagnostic profile has
 one spelling.
+
+**`meta` is not optional, and a `(text, channel, hostname)` signature is the trap.**
+`PERSISTED_BODY` is the only channel whose options are not fixed: `processResponse`
+passes the origin's `contentType` and `contentTypeUndetermined` straight through
+(`processor.ts:549-551`), and those two select the grammar and the JSON exemption —
+i.e. which strip stages run. A channel-only profile cannot express that call, so
+routing it through one would silently change what gets stripped. The channel fixes
+the *policy* fields (`excludeJsonDocuments`, `decodeEntities`); the per-response
+content-type metadata still travels with the call.
 
 **Additive only.** `defendText` and `DefendTextOptions` are exported from
 `src/lib.ts` §7 — adding `defendChannel` alongside is MINOR; removing or

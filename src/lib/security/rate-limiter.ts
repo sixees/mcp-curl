@@ -20,24 +20,34 @@ const hostRateLimitMap = new Map<string, RateLimitEntry>();
 const clientRateLimitMap = new Map<string, RateLimitEntry>();
 
 /**
- * Whether an entry's window has closed.
+ * Elapsed-time source for rate-limit windows.
  *
- * **A negative age counts as closed.** `Date.now()` is wall-clock and moves
- * backwards on an NTP correction, a VM resume or a snapshot restore, leaving
- * entries stamped in the future. Expiry is the only route to freeing tracking
- * capacity, so an entry that can never expire wedges the cap and refuses every
- * new key for as long as the step lasts.
+ * **Monotonic, not wall-clock, and the distinction is load-bearing.**
+ * `Date.now()` moves backwards on an NTP correction, a VM resume or a snapshot
+ * restore, and a window measured against it then fails in both directions at
+ * once: an entry stamped in the future never expires, wedging the tracking cap
+ * against every new key, while reading that same negative age as expiry hands
+ * every caller already at its quota a fresh one. Neither arm of that trade is
+ * safe, so the clock is the thing to fix rather than the comparison. Nothing
+ * here wants a calendar — `windowStart` is only ever subtracted from a later
+ * reading of the same clock.
+ */
+function elapsedNow(): number {
+    return performance.now();
+}
+
+/**
+ * Whether an entry's window has closed.
  */
 function windowClosed(entry: RateLimitEntry, now: number): boolean {
-    const age = now - entry.windowStart;
-    return age >= RATE_LIMIT.WINDOW_MS || age < 0;
+    return now - entry.windowStart >= RATE_LIMIT.WINDOW_MS;
 }
 
 /**
  * Clean up expired entries from a rate limit map.
  */
 function cleanupExpiredEntries(map: Map<string, RateLimitEntry>): void {
-    const now = Date.now();
+    const now = elapsedNow();
     for (const [key, entry] of map) {
         if (windowClosed(entry, now)) {
             map.delete(key);
@@ -55,7 +65,7 @@ function checkRateLimitInternal(
     errorPrefix: string,
     keyKind: "host" | "client"
 ): void {
-    const now = Date.now();
+    const now = elapsedNow();
     const entry = map.get(key);
 
     if (!entry || windowClosed(entry, now)) {
