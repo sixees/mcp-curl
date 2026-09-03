@@ -23,6 +23,16 @@ export const RATE_LIMIT = {
     STDIO_CLIENT_ID: "__stdio_client__",
 } as const;
 
+export const THROTTLE = {
+    /**
+     * Hard ceiling on distinct keys in a process-lifetime throttle map,
+     * enforced at the write by `security/bounded-throttle.ts::setBounded`.
+     * Entries are a <=128-char label and a timestamp, so this caps a throttle
+     * map at roughly 300 KB against a 100 MB response pool.
+     */
+    MAX_TRACKED_KEYS: 1024,
+} as const;
+
 export const TEMP_DIR = {
     /** Prefix for temp directories */
     PREFIX: "mcp-curl-",

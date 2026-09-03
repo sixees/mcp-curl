@@ -46,12 +46,23 @@ export interface CurlArgsParams {
      * DNS pinning to prevent rebinding attacks.
      * Format: --resolve hostname:port:ip forces cURL to use pre-validated IP
      *
-     * **Required, and that is invariant 2 enforced by the type rather than by
-     * memory.** Optional, an argument list that omits it is still valid and
-     * still spawnable — cURL then does its own DNS and the pin is silently off,
-     * with nothing to fail. `metadataSeparator` below is required for the same
-     * reason on invariant 13's behalf; the two invariants now get the same
-     * enforcement instead of one relying on every caller remembering.
+     * **Required, because optional it was a defence with no failure mode.**
+     * Were it optional, an argument list that omitted it would still be valid
+     * and still spawnable — cURL would do its own DNS and the pin would be
+     * silently off, with nothing to fail. `metadataSeparator` below is required
+     * for the same reason on invariant 13's behalf.
+     *
+     * **What that does and does not buy, stated because the difference is the
+     * whole of invariant 2.** Required closes the *omission* route only. It
+     * cannot check that the pin came from `validateUrlAndResolveDns`, nor that
+     * `hostname`/`port` match `url` — a mismatched pin makes cURL resolve the
+     * name itself, with no error. That the pin carries the validated address is
+     * asserted at the producer, in `curl-execute.headers.test.ts`.
+     *
+     * And it covers **the first hop only.** With `-L` in the argument list,
+     * hops 2..N are resolved and connected by cURL with no `--resolve` entry of
+     * their own. See `docs/todos/007`; `ARCHITECTURE.md` owns invariant 2's
+     * stated reach and this comment must not restate it.
      */
     dnsResolve: { hostname: string; port: number; resolvedIp: string };
     /**

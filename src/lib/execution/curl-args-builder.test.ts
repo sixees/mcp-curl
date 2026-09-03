@@ -103,11 +103,12 @@ describe("buildCurlArgs", () => {
         });
     });
 
-    describe("--resolve pin (invariant 2)", () => {
-        // Nothing asserted this before, on either side: the field was optional,
-        // so an argument list with no pin was valid, spawnable, and left cURL
-        // doing its own DNS. The type now refuses that; this is the runtime half.
-        it("always pins the pre-validated IP", () => {
+    describe("--resolve emission (invariant 2, first hop, builder half)", () => {
+        // Scope, because the name used to claim more than the test does: this
+        // asserts the builder EMITS the pin it was handed. That the pin is the
+        // address the SSRF check produced is asserted at the producer, in
+        // curl-execute.headers.test.ts; hops 2..N are docs/todos/007.
+        it("always emits a pin for the address it was given", () => {
             const args = buildCurlArgs(makeParams());
             const i = args.indexOf("--resolve");
             expect(i).toBeGreaterThan(-1);
