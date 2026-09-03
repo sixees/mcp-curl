@@ -12,20 +12,27 @@ import net from "node:net";
 import { executeCommand, HEADER_DUMP_PATH } from "./command-executor.js";
 import { LIMITS } from "../config/limits.js";
 
-let server: net.Server | undefined;
+// Every server this suite opens, not just the newest: a test that needs two
+// responses calls `serveOnce` twice, and a single reference would leave the
+// first listener alive for the rest of the worker with nothing holding a handle
+// to close it. Tracked here rather than at the call sites so a test added later
+// cannot forget.
+const servers: net.Server[] = [];
 
-afterEach(() => {
-    server?.close();
-    server = undefined;
+afterEach(async () => {
+    await Promise.all(
+        servers.splice(0).map((s) => new Promise<void>((resolve) => s.close(() => resolve())))
+    );
 });
 
 /** Serve one raw HTTP response on loopback and return its port. */
 async function serveOnce(payload: string): Promise<number> {
-    server = net.createServer((socket) => {
+    const server = net.createServer((socket) => {
         socket.once("data", () => socket.end(Buffer.from(payload, "utf8")));
     });
-    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
-    return (server!.address() as net.AddressInfo).port;
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return (server.address() as net.AddressInfo).port;
 }
 
 const SIMPLE =

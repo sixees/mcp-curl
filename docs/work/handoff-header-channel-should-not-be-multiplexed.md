@@ -282,3 +282,27 @@ without the pin, 19 assertions were hostage to the runner's platform.
 
 **This round filed no todos. 3 remain open against the repo** (003, 004, 005), all
 pre-existing and none created here.
+
+## Review Comments Addressed — 2026-09-03 (Surface 3, round 2)
+
+3 comments returned (2 findings + the standing Codex summary), against 12 in round 1.
+Copilot returned nothing. Both findings were in round 1's own fixes, which is the
+expected shape of a follow-up round rather than a regression.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Exit 63 can precede any body byte, so "exits 23, 56 and 63 all follow a partial transfer" is false | coderabbit | Fix needed | Correct — round 1 replaced one absolute with its mirror (K-11). Reworded to "cURL can emit partial output before a non-zero exit", keeping the completeness point that justifies the clean-exit gate |
+| `serveOnce` orphans the first loopback server when a test serves twice | codex (P2) | Fix needed | Confirmed by reading: `server` was a single reference and the descriptor-derivation test calls `serveOnce` twice, so `afterEach` closed only the second. Fixed at the shared function — every server is tracked in an array and the hook closes all of them — rather than at the one call site, so a test added later cannot reintroduce it |
+
+### Declined Findings
+
+None this round.
+
+### Verification
+
+Suite **1173 / 1166 passed / 0 failed / 7 skipped**, `success: true`. The server-tracking
+fix is resource hygiene in the test harness and carries no assertion of its own; it is
+verified by reading the reference change plus a green suite, and that is stated rather
+than claimed as covered.
