@@ -1082,8 +1082,9 @@ RC-17's mechanism is **not** superseded — only its verification claim was wron
 - **The near-miss, caught before commit and the more instructive half.** The
   clean fix is `JSON.rawJSON` with the reviver's `context.source`, which
   round-trips every lexeme exactly — measured across seven shapes. It landed in
-  **Node 21**. `README.md` states a floor of **Node ≥18** and `package.json`
-  declares **no `engines` field at all**, so an older host is reachable; there
+  **Node 21**. `docs/getting-started.md` stated a floor of **Node 18** — as did
+  `docs/architecture/architecture.md` — and `package.json` declared **no
+  `engines` field at all**, so an older host was reachable; there
   `JSON.rawJSON` is `undefined`, the call throws inside `defendForInline`,
   `createWrapper` catches it and tags the **undefended** result as wrapped. That
   is RC-20's P1 exactly — a fail-open on every JSON response, introduced by a
@@ -1101,8 +1102,20 @@ RC-17's mechanism is **not** superseded — only its verification claim was wron
   mechanism at two magnitudes, and only one of them is worth writing down. And
   **before reaching for a language feature inside a defence, check the project's
   declared floor**: a defence that throws does not fail loudly here, it fails
-  open. The floor to check is `README.md`'s, because `package.json` has no
-  `engines` to contradict it.
+  open. **And check every declared floor, not the first one found:** two docs
+  stated Node 18 here — `docs/getting-started.md:7` and
+  `docs/architecture/architecture.md:16` — and this entry originally cited
+  `README.md`, which declares no floor at all. The mis-citation survived a
+  review round and a PR reply before the sweep that found the second doc also
+  found the error (K-7).
+
+**RESOLVED 2026-09-04 (round 4).** The operator raised the floor: `engines: {
+node: ">=22" }` in `package.json`, both docs updated, the capability probe
+deleted and lexeme preservation made unconditional. Because `engines` is
+advisory — npm warns and installs anyway without `engine-strict` — the probe was
+replaced by an **import-time throw** naming the runtime, so a too-old host fails
+loudly at load instead of failing open per request. Teeth verified: stubbing the
+pair absent produces *"mcp-curl requires Node >= 22"*.
 
 ### RC-25 — A guard can have teeth and still not test the thing its name claims
 

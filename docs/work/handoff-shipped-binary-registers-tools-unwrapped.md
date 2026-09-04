@@ -358,7 +358,7 @@ with no teeth at all. Both in `LESSONS.md`.
 
 **A near-miss worth reading before the next change to this file.** The clean fix
 for RC-24 is `JSON.rawJSON`, which landed in **Node 21**. `README.md` declares a
-floor of **Node ≥18** and `package.json` declares **no `engines` field at all**,
+floor of **Node 18** — in `docs/getting-started.md` and `docs/architecture/architecture.md`, not `README.md` — and `package.json` declares **no `engines` field at all**,
 so an older host is reachable — and there the call throws inside
 `defendForInline`, `createWrapper` catches it, and the **undefended** result is
 tagged as wrapped. That is RC-20's P1, reintroduced by a fidelity fix. It was
@@ -424,7 +424,7 @@ None. Documentation only: RC-26 and this section.
 | Comment | Reviewer | Severity | Scope | Why it is not mine to take |
 |---|---|---|---|---|
 | **Keep JSON keys out of the composed-text scan** (`curl-execute.ts:297`) — `{"<!--":"a","b":"secret","-->":"c","d":"kept"}` returns `{"":"c","d":"kept"}` under `include_headers: true` | codex | **P1** | In scope — round 1's fix is incomplete, and this arm is this branch's regression | Round 1 defended the body's **values** region-wise. `defendJsonLeaves` deliberately leaves **keys** undefended — its own docblock states why, and states the residual — so the prepass cannot make the body marker-free and the wrap's undivided pass still pairs across keys. Both candidate fixes change a published contract: **(a)** two content parts, which widens the exported `CurlExecuteResult.content` 1-tuple → invariant 11, MAJOR; **(b)** make `include_headers: true` use the JSON envelope, which changes the response shape for that flag combination without touching the type. RC-26 |
-| **Preserve numeric lexemes on every supported Node runtime** (`processor.ts:157`) — the round-2 capability probe leaves the corruption in place on Node 18 and 20 | codex | **P1** | In scope | Correct, and it is the question round 2 already put to the operator, now arriving as a finding. Both docs declare the floor at 18 — `README.md:16` **and** `docs/getting-started.md:7`, the second of which I had not checked. The remedies are codex's own two: a hand-written lossless tokeniser inside the defence, or **raise and enforce** the floor (`engines: { node: ">=22" }` plus both docs). The second is a one-line change and my recommendation — Node 18 and 20 are both EOL as of today — but it changes who can install the package, which is a packaging decision |
+| **Preserve numeric lexemes on every supported Node runtime** (`processor.ts:157`) — the round-2 capability probe leaves the corruption in place on Node 18 and 20 | codex | **P1** | In scope | Correct, and it is the question round 2 already put to the operator, now arriving as a finding. Both docs declare the floor at 18 — `docs/getting-started.md:7` **and** `docs/architecture/architecture.md:16`. (An earlier draft of this row cited `README.md:16`; that was wrong — `README.md` declares no floor at all.) The remedies are codex's own two: a hand-written lossless tokeniser inside the defence, or **raise and enforce** the floor (`engines: { node: ">=22" }` plus both docs). The second is a one-line change and my recommendation — Node 18 and 20 are both EOL as of today — but it changes who can install the package, which is a packaging decision |
 
 ### Declined Findings
 
@@ -478,3 +478,72 @@ operator has not yet made into a promise on their behalf.
 
 **Testing:** unchanged from round 2 — 1215 passed, 0 failed, 7 skipped. No code
 changed, so no new verification was warranted.
+
+## Review Comments Addressed — round 4 (operator dispositions) — 2026-09-04
+
+Round 3's two escalations came back from the operator. No new review round was
+requested; this section records their decisions and the work that followed.
+
+### Changes Made
+
+| Escalation | Operator decision | Action taken |
+|---|---|---|
+| Numeric lexemes lost on Node 18/20 (`processor.ts:157`, codex P1) | *"we will only run this on node 22 and above, so no need to support node 18"* | Floor raised: `engines: { node: ">=22" }` added to `package.json` (which previously declared none), `docs/getting-started.md:7` → *Node.js 22 or later*, `docs/architecture/architecture.md:16` → *Node ≥22 ESM*. The capability probe is **deleted** and lexeme preservation is now unconditional, so there is one numeric behaviour rather than one per host. The 5 number tests no longer skip on any runtime |
+
+**One thing the decision did not cover, decided here and flagged.** `engines` is
+**advisory**: npm warns on a too-old host and installs anyway unless the operator
+has set `engine-strict`. So declaring Node ≥22 makes an older runtime
+*unsupported*, not impossible — and there `JSON.rawJSON` is `undefined`, the call
+throws inside `defendForInline`, and `createWrapper` tags the **undefended**
+result as wrapped. That is RC-20's fail-open, which is exactly what the round-2
+probe existed to avoid; deleting the probe without replacing it would have
+reintroduced it.
+
+The probe is therefore replaced by an **import-time throw** naming the runtime
+(`processor.ts`), so a too-old host fails loudly at load rather than silently
+bypassing the defence on every request. Teeth verified: stubbing the pair absent
+produces *"mcp-curl requires Node >= 22: … Detected v24.18.0."* RC-24 updated
+with the resolution.
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| **Keep JSON keys out of the composed-text scan** (`curl-execute.ts:297`) — `{"<!--":"a","b":"secret","-->":"c","d":"kept"}` returns `{"":"c","d":"kept"}` under `include_headers: true` | codex | **P3** (bot: P1; **round 3 escalated it as P1 — that grade was wrong**) | In scope — this branch's regression | **Declined on the population, and this reverses my own round-3 escalation.** The arm is real and measured. What round 3 failed to do is apply the population test that had already declined three other findings on this PR: the difference between this arm and the value arm fixed in round 1 is *where* the marker sits. A **value** carrying `<!--` is ordinary traffic — any API returning HTML fragments in JSON produces one, which is why the value arm was a genuine P1. An **object key** named `<!--` is not something a JSON API emits; keys are identifiers. The remaining author of such a response is an attacker, who controls the whole body already and gains nothing by deleting fields from it. So the population is empty in practice, and the fix costs a public-contract change — `.claude/rules/42-ship-what-matters.md`, K-14 |
+
+**Residual, documented rather than fixed:** `include_headers: true` with
+`include_metadata: false` deletes fields when a remote puts a comment, script or
+style marker pair in **two different object keys**. Values are safe. Not present
+on `main` before this branch. Reverses in one line of scope if a real API ever
+emits marker-bearing keys.
+
+**On the operator's stated reason.** The decision was given as *"we agreed
+functionality over security"*, and the outcome is right while that reason points
+the other way: the field deletion **is** the functionality loss here, and the
+defence is what causes it — so read literally, that principle argues for fixing
+this arm, not accepting it. What actually justifies the decline is the population,
+which is why the row above is written on that basis. Recorded so a later round
+re-reading this does not inherit a justification that does not hold.
+
+### The layer question, now settled by the decline
+
+Round 3 recommended separate content parts to close the composed-string class
+rather than its arms, and priced it at a MAJOR bump. **With the key arm declined
+on population, that recommendation lapses** — there is no remaining arm with a
+real population, so the layer change would be paid for entirely by cases nobody
+meets. `.claude/rules/03-divergence.md`: settled, and a later round proposing the
+content-part split is answered by citing this row rather than re-deriving it.
+Reopen only on a concrete case.
+
+### Outstanding Todos
+
+None. 0 filed across all four rounds; 1 closed (`012`).
+
+### Files Modified
+
+- `package.json` — `engines: { node: ">=22" }`
+- `docs/getting-started.md`, `docs/architecture/architecture.md` — floor raised
+- `src/lib/response/processor.ts` — probe deleted, lexeme preservation unconditional, import-time runtime guard, stale fallback prose removed
+- `src/lib/tools/register-all-tools.test.ts` — 5 number tests un-skipped
+- `LESSONS.md` — RC-24 citation corrected (`README.md` → the two docs that actually declare it) and resolution recorded
+- `dist/` — rebuilt

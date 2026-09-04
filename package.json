@@ -5,6 +5,9 @@
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "exports": {
     ".": {
       "types": "./dist/lib.d.ts",

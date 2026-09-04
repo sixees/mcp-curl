@@ -1994,7 +1994,7 @@ function parseJsonDocument(text, preserveNumberLexemes = false) {
   if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return void 0;
   try {
     return {
-      value: preserveNumberLexemes && rawJson !== void 0 ? JSON.parse(text, keepNumberLexeme) : JSON.parse(text)
+      value: preserveNumberLexemes ? JSON.parse(text, keepNumberLexeme) : JSON.parse(text)
     };
   } catch {
     return void 0;
@@ -2003,11 +2003,11 @@ function parseJsonDocument(text, preserveNumberLexemes = false) {
 function keepNumberLexeme(_key, value, context) {
   return typeof value === "number" && typeof context?.source === "string" ? rawJson(context.source) : value;
 }
-var jsonWithRaw = JSON;
-var rawJson = typeof jsonWithRaw.rawJSON === "function" ? jsonWithRaw.rawJSON : void 0;
-var isRawJson = jsonWithRaw.isRawJSON;
-function isRawNumber(value) {
-  return isRawJson !== void 0 && isRawJson(value);
+var { rawJSON: rawJson, isRawJSON: isRawNumber } = JSON;
+if (typeof rawJson !== "function" || typeof isRawNumber !== "function") {
+  throw new Error(
+    `mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this runtime, and the response defence cannot preserve JSON number values without them. Detected ${process.version}.`
+  );
 }
 function defendText(text, options) {
   let content = text;

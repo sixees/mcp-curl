@@ -4,7 +4,7 @@ This guide walks you through creating your first MCP cURL server.
 
 ## Prerequisites
 
-- Node.js 18 or later
+- Node.js 22 or later
 - npm or yarn
 - An MCP client (Claude Desktop, Claude Code, or another MCP-compatible client)
 

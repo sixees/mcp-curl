@@ -151,10 +151,7 @@ function parseJsonDocument(
     if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return undefined;
     try {
         return {
-            value:
-                preserveNumberLexemes && rawJson !== undefined
-                    ? JSON.parse(text, keepNumberLexeme)
-                    : JSON.parse(text),
+            value: preserveNumberLexemes ? JSON.parse(text, keepNumberLexeme) : JSON.parse(text),
         };
     } catch {
         return undefined;
@@ -185,41 +182,48 @@ function parseJsonDocument(
  */
 function keepNumberLexeme(_key: string, value: unknown, context?: { source?: string }): unknown {
     return typeof value === "number" && typeof context?.source === "string"
-        ? rawJson!(context.source)
+        ? rawJson(context.source)
         : value;
 }
 
 /**
- * `JSON.rawJSON` / `JSON.isRawJSON` where the host has them, `undefined` where
- * it does not.
+ * `JSON.rawJSON` / `JSON.isRawJSON`, typed — TypeScript 5.9 ships no
+ * declaration for either.
  *
- * **Detected once at load, never called blind, and this is not defensive
- * habit — calling it unguarded would reintroduce the exact P1 the depth bound
- * closed.** The pair landed in Node 21; `README.md` states a floor of Node 18
- * and `package.json` declares no `engines` at all, so an older host is
- * reachable. There `JSON.rawJSON` is `undefined`, the call throws a
- * `TypeError` inside {@link defendForInline}, `post-processor.ts::createWrapper`
- * catches it and tags the UNDEFENDED result as wrapped — so the whole defence
- * is skipped and a downstream wrap short-circuits too. `LESSONS.md` RC-20 is
- * that failure measured. A fail-open on every JSON response is strictly worse
- * than the number normalisation this preserves lexemes to avoid.
- *
- * Where the pair is absent the fallback is **today's behaviour**, unchanged:
- * numbers route through a double and are re-spelled. So this is a monotone
- * improvement per host rather than a new branch of semantics — and raising the
- * floor to Node ≥22 would make it unconditional, which is a packaging decision
- * rather than one this file should take.
+ * The pair landed in **Node 21**, and this package requires **Node ≥22**
+ * (`package.json` → `engines`, `docs/getting-started.md`,
+ * `docs/architecture/architecture.md`). So they are used unconditionally rather
+ * than probed, and there is exactly one numeric behaviour rather than one per
+ * host.
  */
-const jsonWithRaw = JSON as typeof JSON & {
-    rawJSON?: (text: string) => object;
-    isRawJSON?: (value: unknown) => boolean;
+const { rawJSON: rawJson, isRawJSON: isRawNumber } = JSON as typeof JSON & {
+    rawJSON: (text: string) => object;
+    isRawJSON: (value: unknown) => boolean;
 };
-const rawJson = typeof jsonWithRaw.rawJSON === "function" ? jsonWithRaw.rawJSON : undefined;
-const isRawJson = jsonWithRaw.isRawJSON;
 
-/** Whether `value` is a {@link keepNumberLexeme} marker. False where the host has no such thing. */
-function isRawNumber(value: unknown): boolean {
-    return isRawJson !== undefined && isRawJson(value);
+/**
+ * **Fails at import rather than mid-request, and the difference is the whole
+ * point.** `engines` is advisory: npm *warns* on a too-old host and installs
+ * anyway unless the operator has set `engine-strict`, so declaring Node ≥22
+ * does not make a Node 18 process impossible — it makes it unsupported.
+ *
+ * There `JSON.rawJSON` is `undefined` and the call throws inside
+ * {@link defendForInline}. That exception is caught by
+ * `post-processor.ts::createWrapper`, which tags the **undefended** result as
+ * wrapped — so the whole defence is skipped, a downstream wrap short-circuits
+ * on the tag, and nothing on the response says so. `LESSONS.md` RC-20 is that
+ * failure measured, and RC-24 is where reaching for this API nearly
+ * reintroduced it.
+ *
+ * A throw here is loud, immediate, and names the reason. Silence would be a
+ * security bypass wearing a compatibility fallback's clothing.
+ */
+if (typeof rawJson !== "function" || typeof isRawNumber !== "function") {
+    throw new Error(
+        "mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this " +
+            "runtime, and the response defence cannot preserve JSON number values without them. " +
+            `Detected ${process.version}.`
+    );
 }
 
 /**
@@ -556,9 +560,8 @@ function defendInlineString(text: string, hostname: string): string {
  * `9223372036854775807` returning `9223372036854776000` and `1e400` returning
  * `null` — `1.50` was simply its most comfortable member. `LESSONS.md` RC-24.
  *
- * Where the host predates `JSON.rawJSON` the old normalisation is what happens,
- * by design — see {@link rawJson} for why calling it blind would be worse than
- * the rounding.
+ * Unconditional — this package requires Node ≥22, so there is one numeric
+ * behaviour rather than one per host.
  */
 function defendJsonLeaves(value: unknown, hostname: string, depth = 0): unknown {
     if (typeof value === "string") {

