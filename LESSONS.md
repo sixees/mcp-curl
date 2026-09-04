@@ -1058,3 +1058,82 @@ RC-17's mechanism is **not** superseded — only its verification claim was wron
   `rg -n 'Object\.entries\(|\[key\] *='` over `src/lib` — 12 candidates, one
   confirmed, the rest either in-place mutations (safe: an own property is written
   directly) or `Map` iterations.
+
+### RC-24 — A parse-and-reserialise defence rewrites every number it passes, and the obvious fix for that would have failed the defence open
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** — (found in review round 2)
+
+**Class:** K-5, K-2 — *class-id:* `broken-contract`, `fail-open-default`
+
+- **The plan said:** the region-wise walk's numeric residual is cosmetic and
+  bounded — `defendJsonLeaves`' docblock had recorded *"re-serialising
+  normalises their spelling (`1.50` becomes `1.5`)"* and judged that nothing
+  reads meaning from the spelling of an inline copy.
+- **Reality was:** the residual is not cosmetic and it is not confined to
+  spelling. `JSON.parse` routes every number through a double, so
+  `9223372036854775807` — an ordinary 64-bit identifier — returns
+  `9223372036854776000`, and `1e400` overflows to `Infinity` and stringifies as
+  **`null`**. The example in the docblock was the harmless member of the class,
+  and it was chosen as the whole class. An MCP whose purpose is proxying
+  arbitrary APIs meets snowflake ids and database bigints as a matter of course,
+  and it hands the model a plausible **wrong value** with no signal — worse than
+  the field deletion the walk exists to prevent, because a missing field leaves a
+  gap somebody can notice.
+- **The near-miss, caught before commit and the more instructive half.** The
+  clean fix is `JSON.rawJSON` with the reviver's `context.source`, which
+  round-trips every lexeme exactly — measured across seven shapes. It landed in
+  **Node 21**. `README.md` states a floor of **Node ≥18** and `package.json`
+  declares **no `engines` field at all**, so an older host is reachable; there
+  `JSON.rawJSON` is `undefined`, the call throws inside `defendForInline`,
+  `createWrapper` catches it and tags the **undefended** result as wrapped. That
+  is RC-20's P1 exactly — a fail-open on every JSON response, introduced by a
+  fidelity fix. Written and typechecked before the floor was checked.
+- **What changed:** `keepNumberLexeme` behind a load-time capability probe
+  (`rawJson`/`isRawJson`), so the lexeme-preserving parse runs only where the
+  host has it and the fallback is today's behaviour rather than a throw. Opt-in
+  via `parseJsonDocument(text, true)`, so `isDefinitelyJson` keeps its cheap
+  parse and the persisted artefact keeps what RC-8 and RC-10 pinned. Guarded at
+  three walk sites, since a marker is `typeof "object"` and would otherwise be
+  walked as a composite.
+- **What this costs next time:** **when a docblock names a residual, check
+  whether the example is the worst member of its class or the most comfortable
+  one** — "normalises spelling" and "returns a different number" are the same
+  mechanism at two magnitudes, and only one of them is worth writing down. And
+  **before reaching for a language feature inside a defence, check the project's
+  declared floor**: a defence that throws does not fail loudly here, it fails
+  open. The floor to check is `README.md`'s, because `package.json` has no
+  `engines` to contradict it.
+
+### RC-25 — A guard can have teeth and still not test the thing its name claims
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** — (found in review round 2)
+
+**Class:** K-1, K-9 — *class-id:* `broken-contract`
+
+- **The plan said:** round 1's `include_headers` cases guard the composition
+  fix, and the teeth probe confirmed it — reverting the fix failed three of them.
+- **Reality was:** the probe ran on darwin, and `platformSupportsHeaderDump()` is
+  `process.platform === "darwin"`. On a Linux runner those cases take the
+  `headers_unsupported` branch and **no header block is composed at all**.
+  Codex reported this as a false green; measured, that conclusion is **wrong** —
+  the cases still fail there, because `formatResponse` prepends the "cannot be
+  captured on this host" notice and that prefix breaks the JSON parse exactly as
+  a header block does. So the guard keeps its teeth and loses its **subject**: a
+  case named for the header block silently exercises the notice prefix instead,
+  and nothing on either platform says so. The mechanism was right and the
+  consequence was not, which is the ordinary shape of a bot finding.
+- **What changed:** `platformSupportsHeaderDump` stubbed `true` alongside
+  `executeCommand`, and `bodyAfterHeaders` now asserts the prefix is present
+  before extracting — so the case cannot go vacuous if the capability, the
+  platform, or the composition changes underneath it. Teeth verified: forcing
+  the stub `false` now fails with *"expected a header prefix"* rather than
+  passing.
+- **What this costs next time:** **a teeth probe answers "can this fail", never
+  "does this test what it says".** Where a test's subject depends on an ambient
+  capability, stub the capability and **assert the precondition** — otherwise the
+  probe is measuring one machine and the name is describing another. Related:
+  the same round found a guard with no teeth at all (`isCompositeValue`'s
+  raw-number arm, which removing changed nothing until a whitespace-padded
+  numeric string — `" 123"` → `"123"` — was added to the control). Both
+  directions are worth probing: a guard that cannot fail, and a guard that fails
+  for the wrong reason.

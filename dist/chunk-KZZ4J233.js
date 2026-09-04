@@ -1987,16 +1987,27 @@ var JSON_DOCUMENT_FIRST_CHARS = /* @__PURE__ */ new Set([
 function isDefinitelyJson(text) {
   return parseJsonDocument(text) !== void 0;
 }
-function parseJsonDocument(text) {
+function parseJsonDocument(text, preserveNumberLexemes = false) {
   const trimmed = text.trimStart();
   if (trimmed.length === 0) return void 0;
   if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return void 0;
   if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return void 0;
   try {
-    return { value: JSON.parse(text) };
+    return {
+      value: preserveNumberLexemes && rawJson !== void 0 ? JSON.parse(text, keepNumberLexeme) : JSON.parse(text)
+    };
   } catch {
     return void 0;
   }
+}
+function keepNumberLexeme(_key, value, context) {
+  return typeof value === "number" && typeof context?.source === "string" ? rawJson(context.source) : value;
+}
+var jsonWithRaw = JSON;
+var rawJson = typeof jsonWithRaw.rawJSON === "function" ? jsonWithRaw.rawJSON : void 0;
+var isRawJson = jsonWithRaw.isRawJSON;
+function isRawNumber(value) {
+  return isRawJson !== void 0 && isRawJson(value);
 }
 function defendText(text, options) {
   let content = text;
@@ -2023,7 +2034,7 @@ function defendText(text, options) {
   return content;
 }
 function defendForInline(text, hostname) {
-  const parsed = parseJsonDocument(text);
+  const parsed = parseJsonDocument(text, true);
   if (parsed === void 0) return defendInlineString(text, hostname);
   if (exceedsDefenceDepth(parsed.value, MAX_INLINE_DEFENCE_DEPTH)) {
     return defendInlineString(text, hostname);
@@ -2040,6 +2051,7 @@ function exceedsDefenceDepth(value, limit) {
   while (stack.length > 0) {
     const { node, depth } = stack.pop();
     if (depth > limit) return true;
+    if (isRawNumber(node)) continue;
     if (Array.isArray(node)) {
       for (const item of node) stack.push({ node: item, depth: depth + 1 });
     } else if (node !== null && typeof node === "object") {
@@ -2049,6 +2061,7 @@ function exceedsDefenceDepth(value, limit) {
   return false;
 }
 function isCompositeValue(value) {
+  if (isRawNumber(value)) return false;
   return Array.isArray(value) || value !== null && typeof value === "object";
 }
 function defendInlineString(text, hostname) {
@@ -2062,7 +2075,7 @@ function defendInlineString(text, hostname) {
 function defendJsonLeaves(value, hostname, depth = 0) {
   if (typeof value === "string") {
     const budget = MAX_INLINE_DEFENCE_DEPTH - depth;
-    const nested = budget > 0 ? parseJsonDocument(value) : void 0;
+    const nested = budget > 0 ? parseJsonDocument(value, true) : void 0;
     if (nested !== void 0 && isCompositeValue(nested.value) && !exceedsDefenceDepth(nested.value, budget)) {
       return serialiseWithoutGrowing(
         defendJsonLeaves(nested.value, hostname, depth + 1),
@@ -2071,6 +2084,7 @@ function defendJsonLeaves(value, hostname, depth = 0) {
     }
     return defendInlineString(value, hostname);
   }
+  if (isRawNumber(value)) return value;
   if (Array.isArray(value)) {
     return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
   }
@@ -2723,7 +2737,8 @@ async function executeCurlRequest(params, extra = {}) {
       hostname: safeHostname(params.url),
       decodeEntities: false
     }) : result.stderr;
-    const inlineBody = params.include_metadata ? processed.content : defendForInline(processed.content, safeHostname(params.url));
+    const bodyIsReturned = !(processed.savedToFile && processed.filepath);
+    const inlineBody = params.include_metadata || !bodyIsReturned ? processed.content : defendForInline(processed.content, safeHostname(params.url));
     const output = formatResponse(
       inlineBody,
       defendedStderr,

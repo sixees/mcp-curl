@@ -139,7 +139,10 @@ function isDefinitelyJson(text: string): boolean {
  * JSON document" — distinguishable from a document whose value IS `null`,
  * which parses fine and comes back wrapped.
  */
-function parseJsonDocument(text: string): { value: unknown } | undefined {
+function parseJsonDocument(
+    text: string,
+    preserveNumberLexemes = false
+): { value: unknown } | undefined {
     const trimmed = text.trimStart();
     if (trimmed.length === 0) return undefined;
     if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0]!)) return undefined;
@@ -147,10 +150,76 @@ function parseJsonDocument(text: string): { value: unknown } | undefined {
     // parse would be pure cost.
     if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return undefined;
     try {
-        return { value: JSON.parse(text) };
+        return {
+            value:
+                preserveNumberLexemes && rawJson !== undefined
+                    ? JSON.parse(text, keepNumberLexeme)
+                    : JSON.parse(text),
+        };
     } catch {
         return undefined;
     }
+}
+
+/**
+ * Reviver that keeps every number EXACTLY as the origin spelled it.
+ *
+ * **A parse-and-reserialise defence silently rewrites numbers, and the rewrite
+ * is not cosmetic.** `JSON.parse` routes every number through a double, so
+ * `9223372036854775807` — an ordinary 64-bit identifier — comes back
+ * `9223372036854776000`, and `1e400` overflows to `Infinity` and stringifies as
+ * `null`. Both hand the model a plausible WRONG value with no signal that
+ * anything was lost, which is worse than the field deletion this whole
+ * region-wise walk exists to prevent: a deleted field leaves a gap somebody can
+ * notice.
+ *
+ * `context.source` is the raw lexeme the parser consumed, and `JSON.rawJSON`
+ * marks it for verbatim re-emission — so the number never becomes a double at
+ * all. Measured exact across `9223372036854775807`, `1e400`,
+ * `12345678901234567890`, `1.0`, `0.1000`, `-0.0` and `1E+2`.
+ *
+ * **Opt-in, and that matters.** `isDefinitelyJson` shares
+ * {@link parseJsonDocument} and throws the graph away, so paying for the
+ * wrappers there would be pure cost — and the persisted artefact must keep the
+ * behaviour `LESSONS.md` RC-8 and RC-10 pinned.
+ */
+function keepNumberLexeme(_key: string, value: unknown, context?: { source?: string }): unknown {
+    return typeof value === "number" && typeof context?.source === "string"
+        ? rawJson!(context.source)
+        : value;
+}
+
+/**
+ * `JSON.rawJSON` / `JSON.isRawJSON` where the host has them, `undefined` where
+ * it does not.
+ *
+ * **Detected once at load, never called blind, and this is not defensive
+ * habit — calling it unguarded would reintroduce the exact P1 the depth bound
+ * closed.** The pair landed in Node 21; `README.md` states a floor of Node 18
+ * and `package.json` declares no `engines` at all, so an older host is
+ * reachable. There `JSON.rawJSON` is `undefined`, the call throws a
+ * `TypeError` inside {@link defendForInline}, `post-processor.ts::createWrapper`
+ * catches it and tags the UNDEFENDED result as wrapped — so the whole defence
+ * is skipped and a downstream wrap short-circuits too. `LESSONS.md` RC-20 is
+ * that failure measured. A fail-open on every JSON response is strictly worse
+ * than the number normalisation this preserves lexemes to avoid.
+ *
+ * Where the pair is absent the fallback is **today's behaviour**, unchanged:
+ * numbers route through a double and are re-spelled. So this is a monotone
+ * improvement per host rather than a new branch of semantics — and raising the
+ * floor to Node ≥22 would make it unconditional, which is a packaging decision
+ * rather than one this file should take.
+ */
+const jsonWithRaw = JSON as typeof JSON & {
+    rawJSON?: (text: string) => object;
+    isRawJSON?: (value: unknown) => boolean;
+};
+const rawJson = typeof jsonWithRaw.rawJSON === "function" ? jsonWithRaw.rawJSON : undefined;
+const isRawJson = jsonWithRaw.isRawJSON;
+
+/** Whether `value` is a {@link keepNumberLexeme} marker. False where the host has no such thing. */
+function isRawNumber(value: unknown): boolean {
+    return isRawJson !== undefined && isRawJson(value);
 }
 
 /**
@@ -362,7 +431,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
  * cut. `LESSONS.md` RC-16 and ARCHITECTURE.md invariant 16.
  */
 export function defendForInline(text: string, hostname: string): string {
-    const parsed = parseJsonDocument(text);
+    const parsed = parseJsonDocument(text, true);
     if (parsed === undefined) return defendInlineString(text, hostname);
     // Depth is remote-chosen, so the per-leaf walk is only safe once it is
     // bounded — see {@link MAX_INLINE_DEFENCE_DEPTH}.
@@ -438,6 +507,7 @@ function exceedsDefenceDepth(value: unknown, limit: number): boolean {
     while (stack.length > 0) {
         const { node, depth } = stack.pop()!;
         if (depth > limit) return true;
+        if (isRawNumber(node)) continue;
         if (Array.isArray(node)) {
             for (const item of node) stack.push({ node: item, depth: depth + 1 });
         } else if (node !== null && typeof node === "object") {
@@ -447,8 +517,16 @@ function exceedsDefenceDepth(value: unknown, limit: number): boolean {
     return false;
 }
 
-/** Whether a value can hold fields, and so can be spliced across them. */
+/**
+ * Whether a value can hold fields, and so can be spliced across them.
+ *
+ * A {@link keepNumberLexeme} marker is `typeof "object"` with a `rawJSON` key,
+ * so it answers this question wrongly unless excluded — and walking into one
+ * would defend its lexeme as if it were remote prose, corrupting the very
+ * number the marker exists to preserve.
+ */
 function isCompositeValue(value: unknown): boolean {
+    if (isRawNumber(value)) return false;
     return Array.isArray(value) || (value !== null && typeof value === "object");
 }
 
@@ -471,11 +549,16 @@ function defendInlineString(text: string, hostname: string): string {
  * another door. A beacon in a key therefore survives to the model; it is a
  * stated residual rather than an oversight.
  *
- * Numbers, booleans and `null` are returned untouched, and re-serialising
- * normalises their spelling (`1.50` becomes `1.5`). Nothing reads meaning from
- * that spelling on an inline copy — the persisted artefact never takes this
- * path — and it is the price of knowing where one value ends and the next
- * begins.
+ * Booleans and `null` are returned untouched. **Numbers keep the origin's own
+ * text** via {@link keepNumberLexeme}, which is not a nicety: this docblock used
+ * to record the residual as *"re-serialising normalises their spelling (`1.50`
+ * becomes `1.5`)"* and treat that as cosmetic. It is the same mechanism as
+ * `9223372036854775807` returning `9223372036854776000` and `1e400` returning
+ * `null` — `1.50` was simply its most comfortable member. `LESSONS.md` RC-24.
+ *
+ * Where the host predates `JSON.rawJSON` the old normalisation is what happens,
+ * by design — see {@link rawJson} for why calling it blind would be worse than
+ * the rounding.
  */
 function defendJsonLeaves(value: unknown, hostname: string, depth = 0): unknown {
     if (typeof value === "string") {
@@ -496,7 +579,7 @@ function defendJsonLeaves(value: unknown, hostname: string, depth = 0): unknown 
         // benefit whatever: a scalar has no fields, so it cannot be spliced
         // across them, and there is nothing here for this arm to fix.
         const budget = MAX_INLINE_DEFENCE_DEPTH - depth;
-        const nested = budget > 0 ? parseJsonDocument(value) : undefined;
+        const nested = budget > 0 ? parseJsonDocument(value, true) : undefined;
         if (
             nested !== undefined &&
             isCompositeValue(nested.value) &&
@@ -509,6 +592,10 @@ function defendJsonLeaves(value: unknown, hostname: string, depth = 0): unknown 
         }
         return defendInlineString(value, hostname);
     }
+    // Before the object arm, which would otherwise walk it: a
+    // {@link keepNumberLexeme} marker is an object carrying the number's raw
+    // text, and defending that text would corrupt the number it preserves.
+    if (isRawNumber(value)) return value;
     if (Array.isArray(value)) {
         return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
     }

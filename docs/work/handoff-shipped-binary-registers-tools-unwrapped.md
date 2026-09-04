@@ -16,7 +16,10 @@ JSON handling** that had been reachable only through `McpCurlServer`: a
 remote-chosen nesting depth could switch the whole defence off with 4 KB, and a
 string leaf holding a serialised document was scanned undivided, silently
 deleting fields. Both are fixed here. A third arm of the second class
-(`include_headers` without metadata) is filed as `docs/todos/012`.
+(`include_headers` without metadata) was filed as `docs/todos/012` and is
+**closed in review round 1** — see *Review Comments Addressed*. It turned out to
+be a regression this branch introduced rather than the pre-existing defect it was
+filed as (RC-22).
 
 A second, functional defect closed by the same seam: `applyDefaultHeaders` is the
 only reader of `MCP_CURL_USER_AGENT` / `MCP_CURL_REFERER` and sat on the wrapped
@@ -77,17 +80,23 @@ the deleted registrars; env teardown moved to `afterEach`.
   `executeCommand` ceiling applied. Same 30s, different mechanism (cURL exit 28
   rather than an abort). Found by `architecture-strategist`; I had verified the
   timeout's *value* was equivalent and not its *mechanism*.
-- **Re-serialisation normalises number spelling** one level deeper than before —
-  a nested document's `1.50` becomes `1.5`. The top-level residual was already
-  stated in `defendJsonLeaves`' docblock; this extends it by one level. Only for
-  composite leaves; scalar leaves are untouched and pinned by a test.
+- ~~**Re-serialisation normalises number spelling**~~ — **superseded in review
+  round 2, and the framing was the defect.** "Normalises spelling" and
+  "`9223372036854775807` returns `9223372036854776000`, `1e400` returns `null`"
+  are the same mechanism at two magnitudes, and this bullet named only the
+  comfortable one. Numbers now keep the origin's own lexeme where the host has
+  `JSON.rawJSON`. RC-24.
 
 ## Known issues and limitations
 
-- **`docs/todos/012` is open and is a P1** — the `include_headers`-without-metadata
-  arm still deletes fields. Verified on this tree *after* the fix.
-- **The `jq_query` instance of that class is `suspected`, not confirmed** — jq
-  output is a document whose leaves can themselves be documents. Not executed.
+- ~~**`docs/todos/012` is open and is a P1**~~ — **closed in review round 1.**
+  The arm is fixed (body defended as its own region before composition) and the
+  todo is removed. Left visible rather than deleted because the *reason* it was
+  filed matters: the scope call behind it was wrong, which is RC-22.
+- ~~**The `jq_query` instance of that class is `suspected`**~~ — **settled in
+  review round 1: it does not apply.** `executeJqQuery` returns one string with
+  nothing prefixed to it, so the composed-string arm cannot be reached, and both
+  shapes jq can emit are now pinned by tests.
 - **12 pre-existing `tsc --noEmit` errors**, all in `*.test.ts`, none in touched
   files. Pre-existing; declined, not deferred.
 - **`createInstanceUtilities().executeRequest`/`queryFile` still return
@@ -120,8 +129,9 @@ the deleted registrars; env teardown moved to `afterEach`.
 - **Shipped binary re-verified end-to-end** over stdio against a local origin:
   beacon stripped, deep nesting defended, all four fields kept, scalars intact,
   **zero `wrap-error` lines** (a wrap-error would mean fail-open fired).
-- **Gaps:** no case for the `include_headers` arm (that is todo 012's, and it
-  would fail); `jq_query`'s coverage is the wrap assertion only, not the splice.
+- **Gaps:** none of the originally listed ones remain. The `include_headers`
+  arm and `jq_query`'s splice coverage were both closed in review round 1; see
+  that section for what replaced them.
 
 ## Commit history
 
@@ -170,8 +180,10 @@ Both are recorded in `LESSONS.md` as RC-20 and RC-21.
 
 ## Follow-up work
 
-- [ ] `docs/todos/012` — the `include_headers` arm. **P1, open.**
-- [ ] Settle the `jq_query` instance of the splice class (currently `suspected`).
+- [x] `docs/todos/012` — the `include_headers` arm. **Closed in review round 1**
+      (regression of this branch, not pre-existing — RC-22).
+- [x] Settle the `jq_query` instance of the splice class — settled: does not
+      apply, and pinned by two tests.
 - [ ] Restate `docs/todos/008`'s acceptance criterion as *one pass per string*.
 - [ ] Move `docs/todos/003`'s release boundary to the wrap, not the executor.
 - [ ] `docs/todos/011` — correct its DAG block; it now contradicts the tree in
@@ -183,9 +195,8 @@ Both are recorded in `LESSONS.md` as RC-20 and RC-21.
 
 ### Outstanding Todos
 
-| File | Priority | Description | Source |
-|---|---|---|---|
-| `docs/todos/012-P1-headers-prefixed-body-is-defended-undivided.md` | P1 | A headers-prefixed body is defended undivided, so the strip pairs tokens across its fields and deletes them | this review round (data-integrity-guardian, performance-oracle) |
+**None.** `docs/todos/012` was the only entry and it was closed in review round 1
+— the resolved record is in that section's *Resolved Todos* table.
 
 ### Resolved Todos
 
@@ -231,6 +242,12 @@ confirmed independently.
 **Blockers:** none. Three P1s were found and all three are fixed on this branch;
 the one open P1 (todo 012) is a separate class arm outside the authorised scope,
 recorded rather than carried.
+
+> **POST-AUDIT (round 1, Surface 3):** the scope call in the sentence above is
+> the one RC-22 corrects — `012` was a regression this branch introduced, not a
+> separate pre-existing arm, and it is now fixed and closed. The paragraph is
+> left as written because it records what this round concluded; the correction
+> belongs beside it, not in place of it.
 
 ## Review Comments Addressed — 2026-09-04
 
@@ -299,3 +316,90 @@ net-negative on its own.
 **Testing:** 1208 passed, 0 failed, 7 skipped (was 1199/0/7). Build clean.
 Shipped binary re-verified end-to-end over stdio: **7/7**, including the two new
 cases, with **zero `wrap-error` lines**.
+
+## Review Comments Addressed — round 2 — 2026-09-04
+
+9 entries returned, 6 of them new inline threads (4 codex, 2 CodeRabbit). The
+other 3 are `kind: "issue"` entries with no resolved state — the codex review
+summary and two CodeRabbit command acknowledgements — which return on every
+fetch and were dispositioned in round 1.
+
+**This round reviewed round 1's fixes, which is the expected shape.** One of its
+findings is a P1 that round 1's own fix introduced.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Preserve JSON numbers when defending the body (`curl-execute.ts:287`) | codex (P1) | Fix needed — **P1, in scope, introduced by this branch** | `keepNumberLexeme` re-emits each number's original text via `JSON.rawJSON`, behind a load-time capability probe. 5 new cases; teeth verified (reverting fails 4). RC-24 |
+| Skip inline defence when the body was saved (`curl-execute.ts:287`) | codex (P2) | Fix needed — P2, in scope, contained | Gated on `bodyIsReturned`, mirroring the condition `formatResponse` itself branches on. 1 new case guarding the **premise** — that the file branch returns the message and not the body — since the skip has no observable behaviour of its own |
+| Force header capture on in-memory header tests (`register-all-tools.test.ts:48`) | codex (P2) | Fix needed — P2, in scope. **Mechanism right, consequence wrong** | `platformSupportsHeaderDump` stubbed `true`, and `bodyAfterHeaders` now asserts the prefix is present. The claim that the cases *"remain green if the fix is removed"* is measured **false** — they fail on a Linux runner too, because the unsupported-host notice is itself a prefix that breaks the JSON parse. What was really wrong is the guard's **subject**, not its teeth. RC-25 |
+| Update all `docs/todos/012` status entries in the handoff (`handoff…md:19`) | coderabbit (Minor) | Documentation — inside the diff | 5 stale entries reconciled across *Known issues*, *Gaps*, *Follow-up work* and *Outstanding Todos*. The dated Surface-2 record was **not** rewritten — it carries a `POST-AUDIT` pointer instead, since retro-editing a past round's conclusion is what `.claude/rules/03-divergence.md` forbids |
+| Add shipped-path coverage for `MCP_CURL_REFERER` (`register-all-tools.test.ts:186`) | coderabbit (Trivial) | Fix needed — P3, one-liner | Added. `applyDefaultHeaders` reads both env vars through one resolver, so covering one of two values is the shape RC-21 named |
+| — (found while probing) | — | Guard given teeth | `isCompositeValue`'s raw-number arm had **no teeth** — removing it changed nothing. A whitespace-padded numeric string does: `" 123"` → `"123"`. Added to the scalar control, which now fails when the arm is removed |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Preserve saved paths through the new wrapper (`tools/index.ts:67`) — a chosen output directory such as `/tmp/[v](file:data)` has its path rewritten to `[link removed]` in the saved-file message, so the caller is told a path that does not exist | codex | **P3** (bot: P2) | In scope — this branch's wrap introduced it | **Correct mechanism, empty population.** It needs an operator to have named an output directory in markdown-link form with a dangerous scheme inside it — `[v](file:data)`. Ordinary paths, including every path this server generates itself, pass through untouched. The honest fix moves the filepath out of the defended text part, which means a second content part and so widening the exported `CurlExecuteResult.content` 1-tuple — an invariant 11 MAJOR bump for a directory name nobody has. `.claude/rules/42-ship-what-matters.md`: name the population, and where it is empty, decline and write down why. Reversible in one line if a real operator ever hits it |
+
+### Decisions Revised
+
+| Original decision | New approach | Reason | Reviewer |
+|---|---|---|---|
+| Numeric re-spelling is a cosmetic residual of the region-wise walk — *"nothing reads meaning from that spelling on an inline copy"* | Numbers keep the origin's own lexeme where the host supports it | The residual's stated example was the harmless member of its class. Same mechanism, larger magnitude: a 64-bit id returns rounded and `1e400` returns `null` | codex |
+
+### Reality Corrections
+
+**RC-24** — the number rewrite, and the fail-open the obvious fix would have
+introduced. **RC-25** — a guard with teeth but the wrong subject, plus a guard
+with no teeth at all. Both in `LESSONS.md`.
+
+**A near-miss worth reading before the next change to this file.** The clean fix
+for RC-24 is `JSON.rawJSON`, which landed in **Node 21**. `README.md` declares a
+floor of **Node ≥18** and `package.json` declares **no `engines` field at all**,
+so an older host is reachable — and there the call throws inside
+`defendForInline`, `createWrapper` catches it, and the **undefended** result is
+tagged as wrapped. That is RC-20's P1, reintroduced by a fidelity fix. It was
+written and typechecked before the floor was checked, and is now behind a
+load-time capability probe.
+
+**Open question for the operator, not acted on:** raising the floor to Node ≥22
+would make lexeme preservation unconditional and let the probe be deleted. Both
+Node 18 and 20 are EOL as of this date. That is a packaging decision.
+
+### Convergence note
+
+`defendForInline`'s JSON handling has now produced findings in **three
+consecutive rounds** — Surface 2 (depth bound, nested-leaf splice), round 1
+(header composition, prototype keys), round 2 (number lexemes).
+`.claude/rules/42-ship-what-matters.md` says a change that has not settled in two
+rounds is too intricate for its value and should be cut rather than fixed a
+third time.
+
+**Stated rather than acted on, because the cut is not available here and the
+choice belongs to the operator.** The region-wise walk exists because RC-16: a
+serialised document scanned undivided loses whole fields. The two arms are
+region-wise (which was rewriting numbers) or undivided (which deletes fields) —
+both lose payload. Round 2's fix is the third arm, which loses neither, so it is
+a reduction in the residual set rather than another layer on it. But the pattern
+is real and worth the operator's eye.
+
+### Outstanding Todos
+
+None. This round filed **0** and closed **0** (round 1 closed the only one).
+
+### Files Modified
+
+- `src/lib/response/processor.ts` — `keepNumberLexeme`, capability probe, opt-in lexeme parse, three walk guards, corrected docblock
+- `src/lib/tools/curl-execute.ts` — save-path skip
+- `src/lib/tools/register-all-tools.test.ts` — 7 new cases, capability stub, self-verifying header assertion
+- `LESSONS.md` — RC-24, RC-25
+- `docs/work/handoff-…md` — stale `012` entries reconciled, `POST-AUDIT` pointer
+- `dist/` — rebuilt
+
+**Testing:** 1215 passed, 0 failed, 7 skipped (was 1208). `tsc --noEmit` clean in
+touched files. Shipped binary **10/10** over stdio with zero `wrap-error` lines,
+including `{"id":9223372036854775807,"exp":1e400,"pi":3.140}` returned
+byte-exact.

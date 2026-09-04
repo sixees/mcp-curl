@@ -282,9 +282,19 @@ export async function executeCurlRequest(
         // unchanged. The metadata branch is left alone — there the body is a
         // string leaf of a JSON envelope and `defendJsonLeaves` already
         // defends it region-wise.
-        const inlineBody = params.include_metadata
-            ? processed.content
-            : defendForInline(processed.content, safeHostname(params.url));
+        //
+        // Skipped where the body was saved: `formatResponse`'s file branch
+        // returns the server-authored `message` and never reads the body at
+        // all, so defending it is a full detection-and-sanitisation pass over
+        // bytes that cannot be returned — on precisely the path that exists to
+        // offload large responses. The condition mirrors the one
+        // `formatResponse` itself branches on, rather than `savedToFile`
+        // alone, so the two cannot disagree about which shape reads the body.
+        const bodyIsReturned = !(processed.savedToFile && processed.filepath);
+        const inlineBody =
+            params.include_metadata || !bodyIsReturned
+                ? processed.content
+                : defendForInline(processed.content, safeHostname(params.url));
 
         const output = formatResponse(
             inlineBody,
