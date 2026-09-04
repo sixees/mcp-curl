@@ -364,26 +364,92 @@ export function defendText(text: string, options: DefendTextOptions): string {
 export function defendForInline(text: string, hostname: string): string {
     const parsed = parseJsonDocument(text);
     if (parsed === undefined) return defendInlineString(text, hostname);
-    const defended = defendJsonLeaves(parsed.value, hostname);
+    // Depth is remote-chosen, so the per-leaf walk is only safe once it is
+    // bounded — see {@link MAX_INLINE_DEFENCE_DEPTH}.
+    if (exceedsDefenceDepth(parsed.value, MAX_INLINE_DEFENCE_DEPTH)) {
+        return defendInlineString(text, hostname);
+    }
+    return serialiseWithoutGrowing(defendJsonLeaves(parsed.value, hostname), text);
+}
 
-    // **Indented only where indenting does not GROW the document.** The obvious
-    // rule — "indent if the input has a newline" — re-inflates a sparsely
-    // formatted document by its nesting depth: `{"a":1,\n"b":[1,2,3,4,5,6,7,8,
-    // 9,10],"c":{"d":{"e":1}}}` measured 53 bytes in and 140 out. Nothing
-    // bounds that by a constant, so it would silently break
-    // {@link exceedsInlineCap}'s cheap arm and with it invariant 14 — the fix
-    // for one invariant reintroducing the violation of another.
-    //
-    // Comparing against the input instead needs no constant. The compact form
-    // can never exceed the input by more than the beacon substitution already
-    // accounted for, so whichever branch is taken the growth stays inside
-    // {@link MAX_INLINE_GROWTH_RATIO}. Both real producers of pretty JSON here
-    // — `formatResponse` and jq, each at two spaces — take the first branch and
-    // come back looking as they went in.
+/**
+ * Re-serialise a defended graph without growing it past its input.
+ *
+ * **Indented only where indenting does not GROW the document.** The obvious
+ * rule — "indent if the input has a newline" — re-inflates a sparsely formatted
+ * document by its nesting depth: `{"a":1,\n"b":[1,2,3,4,5,6,7,8,9,10],
+ * "c":{"d":{"e":1}}}` measured 53 bytes in and 140 out. Nothing bounds that by a
+ * constant, so it would silently break {@link exceedsInlineCap}'s cheap arm and
+ * with it invariant 14 — the fix for one invariant reintroducing the violation
+ * of another.
+ *
+ * Comparing against the input instead needs no constant. The compact form can
+ * never exceed the input by more than the beacon substitution already accounted
+ * for, so whichever branch is taken the growth stays inside
+ * {@link MAX_INLINE_GROWTH_RATIO}. Both real producers of pretty JSON here —
+ * `formatResponse` and jq, each at two spaces — take the first branch and come
+ * back looking as they went in.
+ *
+ * Shared by {@link defendForInline} and by {@link defendJsonLeaves}'s nested
+ * arm, so the growth rule has one implementation rather than one per level.
+ */
+function serialiseWithoutGrowing(defended: unknown, original: string): string {
     const indented = JSON.stringify(defended, null, 2);
-    return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(text, "utf8")
+    return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(original, "utf8")
         ? indented
         : JSON.stringify(defended);
+}
+
+/**
+ * Depth ceiling for the per-leaf inline defence.
+ *
+ * **The walk's depth comes from remote bytes, so without this it is the remote
+ * that decides whether the defence runs at all.** Measured before the bound
+ * existed: a 4,035-byte body of `"[" × 2000` around a markdown beacon overflowed
+ * the stack in {@link defendJsonLeaves}, `createWrapper`'s catch logged the
+ * `RangeError`, tagged the untouched result as wrapped — so a downstream wrap
+ * short-circuited too — and the beacon reached the model verbatim. The byte cap
+ * could not bound it: 256 KB of `[` is depth 262,144 against a break near 2,000.
+ *
+ * 100 matches `extensible/schema-sanitizer.ts::MAX_RECURSION_DEPTH`, which
+ * already owns this shape for operator-supplied schemas, and sits far below both
+ * observed breaks — the walk's near 2,000 and `JSON.stringify`'s near 20,000.
+ * The second of those is why the bound is checked rather than the recursion
+ * merely made iterative: re-serialisation recurses inside V8 over the same
+ * graph, so an iterative walk alone would move the break rather than remove it.
+ *
+ * **Over the bound the document takes the undivided scan, which strips rather
+ * than throws.** That is a deliberate trade in the safe direction: the defence
+ * still runs, so nothing leaks, but a pathologically nested document may lose a
+ * field to {@link defendJsonLeaves}'s own reason for existing. Real payloads are
+ * nowhere near this — a Lighthouse result nests in the tens.
+ */
+const MAX_INLINE_DEFENCE_DEPTH = 100;
+
+/**
+ * Whether a parsed graph nests deeper than `limit`.
+ *
+ * **Iterative by construction, with an explicit stack.** A recursive probe would
+ * overflow on exactly the input it exists to detect, which is the whole defect
+ * {@link MAX_INLINE_DEFENCE_DEPTH} was added for.
+ */
+function exceedsDefenceDepth(value: unknown, limit: number): boolean {
+    const stack: Array<{ node: unknown; depth: number }> = [{ node: value, depth: 0 }];
+    while (stack.length > 0) {
+        const { node, depth } = stack.pop()!;
+        if (depth > limit) return true;
+        if (Array.isArray(node)) {
+            for (const item of node) stack.push({ node: item, depth: depth + 1 });
+        } else if (node !== null && typeof node === "object") {
+            for (const item of Object.values(node)) stack.push({ node: item, depth: depth + 1 });
+        }
+    }
+    return false;
+}
+
+/** Whether a value can hold fields, and so can be spliced across them. */
+function isCompositeValue(value: unknown): boolean {
+    return Array.isArray(value) || (value !== null && typeof value === "object");
 }
 
 /** {@link defendForInline}'s option set, applied to one undivided string. */
@@ -411,13 +477,45 @@ function defendInlineString(text: string, hostname: string): string {
  * path — and it is the price of knowing where one value ends and the next
  * begins.
  */
-function defendJsonLeaves(value: unknown, hostname: string): unknown {
-    if (typeof value === "string") return defendInlineString(value, hostname);
-    if (Array.isArray(value)) return value.map((item) => defendJsonLeaves(item, hostname));
+function defendJsonLeaves(value: unknown, hostname: string, depth = 0): unknown {
+    if (typeof value === "string") {
+        // **A string leaf that is ITSELF a composite document gets region-wise
+        // treatment too.** RC-16 closed this at the envelope; the property does
+        // not travel to the next level by itself. Measured before this arm
+        // existed, with `include_metadata: true` over an `application/json`
+        // body: `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}`
+        // became `{"a":"open ","d":"kept"}` — the scan paired the opener in `a`
+        // with the closer in `c` and deleted `b` between them, leaving valid
+        // JSON that nothing downstream could tell had been cut.
+        //
+        // **Composites only, and that restriction is load-bearing.**
+        // {@link JSON_DOCUMENT_FIRST_CHARS} admits digits, `-`, `t`, `f` and
+        // `n`, so a scalar leaf parses too — and recursing into one would
+        // re-serialise it, rewriting the string `"1.50"` as `"1.5"` and every
+        // `"01"` as `"1"`. That corrupts identifiers and version strings for no
+        // benefit whatever: a scalar has no fields, so it cannot be spliced
+        // across them, and there is nothing here for this arm to fix.
+        const budget = MAX_INLINE_DEFENCE_DEPTH - depth;
+        const nested = budget > 0 ? parseJsonDocument(value) : undefined;
+        if (
+            nested !== undefined &&
+            isCompositeValue(nested.value) &&
+            !exceedsDefenceDepth(nested.value, budget)
+        ) {
+            return serialiseWithoutGrowing(
+                defendJsonLeaves(nested.value, hostname, depth + 1),
+                value
+            );
+        }
+        return defendInlineString(value, hostname);
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
+    }
     if (value !== null && typeof value === "object") {
         const defended: Record<string, unknown> = {};
         for (const [key, item] of Object.entries(value)) {
-            defended[key] = defendJsonLeaves(item, hostname);
+            defended[key] = defendJsonLeaves(item, hostname, depth + 1);
         }
         return defended;
     }

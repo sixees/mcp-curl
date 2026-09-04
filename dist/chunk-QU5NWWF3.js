@@ -2025,9 +2025,31 @@ function defendText(text, options) {
 function defendForInline(text, hostname) {
   const parsed = parseJsonDocument(text);
   if (parsed === void 0) return defendInlineString(text, hostname);
-  const defended = defendJsonLeaves(parsed.value, hostname);
+  if (exceedsDefenceDepth(parsed.value, MAX_INLINE_DEFENCE_DEPTH)) {
+    return defendInlineString(text, hostname);
+  }
+  return serialiseWithoutGrowing(defendJsonLeaves(parsed.value, hostname), text);
+}
+function serialiseWithoutGrowing(defended, original) {
   const indented = JSON.stringify(defended, null, 2);
-  return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(text, "utf8") ? indented : JSON.stringify(defended);
+  return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(original, "utf8") ? indented : JSON.stringify(defended);
+}
+var MAX_INLINE_DEFENCE_DEPTH = 100;
+function exceedsDefenceDepth(value, limit) {
+  const stack = [{ node: value, depth: 0 }];
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop();
+    if (depth > limit) return true;
+    if (Array.isArray(node)) {
+      for (const item of node) stack.push({ node: item, depth: depth + 1 });
+    } else if (node !== null && typeof node === "object") {
+      for (const item of Object.values(node)) stack.push({ node: item, depth: depth + 1 });
+    }
+  }
+  return false;
+}
+function isCompositeValue(value) {
+  return Array.isArray(value) || value !== null && typeof value === "object";
 }
 function defendInlineString(text, hostname) {
   return defendText(text, {
@@ -2037,13 +2059,25 @@ function defendInlineString(text, hostname) {
     decodeEntities: false
   });
 }
-function defendJsonLeaves(value, hostname) {
-  if (typeof value === "string") return defendInlineString(value, hostname);
-  if (Array.isArray(value)) return value.map((item) => defendJsonLeaves(item, hostname));
+function defendJsonLeaves(value, hostname, depth = 0) {
+  if (typeof value === "string") {
+    const budget = MAX_INLINE_DEFENCE_DEPTH - depth;
+    const nested = budget > 0 ? parseJsonDocument(value) : void 0;
+    if (nested !== void 0 && isCompositeValue(nested.value) && !exceedsDefenceDepth(nested.value, budget)) {
+      return serialiseWithoutGrowing(
+        defendJsonLeaves(nested.value, hostname, depth + 1),
+        value
+      );
+    }
+    return defendInlineString(value, hostname);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
+  }
   if (value !== null && typeof value === "object") {
     const defended = {};
     for (const [key, item] of Object.entries(value)) {
-      defended[key] = defendJsonLeaves(item, hostname);
+      defended[key] = defendJsonLeaves(item, hostname, depth + 1);
     }
     return defended;
   }

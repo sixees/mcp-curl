@@ -1,7 +1,6 @@
 // src/lib/tools/curl-execute.ts
 // Registers the curl_execute tool for making HTTP requests
 
-import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";

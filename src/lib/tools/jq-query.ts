@@ -1,7 +1,6 @@
 // src/lib/tools/jq-query.ts
 // Registers the jq_query tool for querying JSON files
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readFile, writeFile } from "fs/promises";
 import { join, basename } from "path";
 import { JqQuerySchema, type JqQueryInput } from "../server/schemas.js";
