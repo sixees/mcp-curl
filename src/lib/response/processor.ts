@@ -513,7 +513,17 @@ function defendJsonLeaves(value: unknown, hostname: string, depth = 0): unknown 
         return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
     }
     if (value !== null && typeof value === "object") {
-        const defended: Record<string, unknown> = {};
+        // **A null-prototype accumulator, because a remote picks these keys.**
+        // `JSON.parse` gives `__proto__` an OWN property, but assigning that
+        // key to a `{}` literal reaches `Object.prototype`'s inherited setter
+        // instead of creating one — so the field never lands and
+        // `JSON.stringify` omits it. Measured:
+        // `{"__proto__":{"value":"kept"},"ok":2}` came back as `{"ok":2}`,
+        // silently, leaving valid JSON. That is this function's own reason for
+        // existing arriving by a different door — RC-16 again, with a
+        // prototype accessor standing in for the paired marker. `Object.create(null)`
+        // has no such accessor to reach, so every key is an own property.
+        const defended = Object.create(null) as Record<string, unknown>;
         for (const [key, item] of Object.entries(value)) {
             defended[key] = defendJsonLeaves(item, hostname, depth + 1);
         }

@@ -983,3 +983,78 @@ RC-17's mechanism is **not** superseded — only its verification claim was wron
   *registered*, just not *guarded*. The cheap test is the one this file's own
   header states: name the smallest edit to the subject that keeps the suite
   passing, make it, and run.
+
+### RC-22 — "The defect survives my fix" and "my fix caused the defect" are different claims, and only the first was measured
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** `docs/todos/012-P1-headers-prefixed-body-is-defended-undivided.md`
+
+**Class:** K-11, K-9 — *class-id:* `broken-contract`, `stale-observation`
+
+- **The plan said:** the `include_headers`-without-metadata arm of the splice
+  class is **pre-existing**, verified still failing *after* `e6ad205`, and
+  therefore out of the authorised scope — filed as `docs/todos/012` rather than
+  carried.
+- **Reality was:** that verification only ever asked one side of the boundary.
+  *Post*-fix the arm fails, which was measured and true; *pre*-fix on the
+  **shipped binary** it did not exist at all, because the pre-wrap registration
+  never ran `defendForInline` over the composed string. Measured on the
+  registration path with `include_headers: true`:
+  `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returns
+  `["a","b","c","d"]` under the raw registration and `["a","d"]` under the
+  wrapped one. So the branch **introduced** silent field deletion on the one
+  entry point it exists to fix, and filed it as somebody else's pre-existing
+  problem. Codex reported it as a regression; the handoff had already recorded
+  it as pre-existing, and the record was the more confident of the two.
+- **A second failure inside the same episode, and the worse one.** The first
+  probe written to test codex's claim mocked `../types/index.js` by **absolute
+  path** while `curl-execute.ts` imports it by relative specifier, so the mock
+  never applied, the real random separator ran, `metadataFound` was false, and
+  the body arrived non-JSON on *both* arms — producing `["a","d"]` either side
+  and reading as *"the regression claim is wrong"*. That conclusion was stated
+  out loud before the probe was checked. A probe that silently fails to mock
+  what it names is a **false green in measurement form**, and it argues for
+  dismissing a real P1.
+- **What changed:** `curl-execute.ts` defends the body as its own region before
+  `formatResponse` composes it (invariant 13's shape — the split point is known
+  only to the composer). Idempotence measured at zero growth on the second
+  pass, so the wrap's later undivided pass over the composed text is a no-op and
+  invariant 14's accounting is unchanged. Six cases at the registration
+  boundary; teeth verified — reverting the fix fails three.
+- **What this costs next time:** **when declining a finding as pre-existing,
+  name the boundary and measure BOTH sides of it** — the defect's presence after
+  the fix says nothing about its presence before, and on a change whose whole
+  purpose is to route a path somewhere new, "pre-existing in the destination" and
+  "new to the traveller" are the same bytes. And **a probe is a subject under
+  test too**: before trusting a null result, assert the mock actually bound —
+  here, that the separator was consumed.
+
+### RC-23 — A defence that rebuilds an object from remote-chosen keys loses every key that names a prototype accessor
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** — (found in review)
+
+**Class:** K-5, K-11 — *class-id:* `broken-contract`
+
+- **The plan said:** `defendJsonLeaves` defends a document value by value so the
+  strip cannot pair markers across fields, and *"the defence never deletes a
+  field"* — asserted by a suite of comment, script and scalar cases.
+- **Reality was:** the accumulator was a `{}` literal, so `defended["__proto__"] = …`
+  reaches `Object.prototype`'s **inherited setter** instead of creating an own
+  property. `JSON.parse` gives `__proto__` an own property, so the field arrives
+  and then vanishes: `{"__proto__":{"value":"kept"},"ok":2}` re-serialised as
+  `{"ok":2}` — two fields in, one out, silently, leaving valid JSON. The same
+  class RC-16 named, arriving through a prototype accessor rather than a paired
+  marker, and past every case in the guard because no case used a key that is
+  also an accessor. Pre-existing at the top level; `e6ad205`'s nested arm
+  extended its reach one level deeper.
+- **What changed:** `Object.create(null)` as the accumulator, which has no such
+  accessor to reach. Two cases — top-level and nested-leaf — and the fixtures are
+  **literal JSON strings**, not object literals: a `__proto__:` key in JS source
+  sets the prototype, so a `JSON.stringify`-built fixture arrives with the field
+  already missing and passes against the unfixed code. Teeth verified.
+- **What this costs next time:** **where a remote picks the keys, the key space
+  includes the names your language reserves** — enumerate cases from the *key
+  space* rather than from the value space, and use `Object.create(null)` for any
+  accumulator keyed by untrusted strings. Sweep run:
+  `rg -n 'Object\.entries\(|\[key\] *='` over `src/lib` — 12 candidates, one
+  confirmed, the rest either in-place mutations (safe: an own property is written
+  directly) or `Map` iterations.

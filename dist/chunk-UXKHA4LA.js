@@ -2075,7 +2075,7 @@ function defendJsonLeaves(value, hostname, depth = 0) {
     return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
   }
   if (value !== null && typeof value === "object") {
-    const defended = {};
+    const defended = /* @__PURE__ */ Object.create(null);
     for (const [key, item] of Object.entries(value)) {
       defended[key] = defendJsonLeaves(item, hostname, depth + 1);
     }
@@ -2723,8 +2723,9 @@ async function executeCurlRequest(params, extra = {}) {
       hostname: safeHostname(params.url),
       decodeEntities: false
     }) : result.stderr;
+    const inlineBody = params.include_metadata ? processed.content : defendForInline(processed.content, safeHostname(params.url));
     const output = formatResponse(
-      processed.content,
+      inlineBody,
       defendedStderr,
       result.exitCode,
       params.include_metadata,

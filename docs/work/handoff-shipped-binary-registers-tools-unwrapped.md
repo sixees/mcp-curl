@@ -62,7 +62,7 @@ the deleted registrars; env teardown moved to `afterEach`.
 | Depth gate **not** in `parseJsonDocument` | `isDefinitelyJson` shares it, so a depth rejection there would remove the JSON exemption from the **persisted** copy and break RC-8/RC-10's persisted/returned split | Gating at the parse for simplicity — rejected on the persisted-artefact risk |
 | Over-depth falls back to the undivided scan | Fails in the safe direction: the defence still runs so nothing leaks. A visible placeholder was rejected because `MAX_INLINE_GROWTH_RATIO` is derived from the placeholders, and a third one would make that constant stale and blow `exceedsInlineCap`'s cheap arm | Placeholder substitution; returning the subtree undefended (leaks); dropping it (deletes payload) |
 | Composites-only recursion | A scalar has no fields and cannot be spliced, so the arm has nothing to fix there and everything to corrupt | Recursing on anything that parses — rejected, and a positive control pins it |
-| `include_headers` arm filed, not fixed | Needs a different mechanism (two content parts = invariant 11 MAJOR; or defend-before-compose = a second caller on the defence plus an invariant 14 accounting shift). Out of the authorised scope | Folding it in — declined; it deserves its own decision |
+| ~~`include_headers` arm filed, not fixed~~ **Revised during review** — fixed on this branch (defend-before-compose), based on @chatgpt-codex-connector's and @coderabbitai's feedback; see *Review Comments Addressed* and RC-22 | Needs a different mechanism (two content parts = invariant 11 MAJOR; or defend-before-compose = a second caller on the defence plus an invariant 14 accounting shift). Out of the authorised scope | Folding it in — declined; it deserves its own decision |
 
 ## What to pay attention to during review
 
@@ -231,3 +231,71 @@ confirmed independently.
 **Blockers:** none. Three P1s were found and all three are fixed on this branch;
 the one open P1 (todo 012) is a separate class arm outside the authorised scope,
 recorded rather than carried.
+
+## Review Comments Addressed — 2026-09-04
+
+Surface 3, round 1. `@coderabbitai` and `@chatgpt-codex-connector` both
+requested explicitly; both responded inside the 15-minute window. 6 entries
+returned: 4 inline threads, 1 codex review summary, 1 CodeRabbit command
+acknowledgement (`ack: true`).
+
+**Two bots, three distinct classes, two of them mine.** Codex's P1 and
+CodeRabbit's first Major are the same class reported from two anchors and were
+dispositioned together.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Keep headers separate from the body before wrapping (`tools/index.ts:63`) — merged with *Keep `include_headers` metadata and body in separate defence regions* (`processor.ts:372`) | codex (P1) + coderabbit (Major) | Fix needed — **P1, in scope, regression of this branch** | `curl-execute.ts` now defends the body as its own region before `formatResponse` composes it. 6 new cases at the registration boundary; teeth verified (reverting fails 3). Closes `docs/todos/012` |
+| Preserve `__proto__` when rebuilding nested documents (`processor.ts:507`) | codex (P2 → **re-derived P1**) | Fix needed — P1, in scope | `defendJsonLeaves`' object accumulator is now `Object.create(null)`. 2 new cases, fixtures written as literal JSON; teeth verified (reverting fails 2) |
+| — (found while settling `012`'s last criterion) | — | Test gap closed | 2 `jq_query` splice cases, settling the instance `012` recorded as `suspected`: it does not apply, and is now asserted rather than argued |
+
+**Severity re-derivation.** Codex graded the `__proto__` finding P2. Re-derived
+to **P1** on consequence: it deletes a field the origin sent, silently, leaving
+valid JSON — `review-findings` puts data loss reachable by normal use at P1, and
+the mechanical `medium → P2` mapping is where that grading starts rather than
+where it ends. Both bots graded the header arm at merge-blocking level and that
+grade stands.
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Preserve JSON regions when depth exceeds `MAX_INLINE_DEFENCE_DEPTH` — replace the over-depth fallback with a region-preserving defence, and add a depth-101 cross-field-marker test (`processor.ts:370`) | coderabbit | **P3** (bot: Major) | In scope — the fallback is this branch's code | **The mechanism is real and the population is empty.** Reaching it needs a document nesting past 100 *and* carrying a marker pair split across two of its fields. Real payloads nest in the tens (a Lighthouse result), and a remote that constructs the pathological case is deleting fields from a response it already controls end to end — it gains nothing it could not achieve by sending the shorter document directly. The alternatives were weighed and recorded when the bound was added: leaving the subtree undefended **leaks**, dropping it **deletes more**, and a placeholder breaks `MAX_INLINE_GROWTH_RATIO`, which is derived from the existing placeholder lengths — so the undivided scan is the arm that fails in the safe direction. Stated as a residual on `MAX_INLINE_DEFENCE_DEPTH` before review, not discovered by it. `.claude/rules/42-ship-what-matters.md` → the population test; K-14 |
+
+### Decisions Revised
+
+| Original decision | New approach | Reason | Reviewer |
+|---|---|---|---|
+| *"`include_headers` arm filed, not fixed — needs a different mechanism (two content parts = invariant 11 MAJOR; or defend-before-compose = a second caller plus an invariant 14 accounting shift). Out of the authorised scope"* | Fixed on this branch, defend-before-compose, **no MAJOR bump and no accounting shift** | Both feared costs were measured rather than assumed, and neither materialised. `defendForInline` is **idempotent at zero growth** on an already-defended region (6 shapes measured), so the wrap's later pass over the composed text changes nothing — the second caller is the same shared function, not a second implementation. And invariant 14 is *tighter*, not shifted: the gate already weighed `defendForInline(body)`, and the returned body is now exactly those bytes instead of the undefended form the wrap grew back. The scope call was also simply wrong — see RC-22 | codex, coderabbit |
+
+**The scope reversal is the substantive change of this round.** `012` was filed
+as pre-existing and out of scope on a measurement that only asked whether the
+defect survived the fix. It did — and on the shipped binary it did not exist
+*before* it, because the raw registration never ran the defence over the composed
+string. Filed under `**Key decisions**` above as superseded; RC-22 carries the
+measurement and the method that missed it.
+
+### Resolved Todos
+
+| File (removed) | Title | Summary | By | Date |
+|---|---|---|---|---|
+| `docs/todos/012-P1-headers-prefixed-body-is-defended-undivided.md` | A headers-prefixed body is defended undivided, so the strip pairs tokens across its fields and deletes them | Body defended as its own region before composition in `curl-execute.ts`. All six acceptance criteria met: four keys survive; script and style pairs survive; the beacon still strips on that arm; the unpaired-opener positive control holds; invariant 14 re-derived (gate bytes == returned bytes); and the `jq_query` instance is shown not to apply and pinned by two tests | Claude Code | 2026-09-04 |
+
+### Outstanding Todos
+
+None. This round filed **0** todos and closed **1**, so the branch is
+net-negative on its own.
+
+### Files Modified
+
+- `src/lib/tools/curl-execute.ts` — body defended as its own region before composition
+- `src/lib/response/processor.ts` — null-prototype accumulator in `defendJsonLeaves`
+- `src/lib/tools/register-all-tools.test.ts` — 8 new cases (6 header-arm + proto, 2 jq_query)
+- `LESSONS.md` — RC-22, RC-23
+- `dist/` — rebuilt
+
+**Testing:** 1208 passed, 0 failed, 7 skipped (was 1199/0/7). Build clean.
+Shipped binary re-verified end-to-end over stdio: **7/7**, including the two new
+cases, with **zero `wrap-error` lines**.
