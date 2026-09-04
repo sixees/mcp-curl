@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.1] - 2026-09-04
+
+### Security
+
+- **Process-lifetime maps are now bounded at the write, not by an interval.** Four
+  maps keyed by values the model or the remote chooses — the two rate-limit
+  counters and both log throttles — were bounded only by a `setInterval` that a
+  *caller* has to start. Exported entry points exist that never start it:
+  `registerEndpointTools` and `sanitizeAndDetect` both reach a throttle with no
+  cleanup starter available, so on those paths the interval was no bound at all.
+  Each now enforces its ceiling where the entry is written. (The session store,
+  the fifth member of the class, already refused past its ceiling.)
+
+- **The two policies are deliberately different.** A log throttle **evicts** —
+  losing a memo costs one extra line of stderr. A rate-limit counter **refuses** —
+  evicting one would reset it and bypass the limit, so a key that cannot be
+  tracked is not admitted untracked. `RATE_LIMIT.MAX_TRACKED_KEYS` is derived from
+  `SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE` so the ceiling cannot go
+  stale if either input moves.
+
+- **Rate-limit windows are measured on a monotonic clock.** `Date.now()` moves
+  backwards on an NTP correction, a VM resume or a snapshot restore, and a window
+  measured against it failed in both directions at once: an entry stamped in the
+  future never expired and wedged the tracking ceiling, while reading that same
+  negative age as expiry handed every caller already at its quota a fresh one.
+  Windows now read `performance.now()`, and the negative-age special case is gone
+  rather than reinterpreted. `RateLimitEntry.windowStart` is milliseconds since
+  process start and must never be compared with `Date.now()`.
+
+### Fixed
+
+- **`--resolve` is pinned from the resolved IP, asserted at the producer.** A test
+  now checks the argv carries the resolver's address rather than anything
+  derivable from the URL.
+
+- **`headers_unsupported` was documented backwards** in the `curl_execute`
+  documentation resource — qualified "(macOS only)" when it is the state every
+  *non*-macOS host reports. Header capture is implemented for macOS only. This
+  text is served to the model, so it was actively teaching the wrong platform rule.
+
+- **`normalizeLabel` no longer contains raw control bytes.** A literal NUL in its
+  character class made git and ripgrep classify `wrap-error-logger.ts` as binary,
+  so every `src/` sweep silently skipped the file — including the sweeps used to
+  audit the bounds above. Rewritten with `\u` escapes; behaviour is identical.
+
+### Changed
+
+- `docs/architecture/architecture.md` (published) no longer claims the `--resolve`
+  pin defeats DNS rebinding without qualification. It closes rebinding **on the
+  first hop**; redirect targets are neither pinned nor re-validated. The same
+  caveat now appears in all three places that previously claimed otherwise, and
+  the rate-limiting section states the tracking ceiling, its derivation and the
+  refuse-not-evict rationale.
+
 ## [3.5.0] - 2026-09-03
 
 ### Changed — `include_headers` no longer shares a stream with the body
