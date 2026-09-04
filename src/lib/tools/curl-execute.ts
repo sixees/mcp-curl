@@ -308,15 +308,7 @@ export async function executeCurlRequest(
     }
 }
 
-/**
- * Registers the curl_execute tool on the MCP server.
- * This tool provides safe, structured HTTP request execution.
- */
-export function registerCurlExecuteTool(server: McpServer): void {
-    server.registerTool(
-        "curl_execute",
-        CURL_EXECUTE_TOOL_META,
-        (params: CurlExecuteInput, extra: CurlExecuteExtra) =>
-            executeCurlRequest(params, extra)
-    );
-}
+// Registration lives in `tools/index.ts::registerAllTools`, which routes this
+// executor through `extensible/tool-wrapper.ts` so the post-processor wrap
+// (invariant 1) applies. A bare `registerTool` here is what let the shipped
+// binary return unwrapped output — see `docs/todos/006`.

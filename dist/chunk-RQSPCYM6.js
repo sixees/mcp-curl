@@ -25,7 +25,6 @@ import {
   getOrCreateTempDir,
   isValidSessionId,
   parsePort,
-  registerCurlExecuteTool,
   resolveBaseUrl,
   resolveOutputDir,
   safeHostname,
@@ -39,7 +38,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-GWWBEPIT.js";
+} from "./chunk-EMOOOSR6.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -203,13 +202,6 @@ async function executeJqQuery(params, _extra) {
       isError: true
     };
   }
-}
-function registerJqQueryTool(server) {
-  server.registerTool(
-    "jq_query",
-    JQ_QUERY_TOOL_META,
-    async (params, extra) => executeJqQuery(params, extra)
-  );
 }
 
 // src/lib/resources/documentation.ts
@@ -717,22 +709,6 @@ async function closeWithTimeout(op, label, sessionId) {
   }
 }
 
-// src/lib/tools/index.ts
-function registerAllTools(server) {
-  registerCurlExecuteTool(server);
-  registerJqQueryTool(server);
-}
-
-// src/lib/server/registration.ts
-function registerAllCapabilities(server) {
-  registerAllTools(server);
-  registerAllResources(server);
-  registerAllPrompts(server);
-}
-
-// src/lib/extensible/mcp-curl-server.ts
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-
 // src/lib/extensible/hook-executor.ts
 async function executeWithHooks(tool, params, config, hooks, sessionId, executor, wrap, hostnameOf) {
   const ctx = {
@@ -857,6 +833,38 @@ function registerJqToolWithHooks(server, options) {
   };
   server.registerTool("jq_query", JQ_QUERY_TOOL_META, handler);
 }
+
+// src/lib/tools/index.ts
+var NO_HOOKS = Object.freeze({
+  beforeRequest: [],
+  afterResponse: [],
+  onError: []
+});
+var NO_CONFIG = Object.freeze({});
+function registerAllTools(server) {
+  registerCurlToolWithHooks(server, {
+    executor: executeCurlRequest,
+    enabled: true,
+    config: NO_CONFIG,
+    hooks: NO_HOOKS
+  });
+  registerJqToolWithHooks(server, {
+    executor: executeJqQuery,
+    enabled: true,
+    config: NO_CONFIG,
+    hooks: NO_HOOKS
+  });
+}
+
+// src/lib/server/registration.ts
+function registerAllCapabilities(server) {
+  registerAllTools(server);
+  registerAllResources(server);
+  registerAllPrompts(server);
+}
+
+// src/lib/extensible/mcp-curl-server.ts
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 // src/lib/extensible/schema-sanitizer.ts
 import { z as z3 } from "zod";

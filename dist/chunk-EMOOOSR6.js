@@ -2738,13 +2738,6 @@ async function executeCurlRequest(params, extra = {}) {
     };
   }
 }
-function registerCurlExecuteTool(server) {
-  server.registerTool(
-    "curl_execute",
-    CURL_EXECUTE_TOOL_META,
-    (params, extra) => executeCurlRequest(params, extra)
-  );
-}
 
 export {
   ENV,
@@ -2791,6 +2784,5 @@ export {
   exceedsInlineCap,
   createWrapper,
   CURL_EXECUTE_TOOL_META,
-  executeCurlRequest,
-  registerCurlExecuteTool
+  executeCurlRequest
 };

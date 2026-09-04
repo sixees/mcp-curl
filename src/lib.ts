@@ -17,12 +17,17 @@
 //   8. URL validation helpers           — createHttpOnlyUrlSchema, safeHostname
 //
 // PR-6b ships an internal defence-in-depth wrap (`createWrapper(config)` in
-// `src/lib/response/post-processor.ts`) that the server applies automatically
-// at four call sites (curl_execute / jq_query in tool-wrapper.ts, YAML
-// createToolHandler in schema/generator.ts, custom-tool registration in
-// extensible/mcp-curl-server.ts, and the hook short-circuit in
-// extensible/hook-executor.ts) with idempotence via a module-private Symbol
-// tag. **The wrap factory is intentionally not exported** — its
+// `src/lib/response/post-processor.ts`) that the server applies automatically,
+// with idempotence via a module-private Symbol tag.
+//
+// **Do not re-enumerate the call sites here.** This comment used to list four
+// of them, and the list was the defect: `tools/index.ts::registerAllTools` —
+// the shipped binary's own path — was a fifth site that had never been added,
+// so the enumeration read as complete while the wrap was absent from the one
+// entry point `curl-mcp` uses (`docs/todos/006`). Every tool registration now
+// goes through `extensible/tool-wrapper.ts`, so the seam is the thing to name
+// and `rg -n 'createWrapper' src` is the thing to trust.
+// **The wrap factory is intentionally not exported** — its
 // `CallToolResult` shape is coupled to the MCP SDK. Library consumers interact
 // with it via `enableSpotlighting` (see McpCurlConfig).
 //
