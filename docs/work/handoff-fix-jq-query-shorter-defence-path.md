@@ -258,10 +258,10 @@ is removed by the todo lifecycle below rather than annotated.
 
 | File | Priority | Description | Source |
 |---|---|---|---|
-| `docs/todos/005-bracketed-label-defeats-beacon-strip.md` | **P1** | `[see [1]](https://evil/x)` defeats all four beacon patterns — a complete bypass of the markdown beacon defence. **Pre-existing; found while benchmarking the RC-11 rewrite, not caused by it.** Filed rather than fixed because the fix is a second rewrite of the stage this branch just rewrote, with no review round left. | this run |
-| `docs/todos/004-entity-decode-serves-two-channels.md` | P2 | The entity-decode stage cannot serve the header channel and the wrap with one commit rule. RC-12. | security-sentinel |
+| `docs/todos/005-P1-bracketed-label-defeats-beacon-strip.md` | **P1** | `[see [1]](https://evil/x)` defeats all four beacon patterns — a complete bypass of the markdown beacon defence. **Pre-existing; found while benchmarking the RC-11 rewrite, not caused by it.** Filed rather than fixed because the fix is a second rewrite of the stage this branch just rewrote, with no review round left. | this run |
+| `docs/todos/004-P2-entity-decode-serves-two-channels.md` | P2 | The entity-decode stage cannot serve the header channel and the wrap with one commit rule. RC-12. | security-sentinel |
 | `docs/todos/002-header-channel-should-not-be-multiplexed.md` | P1 | `-i` multiplexing; the boundary arithmetic has failed three times. | PR #32 |
-| `docs/todos/003-memory-ceiling-released-before-peak.md` | P2 | Pre-existing. | PR #32 |
+| `docs/todos/003-P2-memory-ceiling-released-before-peak.md` | P2 | Pre-existing. | PR #32 |
 
 This run opened two todos of its own (004, 005) and closed one (001), so the
 branch is net +1 on its own todos. Both new ones are recorded rather than
@@ -377,7 +377,7 @@ pre-existing backlog and none carries `pr: "#33"`.
 
 `src/lib/response/strip-blocks.ts`, `src/lib/response/processor.ts`,
 `src/lib/response/strip-blocks.test.ts`,
-`docs/todos/005-bracketed-label-defeats-beacon-strip.md`, and this handoff.
+`docs/todos/005-P1-bracketed-label-defeats-beacon-strip.md`, and this handoff.
 
 ## Review Comments Addressed — 2026-09-02 (round 3, PR #33)
 
@@ -488,7 +488,7 @@ the class sweep RC-14 prescribes.
 `src/lib/response/post-processor.ts`, `src/lib/tools/jq-query.ts`,
 `src/lib/response/index.ts`, `src/lib.ts`, the four test files above,
 `ARCHITECTURE.md`, `LESSONS.md`, `CHANGELOG.md`, `docs/custom-tools.md`,
-`docs/todos/005-bracketed-label-defeats-beacon-strip.md`, and this handoff.
+`docs/todos/005-P1-bracketed-label-defeats-beacon-strip.md`, and this handoff.
 
 ### Status
 

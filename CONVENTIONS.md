@@ -192,7 +192,7 @@ and re-seeded per clone; only the project profile is tracked.
 |---|---|---|
 | Plans | `docs/plans/` | Yes |
 | Handoffs | `docs/work/handoff-<type>-<slug>.md` | Yes |
-| Todos | `docs/todos/` | Yes |
+| Todos | `docs/todos/<nnn>-<P1..P3>-<slug>.md` — severity in the name, so a listing ranks itself | Yes |
 | Solutions / prior art | `docs/solutions/` | Yes |
 | RC ledger | `LESSONS.md` (repo root) | Yes — this is the durable record |
 | Compound profile | `docs/compound/compound-engineering-profile.md` | Yes |

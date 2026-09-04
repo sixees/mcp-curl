@@ -213,9 +213,9 @@ RCs are in `LESSONS.md`, which is the durable record.
 
 | File | Priority | Description | Source |
 |---|---|---|---|
-| `docs/todos/003-memory-ceiling-released-before-peak.md` | P2 | pre-existing backlog | earlier review |
-| `docs/todos/004-entity-decode-serves-two-channels.md` | P2 | pre-existing backlog | earlier review |
-| `docs/todos/005-bracketed-label-defeats-beacon-strip.md` | P1 | pre-existing; carries its own written "leave open, do not schedule" | earlier review |
+| `docs/todos/003-P2-memory-ceiling-released-before-peak.md` | P2 | pre-existing backlog | earlier review |
+| `docs/todos/004-P2-entity-decode-serves-two-channels.md` | P2 | pre-existing backlog | earlier review |
+| `docs/todos/005-P1-bracketed-label-defeats-beacon-strip.md` | P1 | pre-existing; carries its own written "leave open, do not schedule" | earlier review |
 
 **This run created no todos.** Two P2s were held by their reviewer rather than
 re-graded upward, with an explicit note that by consequence alone they read as
