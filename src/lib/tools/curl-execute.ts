@@ -1,7 +1,6 @@
 // src/lib/tools/curl-execute.ts
 // Registers the curl_execute tool for making HTTP requests
 
-import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
@@ -15,6 +14,7 @@ import {
     formatResponse,
     processResponse,
     defendText,
+    defendForInline,
     extractHeaderChannel,
 } from "../response/index.js";
 
@@ -257,8 +257,47 @@ export async function executeCurlRequest(
               })
             : result.stderr;
 
+        // **The body is defended as its own region BEFORE composition, and that
+        // is what keeps invariant 16 true across the join.** On the plain
+        // branch `formatResponse` prepends the header block and the notice
+        // lines, and the result does not parse as JSON — so the wrap's
+        // `defendForInline` takes its UNDIVIDED arm over the whole composed
+        // string and pairs a marker in one body field with one in a later
+        // field, deleting everything between. Measured on the shipped
+        // registration with `include_headers: true`:
+        // `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` came
+        // back as `{"a":"open ","d":"kept"}` — `b` and `c` gone, the remainder
+        // still valid JSON. Routing this path through the wrap is what exposed
+        // it: the pre-wrap registration returned all four fields.
+        //
+        // Defending here rather than at the wrap because **the boundary is
+        // knowable only to the composer** — invariant 13's shape, that a split
+        // point comes from a source the remote cannot write to. The wrap sees
+        // one string and cannot recover where the headers stopped.
+        //
+        // Safe to run twice: the wrap's later pass over the composed text is
+        // idempotent on an already-defended region (measured: byte-identical,
+        // zero growth), and `processResponse`'s size gate already weighed
+        // exactly these defended bytes, so invariant 14's accounting is
+        // unchanged. The metadata branch is left alone — there the body is a
+        // string leaf of a JSON envelope and `defendJsonLeaves` already
+        // defends it region-wise.
+        //
+        // Skipped where the body was saved: `formatResponse`'s file branch
+        // returns the server-authored `message` and never reads the body at
+        // all, so defending it is a full detection-and-sanitisation pass over
+        // bytes that cannot be returned — on precisely the path that exists to
+        // offload large responses. The condition mirrors the one
+        // `formatResponse` itself branches on, rather than `savedToFile`
+        // alone, so the two cannot disagree about which shape reads the body.
+        const bodyIsReturned = !(processed.savedToFile && processed.filepath);
+        const inlineBody =
+            params.include_metadata || !bodyIsReturned
+                ? processed.content
+                : defendForInline(processed.content, safeHostname(params.url));
+
         const output = formatResponse(
-            processed.content,
+            inlineBody,
             defendedStderr,
             result.exitCode,
             params.include_metadata,
@@ -308,15 +347,7 @@ export async function executeCurlRequest(
     }
 }
 
-/**
- * Registers the curl_execute tool on the MCP server.
- * This tool provides safe, structured HTTP request execution.
- */
-export function registerCurlExecuteTool(server: McpServer): void {
-    server.registerTool(
-        "curl_execute",
-        CURL_EXECUTE_TOOL_META,
-        (params: CurlExecuteInput, extra: CurlExecuteExtra) =>
-            executeCurlRequest(params, extra)
-    );
-}
+// Registration lives in `tools/index.ts::registerAllTools`, which routes this
+// executor through `extensible/tool-wrapper.ts` so the post-processor wrap
+// (invariant 1) applies. A bare `registerTool` here is what let the shipped
+// binary return unwrapped output — see `docs/todos/006`.

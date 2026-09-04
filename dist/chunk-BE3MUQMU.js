@@ -1777,7 +1777,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "3.5.1" : "0.0.0"
+  VERSION: true ? "3.6.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -1987,16 +1987,27 @@ var JSON_DOCUMENT_FIRST_CHARS = /* @__PURE__ */ new Set([
 function isDefinitelyJson(text) {
   return parseJsonDocument(text) !== void 0;
 }
-function parseJsonDocument(text) {
+function parseJsonDocument(text, preserveNumberLexemes = false) {
   const trimmed = text.trimStart();
   if (trimmed.length === 0) return void 0;
   if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return void 0;
   if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return void 0;
   try {
-    return { value: JSON.parse(text) };
+    return {
+      value: preserveNumberLexemes ? JSON.parse(text, keepNumberLexeme) : JSON.parse(text)
+    };
   } catch {
     return void 0;
   }
+}
+function keepNumberLexeme(_key, value, context) {
+  return typeof value === "number" && typeof context?.source === "string" ? rawJson(context.source) : value;
+}
+var { rawJSON: rawJson, isRawJSON: isRawNumber } = JSON;
+if (typeof rawJson !== "function" || typeof isRawNumber !== "function") {
+  throw new Error(
+    `mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this runtime, and the response defence cannot preserve JSON number values without them. Detected ${process.version}.`
+  );
 }
 function defendText(text, options) {
   let content = text;
@@ -2023,11 +2034,35 @@ function defendText(text, options) {
   return content;
 }
 function defendForInline(text, hostname) {
-  const parsed = parseJsonDocument(text);
+  const parsed = parseJsonDocument(text, true);
   if (parsed === void 0) return defendInlineString(text, hostname);
-  const defended = defendJsonLeaves(parsed.value, hostname);
+  if (exceedsDefenceDepth(parsed.value, MAX_INLINE_DEFENCE_DEPTH)) {
+    return defendInlineString(text, hostname);
+  }
+  return serialiseWithoutGrowing(defendJsonLeaves(parsed.value, hostname), text);
+}
+function serialiseWithoutGrowing(defended, original) {
   const indented = JSON.stringify(defended, null, 2);
-  return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(text, "utf8") ? indented : JSON.stringify(defended);
+  return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(original, "utf8") ? indented : JSON.stringify(defended);
+}
+var MAX_INLINE_DEFENCE_DEPTH = 100;
+function exceedsDefenceDepth(value, limit) {
+  const stack = [{ node: value, depth: 0 }];
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop();
+    if (depth > limit) return true;
+    if (isRawNumber(node)) continue;
+    if (Array.isArray(node)) {
+      for (const item of node) stack.push({ node: item, depth: depth + 1 });
+    } else if (node !== null && typeof node === "object") {
+      for (const item of Object.values(node)) stack.push({ node: item, depth: depth + 1 });
+    }
+  }
+  return false;
+}
+function isCompositeValue(value) {
+  if (isRawNumber(value)) return false;
+  return Array.isArray(value) || value !== null && typeof value === "object";
 }
 function defendInlineString(text, hostname) {
   return defendText(text, {
@@ -2037,13 +2072,26 @@ function defendInlineString(text, hostname) {
     decodeEntities: false
   });
 }
-function defendJsonLeaves(value, hostname) {
-  if (typeof value === "string") return defendInlineString(value, hostname);
-  if (Array.isArray(value)) return value.map((item) => defendJsonLeaves(item, hostname));
+function defendJsonLeaves(value, hostname, depth = 0) {
+  if (typeof value === "string") {
+    const budget = MAX_INLINE_DEFENCE_DEPTH - depth;
+    const nested = budget > 0 ? parseJsonDocument(value, true) : void 0;
+    if (nested !== void 0 && isCompositeValue(nested.value) && !exceedsDefenceDepth(nested.value, budget)) {
+      return serialiseWithoutGrowing(
+        defendJsonLeaves(nested.value, hostname, depth + 1),
+        value
+      );
+    }
+    return defendInlineString(value, hostname);
+  }
+  if (isRawNumber(value)) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
+  }
   if (value !== null && typeof value === "object") {
-    const defended = {};
+    const defended = /* @__PURE__ */ Object.create(null);
     for (const [key, item] of Object.entries(value)) {
-      defended[key] = defendJsonLeaves(item, hostname);
+      defended[key] = defendJsonLeaves(item, hostname, depth + 1);
     }
     return defended;
   }
@@ -2689,8 +2737,10 @@ async function executeCurlRequest(params, extra = {}) {
       hostname: safeHostname(params.url),
       decodeEntities: false
     }) : result.stderr;
+    const bodyIsReturned = !(processed.savedToFile && processed.filepath);
+    const inlineBody = params.include_metadata || !bodyIsReturned ? processed.content : defendForInline(processed.content, safeHostname(params.url));
     const output = formatResponse(
-      processed.content,
+      inlineBody,
       defendedStderr,
       result.exitCode,
       params.include_metadata,
@@ -2738,13 +2788,6 @@ async function executeCurlRequest(params, extra = {}) {
     };
   }
 }
-function registerCurlExecuteTool(server) {
-  server.registerTool(
-    "curl_execute",
-    CURL_EXECUTE_TOOL_META,
-    (params, extra) => executeCurlRequest(params, extra)
-  );
-}
 
 export {
   ENV,
@@ -2791,6 +2834,5 @@ export {
   exceedsInlineCap,
   createWrapper,
   CURL_EXECUTE_TOOL_META,
-  executeCurlRequest,
-  registerCurlExecuteTool
+  executeCurlRequest
 };

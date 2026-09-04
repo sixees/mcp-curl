@@ -1,7 +1,6 @@
 // src/lib/tools/jq-query.ts
 // Registers the jq_query tool for querying JSON files
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readFile, writeFile } from "fs/promises";
 import { join, basename } from "path";
 import { JqQuerySchema, type JqQueryInput } from "../server/schemas.js";
@@ -178,14 +177,7 @@ export async function executeJqQuery(
     }
 }
 
-/**
- * Registers the jq_query tool on the MCP server.
- * This tool allows querying JSON files without making new HTTP requests.
- */
-export function registerJqQueryTool(server: McpServer): void {
-    server.registerTool(
-        "jq_query",
-        JQ_QUERY_TOOL_META,
-        async (params: JqQueryInput, extra: JqQueryExtra) => executeJqQuery(params, extra)
-    );
-}
+// Registration lives in `tools/index.ts::registerAllTools`, which routes this
+// executor through `extensible/tool-wrapper.ts` so the post-processor wrap
+// (invariant 1) applies. A bare `registerTool` here is what let the shipped
+// binary return unwrapped output — see `docs/todos/006`.

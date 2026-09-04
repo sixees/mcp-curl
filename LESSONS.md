@@ -909,3 +909,284 @@ RC-17's mechanism is **not** superseded — only its verification claim was wron
      under test.** Two limits in one call path saturate in some order, and the
      first one to fire hides the second. Assert the precondition — *the map is at
      the cap* — before asserting behaviour at it, or the case certifies nothing.
+
+---
+
+### RC-20 — Routing a path into a shared defence inherits the defence's defects, and "the guard now runs" is not "the payload survives"
+
+**Date:** 2026-09-04 · **PR:** — (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** `docs/todos/006-P1-shipped-binary-registers-tools-unwrapped.md`
+
+**Class:** K-11, K-2 — *class-id:* `broken-contract`, `unwrapped-multi-write`
+
+- **The plan said:** todo 006 scoped the fix as one seam — give `registerAllTools`
+  the body `extensible/tool-wrapper.ts` already has, so invariant 1's wrap applies
+  on the shipped binary as it does on the library. It adjudicated the layer
+  question (not inside the executors, which would be a MAJOR bump under invariant
+  11) and called the result *"not a public-contract change"*. Both claims were
+  correct, and the registration fix was correct.
+- **Reality was:** the wrap had **never run on that path**, so routing traffic
+  into it exposed two P1 defects in the wrap's own JSON handling that were
+  previously reachable only through `McpCurlServer`. (1) `defendJsonLeaves`
+  recursed on remote-chosen nesting depth: a **4,035-byte** body of `"[" × 2000`
+  around a beacon overflowed the stack, `createWrapper`'s catch logged the
+  `RangeError`, **tagged the untouched result as wrapped** so a downstream wrap
+  short-circuited too, and the beacon reached the model verbatim — a remote could
+  switch the whole defence off with 4 KB. (2) A string leaf that was itself a
+  serialised document was scanned undivided, so
+  `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returned as
+  `{"a":"open ","d":"kept"}` — RC-16 one nesting level down, with the file on disk
+  still holding all four fields.
+- **What changed:** `response/processor.ts` gained `MAX_INLINE_DEFENCE_DEPTH`
+  (100, matching `extensible/schema-sanitizer.ts::MAX_RECURSION_DEPTH`) checked by
+  an iterative `exceedsDefenceDepth`, and `defendJsonLeaves`' string arm now
+  recurses on **composite** leaves only — `JSON_DOCUMENT_FIRST_CHARS` admits
+  digits and `-`, so recursing into a scalar would rewrite `"1.50"` as `"1.5"`.
+  The depth gate is deliberately **not** in `parseJsonDocument`: `isDefinitelyJson`
+  shares it, and a rejection there would strip the *persisted* copy and break
+  RC-8/RC-10's split. The `include_headers`-without-metadata arm of the same class
+  is `docs/todos/012`.
+- **What this costs next time:** **a fix that routes a path into a shared layer
+  adopts every defect that layer has, and the review question is not "does the
+  guard run now?" but "what does the guard do to this traffic?"** `skill:
+  pr-resolver-safety` already says *"then ask what the fix newly made true"*; this
+  is what that costs when skipped. The verification that missed it was an
+  end-to-end smoke test against the **default** flags — it passed, because both
+  defects need `include_metadata`, `include_headers`, or adversarial depth. **A
+  smoke test on defaults certifies the default path and nothing else.**
+
+---
+
+### RC-21 — A regression guard for a two-path invariant asserted it on one path, so the other could revert with the suite green
+
+**Date:** 2026-09-04 · **PR:** — (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** `docs/todos/006-P1-shipped-binary-registers-tools-unwrapped.md`
+
+**Class:** K-1, K-4 — *class-id:* `broken-contract`, `missing-validation`
+
+- **The plan said:** todo 006's acceptance criterion was *"a server built via
+  `createServer()` + `registerAllCapabilities()` returns `[image removed]` for an
+  `application/json` body containing a markdown beacon"* — singular, and the new
+  `tools/register-all-tools.test.ts` satisfied it.
+- **Reality was:** `registerAllTools` registers **two** tools, and the guard
+  asserted the wrap for `curl_execute` while asserting only *name presence* for
+  `jq_query`. Reverting the `registerJqToolWithHooks` call to a bare
+  `server.registerTool` — the exact shape the commit had just deleted — passed the
+  entire suite. The guard written to close todo 006 recreated todo 006's
+  precondition on the sibling tool. Two reviewers found it independently from
+  different lanes, and `learnings-researcher` joined it to **RC-1** (an invariant
+  satisfied by the bug it was written to prevent) and **RC-6**.
+- **What changed:** a `jq_query` wrap assertion in the same file, driving the
+  captured handler against a temp JSON file holding a beacon. Teeth verified by
+  probe: a bare `jq_query` registration fails it.
+- **What this costs next time:** **the assertion set must match the registration
+  set.** Where a change routes N paths through one guard, N-1 assertions is a
+  false green — and the missing one is invisible because the tool is still
+  *registered*, just not *guarded*. The cheap test is the one this file's own
+  header states: name the smallest edit to the subject that keeps the suite
+  passing, make it, and run.
+
+### RC-22 — "The defect survives my fix" and "my fix caused the defect" are different claims, and only the first was measured
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** `docs/todos/012-P1-headers-prefixed-body-is-defended-undivided.md`
+
+**Class:** K-11, K-9 — *class-id:* `broken-contract`, `stale-observation`
+
+- **The plan said:** the `include_headers`-without-metadata arm of the splice
+  class is **pre-existing**, verified still failing *after* `e6ad205`, and
+  therefore out of the authorised scope — filed as `docs/todos/012` rather than
+  carried.
+- **Reality was:** that verification only ever asked one side of the boundary.
+  *Post*-fix the arm fails, which was measured and true; *pre*-fix on the
+  **shipped binary** it did not exist at all, because the pre-wrap registration
+  never ran `defendForInline` over the composed string. Measured on the
+  registration path with `include_headers: true`:
+  `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returns
+  `["a","b","c","d"]` under the raw registration and `["a","d"]` under the
+  wrapped one. So the branch **introduced** silent field deletion on the one
+  entry point it exists to fix, and filed it as somebody else's pre-existing
+  problem. Codex reported it as a regression; the handoff had already recorded
+  it as pre-existing, and the record was the more confident of the two.
+- **A second failure inside the same episode, and the worse one.** The first
+  probe written to test codex's claim mocked `../types/index.js` by **absolute
+  path** while `curl-execute.ts` imports it by relative specifier, so the mock
+  never applied, the real random separator ran, `metadataFound` was false, and
+  the body arrived non-JSON on *both* arms — producing `["a","d"]` either side
+  and reading as *"the regression claim is wrong"*. That conclusion was stated
+  out loud before the probe was checked. A probe that silently fails to mock
+  what it names is a **false green in measurement form**, and it argues for
+  dismissing a real P1.
+- **What changed:** `curl-execute.ts` defends the body as its own region before
+  `formatResponse` composes it (invariant 13's shape — the split point is known
+  only to the composer). Idempotence measured at zero growth on the second
+  pass, so the wrap's later undivided pass over the composed text is a no-op and
+  invariant 14's accounting is unchanged. Six cases at the registration
+  boundary; teeth verified — reverting the fix fails three.
+- **What this costs next time:** **when declining a finding as pre-existing,
+  name the boundary and measure BOTH sides of it** — the defect's presence after
+  the fix says nothing about its presence before, and on a change whose whole
+  purpose is to route a path somewhere new, "pre-existing in the destination" and
+  "new to the traveller" are the same bytes. And **a probe is a subject under
+  test too**: before trusting a null result, assert the mock actually bound —
+  here, that the separator was consumed.
+
+### RC-23 — A defence that rebuilds an object from remote-chosen keys loses every key that names a prototype accessor
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** — (found in review)
+
+**Class:** K-5, K-11 — *class-id:* `broken-contract`
+
+- **The plan said:** `defendJsonLeaves` defends a document value by value so the
+  strip cannot pair markers across fields, and *"the defence never deletes a
+  field"* — asserted by a suite of comment, script and scalar cases.
+- **Reality was:** the accumulator was a `{}` literal, so `defended["__proto__"] = …`
+  reaches `Object.prototype`'s **inherited setter** instead of creating an own
+  property. `JSON.parse` gives `__proto__` an own property, so the field arrives
+  and then vanishes: `{"__proto__":{"value":"kept"},"ok":2}` re-serialised as
+  `{"ok":2}` — two fields in, one out, silently, leaving valid JSON. The same
+  class RC-16 named, arriving through a prototype accessor rather than a paired
+  marker, and past every case in the guard because no case used a key that is
+  also an accessor. Pre-existing at the top level; `e6ad205`'s nested arm
+  extended its reach one level deeper.
+- **What changed:** `Object.create(null)` as the accumulator, which has no such
+  accessor to reach. Two cases — top-level and nested-leaf — and the fixtures are
+  **literal JSON strings**, not object literals: a `__proto__:` key in JS source
+  sets the prototype, so a `JSON.stringify`-built fixture arrives with the field
+  already missing and passes against the unfixed code. Teeth verified.
+- **What this costs next time:** **where a remote picks the keys, the key space
+  includes the names your language reserves** — enumerate cases from the *key
+  space* rather than from the value space, and use `Object.create(null)` for any
+  accumulator keyed by untrusted strings. Sweep run:
+  `rg -n 'Object\.entries\(|\[key\] *='` over `src/lib` — 12 candidates, one
+  confirmed, the rest either in-place mutations (safe: an own property is written
+  directly) or `Map` iterations.
+
+### RC-24 — A parse-and-reserialise defence rewrites every number it passes, and the obvious fix for that would have failed the defence open
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** — (found in review round 2)
+
+**Class:** K-5, K-2 — *class-id:* `broken-contract`, `fail-open-default`
+
+- **The plan said:** the region-wise walk's numeric residual is cosmetic and
+  bounded — `defendJsonLeaves`' docblock had recorded *"re-serialising
+  normalises their spelling (`1.50` becomes `1.5`)"* and judged that nothing
+  reads meaning from the spelling of an inline copy.
+- **Reality was:** the residual is not cosmetic and it is not confined to
+  spelling. `JSON.parse` routes every number through a double, so
+  `9223372036854775807` — an ordinary 64-bit identifier — returns
+  `9223372036854776000`, and `1e400` overflows to `Infinity` and stringifies as
+  **`null`**. The example in the docblock was the harmless member of the class,
+  and it was chosen as the whole class. An MCP whose purpose is proxying
+  arbitrary APIs meets snowflake ids and database bigints as a matter of course,
+  and it hands the model a plausible **wrong value** with no signal — worse than
+  the field deletion the walk exists to prevent, because a missing field leaves a
+  gap somebody can notice.
+- **The near-miss, caught before commit and the more instructive half.** The
+  clean fix is `JSON.rawJSON` with the reviver's `context.source`, which
+  round-trips every lexeme exactly — measured across seven shapes. It landed in
+  **Node 21**. `docs/getting-started.md` stated a floor of **Node 18** — as did
+  `docs/architecture/architecture.md` — and `package.json` declared **no
+  `engines` field at all**, so an older host was reachable; there
+  `JSON.rawJSON` is `undefined`, the call throws inside `defendForInline`,
+  `createWrapper` catches it and tags the **undefended** result as wrapped. That
+  is RC-20's P1 exactly — a fail-open on every JSON response, introduced by a
+  fidelity fix. Written and typechecked before the floor was checked.
+- **What changed:** `keepNumberLexeme` behind a load-time capability probe
+  (`rawJson`/`isRawJson`), so the lexeme-preserving parse runs only where the
+  host has it and the fallback is today's behaviour rather than a throw. Opt-in
+  via `parseJsonDocument(text, true)`, so `isDefinitelyJson` keeps its cheap
+  parse and the persisted artefact keeps what RC-8 and RC-10 pinned. Guarded at
+  three walk sites, since a marker is `typeof "object"` and would otherwise be
+  walked as a composite.
+- **What this costs next time:** **when a docblock names a residual, check
+  whether the example is the worst member of its class or the most comfortable
+  one** — "normalises spelling" and "returns a different number" are the same
+  mechanism at two magnitudes, and only one of them is worth writing down. And
+  **before reaching for a language feature inside a defence, check the project's
+  declared floor**: a defence that throws does not fail loudly here, it fails
+  open. **And check every declared floor, not the first one found:** two docs
+  stated Node 18 here — `docs/getting-started.md:7` and
+  `docs/architecture/architecture.md:16` — and this entry originally cited
+  `README.md`, which declares no floor at all. The mis-citation survived a
+  review round and a PR reply before the sweep that found the second doc also
+  found the error (K-7).
+
+**RESOLVED 2026-09-04 (round 4).** The operator raised the floor: `engines: {
+node: ">=22" }` in `package.json`, both docs updated, the capability probe
+deleted and lexeme preservation made unconditional. Because `engines` is
+advisory — npm warns and installs anyway without `engine-strict` — the probe was
+replaced by an **import-time throw** naming the runtime, so a too-old host fails
+loudly at load instead of failing open per request. Teeth verified: stubbing the
+pair absent produces *"mcp-curl requires Node >= 22"*.
+
+### RC-25 — A guard can have teeth and still not test the thing its name claims
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** — (found in review round 2)
+
+**Class:** K-1, K-9 — *class-id:* `broken-contract`
+
+- **The plan said:** round 1's `include_headers` cases guard the composition
+  fix, and the teeth probe confirmed it — reverting the fix failed three of them.
+- **Reality was:** the probe ran on darwin, and `platformSupportsHeaderDump()` is
+  `process.platform === "darwin"`. On a Linux runner those cases take the
+  `headers_unsupported` branch and **no header block is composed at all**.
+  Codex reported this as a false green; measured, that conclusion is **wrong** —
+  the cases still fail there, because `formatResponse` prepends the "cannot be
+  captured on this host" notice and that prefix breaks the JSON parse exactly as
+  a header block does. So the guard keeps its teeth and loses its **subject**: a
+  case named for the header block silently exercises the notice prefix instead,
+  and nothing on either platform says so. The mechanism was right and the
+  consequence was not, which is the ordinary shape of a bot finding.
+- **What changed:** `platformSupportsHeaderDump` stubbed `true` alongside
+  `executeCommand`, and `bodyAfterHeaders` now asserts the prefix is present
+  before extracting — so the case cannot go vacuous if the capability, the
+  platform, or the composition changes underneath it. Teeth verified: forcing
+  the stub `false` now fails with *"expected a header prefix"* rather than
+  passing.
+- **What this costs next time:** **a teeth probe answers "can this fail", never
+  "does this test what it says".** Where a test's subject depends on an ambient
+  capability, stub the capability and **assert the precondition** — otherwise the
+  probe is measuring one machine and the name is describing another. Related:
+  the same round found a guard with no teeth at all (`isCompositeValue`'s
+  raw-number arm, which removing changed nothing until a whitespace-padded
+  numeric string — `" 123"` → `"123"` — was added to the control). Both
+  directions are worth probing: a guard that cannot fail, and a guard that fails
+  for the wrong reason.
+
+### RC-26 — The fix closed the arm the reviewer demonstrated, and the code had already documented the other one
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** — (found in review round 3)
+
+**Class:** K-4, K-11 — *class-id:* `broken-contract`
+
+- **The plan said:** round 1 closed the composed-string splice by defending the
+  body as its own region before `formatResponse` prefixes anything to it. Six
+  cases, teeth verified, `docs/todos/012` closed.
+- **Reality was:** it closed the arm the reviewer had demonstrated — markers in
+  **values** — and not the class. `defendJsonLeaves` deliberately does not
+  defend object **keys**, and says so in its own docblock: *"Two keys that
+  defended to the same string would collapse into one, losing a field… A beacon
+  in a key therefore survives to the model; it is a stated residual."* So the
+  prepass cannot make the body marker-free, and the wrap's undivided pass over
+  the composed text pairs a marker in one key with one in a later key. Measured:
+  `{"<!--":"a","b":"secret","-->":"c","d":"kept"}` returns `{"":"c","d":"kept"}`
+  under `include_headers: true` — two fields deleted, valid JSON left behind.
+- **The evidence was already in context.** That docblock was read while writing
+  the round-1 fix. What was not done is the join: *keys are deliberately
+  undefended*, therefore *a prepass over values cannot make the composed string
+  safe*. The reviewer's example was values, the sweep was derived from the
+  example, and the class definition was sitting three lines above the code being
+  edited.
+- **What this says about the layer, which is the actual finding.** Two rounds of
+  fixes at the composition have each closed one arm, and the escalation ladder's
+  third rung is the one that applies: *no fix exists at that layer.* The wrap
+  receives one string and cannot recover where the header block stopped — a
+  composed prefix and remote body are syntactically indistinguishable — so every
+  fix here is a patch on whichever marker shape the last reviewer chose. The
+  precondition has to move to the caller: give the wrap the regions instead of a
+  composed string. That is a public-contract change and so escalated rather than
+  taken.
+- **What this costs next time:** **when a fix relies on a sibling function
+  making something safe, read that function's stated residuals before claiming
+  the class is closed** — and when the second arm of one class arrives, price
+  the layer rather than the arm. `.claude/rules/42-ship-what-matters.md`'s
+  convergence rule had already fired on this surface a round earlier, and the
+  right response to it is not a third patch.

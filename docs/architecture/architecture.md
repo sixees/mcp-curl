@@ -13,7 +13,7 @@ scope: full
 
 ## Stack & Distribution
 
-Node ≥18 ESM, TypeScript strict, Zod runtime validation, `@modelcontextprotocol/sdk` 1.x, Express for HTTP transport, `js-yaml` for schema loading, vitest for tests, tsup for bundling. See `package.json` for pinned versions.
+Node ≥22 ESM, TypeScript strict, Zod runtime validation, `@modelcontextprotocol/sdk` 1.x, Express for HTTP transport, `js-yaml` for schema loading, vitest for tests, tsup for bundling. See `package.json` for pinned versions.
 
 - **Distribution.** Published to npm as `mcp-curl`; see `package.json` for the current version rather than a number copied here. `prepublishOnly` runs the tsup build; only `dist/` and `docs/` are shipped.
 - **CI/CD.** No `.github/workflows/` checked in. Quality gates rely on local `npm test` plus `.coderabbit.yaml` and `.gemini/styleguide.md` for external review.
