@@ -848,3 +848,64 @@ and `data-integrity-guardian` — reached it through different lenses and graded
 P1. That convergence is the signal; either alone would have been easier to argue
 down. `ARCHITECTURE.md` invariant 13 and RC-17 remain otherwise correct, and
 RC-17's mechanism is **not** superseded — only its verification claim was wrong.
+
+---
+
+### RC-19 — Bounding a map and sizing the bound are two decisions, and only the first got reviewed
+
+**Date:** 2026-09-03 · **PR:** #35 (review rounds 1–3) · **Plan:** —
+
+**Class:** K-11, K-13 — *class-id:* `misplaced-decision`, `fail-open-default`
+
+- **The plan said:** round 1 bounded the two log-throttle maps at the write and
+  **declined** to bound `rate-limiter.ts`, recording the reason in
+  `bounded-throttle.ts`: *"Evicting a counter resets it, which turns a
+  bounded-memory fix into a bypass of the thing the counter enforces."*
+- **Reality was:** that reasoning rules out one *policy*, not every policy —
+  `SessionManager.set` had been rejecting-when-full four directories away the
+  whole time. Round 2 reopened the decline on exactly the route RC-10 sanctions
+  (*a decision recorded with its reasoning can be reopened by showing the
+  reasoning does not reach a site*), and four reviewers reached it independently.
+  **Then round 2 chose the right policy and reached for the wrong number**: it
+  bounded the counters with `THROTTLE.MAX_TRACKED_KEYS`, a constant sized for
+  ≤128-char log labels where overflow costs one line of stderr, on maps where
+  overflow *refuses a request*. Measured in round 3: four sessions issuing 1023
+  requests to distinct hosts fill the map, and a fifth session that has spent
+  **1 of its 300** permitted requests is refused every unseen hostname.
+- **Compounding, and found only because someone probed the clock:** the window is
+  a wall-clock difference, so a backwards step (NTP, VM resume, snapshot restore)
+  leaves every entry stamped in the future, nothing ever expires, and — because
+  expiry is the only route to freeing capacity — the *new rejecting cap* turned a
+  merely-large map into a total refusal lasting the whole step. The bound created
+  the outage; the leak it replaced had none.
+- **And the tests could not see any of it.** Round 2's fixture rotated the client
+  id per call, so the client gate saturated first and the host map peaked at
+  **966 of 1024** — the host cap's refusal branch was never executed. The case
+  whose own comment read *"this is the assertion that fails if someone reaches
+  for the evicting helper"* passed under both policies.
+- **What changed:** `RATE_LIMIT.MAX_TRACKED_KEYS` is its own value, *derived*
+  (`SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE`) so it cannot go stale if
+  either input moves; `windowClosed` treats a negative age as closed and both the
+  sweep and the window check use it; the fixture rotates clients in blocks and
+  every capacity case asserts the map is at exactly the cap before testing
+  behaviour at it. All three teeth-probed.
+- **Settled, so it stays settled:** `data-integrity-guardian` filed a P2 asking to
+  replace eviction with dropping the log line. **Declined with evidence** —
+  `security-sentinel` and `performance-oracle` showed the premise is inverted
+  (evicting a throttle *memo* makes a host log **sooner**, so suppression is
+  impossible and amplification is below 1), and the proposed fix would have
+  introduced the suppression it feared. Its author confirmed the decline in round
+  3. A later round proposing it again is answered by citing this line.
+- **What this costs next time:** three rules.
+  1. **A shared constant carries its subsystem's cost model, not just its
+     value.** Reaching for a neighbouring limit because the number looks right
+     imports the assumption behind it. Ask what *exceeding* it does here — a
+     dropped log line and a refused request are not the same failure.
+  2. **Choosing the policy and sizing it are separate reviews.** Round 2's policy
+     was right and unanimous, which is exactly why nobody looked at the number.
+     A finding that four reviewers agree on is the one whose *details* go
+     unexamined.
+  3. **A guard added to a map with two gates needs a fixture that reaches the gate
+     under test.** Two limits in one call path saturate in some order, and the
+     first one to fire hides the second. Assert the precondition — *the map is at
+     the cap* — before asserting behaviour at it, or the case certifies nothing.

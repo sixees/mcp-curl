@@ -4,7 +4,9 @@ import {
     logWrapError,
     cleanupWrapErrorMap,
     clearWrapErrorMap,
+    wrapErrorMapSize,
 } from "./wrap-error-logger.js";
+import { THROTTLE } from "../config/session.js";
 
 beforeEach(() => {
     clearWrapErrorMap();
@@ -122,5 +124,17 @@ describe("cleanupWrapErrorMap", () => {
         (console.error as ReturnType<typeof vi.spyOn>).mockClear();
         logWrapError("host.com", new Error());
         expect(console.error).not.toHaveBeenCalled();
+    });
+});
+
+describe("label-map bound (invariant: the map is finite without the interval)", () => {
+    // The cleanup interval is started only by `McpCurlServer`. On both shipped
+    // transports, and on every library path that reaches `logWrapError` through
+    // the exported `registerEndpointTools`, the cap below is the ONLY bound.
+    it("stays at or under the cap across more distinct labels than it tracks", () => {
+        for (let i = 0; i < THROTTLE.MAX_TRACKED_KEYS + 200; i++) {
+            logWrapError(`host-${i}.example.com`, new Error("boom"));
+        }
+        expect(wrapErrorMapSize()).toBe(THROTTLE.MAX_TRACKED_KEYS);
     });
 });

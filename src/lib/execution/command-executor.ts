@@ -191,7 +191,6 @@ export async function executeCommand(
         let stderrMemoryUsage = 0;
         let killed = false;
 
-        // Cleanup function to release memory tracking
         const releaseRequestMemory = () => {
             releaseMemory(requestMemoryUsage);
             requestMemoryUsage = 0;
@@ -330,13 +329,18 @@ export async function executeCommand(
 
         childProcess.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
             clearTimeout(timeoutId);
-            releaseRequestMemory(); // Release memory tracking on completion
+            releaseRequestMemory();
             if (!killed) {
-                // Concat INSIDE the accounted window, then drop the chunk
-                // references so only one full-size copy survives. No eager
-                // `.toString()`: it costs a full decode (20MB on a 10MB
-                // non-UTF-8 response, since U+FFFD forces a two-byte string)
-                // for a value every caller reaches through `stdoutBytes`.
+                // Concat AFTER the release above, then drop the chunk
+                // references so only one full-size copy survives.
+                //
+                // This copy, and every copy downstream of it, is made with
+                // this request's accounting already at zero. That ordering is
+                // the defect `docs/todos/003` records, not a choice made here.
+                //
+                // No eager `.toString()`: it costs a full decode (20MB on a
+                // 10MB non-UTF-8 response, since U+FFFD forces a two-byte
+                // string) for a value every caller reaches via `stdoutBytes`.
                 const stdoutBytes = Buffer.concat(stdoutChunks);
                 stdoutChunks.length = 0;
                 // An empty capture and no capture collapse to `undefined`, so
@@ -359,7 +363,7 @@ export async function executeCommand(
 
         childProcess.on("error", (error: Error) => {
             clearTimeout(timeoutId);
-            releaseRequestMemory(); // Release memory tracking on error
+            releaseRequestMemory();
             // AbortError means our timeout triggered
             if (error.name === "AbortError") {
                 reject(new Error(

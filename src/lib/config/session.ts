@@ -1,5 +1,5 @@
 // src/lib/config/session.ts
-// Session management, rate limiting, and temp directory constants
+// Session management, rate limiting, throttle bounds, and temp directory constants
 
 export const SESSION = {
     /** Maximum concurrent HTTP sessions */
@@ -10,7 +10,7 @@ export const SESSION = {
     CLEANUP_INTERVAL_MS: 300_000,
 } as const;
 
-export const RATE_LIMIT = {
+const RATE_LIMIT_QUOTAS = {
     /** Maximum requests per host per minute */
     MAX_PER_HOST_PER_MINUTE: 60,
     /** Maximum requests per client per minute */
@@ -21,6 +21,47 @@ export const RATE_LIMIT = {
     CLEANUP_INTERVAL_MS: 10_000,
     /** Client ID used for stdio transport */
     STDIO_CLIENT_ID: "__stdio_client__",
+} as const;
+
+export const RATE_LIMIT = {
+    ...RATE_LIMIT_QUOTAS,
+    /**
+     * Ceiling on distinct keys either rate-limit map tracks.
+     *
+     * **Derived rather than chosen, because exceeding it refuses a request.**
+     * Every concurrent session spending its whole quota on distinct hosts is
+     * the cardinality this ceiling is sized against, so it cannot refuse a
+     * caller inside their own quota at the concurrency the session manager
+     * admits.
+     *
+     * **It is not a proof of an upper bound, and does not claim to be.**
+     * `MAX_SESSIONS` caps sessions held at once, not sessions opened during a
+     * window, so churn can in principle exceed the product. Reaching it needs
+     * that many distinct hostnames each clearing DNS resolution and the SSRF
+     * check inside one window — both run before `checkRateLimits`
+     * (`tools/curl-execute.ts`) — and the map drains one window later, so the
+     * failure is a bounded refusal rather than a wedge. Raising this number
+     * buys nothing that the window does not already give back.
+     *
+     * Deliberately not {@link THROTTLE.MAX_TRACKED_KEYS}: that one bounds log
+     * throttles, where overflow costs a line of stderr. Sharing a value would
+     * couple an availability threshold to a memory one.
+     */
+    MAX_TRACKED_KEYS: SESSION.MAX_SESSIONS * RATE_LIMIT_QUOTAS.MAX_PER_CLIENT_PER_MINUTE,
+} as const;
+
+export const THROTTLE = {
+    /**
+     * Ceiling on distinct keys in a log-throttle map, enforced at the write by
+     * `security/bounded-throttle.ts::setBounded`.
+     *
+     * Sized for memory alone: overflow here drops a throttle memo, costing at
+     * most one extra line of stderr. Entries are a <=128-char label and a
+     * timestamp, so a map is capped near 300 KB against a 100 MB response pool.
+     * Counters need {@link RATE_LIMIT.MAX_TRACKED_KEYS}, which is sized for
+     * availability because overflow there refuses a request.
+     */
+    MAX_TRACKED_KEYS: 1024,
 } as const;
 
 export const TEMP_DIR = {

@@ -798,3 +798,27 @@ describe("curl_execute — both output shapes get the same defence", () => {
         expect(wrapped.content[0].text).not.toContain("evil.test");
     });
 });
+
+describe("curl_execute — the pin carries the SSRF check's own IP (invariant 2)", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    // The builder's unit test proves buildCurlArgs formats whatever pin it is
+    // handed. It cannot prove the pin came from `validateUrlAndResolveDns`, and
+    // invariant 2 is about exactly that: the request goes to the PRE-VALIDATED
+    // address. Source `dnsResolve` from anywhere else in executeCurlRequest --
+    // a re-parse of the URL, a second lookup -- and the builder test still
+    // passes while rebinding is back. This is the assertion that fails.
+    it("passes --resolve built from the resolver's result, not from the URL", async () => {
+        mockedExecuteCommand.mockResolvedValue(stdoutFor("HTTP/2 200 \r\n\r\n", "ok", "text/plain"));
+
+        await executeCurlRequest(params({ url: "https://example.test/doc" }));
+
+        expect(mockedExecuteCommand).toHaveBeenCalledTimes(1);
+        const argv = mockedExecuteCommand.mock.calls[0][1] as string[];
+        const i = argv.indexOf("--resolve");
+        expect(i).toBeGreaterThan(-1);
+        // 93.184.216.34 is the mocked resolver's answer, not anything derivable
+        // from "https://example.test/doc".
+        expect(argv[i + 1]).toBe("example.test:443:93.184.216.34");
+    });
+});

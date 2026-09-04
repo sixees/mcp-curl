@@ -384,6 +384,87 @@ function isSniffableContentType(contentType) {
   return isBinaryContentType(contentType);
 }
 
+// src/lib/config/session.ts
+var SESSION = {
+  /** Maximum concurrent HTTP sessions */
+  MAX_SESSIONS: 100,
+  /** Session idle timeout (1 hour) */
+  IDLE_TIMEOUT_MS: 36e5,
+  /** Interval for cleaning up idle sessions (5 minutes) */
+  CLEANUP_INTERVAL_MS: 3e5
+};
+var RATE_LIMIT_QUOTAS = {
+  /** Maximum requests per host per minute */
+  MAX_PER_HOST_PER_MINUTE: 60,
+  /** Maximum requests per client per minute */
+  MAX_PER_CLIENT_PER_MINUTE: 300,
+  /** Rate limit window duration (1 minute) */
+  WINDOW_MS: 6e4,
+  /** Interval for cleaning up expired rate limit entries (10 seconds) */
+  CLEANUP_INTERVAL_MS: 1e4,
+  /** Client ID used for stdio transport */
+  STDIO_CLIENT_ID: "__stdio_client__"
+};
+var RATE_LIMIT = {
+  ...RATE_LIMIT_QUOTAS,
+  /**
+   * Ceiling on distinct keys either rate-limit map tracks.
+   *
+   * **Derived rather than chosen, because exceeding it refuses a request.**
+   * Every concurrent session spending its whole quota on distinct hosts is
+   * the cardinality this ceiling is sized against, so it cannot refuse a
+   * caller inside their own quota at the concurrency the session manager
+   * admits.
+   *
+   * **It is not a proof of an upper bound, and does not claim to be.**
+   * `MAX_SESSIONS` caps sessions held at once, not sessions opened during a
+   * window, so churn can in principle exceed the product. Reaching it needs
+   * that many distinct hostnames each clearing DNS resolution and the SSRF
+   * check inside one window — both run before `checkRateLimits`
+   * (`tools/curl-execute.ts`) — and the map drains one window later, so the
+   * failure is a bounded refusal rather than a wedge. Raising this number
+   * buys nothing that the window does not already give back.
+   *
+   * Deliberately not {@link THROTTLE.MAX_TRACKED_KEYS}: that one bounds log
+   * throttles, where overflow costs a line of stderr. Sharing a value would
+   * couple an availability threshold to a memory one.
+   */
+  MAX_TRACKED_KEYS: SESSION.MAX_SESSIONS * RATE_LIMIT_QUOTAS.MAX_PER_CLIENT_PER_MINUTE
+};
+var THROTTLE = {
+  /**
+   * Ceiling on distinct keys in a log-throttle map, enforced at the write by
+   * `security/bounded-throttle.ts::setBounded`.
+   *
+   * Sized for memory alone: overflow here drops a throttle memo, costing at
+   * most one extra line of stderr. Entries are a <=128-char label and a
+   * timestamp, so a map is capped near 300 KB against a 100 MB response pool.
+   * Counters need {@link RATE_LIMIT.MAX_TRACKED_KEYS}, which is sized for
+   * availability because overflow there refuses a request.
+   */
+  MAX_TRACKED_KEYS: 1024
+};
+var TEMP_DIR = {
+  /** Prefix for temp directories */
+  PREFIX: "mcp-curl-",
+  /** Minimum age before orphaned temp dirs are cleaned (1 hour) */
+  ORPHAN_MIN_AGE_MS: 36e5,
+  /** Backoff period before retrying temp directory creation after failure (1 second) */
+  RETRY_BACKOFF_MS: 1e3
+};
+
+// src/lib/security/bounded-throttle.ts
+function setBounded(map, key, value, pruneExpired) {
+  if (!map.has(key) && map.size >= THROTTLE.MAX_TRACKED_KEYS) {
+    pruneExpired();
+    if (map.size >= THROTTLE.MAX_TRACKED_KEYS) {
+      const oldest = map.keys().next().value;
+      if (oldest !== void 0) map.delete(oldest);
+    }
+  }
+  map.set(key, value);
+}
+
 // src/lib/security/detection-logger.ts
 var THROTTLE_WINDOW_MS = 6e4;
 var lastDetectedMap = /* @__PURE__ */ new Map();
@@ -397,7 +478,7 @@ function logInjectionDetected(hostname) {
   if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS) {
     return;
   }
-  lastDetectedMap.set(safeLabel, now);
+  setBounded(lastDetectedMap, safeLabel, now, cleanupInjectionDetectionMap);
   console.error(`[injection-defense] [${safeLabel}] InjectionDetected`);
 }
 function sanitizeAndDetect(text, label) {
@@ -449,7 +530,7 @@ var CurlExecuteSchema = z2.object({
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
   include_headers: z2.boolean().default(false).describe(
-    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they are prefixed to the returned text followed by a blank line, so that result is not JSON-parseable. Capped at 64KB; truncation is reported via headers_truncated"
+    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they are prefixed to the returned text followed by a blank line, so that result is not JSON-parseable. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
@@ -967,38 +1048,6 @@ var PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
 import { tmpdir } from "os";
 import { join } from "path";
 import { mkdtemp, chmod, rm, readdir, stat } from "fs/promises";
-
-// src/lib/config/session.ts
-var SESSION = {
-  /** Maximum concurrent HTTP sessions */
-  MAX_SESSIONS: 100,
-  /** Session idle timeout (1 hour) */
-  IDLE_TIMEOUT_MS: 36e5,
-  /** Interval for cleaning up idle sessions (5 minutes) */
-  CLEANUP_INTERVAL_MS: 3e5
-};
-var RATE_LIMIT = {
-  /** Maximum requests per host per minute */
-  MAX_PER_HOST_PER_MINUTE: 60,
-  /** Maximum requests per client per minute */
-  MAX_PER_CLIENT_PER_MINUTE: 300,
-  /** Rate limit window duration (1 minute) */
-  WINDOW_MS: 6e4,
-  /** Interval for cleaning up expired rate limit entries (10 seconds) */
-  CLEANUP_INTERVAL_MS: 1e4,
-  /** Client ID used for stdio transport */
-  STDIO_CLIENT_ID: "__stdio_client__"
-};
-var TEMP_DIR = {
-  /** Prefix for temp directories */
-  PREFIX: "mcp-curl-",
-  /** Minimum age before orphaned temp dirs are cleaned (1 hour) */
-  ORPHAN_MIN_AGE_MS: 36e5,
-  /** Backoff period before retrying temp directory creation after failure (1 second) */
-  RETRY_BACKOFF_MS: 1e3
-};
-
-// src/lib/files/temp-manager.ts
 var sharedTempDir = null;
 var tempDirPromise = null;
 var lastFailureTime = 0;
@@ -1633,18 +1682,32 @@ async function validateUrlAndResolveDns(url, options) {
 // src/lib/security/rate-limiter.ts
 var hostRateLimitMap = /* @__PURE__ */ new Map();
 var clientRateLimitMap = /* @__PURE__ */ new Map();
+function elapsedNow() {
+  return performance.now();
+}
+function windowClosed(entry, now) {
+  return now - entry.windowStart >= RATE_LIMIT.WINDOW_MS;
+}
 function cleanupExpiredEntries(map) {
-  const now = Date.now();
+  const now = elapsedNow();
   for (const [key, entry] of map) {
-    if (now - entry.windowStart >= RATE_LIMIT.WINDOW_MS) {
+    if (windowClosed(entry, now)) {
       map.delete(key);
     }
   }
 }
-function checkRateLimitInternal(map, key, maxRequests, errorPrefix) {
-  const now = Date.now();
+function checkRateLimitInternal(map, key, maxRequests, errorPrefix, keyKind) {
+  const now = elapsedNow();
   const entry = map.get(key);
-  if (!entry || now - entry.windowStart >= RATE_LIMIT.WINDOW_MS) {
+  if (!entry || windowClosed(entry, now)) {
+    if (!entry && map.size >= RATE_LIMIT.MAX_TRACKED_KEYS) {
+      cleanupExpiredEntries(map);
+      if (map.size >= RATE_LIMIT.MAX_TRACKED_KEYS) {
+        throw new Error(
+          `Rate-limit tracking is at capacity (${RATE_LIMIT.MAX_TRACKED_KEYS} distinct keys). Refusing an untracked ${keyKind}.`
+        );
+      }
+    }
     map.set(key, { count: 1, windowStart: now });
     return;
   }
@@ -1655,16 +1718,18 @@ function checkRateLimitInternal(map, key, maxRequests, errorPrefix) {
 }
 function checkRateLimits(hostname, clientId = RATE_LIMIT.STDIO_CLIENT_ID) {
   checkRateLimitInternal(
-    hostRateLimitMap,
-    hostname,
-    RATE_LIMIT.MAX_PER_HOST_PER_MINUTE,
-    `Rate limit exceeded for host "${hostname}"`
-  );
-  checkRateLimitInternal(
     clientRateLimitMap,
     clientId,
     RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE,
-    "Client rate limit exceeded"
+    "Client rate limit exceeded",
+    "client"
+  );
+  checkRateLimitInternal(
+    hostRateLimitMap,
+    hostname,
+    RATE_LIMIT.MAX_PER_HOST_PER_MINUTE,
+    `Rate limit exceeded for host "${hostname}"`,
+    "host"
   );
 }
 function startRateLimitCleanup() {
@@ -1869,7 +1934,7 @@ async function validateFilePath(filepath) {
 var THROTTLE_WINDOW_MS2 = 6e4;
 var lastErrorMap = /* @__PURE__ */ new Map();
 function normalizeLabel(label) {
-  return label.replace(/[ --]/g, "").slice(0, 128);
+  return label.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").slice(0, 128);
 }
 function logWrapError(label, error) {
   const safeLabel = normalizeLabel(label);
@@ -1878,7 +1943,7 @@ function logWrapError(label, error) {
   if (lastSeen !== void 0 && now - lastSeen < THROTTLE_WINDOW_MS2) {
     return;
   }
-  lastErrorMap.set(safeLabel, now);
+  setBounded(lastErrorMap, safeLabel, now, cleanupWrapErrorMap);
   const errorName = error instanceof Error && typeof error.name === "string" && error.name.length > 0 ? error.name : "UnknownError";
   console.error(`[wrap-error] [${safeLabel}] ${errorName}`);
 }
@@ -2459,15 +2524,9 @@ function buildCurlArgs(params) {
     args.push("-s");
   }
   const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
-  if (params.output_format) {
-    args.push("-w", params.output_format + metadataSuffix);
-  } else {
-    args.push("-w", metadataSuffix);
-  }
-  if (params.dnsResolve) {
-    const { hostname, port, resolvedIp } = params.dnsResolve;
-    args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
-  }
+  args.push("-w", metadataSuffix);
+  const { hostname, port, resolvedIp } = params.dnsResolve;
+  args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
   args.push("--max-filesize", String(LIMITS.MAX_RESPONSE_SIZE));
   args.push(params.url);
   return args;

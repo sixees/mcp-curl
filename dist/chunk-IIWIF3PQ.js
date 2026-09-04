@@ -39,7 +39,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-B66VEC57.js";
+} from "./chunk-BQODRQ3G.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -262,10 +262,18 @@ Files are saved to (in priority order):
 
 \`max_result_size\` bounds the body. Header text from \`include_headers\` is surfaced inline even
 when the body was saved to a file, and is capped at \`min(64KB, max_result_size)\` \u2014 it honours
-the caller's inline budget as well as its own ceiling. Truncation is reported out of band as
-\`headers_truncated\` / \`header_bytes_received\` under \`include_metadata\`, and as a leading
-\`[mcp-curl]\` notice otherwise \u2014 never as a marker inside the header text, which a server
-could simply send verbatim.
+the caller's inline budget as well as its own ceiling. Three states are reported out of band
+under \`include_metadata\`, and as a leading \`[mcp-curl]\` notice otherwise \u2014 never as a marker
+inside the header text, which a server could simply send verbatim:
+
+- \`headers_truncated\` / \`header_bytes_received\` \u2014 the text was cut to fit the ceiling.
+- \`headers_undetermined\` \u2014 headers were requested and the origin sent no header block.
+- \`headers_unsupported\` \u2014 this host cannot capture headers at all. Capture is implemented for
+  macOS only, so this is the state every non-macOS host reports. A fact about the host,
+  deliberately distinct from \`headers_undetermined\`, which is a fact about the origin.
+
+An absent \`headers\` key is therefore not evidence the origin sent none \u2014 check which of the
+three states is set.
 
 ### jq_filter Syntax
 
@@ -800,11 +808,6 @@ function applyConfigTransformsCurl(params, config) {
   applySharedConfigDefaults(transformed, config);
   return transformed;
 }
-function applyConfigTransformsJq(params, config) {
-  const transformed = { ...params };
-  applySharedConfigDefaults(transformed, config);
-  return transformed;
-}
 function registerCurlToolWithHooks(server, options) {
   const { executor, enabled, config, hooks } = options;
   const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
@@ -839,7 +842,8 @@ function registerJqToolWithHooks(server, options) {
         isError: true
       };
     }
-    const transformedParams = applyConfigTransformsJq(params, config);
+    const transformedParams = { ...params };
+    applySharedConfigDefaults(transformedParams, config);
     return await executeWithHooks(
       "jq_query",
       transformedParams,

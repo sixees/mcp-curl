@@ -20,8 +20,6 @@ export interface CurlArgsParams {
     data?: string;
     /** Form data as key-value pairs (multipart/form-data) */
     form?: Record<string, string>;
-    /** Custom output format string for cURL -w flag */
-    output_format?: string;
     /** Follow HTTP redirects (default: true) */
     follow_redirects?: boolean;
     /** Skip SSL certificate verification */
@@ -45,10 +43,24 @@ export interface CurlArgsParams {
     /** Silent mode - no progress output */
     silent?: boolean;
     /**
-     * DNS pinning to prevent rebinding attacks.
-     * Format: --resolve hostname:port:ip forces cURL to use pre-validated IP
+     * DNS pinning: `--resolve hostname:port:ip` holds cURL to the address the
+     * SSRF check already validated.
+     *
+     * **Required, because an optional defence has no failure mode.** An
+     * argument list omitting it would be valid and spawnable, cURL would do its
+     * own DNS, and the pin would be off with nothing to fail. `metadataSeparator`
+     * below is required for the same reason, on invariant 13's behalf.
+     *
+     * Required closes the *omission* route and nothing more. It cannot check
+     * that the pin came from `validateUrlAndResolveDns`, nor that
+     * `hostname`/`port` match `url` — a mismatched pin has cURL resolve the name
+     * itself with no error, which is why provenance is asserted at the producer
+     * in `curl-execute.headers.test.ts`. And it covers the first hop only: with
+     * `-L`, hops 2..N carry no `--resolve` of their own. `ARCHITECTURE.md`
+     * invariant 2 does not record that limit, so the redirect path violates it
+     * rather than falling outside it; `docs/todos/007` tracks closing the gap.
      */
-    dnsResolve?: { hostname: string; port: number; resolvedIp: string };
+    dnsResolve: { hostname: string; port: number; resolvedIp: string };
     /**
      * Unique per-request separator for extracting metadata.
      * Prevents response injection attacks by using unpredictable separator.
@@ -186,19 +198,13 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
     const metadataSuffix =
         params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") +
         "%{content_type}";
-    if (params.output_format) {
-        args.push("-w", params.output_format + metadataSuffix);
-    } else {
-        args.push("-w", metadataSuffix);
-    }
+    args.push("-w", metadataSuffix);
 
     // DNS pinning with --resolve to prevent DNS rebinding attacks
     // Format: --resolve hostname:port:ip
     // This forces cURL to use our pre-validated IP instead of doing its own DNS lookup
-    if (params.dnsResolve) {
-        const { hostname, port, resolvedIp } = params.dnsResolve;
-        args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
-    }
+    const { hostname, port, resolvedIp } = params.dnsResolve;
+    args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
 
     // Abort early if Content-Length exceeds limit (cURL exit code 63)
     // For chunked/streaming responses, the Node-level kill in command-executor.ts is the backstop

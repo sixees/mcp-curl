@@ -5,7 +5,9 @@ import {
     sanitizeAndDetect,
     cleanupInjectionDetectionMap,
     clearInjectionDetectionMap,
+    detectionMapSize,
 } from "./detection-logger.js";
+import { THROTTLE } from "../config/session.js";
 
 beforeEach(() => {
     clearInjectionDetectionMap();
@@ -166,5 +168,17 @@ describe("logInjectionDetected — hostname normalization", () => {
         (console.error as ReturnType<typeof vi.spyOn>).mockClear();
         logInjectionDetected("host.com\x00");
         expect(console.error).not.toHaveBeenCalled();
+    });
+});
+
+describe("label-map bound (invariant: the map is finite without the interval)", () => {
+    // `sanitizeAndDetect` and `logInjectionDetected` are exported from the
+    // `mcp-curl` root entry point, which exports no cleanup starter at all — so
+    // a consumer composing them by hand has the cap and nothing else.
+    it("stays at or under the cap across more distinct labels than it tracks", () => {
+        for (let i = 0; i < THROTTLE.MAX_TRACKED_KEYS + 200; i++) {
+            logInjectionDetected(`host-${i}.example.com`);
+        }
+        expect(detectionMapSize()).toBe(THROTTLE.MAX_TRACKED_KEYS);
     });
 });

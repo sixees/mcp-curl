@@ -13,8 +13,8 @@ import {
   loadApiSchemaFromString,
   registerEndpointTools,
   validateApiSchema
-} from "../../chunk-VWB5O365.js";
-import "../../chunk-B66VEC57.js";
+} from "../../chunk-5V6SDPMH.js";
+import "../../chunk-BQODRQ3G.js";
 export {
   ApiSchemaLoadError,
   ApiSchemaValidationError,

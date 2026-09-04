@@ -10,6 +10,7 @@ function makeParams(overrides: Partial<CurlArgsParams> = {}): CurlArgsParams {
     return {
         url: "https://example.com/api",
         metadataSeparator: "\n---SEP---\n",
+        dnsResolve: { hostname: "example.com", port: 443, resolvedIp: "93.184.216.34" },
         ...overrides,
     };
 }
@@ -100,11 +101,18 @@ describe("buildCurlArgs", () => {
             const w = args[args.indexOf("-w") + 1];
             expect(w).toBe("\\n---SEP---\\n%{content_type}");
         });
+    });
 
-        it("appends the metadata block to a caller's output_format", () => {
-            const args = buildCurlArgs(makeParams({ output_format: "%{http_code}" }));
-            const w = args[args.indexOf("-w") + 1];
-            expect(w).toBe("%{http_code}\\n---SEP---\\n%{content_type}");
+    describe("--resolve emission (invariant 2, first hop, builder half)", () => {
+        // Scope: this asserts only that the builder EMITS the pin it is handed.
+        // That the pin carries the address the SSRF check produced is asserted
+        // at the producer in curl-execute.headers.test.ts; hops 2..N are
+        // docs/todos/007.
+        it("always emits a pin for the address it was given", () => {
+            const args = buildCurlArgs(makeParams());
+            const i = args.indexOf("--resolve");
+            expect(i).toBeGreaterThan(-1);
+            expect(args[i + 1]).toBe("example.com:443:93.184.216.34");
         });
     });
 

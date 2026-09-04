@@ -72,7 +72,9 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 > both.
 
 - URL must parse, use `http`/`https`, and resolve to a non-private IP before the request issues (unless `MCP_CURL_ALLOW_LOCALHOST=true`).
-- cURL is pinned to the resolved IP via `--resolve hostname:port:ip` — defeats DNS rebinding.
+- cURL is pinned to the resolved IP via `--resolve hostname:port:ip`, which closes DNS rebinding
+  **on the first hop**. Redirects carry no `--resolve` of their own, so hops 2..N are resolved by
+  cURL itself — see `docs/todos/007`.
 - `include_headers` reports the header block out of the body — never into the saved file or the jq_filter input — so it composes
   with `jq_filter` and `save_to_file`; a saved file holds the body only. Header text is
   server-controlled and takes the **full** defence pipeline (`processor.ts::defendText` —
@@ -166,15 +168,17 @@ Default deployment posture (HTTP transport, `MCP_AUTH_TOKEN` unset): any process
 
 ### Network / SSRF Defense — strategy
 
-DNS-resolve-then-pin: validate the URL, resolve via Node's `dns.lookup`, check the resolved IP against frozen blocklists (private + cloud-metadata + DNS-rebinding services + internal TLDs), then pass `--resolve hostname:port:ip` to cURL so it cannot re-resolve to a different IP. Triple protocol enforcement: Zod refinement, URL parser refusal in SSRF, and cURL `--proto =http,https` + `--proto-redir =http,https` for redirects. Localhost is blocked unless `MCP_CURL_ALLOW_LOCALHOST` is set, and even then to ports 80, 443, or `>1024`. Windows UNC paths rejected at the URL string and as a hostname pattern. `--max-filesize 10 MB` is the early server-side abort; per-chunk Node-level kill is the streaming backstop.
+DNS-resolve-then-pin: validate the URL, resolve via Node's `dns.lookup`, check the resolved IP against frozen blocklists (private + cloud-metadata + DNS-rebinding services + internal TLDs), then pass `--resolve hostname:port:ip` to cURL so it cannot re-resolve to a different IP for that hop. **Redirect targets are not pinned or re-validated** — `--proto-redir` constrains their scheme and nothing constrains their address. Triple protocol enforcement: Zod refinement, URL parser refusal in SSRF, and cURL `--proto =http,https` + `--proto-redir =http,https` for redirects. Localhost is blocked unless `MCP_CURL_ALLOW_LOCALHOST` is set, and even then to ports 80, 443, or `>1024`. Windows UNC paths rejected at the URL string and as a hostname pattern. `--max-filesize 10 MB` is the early server-side abort; per-chunk Node-level kill is the streaming backstop.
 
 For exact blocklists — CIDRs, hostnames, TLDs, rebinding services — see `src/lib/config/security/ssrf.ts:62-153`.
 
 ### Rate Limiting
 
-Two fixed-window counters (per-host, per-client) — `security/rate-limiter.ts`. Limits: 60/min per host, 300/min per client; both must pass. Cleanup `setInterval` runs every 10 s (`unref`'d). For stdio, client id is the constant `__stdio_client__`; for HTTP, it is the validated session id.
+Two fixed-window counters (per-host, per-client) — `security/rate-limiter.ts`. Limits: 60/min per host, 300/min per client; both must pass. The client gate runs first, so a request it refuses adds no host key. Cleanup `setInterval` runs every 10 s (`unref`'d). For stdio, client id is the constant `__stdio_client__`; for HTTP, it is the validated session id.
 
-**Boundary burst is exploitable today.** The window resets unconditionally when `(now - windowStart) >= WINDOW_MS` (`rate-limiter.ts:46-50`), so up to 2× the nominal limit can pass in a 1–2 second crossing — 120 requests per host, 600 per client, each a possible 10 MB pull (~1.2 GB of amplified DoS in seconds). Treat the limits as soft when serving untrusted clients (HTTP unauthed, shared stdio).
+Each map also refuses keys beyond `RATE_LIMIT.MAX_TRACKED_KEYS` (`config/session.ts`), enforced at the write in `rate-limiter.ts::checkRateLimitInternal`. **It refuses rather than evicting**: evicting a counter would reset it and bypass the limit. The ceiling is derived from `SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE`, the cardinality every concurrent session spending its whole quota on distinct hosts would produce. **That is what it is sized against, not a proven upper bound** — `MAX_SESSIONS` caps sessions held at once, not sessions opened during a window, so churn past it is possible and costs a refusal that expires one window later. Windows are measured on a monotonic clock (`rate-limiter.ts::elapsedNow`), so a backward wall-clock step neither wedges the ceiling nor resets an active counter. The cap matters because the cleanup interval is started by the transports and `McpCurlServer` only — an embedder calling `executeCurlRequest` directly starts none of them.
+
+**Boundary burst is exploitable today.** The window resets unconditionally when `rate-limiter.ts::windowClosed` reports the window closed, so up to 2× the nominal limit can pass in a 1–2 second crossing — 120 requests per host, 600 per client, each a possible 10 MB pull (~1.2 GB of amplified DoS in seconds). Treat the limits as soft when serving untrusted clients (HTTP unauthed, shared stdio).
 
 ### Authentication & Authorization
 
@@ -323,7 +327,7 @@ No external services need to be running. The server is a single Node process; th
 | Pure config / stateful split (`config/security` vs `security`) | Keeps blocklists immutable and trivially auditable; lets stateful code be tested in isolation against frozen inputs. |
 | Fluent builder + freeze-on-start | Configuration is mutable until `start()`, immutable thereafter — predictable runtime, easier reasoning about hooks. |
 | Per-request UUID metadata separator | Defends against response-content collisions in the cURL `-w` boundary; tail-only search adds defense in depth. |
-| DNS resolve + `--resolve` pinning | Eliminates the TOCTOU window between Node validation and cURL's own DNS lookup, defeating rebinding. |
+| DNS resolve + `--resolve` pinning | Eliminates the TOCTOU window between Node validation and cURL's own DNS lookup for the first hop. Redirect hops are unpinned. |
 | Sanitize / detect, never suppress | Observability over censorship — the LLM still sees the raw content, the operator sees a throttled log. |
 | Bearer auth opt-in (HTTP) | When `MCP_AUTH_TOKEN` is unset, all HTTP requests pass. Deliberate trade-off for backwards compatibility and CLI use cases — operators on shared hosts must set the token. See Threat Model. |
 | Two MCP tools + extension surface | `curl_execute` and `jq_query` cover most cases; YAML schema and custom tools handle the rest without forking. |

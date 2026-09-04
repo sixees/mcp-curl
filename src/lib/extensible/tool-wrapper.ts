@@ -72,22 +72,6 @@ export function applyConfigTransformsCurl(
 }
 
 /**
- * Apply configuration transforms to jq_query parameters.
- * - Apply outputDir if not specified
- * - Apply maxResultSize if not specified
- */
-function applyConfigTransformsJq(
-    params: JqQueryInput,
-    config: Readonly<McpCurlConfig>
-): JqQueryInput {
-    const transformed = { ...params };
-
-    applySharedConfigDefaults(transformed, config);
-
-    return transformed;
-}
-
-/**
  * Register curl_execute tool on the MCP server with hook support and config transforms.
  *
  * @param server - MCP server instance
@@ -148,7 +132,10 @@ export function registerJqToolWithHooks(
                 isError: true,
             };
         }
-        const transformedParams = applyConfigTransformsJq(params, config);
+        // jq_query has no tool-specific transforms — only the shared
+        // output_dir / max_result_size defaults, applied in place.
+        const transformedParams: JqQueryInput = { ...params };
+        applySharedConfigDefaults(transformedParams, config);
         return await executeWithHooks(
             "jq_query",
             transformedParams,
