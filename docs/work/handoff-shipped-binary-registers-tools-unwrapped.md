@@ -403,3 +403,78 @@ None. This round filed **0** and closed **0** (round 1 closed the only one).
 touched files. Shipped binary **10/10** over stdio with zero `wrap-error` lines,
 including `{"id":9223372036854775807,"exp":1e400,"pi":3.140}` returned
 byte-exact.
+
+## Review Comments Addressed — round 3 — 2026-09-04
+
+8 entries, 4 of them new inline threads (3 codex, 1 CodeRabbit). The other 4 are
+`kind: "issue"` entries with no resolved state — the codex review summary and
+three CodeRabbit command acknowledgements — dispositioned in earlier rounds.
+
+**No code changed this round.** Two P1s survived triage and both have fixes that
+change a published contract, so they are escalated rather than taken; the third
+finding is declined on its population. This is the round where the convergence
+rule flagged in round 2 came due — see *The layer, not the arm*.
+
+### Changes Made
+
+None. Documentation only: RC-26 and this section.
+
+### Escalated — awaiting the operator
+
+| Comment | Reviewer | Severity | Scope | Why it is not mine to take |
+|---|---|---|---|---|
+| **Keep JSON keys out of the composed-text scan** (`curl-execute.ts:297`) — `{"<!--":"a","b":"secret","-->":"c","d":"kept"}` returns `{"":"c","d":"kept"}` under `include_headers: true` | codex | **P1** | In scope — round 1's fix is incomplete, and this arm is this branch's regression | Round 1 defended the body's **values** region-wise. `defendJsonLeaves` deliberately leaves **keys** undefended — its own docblock states why, and states the residual — so the prepass cannot make the body marker-free and the wrap's undivided pass still pairs across keys. Both candidate fixes change a published contract: **(a)** two content parts, which widens the exported `CurlExecuteResult.content` 1-tuple → invariant 11, MAJOR; **(b)** make `include_headers: true` use the JSON envelope, which changes the response shape for that flag combination without touching the type. RC-26 |
+| **Preserve numeric lexemes on every supported Node runtime** (`processor.ts:157`) — the round-2 capability probe leaves the corruption in place on Node 18 and 20 | codex | **P1** | In scope | Correct, and it is the question round 2 already put to the operator, now arriving as a finding. Both docs declare the floor at 18 — `README.md:16` **and** `docs/getting-started.md:7`, the second of which I had not checked. The remedies are codex's own two: a hand-written lossless tokeniser inside the defence, or **raise and enforce** the floor (`engines: { node: ">=22" }` plus both docs). The second is a one-line change and my recommendation — Node 18 and 20 are both EOL as of today — but it changes who can install the package, which is a packaging decision |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| **Preserve duplicate JSON members** (`processor.ts:586` and `processor.ts:442`) — `{"a":1,"a":2,"kept":"ok"}` returns `{"a":2,"kept":"ok"}`; reported by both bots, merged on instance overlap | codex (P2) + coderabbit (Major) | **P3** (re-derived down) | In scope | **The loss is invisible to any consumer that could have used it.** Measured: plain `JSON.parse`/`JSON.stringify` returns exactly the same `{"a":2,"kept":"ok"}`, so an agent parsing the response collapses the duplicate identically — the earlier member is unreachable downstream whether this defence runs or not. RFC 8259 says names SHOULD be unique and leaves the behaviour of duplicates undefined, so there is no correct value to preserve. The population is an API that deliberately returns duplicate names *and* a consumer that reads the first rather than the last, and the second half of that does not exist here. The suggested remedy — tokenise instead of reconstructing — is new parsing machinery inside the defence, priced against a value nothing downstream can read. `.claude/rules/42-ship-what-matters.md`; K-14 |
+
+### The layer, not the arm
+
+Round 2 recorded that `defendForInline`'s JSON handling had produced findings in
+three consecutive rounds, and flagged the convergence rule without acting on it.
+Round 3 is the fourth, and the pattern is now legible:
+
+| Round | Arm found | Fix |
+|---|---|---|
+| Surface 2 | over-depth bypass; nested-leaf splice | depth bound; nested arm |
+| 1 | composed prefix splices across **values** | defend the body pre-composition |
+| 3 | composed prefix splices across **keys** | — none available at this layer |
+
+`skill: pr-resolver-safety`'s escalation ladder names this exact situation at its
+third rung: *recognise that no fix exists at that layer, and move the
+precondition to the caller.* The wrap receives one string and **cannot** recover
+where the header block stopped — a server-authored prefix and a remote body are
+syntactically indistinguishable — so each fix closes whichever marker shape the
+last reviewer happened to choose. Naming the layer is the finding.
+
+**Recommendation, for the operator's decision:** take option (a) — headers and
+body as separate content parts — and accept the MAJOR bump. It closes the class
+rather than an arm, removes the pre-composition prepass entirely rather than
+extending it, and subsumes the saved-path finding declined in round 2 for the
+same structural reason. Option (b) is cheaper and closes the same class, at the
+cost of changing what `include_headers: true` returns.
+
+**Until that decision, the residual is:** `include_headers: true` with
+`include_metadata: false` deletes fields when a remote puts a comment, script or
+style marker pair in two different **object keys**. Values are safe. This is a
+regression of this branch and is not present on `main`.
+
+### Outstanding Todos
+
+None filed. **Two P1s are escalated and undispositioned**, which per
+`plugin:compound/compound-engineering-core.md` → *Authorisation gates* is the
+absence of a disposition and blocks the merge until the operator settles them.
+No todo is filed for either, because filing one would convert a decision the
+operator has not yet made into a promise on their behalf.
+
+### Files Modified
+
+- `LESSONS.md` — RC-26
+- `docs/work/handoff-…md` — this section
+
+**Testing:** unchanged from round 2 — 1215 passed, 0 failed, 7 skipped. No code
+changed, so no new verification was warranted.

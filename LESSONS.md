@@ -1137,3 +1137,43 @@ RC-17's mechanism is **not** superseded — only its verification claim was wron
   numeric string — `" 123"` → `"123"` — was added to the control). Both
   directions are worth probing: a guard that cannot fail, and a guard that fails
   for the wrong reason.
+
+### RC-26 — The fix closed the arm the reviewer demonstrated, and the code had already documented the other one
+
+**Date:** 2026-09-04 · **PR:** #36 (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** — (found in review round 3)
+
+**Class:** K-4, K-11 — *class-id:* `broken-contract`
+
+- **The plan said:** round 1 closed the composed-string splice by defending the
+  body as its own region before `formatResponse` prefixes anything to it. Six
+  cases, teeth verified, `docs/todos/012` closed.
+- **Reality was:** it closed the arm the reviewer had demonstrated — markers in
+  **values** — and not the class. `defendJsonLeaves` deliberately does not
+  defend object **keys**, and says so in its own docblock: *"Two keys that
+  defended to the same string would collapse into one, losing a field… A beacon
+  in a key therefore survives to the model; it is a stated residual."* So the
+  prepass cannot make the body marker-free, and the wrap's undivided pass over
+  the composed text pairs a marker in one key with one in a later key. Measured:
+  `{"<!--":"a","b":"secret","-->":"c","d":"kept"}` returns `{"":"c","d":"kept"}`
+  under `include_headers: true` — two fields deleted, valid JSON left behind.
+- **The evidence was already in context.** That docblock was read while writing
+  the round-1 fix. What was not done is the join: *keys are deliberately
+  undefended*, therefore *a prepass over values cannot make the composed string
+  safe*. The reviewer's example was values, the sweep was derived from the
+  example, and the class definition was sitting three lines above the code being
+  edited.
+- **What this says about the layer, which is the actual finding.** Two rounds of
+  fixes at the composition have each closed one arm, and the escalation ladder's
+  third rung is the one that applies: *no fix exists at that layer.* The wrap
+  receives one string and cannot recover where the header block stopped — a
+  composed prefix and remote body are syntactically indistinguishable — so every
+  fix here is a patch on whichever marker shape the last reviewer chose. The
+  precondition has to move to the caller: give the wrap the regions instead of a
+  composed string. That is a public-contract change and so escalated rather than
+  taken.
+- **What this costs next time:** **when a fix relies on a sibling function
+  making something safe, read that function's stated residuals before claiming
+  the class is closed** — and when the second arm of one class arrives, price
+  the layer rather than the arm. `.claude/rules/42-ship-what-matters.md`'s
+  convergence rule had already fired on this surface a round earlier, and the
+  right response to it is not a third patch.
