@@ -909,3 +909,77 @@ RC-17's mechanism is **not** superseded — only its verification claim was wron
      under test.** Two limits in one call path saturate in some order, and the
      first one to fire hides the second. Assert the precondition — *the map is at
      the cap* — before asserting behaviour at it, or the case certifies nothing.
+
+---
+
+### RC-20 — Routing a path into a shared defence inherits the defence's defects, and "the guard now runs" is not "the payload survives"
+
+**Date:** 2026-09-04 · **PR:** — (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** `docs/todos/006-P1-shipped-binary-registers-tools-unwrapped.md`
+
+**Class:** K-11, K-2 — *class-id:* `broken-contract`, `unwrapped-multi-write`
+
+- **The plan said:** todo 006 scoped the fix as one seam — give `registerAllTools`
+  the body `extensible/tool-wrapper.ts` already has, so invariant 1's wrap applies
+  on the shipped binary as it does on the library. It adjudicated the layer
+  question (not inside the executors, which would be a MAJOR bump under invariant
+  11) and called the result *"not a public-contract change"*. Both claims were
+  correct, and the registration fix was correct.
+- **Reality was:** the wrap had **never run on that path**, so routing traffic
+  into it exposed two P1 defects in the wrap's own JSON handling that were
+  previously reachable only through `McpCurlServer`. (1) `defendJsonLeaves`
+  recursed on remote-chosen nesting depth: a **4,035-byte** body of `"[" × 2000`
+  around a beacon overflowed the stack, `createWrapper`'s catch logged the
+  `RangeError`, **tagged the untouched result as wrapped** so a downstream wrap
+  short-circuited too, and the beacon reached the model verbatim — a remote could
+  switch the whole defence off with 4 KB. (2) A string leaf that was itself a
+  serialised document was scanned undivided, so
+  `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returned as
+  `{"a":"open ","d":"kept"}` — RC-16 one nesting level down, with the file on disk
+  still holding all four fields.
+- **What changed:** `response/processor.ts` gained `MAX_INLINE_DEFENCE_DEPTH`
+  (100, matching `extensible/schema-sanitizer.ts::MAX_RECURSION_DEPTH`) checked by
+  an iterative `exceedsDefenceDepth`, and `defendJsonLeaves`' string arm now
+  recurses on **composite** leaves only — `JSON_DOCUMENT_FIRST_CHARS` admits
+  digits and `-`, so recursing into a scalar would rewrite `"1.50"` as `"1.5"`.
+  The depth gate is deliberately **not** in `parseJsonDocument`: `isDefinitelyJson`
+  shares it, and a rejection there would strip the *persisted* copy and break
+  RC-8/RC-10's split. The `include_headers`-without-metadata arm of the same class
+  is `docs/todos/012`.
+- **What this costs next time:** **a fix that routes a path into a shared layer
+  adopts every defect that layer has, and the review question is not "does the
+  guard run now?" but "what does the guard do to this traffic?"** `skill:
+  pr-resolver-safety` already says *"then ask what the fix newly made true"*; this
+  is what that costs when skipped. The verification that missed it was an
+  end-to-end smoke test against the **default** flags — it passed, because both
+  defects need `include_metadata`, `include_headers`, or adversarial depth. **A
+  smoke test on defaults certifies the default path and nothing else.**
+
+---
+
+### RC-21 — A regression guard for a two-path invariant asserted it on one path, so the other could revert with the suite green
+
+**Date:** 2026-09-04 · **PR:** — (branch `fix/shipped-binary-registers-tools-unwrapped`) · **Plan:** `docs/todos/006-P1-shipped-binary-registers-tools-unwrapped.md`
+
+**Class:** K-1, K-4 — *class-id:* `broken-contract`, `missing-validation`
+
+- **The plan said:** todo 006's acceptance criterion was *"a server built via
+  `createServer()` + `registerAllCapabilities()` returns `[image removed]` for an
+  `application/json` body containing a markdown beacon"* — singular, and the new
+  `tools/register-all-tools.test.ts` satisfied it.
+- **Reality was:** `registerAllTools` registers **two** tools, and the guard
+  asserted the wrap for `curl_execute` while asserting only *name presence* for
+  `jq_query`. Reverting the `registerJqToolWithHooks` call to a bare
+  `server.registerTool` — the exact shape the commit had just deleted — passed the
+  entire suite. The guard written to close todo 006 recreated todo 006's
+  precondition on the sibling tool. Two reviewers found it independently from
+  different lanes, and `learnings-researcher` joined it to **RC-1** (an invariant
+  satisfied by the bug it was written to prevent) and **RC-6**.
+- **What changed:** a `jq_query` wrap assertion in the same file, driving the
+  captured handler against a temp JSON file holding a beacon. Teeth verified by
+  probe: a bare `jq_query` registration fails it.
+- **What this costs next time:** **the assertion set must match the registration
+  set.** Where a change routes N paths through one guard, N-1 assertions is a
+  false green — and the missing one is invisible because the tool is still
+  *registered*, just not *guarded*. The cheap test is the one this file's own
+  header states: name the smallest edit to the subject that keeps the suite
+  passing, make it, and run.
