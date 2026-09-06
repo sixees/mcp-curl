@@ -1227,14 +1227,32 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         // the arms are ~27 ms apiece, where one descheduled run would otherwise
         // decide the verdict.
         const body = "lorem ipsum dolor sit amet <b>x</b> [a](https://e.test/p) ".repeat(50000);
+        // **CPU time, not wall time**, and the difference decides whether this
+        // guard measures the code or the machine. The arms are ~27 ms each, so
+        // on a loaded host one descheduled arm decides the verdict: measured at
+        // 2x CPU oversubscription the wall-clock ratio ranged 0.45-3.35 against
+        // this 1.5 threshold — 6 false failures in 20 runs on CORRECT code — and
+        // no amount of aggregation rescued it (min-of-3, median-of-5 and a
+        // 9.86 MB fixture were all worse). The same fixture and threshold on
+        // `process.cpuUsage()` gave 0 false failures in 12 runs under the same
+        // load, with detection unweakened (2.11-2.24 with the defect present).
+        //
+        // Not hypothetical here: vitest runs test files in parallel workers, and
+        // this session watched `strip-blocks.test.ts`'s wall-clock ReDoS budgets
+        // fail twice under load and pass 3/3 isolated.
+        //
+        // CPU time also excludes the file write the over-cap arm does and the
+        // inline arm does not (2.79 ms, ~10% of an arm), which would otherwise
+        // put the ratio at ~2.08 on correct code on a slow filesystem.
         const timed = async (maxResultSize: number) => {
-            const started = Date.now();
+            const started = process.cpuUsage();
             const result = await processResponse(body, {
                 url: "http://example.com",
                 contentType: "text/plain",
                 maxResultSize,
             });
-            return { ms: Date.now() - started, savedToFile: result.savedToFile };
+            const spent = process.cpuUsage(started);
+            return { ms: (spent.user + spent.system) / 1000, savedToFile: result.savedToFile };
         };
         const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 

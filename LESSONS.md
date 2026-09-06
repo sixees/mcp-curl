@@ -39,7 +39,7 @@ believed, and correcting it in place destroys the evidence that anything diverge
 
 **Date:** YYYY-MM-DD · **PR:** #N · **Plan:** <path>
 
-**Class:** <the `K-` shapes and local `C` classes this instantiates, or `—`>
+**Class:** <the `K-` shapes and local `C` classes this instantiates, or `—`> — *class-id:* <the `skill: review-findings` defect nouns this instantiates>
 
 - **The plan said:** what was assumed, and where that assumption came from.
 - **Reality was:** what was actually true, and how it was discovered.
@@ -48,7 +48,13 @@ believed, and correcting it in place destroys the evidence that anything diverge
   rule; say so rather than inventing one.
 ```
 
-Every field is required; `—` fills one that has no value. Name the files and
+Every field is required; `—` fills one that has no value. **The `class-id`
+suffix on the `Class:` line is part of the format, not decoration** — it is the key
+`/sixees-workflow:review` joins a live finding to a divergence already recorded here,
+and it must be a defect noun from `skill: review-findings` → *The class-id vocabulary*
+rather than a phrase you coined. Every entry below carries one; this line did not say
+so until RC-28, which is why RC-27 and RC-28 were both filed without it and had to be
+corrected. Name the files and
 symbols — an RC that says "fixed the auth handling" is a note to nobody, because
 the next reader needs to know *where* to be careful. Closing prose after the four
 bullets is fine for who found it and how, but it never stands in for them.
@@ -1195,7 +1201,7 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
 
 **Date:** 2026-09-06 · **PR:** — · **Plan:** `docs/todos/008-P2-over-cap-preview-is-computed-then-discarded.md`
 
-**Class:** K-12, K-11, K-4
+**Class:** K-12, K-11, K-4 — *class-id:* `broken-contract`, `duplicated-logic`
 
 - **The plan said:** nothing about numbers at all. Todo 008 was a performance and
   altitude finding about the over-cap preview, and RC-24 was already recorded as
@@ -1217,6 +1223,12 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
   Regression tests at the tool boundary in `tools/register-all-tools.test.ts` cover
   the two jq surfaces separately — verified by probe that restoring one reviver
   alone still fails the other's cases.
+  **One consequence to record rather than gloss:** the `curl_execute` + `jq_filter`
+  arm reassigns `content` from the filter result before saving, so this changes the
+  bytes that land on DISK — a saved artefact now carries `9223372036854775807`
+  where it carried `9223372036854776000`. RC-8/RC-10 pin those bytes, so this is a
+  deliberate change to them in the fidelity direction, not an untouched path. Every
+  other arm writes byte-identical output; `saveResponseToFile` never parses.
 - **What this costs next time:** when an RC's fix is a *rule about a primitive*
   rather than a repair to one function, the sweep query is the primitive, not the
   symptom. `rg 'JSON\.parse\(' src` returns three lines and would have found all of
@@ -1227,7 +1239,7 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
 
 **Date:** 2026-09-06 · **PR:** — · **Plan:** `docs/todos/008-P2-over-cap-preview-is-computed-then-discarded.md`
 
-**Class:** K-1, K-3
+**Class:** K-1, K-3 — *class-id:* `unchecked-assertion`, `repeated-computation`
 
 - **The plan said:** delete the over-cap preview, because `formatResponse`'s saved
   branch never reads it. Todo 008 named no test as depending on it.
@@ -1249,3 +1261,43 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
   removes a value, check what asserts on it *before* deciding the removal is safe —
   and probe the replacement, because a guard written to replace a false green is
   written under the same pressure that produced the first one.
+
+### RC-29 — extracting the rule left its precondition behind in the old module
+
+**Date:** 2026-09-06 · **PR:** — · **Plan:** `docs/todos/008-P2-over-cap-preview-is-computed-then-discarded.md`
+
+**Class:** K-12, K-13 — *class-id:* `misplaced-decision`, `unchecked-assertion`
+
+- **The plan said:** RC-27's fix was to give the number-lexeme rule one
+  implementation, so `keepNumberLexeme`, `rawJson` and `isRawNumber` moved from
+  `response/processor.ts` to `utils/json-lexeme.ts` and both jq sites imported them.
+  That looked complete: one rule, one module, three callers.
+- **Reality was:** the *rule* moved and its *precondition* did not. The Node ≥22
+  capability guard — the module-scope `throw` that turns a missing `JSON.rawJSON`
+  into a loud import-time error instead of RC-20's silent undefended-but-tagged
+  result — stayed at `response/processor.ts` module scope. `jq/filter.ts` imports
+  the capability directly and imports no `response/` module, so it was guarded only
+  by the accident that both its callers happen to load `processor.ts` through a
+  barrel. `utils/json-lexeme.ts` meanwhile cast `JSON` to a type asserting both
+  functions exist, an assertion nothing could enforce: deleting the guard left
+  `tsc --noEmit` clean. Found independently by three reviewers in one round —
+  `typescript-reviewer` (P2), `architecture-strategist` (P2) and
+  `pattern-recognition-specialist` (routed) — which is what a genuinely displaced
+  precondition looks like from three different lanes.
+- **What changed:** the guard moved into `utils/json-lexeme.ts` beside the
+  destructure, and the cast now declares both functions **optional**, so the
+  narrowing below the guard is what makes the module compile — delete the guard and
+  `tsc` fails. `rawJson` is no longer exported at all, which also makes
+  `isRawNumber`'s name true by construction: `JSON.isRawJSON` is true for a marker
+  built from *any* JSON text, and four structural guards read it as "scalar, do not
+  descend", so a non-number marker anywhere in the tree would have made all four
+  treat a composite as a scalar. With `keepNumberLexeme` the only producer, none can
+  exist. `utils/json-lexeme.test.ts` asserts the throw by importing the module in
+  isolation with no `response/` edge in its graph.
+- **What this costs next time:** **when you extract a rule, ask what was enforcing
+  its preconditions, and check whether that came with it.** A guard is not part of
+  the thing it guards, so it does not move automatically — and the import graph that
+  used to make it unavoidable is exactly what an extraction rearranges. The test for
+  whether the new home is real: can the extracted module fail its own precondition
+  without anything erroring? Here it could, and the fix was to make the type carry
+  the obligation rather than merely assert it.

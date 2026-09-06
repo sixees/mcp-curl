@@ -19,7 +19,6 @@ import {
     isRawNumber,
     isSniffableContentType,
     keepNumberLexeme,
-    rawJson,
     safeHostname,
     supportsMarkupComments,
 } from "../utils/index.js";
@@ -166,30 +165,12 @@ function parseJsonDocument(
 // `jq_query` tool — and it used to have one implementation, so the same body's
 // numbers survived inline and were corrupted through jq (RC-27).
 
-/**
- * **Fails at import rather than mid-request, and the difference is the whole
- * point.** `engines` is advisory: npm *warns* on a too-old host and installs
- * anyway unless the operator has set `engine-strict`, so declaring Node ≥22
- * does not make a Node 18 process impossible — it makes it unsupported.
- *
- * There `JSON.rawJSON` is `undefined` and the call throws inside
- * {@link defendForInline}. That exception is caught by
- * `post-processor.ts::createWrapper`, which tags the **undefended** result as
- * wrapped — so the whole defence is skipped, a downstream wrap short-circuits
- * on the tag, and nothing on the response says so. `LESSONS.md` RC-20 is that
- * failure measured, and RC-24 is where reaching for this API nearly
- * reintroduced it.
- *
- * A throw here is loud, immediate, and names the reason. Silence would be a
- * security bypass wearing a compatibility fallback's clothing.
- */
-if (typeof rawJson !== "function" || typeof isRawNumber !== "function") {
-    throw new Error(
-        "mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this " +
-            "runtime, and the response defence cannot preserve JSON number values without them. " +
-            `Detected ${process.version}.`
-    );
-}
+// The Node >= 22 capability guard for `JSON.rawJSON` / `JSON.isRawJSON` now lives
+// in `utils/json-lexeme.ts`, beside the cast that asserts they exist. It sat here
+// while the primitive lived here; once the primitive moved, this was the wrong
+// layer — the guard reached `jq_query` only because that tool imports `defendText`
+// from the barrel that re-exports this file, so an import path not needing
+// `defendText` would have skipped the check silently (RC-29).
 
 /**
  * Run the full defensive pipeline over one piece of remote-origin text.
@@ -631,11 +612,77 @@ const MAX_INLINE_GROWTH_RATIO =
  *
  * @param hostname - label for the detection log, on the rare arm that runs it
  */
+/**
+ * **The growth-band double-compute is a known, declined cost — do not "fix" it
+ * with the shortcut that looks obvious.**
+ *
+ * For a body in the growth band that stays inline, this function runs
+ * `defendForInline` as a measurement, discards it, and `curl-execute.ts` then
+ * runs the identical pass to produce what it returns. Measured at ~4 ms on a
+ * 500 KB body under a 600 KB cap. Declined rather than fixed: threading the
+ * defended string back out re-creates the two-shapes-of-content hazard that
+ * removing `content` from `ProcessedResponse`'s saved arm just eliminated, and
+ * 4 ms on a body bounded by `max_result_size` does not buy that back.
+ *
+ * **The shortcut that is unsound**, recorded so a later round does not spend a
+ * measurement rediscovering it: you cannot skip the expensive arm above
+ * `STRIP_PATH_MAX_BYTES` on the reasoning that the defence cannot grow a body
+ * larger than the strip cap. `defendText` sanitises BEFORE it checks that cap,
+ * so a body above it can collapse below it and then take the strip path —
+ * measured 263,900 bytes in, 407,401 out, past a 262,144-byte cap. That arm
+ * would breach invariant 14 for precisely the body class RC-15 was filed about.
+ */
 export function exceedsInlineCap(text: string, hostname: string, maxBytes: number): boolean {
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > maxBytes) return true;
     if (bytes * MAX_INLINE_GROWTH_RATIO <= maxBytes) return false;
     return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
+}
+
+/**
+ * The server-authored sentence a saved response comes back as.
+ *
+ * **Every clause here is a claim an LLM will act on, so each one is gated on
+ * something that can answer it.** Two review rounds found two that were not:
+ *
+ * - **The reader tool is named only where the artefact is in its grammar.**
+ *   `jq_query` is the only file-reading tool this server registers, so pointing
+ *   at it is the whole route to an over-cap body — but it parses JSON and
+ *   returns *"Response is not valid JSON"* on anything else. A 1 MB `text/html`
+ *   page was therefore sent to a tool that cannot open it, with no other route
+ *   offered. Where the grammar is not JSON the path is still named and the
+ *   client's own file tooling is left to it.
+ * - **The byte count and the limit claim have to be about the same bytes.**
+ *   `exceedsInlineCap` weighs the DEFENDED form, which the defence can make
+ *   longer — so a 990-byte body can exceed a 1000-byte cap. Reporting
+ *   *"990 bytes exceeded the 1000-byte limit"* is a sentence no reader can
+ *   reconcile, and a model that responds by raising `max_result_size` to 1200
+ *   gets the same file back. The size is labelled as the on-disk size and the
+ *   limit is labelled as applying after the pass, so both are true together.
+ *
+ * `save_to_file` is a request rather than a limit, which is why the over-cap
+ * clause is absent on that arm entirely: telling the model it exceeded a limit
+ * it did not exceed is a falsehood about its own request.
+ */
+function savedMessage(
+    diskBytes: number,
+    filepath: string,
+    maxSize: number,
+    overCap: boolean,
+    contentType: string | undefined
+): string {
+    const cause = overCap
+        ? `Response (${diskBytes} bytes on disk) was saved to: ${filepath} — it exceeds the ` +
+          `${maxSize}-byte inline limit once the inline defence pass is applied, so no body is ` +
+          `returned here.`
+        : `Response (${diskBytes} bytes) saved to: ${filepath}`;
+
+    const route = isJsonContentType(contentType)
+        ? " Use the jq_query tool on that path to extract fields."
+        : ` The body is ${contentType ? `\`${contentType}\`` : "not JSON"}, which the jq_query ` +
+          `tool cannot parse — read the path with your own file tooling.`;
+
+    return cause + route;
 }
 
 /**
@@ -816,23 +863,13 @@ export async function processResponse(
         return {
             savedToFile: true,
             filepath,
-            // Server-authored, and the model's only route to the body from here,
-            // so it names the next call rather than just the path. `jq_query`
-            // applies its own defence and its own cap to whatever it extracts,
-            // which is why handing over a filepath is not handing over the cap.
-            //
-            // Describes the artefact on disk, which is the origin-grammar copy.
-            // Two arms because `shouldSave` has two causes and only one of
-            // them is a limit: `save_to_file` forces the file for a body that
-            // was never over the cap, and telling the model it exceeded a limit
-            // it did not exceed is a server-authored falsehood about its own
-            // request.
-            message: overCap
-                ? `Response (${Buffer.byteLength(content, "utf8")} bytes) exceeded the ` +
-                  `${maxSize}-byte inline limit and was saved to: ${filepath} — ` +
-                  `use the jq_query tool on that path to extract fields.`
-                : `Response (${Buffer.byteLength(content, "utf8")} bytes) saved to: ${filepath} — ` +
-                  `use the jq_query tool on that path to extract fields.`,
+            message: savedMessage(
+                Buffer.byteLength(content, "utf8"),
+                filepath,
+                maxSize,
+                overCap,
+                options.contentType
+            ),
         };
     }
 

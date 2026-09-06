@@ -67,8 +67,11 @@ updated (K-7). Corrected in place.
   how the class kept an uncorrected site through RC-24. Probed: restoring one reviver
   alone still fails the other's tests.
 - `processor.ts:157`'s `preserveNumberLexemes` opt-out is deliberate, not a fourth
-  bypass — `isDefinitelyJson` throws the graph away, and the persisted path is pinned
-  by RC-8/RC-10.
+  bypass — `isDefinitelyJson` throws the graph away. **Correction from review:** this
+  originally also credited "the persisted path, pinned by RC-8/RC-10". That is wrong —
+  `saveResponseToFile` never calls `parseJsonDocument` or `JSON.parse` at all, so
+  RC-8/RC-10 are preserved by never parsing rather than by a `false` flag. There is
+  one `false` caller, not two.
 
 ## Known issues and limitations
 
@@ -88,8 +91,22 @@ updated (K-7). Corrected in place.
 **Runner and mode:** `npm test -- --reporter=json --outputFile=…`, verdict parsed from the
 JSON artefact's `numPassedTests`/`numFailedTests`/`numTotalTestSuites`, not from a summary line.
 
-**Result: 1236 passed, 0 failed, 7 skipped, 269 suites, 0 failed suites.** Baseline on
-`main` before this branch was 1215 passed / 0 failed / 7 skipped — net +21.
+**Result after review round 1: 1250 passed, 7 skipped, 272 suites — net +36 tests.**
+
+**Read the failure line honestly: a full-suite run is NOT clean, on this branch OR on
+`main`.** Four runs each, measured today on this machine:
+
+| | run 1 | run 2 | run 3 | run 4 |
+|---|---|---|---|---|
+| this branch (`cc69dc2`) | 1248 / 3 failed | 1250 / 1 | 1249 / 2 | 1250 / 1 |
+| `main` (`5adb7d3`, clean worktree) | 1213 / 2 failed | 1214 / 1 | 1213 / 2 | 1212 / 3 |
+
+Every failure on both sides is a `REDOS_BUDGET_MS` wall-clock case in
+`strip-blocks.test.ts`, a different subset each run, and that file passes 3/3 (110/110)
+in isolation. **Same class, same rate, on both branches — so this branch introduces no
+new failure**, but the earlier claim in this document of a "1215 / 0 failed" baseline
+was taken from a previous session's record rather than measured here, and it is wrong.
+Filed as `docs/todos/013`.
 
 No linter is configured in this project (`package.json` has `build`, `test`, `dev`, `start`
 only), so no lint gate was run. `npx tsc --noEmit` is clean apart from 12 pre-existing
@@ -156,10 +173,94 @@ removed by the lifecycle below rather than annotated.
 
 ### Outstanding Todos
 
-_None created by this run._
+| File | Priority | Description | Source |
+|---|---|---|---|
+| `docs/todos/012-P1-saved-files-can-silently-overwrite.md` | P1 | Saved response files collide on a 50-char truncated name plus a millisecond clock, and `writeFile` has no `flag: "wx"`. Pre-existing; this branch removed the preview that made a substitution detectable. | Escalated to and settled by the operator |
+| `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md` | P2 | `strip-blocks.test.ts`'s absolute wall-clock ReDoS budgets fail on every full-suite run on `main` as well as here, so the suite has no reliable green. | Found while verifying this branch's own test claim |
+
+Both are pre-existing and out of this branch's scope. 013 in particular should be read
+before trusting any "tests pass" line in this document.
 
 ### Resolved Todos
 
 | File (removed) | Title | Summary | By | Date |
 |---|---|---|---|---|
 | `docs/todos/008-P2-over-cap-preview-is-computed-then-discarded.md` | The over-cap preview is defended over the whole body, then discarded by the formatter | Preview deleted; message now routes the model to `jq_query`; `ProcessedResponse` narrowed; stale "published entry point" doc-block corrected. All four acceptance criteria met, criterion 3 structurally rather than by test. | fix/over-cap-preview-computed-then-discarded | 2026-09-06 |
+
+
+---
+
+## Review Round 1 — 2026-09-06
+
+Eight reviewers (six configured + the four-agent floor, deduped) plus the built-in
+`/security-review`. All returned; none failed. Base `5adb7d3`, resolved once via
+`git merge-base origin/HEAD HEAD` and handed to every reviewer.
+
+| Reviewer | Result |
+|---|---|
+| `code-simplicity-reviewer` | clean — 0 |
+| `learnings-researcher` | no RC conflicts across RC-8/10/12/15/16/24 |
+| `pattern-recognition-specialist` | clean — 0, 3 routed observations |
+| `typescript-reviewer` | 3 — P2, P3, P3 |
+| `security-sentinel` | 1 — P2 |
+| `architecture-strategist` | 3 — P2, P3, P3 |
+| `data-integrity-guardian` | 3 — P2 x3 |
+| `/security-review` | clean — no HIGH/MEDIUM at confidence >= 7 |
+
+### Fixed
+
+| Class | Found by | Disposition |
+|---|---|---|
+| **Guard displacement** — extracting the reviver left the Node >= 22 precondition in `processor.ts`; `json-lexeme.ts` asserted the capability with nothing enforcing it | `typescript-reviewer` (P2), `architecture-strategist` (P2), `pattern-recognition-specialist` (routed) — **three lanes, merged on instance overlap** | Guard moved into `json-lexeme.ts`; cast made optional so `tsc` carries the obligation; `rawJson` unexported so `isRawNumber`'s name is true by construction. New `utils/json-lexeme.test.ts` asserts the throw with no `response/` edge in its module graph. **RC-29** |
+| **`jq_query` named as the route to artefacts it cannot read** — an over-cap `text/html` body was sent to a JSON-only tool, the only file reader registered | `data-integrity-guardian` (P2) | `savedMessage` gates the pointer on `isJsonContentType`; non-JSON bodies get the path and are told to use their own file tooling |
+| **Message asserted a breach using a count that contradicted it** — *"Response (908 bytes) exceeded the 1000-byte inline limit"*, because the gate weighs DEFENDED bytes | `data-integrity-guardian` (P2), `architecture-strategist` (P3) — merged | Reworded so the count is labelled on-disk and the limit is labelled as applying after the defence pass. Both are then true together |
+| **A false green in this branch's own new tests** — every saved-path fixture was `application/json`, so `toContain("jq_query")` could not fail for any content type | `data-integrity-guardian` | `text/html` and `text/csv` negative controls added, plus a byte-claim control. Teeth-probed |
+| **Perf guard measured the scheduler as well as the code** — wall clock on ~27 ms arms; 6 false failures in 20 runs at 2x CPU oversubscription | `performance-oracle` (P3) | Switched to `process.cpuUsage()`. Re-probed: **0 false failures in 6 runs under 24-spinner load, detection still firing at 2.65 vs the 1.5 threshold.** Not hypothetical — this session watched `strip-blocks.test.ts`'s pre-existing wall-clock ReDoS budgets fail twice under agent load and pass 3/3 isolated |
+
+### Declined, with evidence
+
+| Class | Found by | Why |
+|---|---|---|
+| **Reviver CPU/memory cost** — 14-21x on the jq path; 384 ms and ~308 MB RSS on a 9.5 MB numeric body at `JQ.MAX_QUERY_FILE_SIZE` | `security-sentinel` (P2), `performance-oracle` (P2) — merged | Realistic payloads cost ~+22 ms (PageSpeed 3.5 MB: 12.3 -> 34.8 ms; Toggl 1.6 MB: 3.2 -> 24.3 ms). The proposed fallback to a plain parse above a threshold would re-corrupt exactly the large bodies `jq_query` is now the advertised route to — one invariant's fix reintroducing another's violation. **Two mitigations were measured and rejected, not assumed:** conditional wrapping (2562 vs 2229 ms adversarially, and *worse* on realistic bodies) and a regex pre-screen (74 ms when it does not fire). `performance-oracle` established why nothing at the mechanism can work — an *identity* reviver already costs 14.3x, because any reviver drops V8 off its bulk parse path. The measured table and the named lever (`JQ.MAX_QUERY_FILE_SIZE`) are recorded in `json-lexeme.ts`'s docblock |
+| **`FileSaveInfo` re-widens the invariant** `ProcessedResponse` just pinned | `typescript-reviewer` (P3), `architecture-strategist` (P3) — merged | Both confirmed **unreachable**: one production caller, which derives both fields from the narrowed union, and `join()` cannot return `""`. Effort `m` (four test files). Population is a hypothetical second producer |
+| **Growth-band double-compute** — `exceedsInlineCap` defends, discards, `curl-execute` recomputes; ~4 ms on a 500 KB body | `performance-oracle` (P3) | Threading the defended string back out re-creates the two-shapes-of-content hazard that removing `content` from the saved arm just eliminated. `performance-oracle`'s own read was decline-and-record. Recorded in `processor.ts` **together with the unsound shortcut** a later round would otherwise rediscover: skipping the arm above `STRIP_PATH_MAX_BYTES` is wrong because `defendText` sanitises before it checks that cap — measured 263,900 bytes in, 407,401 out |
+
+### Escalated, and settled by the operator
+
+**Saved files can silently overwrite each other** (`data-integrity-guardian`, P2 with
+the P1 tension named). `?page=1` and `?page=2` both truncate to the identical 50-char
+base; `Date.now()` is millisecond; `writeFile` has no `flag: "wx"`. Pre-existing and
+out of scope — but this branch removed the inline preview that made a substitution
+detectable. The reviewer said explicitly *"if concurrent tool calls are normal in the
+deployment, this is P1"*, and for an orchestrated agent fleet they are.
+
+**Operator's decision: file at P1, ship this branch.** Filed as
+`docs/todos/012-P1-saved-files-can-silently-overwrite.md`. Recorded here per
+`03-divergence.md` so a later round cites it rather than re-litigating it.
+
+### Corrections to this document, from review
+
+- The `parseJsonDocument` opt-out claim above — one `false` caller, not two.
+- **The persisted artefact is NOT byte-identical on every arm.** The `curl_execute` +
+  `jq_filter` branch reassigns `content` from the filter result before saving, so a
+  saved file now carries `9223372036854775807` where it carried
+  `9223372036854776000`. That is the RC-27 fix working in the fidelity direction, but
+  RC-8/RC-10 pin those bytes, so it is recorded as a deliberate change rather than
+  reported as untouched. Every other arm is byte-identical. Now in RC-27.
+- `ARCHITECTURE.md` invariant 14 now records that the ceiling is type-enforced on the
+  saved path (`architecture-strategist` flagged the K-7 risk of that fact living only
+  in source docblocks).
+
+### Not filed, surfaced only
+
+- `sanitize.ts::detectInjectionPattern`'s docblock claims its footprint stays "well
+  inside `MAX_TOTAL_RESPONSE_MEMORY` (100 MB)". `performance-oracle` measured ~308 MB
+  RSS on the jq path, so that sentence now understates the peak by roughly 3x, and
+  `memory-tracker.ts::allocateMemory` charges 9.5 MB for such a request. Out of scope
+  (neither file is in this diff) and the claim is about a different quantity than the
+  accounting budget, but it is now misleading and worth a look.
+- 67% of the remaining ~92 ms on the over-cap path is `detectInjectionPattern`, most of
+  it an NFKC normalise over a full transient copy. Bounding it is a security trade, not
+  a performance one — `security-sentinel`'s call, not something to take casually.
+- `utils/json-lexeme.ts` had no colocated test where every other `utils/` file does
+  (`pattern-recognition-specialist`). Fixed as part of RC-29's fix rather than tracked.

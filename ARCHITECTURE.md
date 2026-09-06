@@ -291,7 +291,12 @@ what a violation looks like, it does not belong on this list.
 
     Object keys are deliberately left undefended: two keys defending to the
     same string would collapse into one, which is the very loss this invariant
-    exists to stop. Number spelling is NOT normalised — `1.50`, `1e400` and an
+    **On the saved path the ceiling is enforced by the type**, not by a
+    truncation: `ProcessedResponse`'s `savedToFile: true` arm carries no
+    `content` field, so there are no body bytes to bound. The cap cannot be
+    exceeded by bytes that are not returned. `LESSONS.md` RC-28.
+
+    Number spelling is NOT normalised — `1.50`, `1e400` and an
     integer past `Number.MAX_SAFE_INTEGER` all come back byte-exact, because
     the parse preserves each number's source lexeme and the serialiser re-emits
     it verbatim. `LESSONS.md` RC-16, RC-24.

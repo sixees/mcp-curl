@@ -681,8 +681,10 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
             expect(text).not.toContain(marker);
             // Names the limit it crossed, so the model can tell this apart from
-            // a file it asked for.
-            expect(text).toContain("exceeded the");
+            // a file it asked for. Phrased as "exceeds ... once the inline
+            // defence pass is applied" because the gate weighs the DEFENDED
+            // bytes, which are not the count reported here.
+            expect(text).toContain("inline limit");
         });
 
         it.each([
@@ -704,6 +706,62 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
             expect(text).toContain("jq_query");
         });
+        // **The negative control for the pair above, and it is the reason they
+        // are not a false green.** Both those cases pass `application/json`, so
+        // `toContain("jq_query")` could not have failed for ANY content type
+        // while the message named the tool unconditionally — the fixture, not
+        // the assertion, was carrying the claim. `jq_query` parses JSON and
+        // answers "Response is not valid JSON" on anything else, and it is the
+        // only file-reading tool registered, so pointing a 1 MB HTML page at it
+        // sent the model to the one tool that cannot open it, with no other
+        // route offered.
+        it.each([
+            ["text/html", "<html><body>" + "x".repeat(4000) + "</body></html>"],
+            ["text/csv", "a,b,c\n" + "1,2,3\n".repeat(700)],
+        ])("does NOT name jq_query for a saved %s body", async (contentType, body) => {
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, contentType));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params({ max_result_size: 1000 }), {
+                    sessionId: undefined,
+                })
+            );
+
+            expect(text).not.toContain("jq_query tool on that path");
+            // The path is still named — the body is not lost, only the wrong
+            // reader is no longer recommended.
+            expect(text).toContain("saved to:");
+            expect(text).toContain(contentType);
+        });
+
+        it("does not report a byte count below the limit it says was exceeded", async () => {
+            // `exceedsInlineCap` weighs the DEFENDED form, which the defence can
+            // make longer, so a body under the cap can still be over it. The
+            // message used to read "Response (990 bytes) exceeded the 1000-byte
+            // inline limit" — a sentence no reader can reconcile, and a model
+            // that responds by raising max_result_size gets the same file back.
+            const body = JSON.stringify({ v: "[](file:)".repeat(100) });
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params({ max_result_size: 1000 }), {
+                    sessionId: undefined,
+                })
+            );
+
+            expect(text).toContain("saved to:");
+            const reported = Number(/Response \((\d+) bytes/.exec(text)?.[1]);
+            expect(Number.isFinite(reported)).toBe(true);
+            // Whatever the number is, the sentence must not assert a bare breach
+            // of a larger limit by a smaller count.
+            expect(text).not.toMatch(/\(\d+ bytes\) exceeded the 1000-byte/);
+            if (reported < 1000) {
+                expect(text).toContain("once the inline defence pass is applied");
+            }
+        });
+
     });
 
     describe("curl_execute's jq_filter branch keeps number spelling (RC-27)", () => {

@@ -307,6 +307,11 @@ function createConfigError(configName, value, reason) {
 
 // src/lib/utils/json-lexeme.ts
 var { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON;
+if (typeof rawJsonImpl !== "function" || typeof isRawJsonImpl !== "function") {
+  throw new Error(
+    `mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this runtime, and the response defence cannot preserve JSON number values without them. Detected ${process.version}.`
+  );
+}
 var rawJson = rawJsonImpl;
 var isRawNumber = isRawJsonImpl;
 function keepNumberLexeme(_key, value, context) {
@@ -2009,11 +2014,6 @@ function parseJsonDocument(text, preserveNumberLexemes = false) {
     return void 0;
   }
 }
-if (typeof rawJson !== "function" || typeof isRawNumber !== "function") {
-  throw new Error(
-    `mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this runtime, and the response defence cannot preserve JSON number values without them. Detected ${process.version}.`
-  );
-}
 function defendText(text, options) {
   let content = text;
   const { hostname, contentTypeUndetermined = true } = options;
@@ -2110,6 +2110,11 @@ function exceedsInlineCap(text, hostname, maxBytes) {
   if (bytes * MAX_INLINE_GROWTH_RATIO <= maxBytes) return false;
   return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
 }
+function savedMessage(diskBytes, filepath, maxSize, overCap, contentType) {
+  const cause = overCap ? `Response (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `Response (${diskBytes} bytes) saved to: ${filepath}`;
+  const route = isJsonContentType(contentType) ? " Use the jq_query tool on that path to extract fields." : ` The body is ${contentType ? `\`${contentType}\`` : "not JSON"}, which the jq_query tool cannot parse \u2014 read the path with your own file tooling.`;
+  return cause + route;
+}
 async function processResponse(response, options) {
   if (typeof response !== "string") {
     throw new TypeError("processResponse: response must be a string");
@@ -2159,18 +2164,13 @@ async function processResponse(response, options) {
     return {
       savedToFile: true,
       filepath,
-      // Server-authored, and the model's only route to the body from here,
-      // so it names the next call rather than just the path. `jq_query`
-      // applies its own defence and its own cap to whatever it extracts,
-      // which is why handing over a filepath is not handing over the cap.
-      //
-      // Describes the artefact on disk, which is the origin-grammar copy.
-      // Two arms because `shouldSave` has two causes and only one of
-      // them is a limit: `save_to_file` forces the file for a body that
-      // was never over the cap, and telling the model it exceeded a limit
-      // it did not exceed is a server-authored falsehood about its own
-      // request.
-      message: overCap ? `Response (${Buffer.byteLength(content, "utf8")} bytes) exceeded the ${maxSize}-byte inline limit and was saved to: ${filepath} \u2014 use the jq_query tool on that path to extract fields.` : `Response (${Buffer.byteLength(content, "utf8")} bytes) saved to: ${filepath} \u2014 use the jq_query tool on that path to extract fields.`
+      message: savedMessage(
+        Buffer.byteLength(content, "utf8"),
+        filepath,
+        maxSize,
+        overCap,
+        options.contentType
+      )
     };
   }
   return {

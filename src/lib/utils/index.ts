@@ -9,7 +9,8 @@ export {
     createConfigError,
 } from "./error.js";
 
-export { rawJson, isRawNumber, keepNumberLexeme } from "./json-lexeme.js";
+// `rawJson` is deliberately absent — see `json-lexeme.ts`.
+export { isRawNumber, keepNumberLexeme } from "./json-lexeme.js";
 export { resolveBaseUrl, createHttpOnlyUrlSchema, safeHostname } from "./url.js";
 export type { CreateHttpOnlyUrlSchemaOptions } from "./url.js";
 
