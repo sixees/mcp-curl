@@ -16,7 +16,9 @@ import {
 } from "./strip-blocks.js";
 import {
     isMarkdownContentType,
+    isRawNumber,
     isSniffableContentType,
+    keepNumberLexeme,
     safeHostname,
     supportsMarkupComments,
 } from "../utils/index.js";
@@ -158,73 +160,17 @@ function parseJsonDocument(
     }
 }
 
-/**
- * Reviver that keeps every number EXACTLY as the origin spelled it.
- *
- * **A parse-and-reserialise defence silently rewrites numbers, and the rewrite
- * is not cosmetic.** `JSON.parse` routes every number through a double, so
- * `9223372036854775807` — an ordinary 64-bit identifier — comes back
- * `9223372036854776000`, and `1e400` overflows to `Infinity` and stringifies as
- * `null`. Both hand the model a plausible WRONG value with no signal that
- * anything was lost, which is worse than the field deletion this whole
- * region-wise walk exists to prevent: a deleted field leaves a gap somebody can
- * notice.
- *
- * `context.source` is the raw lexeme the parser consumed, and `JSON.rawJSON`
- * marks it for verbatim re-emission — so the number never becomes a double at
- * all. Measured exact across `9223372036854775807`, `1e400`,
- * `12345678901234567890`, `1.0`, `0.1000`, `-0.0` and `1E+2`.
- *
- * **Opt-in, and that matters.** `isDefinitelyJson` shares
- * {@link parseJsonDocument} and throws the graph away, so paying for the
- * wrappers there would be pure cost — and the persisted artefact must keep the
- * behaviour `LESSONS.md` RC-8 and RC-10 pinned.
- */
-function keepNumberLexeme(_key: string, value: unknown, context?: { source?: string }): unknown {
-    return typeof value === "number" && typeof context?.source === "string"
-        ? rawJson(context.source)
-        : value;
-}
+// `keepNumberLexeme`, `rawJson` and `isRawNumber` live in `utils/json-lexeme.ts`.
+// The rule has three callers — this walk, the `jq_filter` branch below, and the
+// `jq_query` tool — and it used to have one implementation, so the same body's
+// numbers survived inline and were corrupted through jq (RC-27).
 
-/**
- * `JSON.rawJSON` / `JSON.isRawJSON`, typed — TypeScript 5.9 ships no
- * declaration for either.
- *
- * The pair landed in **Node 21**, and this package requires **Node ≥22**
- * (`package.json` → `engines`, `docs/getting-started.md`,
- * `docs/architecture/architecture.md`). So they are used unconditionally rather
- * than probed, and there is exactly one numeric behaviour rather than one per
- * host.
- */
-const { rawJSON: rawJson, isRawJSON: isRawNumber } = JSON as typeof JSON & {
-    rawJSON: (text: string) => object;
-    isRawJSON: (value: unknown) => boolean;
-};
-
-/**
- * **Fails at import rather than mid-request, and the difference is the whole
- * point.** `engines` is advisory: npm *warns* on a too-old host and installs
- * anyway unless the operator has set `engine-strict`, so declaring Node ≥22
- * does not make a Node 18 process impossible — it makes it unsupported.
- *
- * There `JSON.rawJSON` is `undefined` and the call throws inside
- * {@link defendForInline}. That exception is caught by
- * `post-processor.ts::createWrapper`, which tags the **undefended** result as
- * wrapped — so the whole defence is skipped, a downstream wrap short-circuits
- * on the tag, and nothing on the response says so. `LESSONS.md` RC-20 is that
- * failure measured, and RC-24 is where reaching for this API nearly
- * reintroduced it.
- *
- * A throw here is loud, immediate, and names the reason. Silence would be a
- * security bypass wearing a compatibility fallback's clothing.
- */
-if (typeof rawJson !== "function" || typeof isRawNumber !== "function") {
-    throw new Error(
-        "mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this " +
-            "runtime, and the response defence cannot preserve JSON number values without them. " +
-            `Detected ${process.version}.`
-    );
-}
+// The Node >= 22 capability guard for `JSON.rawJSON` / `JSON.isRawJSON` now lives
+// in `utils/json-lexeme.ts`, beside the cast that asserts they exist. It sat here
+// while the primitive lived here; once the primitive moved, this was the wrong
+// layer — the guard reached `jq_query` only because that tool imports `defendText`
+// from the barrel that re-exports this file, so an import path not needing
+// `defendText` would have skipped the check silently (RC-29).
 
 /**
  * Run the full defensive pipeline over one piece of remote-origin text.
@@ -665,12 +611,120 @@ const MAX_INLINE_GROWTH_RATIO =
  * nowhere near its cap.
  *
  * @param hostname - label for the detection log, on the rare arm that runs it
+ *
+ * **The growth-band double-compute is a known, declined cost — do not "fix" it
+ * with the shortcut that looks obvious.**
+ *
+ * For a body in the growth band that stays inline, this function runs
+ * `defendForInline` as a measurement, discards it, and `curl-execute.ts` then
+ * runs the identical pass to produce what it returns. Declined rather than
+ * fixed: threading the defended string back out re-creates the
+ * two-shapes-of-content hazard that removing `content` from
+ * `ProcessedResponse`'s saved arm just eliminated.
+ *
+ * **Priced at the worst `max_result_size` the schema admits, not at the
+ * default** — the earlier note here measured 500 KB under a 600 KB cap and read
+ * as settled, but that band sits ABOVE `STRIP_PATH_MAX_BYTES` and so takes the
+ * cheap sanitise arm. Any `max_result_size` ≤ 262,144 puts the whole band
+ * `(0.6·max, max]` below the strip cap, where the expensive JSON-walk arm runs:
+ * measured 39.8–70.7 ms at 244 KB against 3.4 ms at 273 KB — the cost is
+ * INVERTED in body size across that boundary, and `curl-execute.ts` then pays
+ * it a second time. The decline stands at the default (5.6 ms measured) and is
+ * an operator call at a small cap. `LESSONS.md` RC-30.
+ *
+ * **The shortcut that is unsound**, recorded so a later round does not spend a
+ * measurement rediscovering it: you cannot skip the expensive arm above
+ * `STRIP_PATH_MAX_BYTES` on the reasoning that the defence cannot grow a body
+ * larger than the strip cap. `defendText` sanitises BEFORE it checks that cap,
+ * so a body above it can collapse below it and then take the strip path —
+ * measured 263,900 bytes in, 407,401 out, past a 262,144-byte cap. That arm
+ * would breach invariant 14 for precisely the body class RC-15 was filed about.
  */
 export function exceedsInlineCap(text: string, hostname: string, maxBytes: number): boolean {
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > maxBytes) return true;
     if (bytes * MAX_INLINE_GROWTH_RATIO <= maxBytes) return false;
     return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
+}
+
+/**
+ * The server-authored sentence a saved response comes back as.
+ *
+ * **Every clause here is a claim an LLM will act on, so each one is gated on
+ * something that can answer it.** Two review rounds found two that were not:
+ *
+ * - **The reader tool is named only where the artefact is in its grammar.**
+ *   `jq_query` is the only file-reading tool this server registers, so pointing
+ *   at it is the whole route to an over-cap body — but it parses JSON and
+ *   returns *"Response is not valid JSON"* on anything else. A 1 MB `text/html`
+ *   page was therefore sent to a tool that cannot open it, with no other route
+ *   offered. Where the grammar is not JSON the path is still named and the
+ *   client's own file tooling is left to it.
+ * - **The byte count and the limit claim have to be about the same bytes.**
+ *   `exceedsInlineCap` weighs the DEFENDED form, which the defence can make
+ *   longer — so a 990-byte body can exceed a 1000-byte cap. Reporting
+ *   *"990 bytes exceeded the 1000-byte limit"* is a sentence no reader can
+ *   reconcile, and a model that responds by raising `max_result_size` to 1200
+ *   gets the same file back. The size is labelled as the on-disk size and the
+ *   limit is labelled as applying after the pass, so both are true together.
+ *
+ * - **The noun has to name what is on disk.** With a `jq_filter` the artefact
+ *   is the FILTER's output, not the response — so a model that queries the file
+ *   for a sibling field gets `null`, which is jq's answer for an absent path,
+ *   and reports that the origin never sent it. `tools/jq-query.ts` already says
+ *   `Result (…)` for the same class of artefact, with the same reasoning; two
+ *   tools writing one kind of file should not use two nouns for it.
+ * - **A content type is never echoed.** The origin writes that header. Anything
+ *   remote-authored inside a sentence this server speaks is indistinguishable
+ *   to the reader from the server's own words, and the inline defence pass
+ *   removes markup and beacons but not prose. `parser.ts`'s `MEDIA_TYPE_PATTERN`
+ *   now bounds the field at the boundary; not interpolating it here is the
+ *   second half, and it is what makes this whole function server-authored.
+ * - **Absence is its own arm.** `isJsonContentType(undefined)` is `false`, so a
+ *   two-way split states "not JSON" about a body whose grammar was never
+ *   declared — and `jq_query` would have parsed it. Unknown gets its own
+ *   clause, which costs one speculative call and never withholds the payload.
+ *
+ * `save_to_file` is a request rather than a limit, which is why the over-cap
+ * clause is gated on the bytes genuinely exceeding the cap rather than on which
+ * arm asked for the save: telling the model it exceeded a limit it did not
+ * exceed is a falsehood about its own request. Both arms are reachable with
+ * `save_to_file: true`, and `processor.test.ts` pins each.
+ *
+ * `LESSONS.md` RC-30.
+ */
+function savedMessage(
+    diskBytes: number,
+    filepath: string,
+    maxSize: number,
+    overCap: boolean,
+    contentType: string | undefined,
+    filtered: boolean
+): string {
+    const subject = filtered ? "Result of jq_filter" : "Response";
+
+    const cause = overCap
+        ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} — it exceeds the ` +
+          `${maxSize}-byte inline limit once the inline defence pass is applied, so no body is ` +
+          `returned here.`
+        : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
+
+    // The filter ran, so the artefact is JSON by construction whatever the
+    // origin declared — `applyJqFilterToParsed` returns `JSON.stringify` output.
+    const route =
+        filtered || isJsonContentType(contentType)
+            ? " Use the jq_query tool on that path to extract fields."
+            : contentType === undefined
+              ? " The content type was not declared, so the grammar is unknown — try the jq_query" +
+                " tool on that path; it reports plainly if the file is not JSON."
+              : " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
+                " your own tooling.";
+
+    const scope = filtered
+        ? " That file holds the FILTER OUTPUT, not the full response body."
+        : "";
+
+    return cause + route + scope;
 }
 
 /**
@@ -768,7 +822,12 @@ export async function processResponse(
         }
 
         try {
-            parsedData = JSON.parse(trimmed);
+            // Same reviver as the defence walk above and as `jq_query`: this
+            // branch re-serialises through `applyJqFilterToParsed`, so without
+            // it a 64-bit id returned by `curl_execute` with a `jq_filter` is
+            // silently rounded while the SAME body returned without one is
+            // exact (RC-27).
+            parsedData = JSON.parse(trimmed, keepNumberLexeme);
         } catch (error) {
             // SyntaxError indicates invalid JSON
             if (error instanceof SyntaxError) {
@@ -804,12 +863,14 @@ export async function processResponse(
     // model never receives and let an over-cap result stay inline, which is the
     // invariant-14 violation this closes (`LESSONS.md` RC-15).
     //
-    // What it does NOT do is rewrite the returned value. `processResponse` is a
-    // published entry point whose documented behaviour is the ORIGIN's grammar —
-    // a `text/plain` body keeps its comments, a JSON document keeps `<script>`
-    // inside its string values (RC-10) — and the strict pass belongs to the
-    // model-facing boundary, not to this one. So the defended text is computed
-    // as a measurement and discarded; only the gate consumes it.
+    // What it does NOT do is rewrite the returned value. `processResponse` has
+    // one caller (`tools/curl-execute.ts`) and is exported from none of the four
+    // npm entry points, but its documented behaviour is still the ORIGIN's
+    // grammar — a `text/plain` body keeps its comments, a JSON document keeps
+    // `<script>` inside its string values (RC-10) — and the strict pass belongs
+    // to the model-facing boundary, not to this one. So the defended text is
+    // computed as a measurement and discarded; only the gate consumes it, and on
+    // the over-cap arm below it is not computed at all.
     //
     // **This is also why the cap cannot be enforced at the wrap itself**, which
     // was the other candidate. By then the body is sealed inside
@@ -825,30 +886,33 @@ export async function processResponse(
 
     if (shouldSave) {
         const filepath = await saveResponseToFile(content, options.url, options.outputDir);
-        // The preview is the one place the defended form is RETURNED, because
-        // it is the only form that can be bounded: truncating `content` would
-        // leave the wrap free to grow it back over the cap. Truncation can only
-        // destroy a complete `[…](…)`, never create one, so the wrap's pass over
-        // this preview finds nothing left to replace and cannot grow it.
+        // **No body bytes are returned on this arm, and that is the whole
+        // saving.** This used to return a preview — `defendForInline` over the
+        // entire body, then a byte-cut to `maxSize` — on the reasoning that the
+        // defended form was the only one that could be bounded. The reasoning
+        // was sound and the consumer was not there: `formatResponse`'s file
+        // branch emits `saved_to_file`, `filepath` and `message` and never reads
+        // the body, so the pass produced nothing the model ever saw. Measured at
+        // 91 ms of a 197 ms call on a 9.4 MB body (`docs/todos/008`).
         //
-        // Byte-aware, best-effort — may produce a replacement char at the
-        // boundary. No notice is written into the text: a truncation notice
-        // inside remote-authored text is a control-plane fact in a data-plane
-        // string and an origin can send the same words, so the fact travels in
-        // the server-authored `message`. Same reasoning as the out-of-band
-        // header facts in `formatter.ts::formatResponse`.
-        let displayContent = content;
-        if (overCap) {
-            displayContent = Buffer.from(defendForInline(content, hostname), "utf8")
-                .subarray(0, maxSize)
-                .toString("utf8");
-        }
+        // Dropping it makes invariant 14 trivially true here rather than
+        // narrowly true: the cap cannot be exceeded by bytes that are not
+        // returned. `ProcessedResponse`'s saved arm carries no `content` field
+        // at all, so this is enforced by the type and not by this comment.
+        //
+        // The body is not lost — it is on disk in origin grammar, and `message`
+        // below names the tool that reads it.
         return {
-            content: displayContent,
             savedToFile: true,
             filepath,
-            // Describes the artefact on disk, which is the origin-grammar copy.
-            message: `Response (${Buffer.byteLength(content, "utf8")} bytes) saved to: ${filepath}`,
+            message: savedMessage(
+                Buffer.byteLength(content, "utf8"),
+                filepath,
+                maxSize,
+                overCap,
+                options.contentType,
+                options.jqFilter !== undefined
+            ),
         };
     }
 

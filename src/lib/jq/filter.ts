@@ -4,12 +4,22 @@
 import { JQ } from "../config/jq.js";
 import { LIMITS } from "../config/limits.js";
 import { parseJqFilter, splitJqFilters } from "./parser.js";
+import { isRawNumber, keepNumberLexeme } from "../utils/index.js";
 
 /**
  * Type guard for plain objects (not arrays or null).
  * Internal helper - not exported from module.
  */
 function isRecord(value: unknown): value is Record<string, unknown> {
+    // **A preserved number lexeme is an object at runtime and a NUMBER to every
+    // caller here.** Without this arm `.price` on `{"price":3.140}` navigates
+    // into the marker, so `.price.rawJSON` returns the string `"3.140"` and
+    // leaks an internal representation as if the origin had sent it. It also
+    // turns a scalar into a container for any walk that keys off "is this an
+    // object?" — the same guard `response/processor.ts` needs at its own three
+    // structural tests, and the reason `isRawNumber` is exported beside the
+    // reviver rather than kept private to it.
+    if (isRawNumber(value)) return false;
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -130,7 +140,12 @@ export function applyJqFilterToParsed(data: unknown, filter: string): string {
 export function applyJqFilter(jsonString: string, filter: string): string {
     let data: unknown;
     try {
-        data = JSON.parse(jsonString);
+        // `keepNumberLexeme`, so a number survives this parse-and-reserialise
+        // exactly as the origin spelled it. This is the tool the model is sent
+        // to when a response is too large to return inline, so it is the path
+        // large-body numbers actually travel — and it used to round them while
+        // the inline path kept them exact (RC-27).
+        data = JSON.parse(jsonString, keepNumberLexeme);
     } catch (error) {
         // SyntaxError indicates invalid JSON
         if (error instanceof SyntaxError) {

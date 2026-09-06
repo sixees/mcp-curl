@@ -205,6 +205,17 @@ what a violation looks like, it does not belong on this list.
     `max_result_size`, and the wrap still has no file to save what it would
     trim — so the cap stays upstream, where both are in hand.
 
+    **On the saved path the ceiling is enforced by the type**, not by a
+    truncation: `ProcessedResponse`'s `savedToFile: true` arm carries no
+    `content` field, so there are no body bytes to bound. `LESSONS.md` RC-28.
+    This bounds the *body* and nothing else — `message` is composed after the
+    gate, which is why every value it may carry is bounded at its own source
+    (`parser.ts::MEDIA_TYPE_PATTERN` for the content type, `FILENAME_MAX_LENGTH`
+    for the path) rather than weighed here. Two channels are still bounded by
+    constants unrelated to `max_result_size` and are recorded as such:
+    `curl-execute.ts`'s `stderr` under `verbose` (`MAX_RESPONSE_SIZE`, 10 MB)
+    and `processResponse`'s jq-filter error. `LESSONS.md` RC-30.
+
 15. **Every regex in the strip path is linear in the size of its input, and the
     byte cap is not what makes it so.** A `g`-flagged replace starts a match
     attempt at every position, so a pattern that is linear *per attempt* is
@@ -291,9 +302,12 @@ what a violation looks like, it does not belong on this list.
 
     Object keys are deliberately left undefended: two keys defending to the
     same string would collapse into one, which is the very loss this invariant
-    exists to stop. Re-serialising also normalises number spelling (`1.50` →
-    `1.5`); nothing inline reads meaning from it, and the persisted artefact
-    never takes this path. `LESSONS.md` RC-16.
+    exists to stop. `LESSONS.md` RC-16.
+
+    Number spelling is NOT normalised — `1.50`, `1e400` and an
+    integer past `Number.MAX_SAFE_INTEGER` all come back byte-exact, because
+    the parse preserves each number's source lexeme and the serialiser re-emits
+    it verbatim. `LESSONS.md` RC-16, RC-24.
 
 ## Environments
 

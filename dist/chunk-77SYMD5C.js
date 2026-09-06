@@ -305,6 +305,19 @@ function createConfigError(configName, value, reason) {
   return new Error(`Invalid ${configName} value "${safeValue}": ${reason}.`);
 }
 
+// src/lib/utils/json-lexeme.ts
+var { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON;
+if (typeof rawJsonImpl !== "function" || typeof isRawJsonImpl !== "function") {
+  throw new Error(
+    `mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this runtime, and the response defence cannot preserve JSON number values without them. Detected ${process.version}.`
+  );
+}
+var rawJson = rawJsonImpl;
+var isRawNumber = isRawJsonImpl;
+function keepNumberLexeme(_key, value, context) {
+  return typeof value === "number" && typeof context?.source === "string" ? rawJson(context.source) : value;
+}
+
 // src/lib/utils/content-type.ts
 function parseMimeType(contentType) {
   if (typeof contentType !== "string" || !contentType) return "";
@@ -885,6 +898,7 @@ function splitJqFilters(filter) {
 
 // src/lib/jq/filter.ts
 function isRecord(value) {
+  if (isRawNumber(value)) return false;
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 function applySingleJqFilter(data, filter) {
@@ -951,7 +965,7 @@ function applyJqFilterToParsed(data, filter) {
 function applyJqFilter(jsonString, filter) {
   let data;
   try {
-    data = JSON.parse(jsonString);
+    data = JSON.parse(jsonString, keepNumberLexeme);
   } catch (error) {
     if (error instanceof SyntaxError) {
       const preview = jsonString.slice(0, LIMITS.ERROR_PREVIEW_LENGTH);
@@ -966,6 +980,7 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 }
 
 // src/lib/response/parser.ts
+var MEDIA_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?:[ \t]*;[ \t]*[A-Za-z0-9!#$&^_.+`|~*%'-]{1,64}=(?:[A-Za-z0-9!#$&^_.+`|~*%'-]{1,256}|"[^"\\\x00-\x1f]{0,512}")){0,32}[ \t]*;?[ \t]*$/;
 function isJsonContentType(contentType) {
   const mime = parseMimeType(contentType);
   return mime === "application/json" || mime.endsWith("+json");
@@ -986,9 +1001,10 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const bodyBytes = raw.subarray(0, separatorIndex);
   const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
   const contentType = metadata.trim();
+  const validContentType = MEDIA_TYPE_PATTERN.test(contentType) ? contentType : void 0;
   return {
     body: bodyBytes.toString("utf8"),
-    contentType: contentType || void 0,
+    contentType: validContentType,
     metadataFound: true
   };
 }
@@ -2000,15 +2016,6 @@ function parseJsonDocument(text, preserveNumberLexemes = false) {
     return void 0;
   }
 }
-function keepNumberLexeme(_key, value, context) {
-  return typeof value === "number" && typeof context?.source === "string" ? rawJson(context.source) : value;
-}
-var { rawJSON: rawJson, isRawJSON: isRawNumber } = JSON;
-if (typeof rawJson !== "function" || typeof isRawNumber !== "function") {
-  throw new Error(
-    `mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this runtime, and the response defence cannot preserve JSON number values without them. Detected ${process.version}.`
-  );
-}
 function defendText(text, options) {
   let content = text;
   const { hostname, contentTypeUndetermined = true } = options;
@@ -2105,6 +2112,13 @@ function exceedsInlineCap(text, hostname, maxBytes) {
   if (bytes * MAX_INLINE_GROWTH_RATIO <= maxBytes) return false;
   return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
 }
+function savedMessage(diskBytes, filepath, maxSize, overCap, contentType, filtered) {
+  const subject = filtered ? "Result of jq_filter" : "Response";
+  const cause = overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
+  const route = filtered || isJsonContentType(contentType) ? " Use the jq_query tool on that path to extract fields." : contentType === void 0 ? " The content type was not declared, so the grammar is unknown \u2014 try the jq_query tool on that path; it reports plainly if the file is not JSON." : " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling.";
+  const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
+  return cause + route + scope;
+}
 async function processResponse(response, options) {
   if (typeof response !== "string") {
     throw new TypeError("processResponse: response must be a string");
@@ -2134,7 +2148,7 @@ async function processResponse(response, options) {
       }
     }
     try {
-      parsedData = JSON.parse(trimmed);
+      parsedData = JSON.parse(trimmed, keepNumberLexeme);
     } catch (error) {
       if (error instanceof SyntaxError) {
         throw new Error(
@@ -2151,16 +2165,17 @@ async function processResponse(response, options) {
   const shouldSave = options.saveToFile || overCap;
   if (shouldSave) {
     const filepath = await saveResponseToFile(content, options.url, options.outputDir);
-    let displayContent = content;
-    if (overCap) {
-      displayContent = Buffer.from(defendForInline(content, hostname), "utf8").subarray(0, maxSize).toString("utf8");
-    }
     return {
-      content: displayContent,
       savedToFile: true,
       filepath,
-      // Describes the artefact on disk, which is the origin-grammar copy.
-      message: `Response (${Buffer.byteLength(content, "utf8")} bytes) saved to: ${filepath}`
+      message: savedMessage(
+        Buffer.byteLength(content, "utf8"),
+        filepath,
+        maxSize,
+        overCap,
+        options.contentType,
+        options.jqFilter !== void 0
+      )
     };
   }
   return {
@@ -2737,8 +2752,7 @@ async function executeCurlRequest(params, extra = {}) {
       hostname: safeHostname(params.url),
       decodeEntities: false
     }) : result.stderr;
-    const bodyIsReturned = !(processed.savedToFile && processed.filepath);
-    const inlineBody = params.include_metadata || !bodyIsReturned ? processed.content : defendForInline(processed.content, safeHostname(params.url));
+    const inlineBody = processed.savedToFile ? "" : params.include_metadata ? processed.content : defendForInline(processed.content, safeHostname(params.url));
     const output = formatResponse(
       inlineBody,
       defendedStderr,

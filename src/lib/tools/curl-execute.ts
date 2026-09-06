@@ -283,18 +283,22 @@ export async function executeCurlRequest(
         // string leaf of a JSON envelope and `defendJsonLeaves` already
         // defends it region-wise.
         //
-        // Skipped where the body was saved: `formatResponse`'s file branch
-        // returns the server-authored `message` and never reads the body at
-        // all, so defending it is a full detection-and-sanitisation pass over
-        // bytes that cannot be returned — on precisely the path that exists to
-        // offload large responses. The condition mirrors the one
-        // `formatResponse` itself branches on, rather than `savedToFile`
-        // alone, so the two cannot disagree about which shape reads the body.
-        const bodyIsReturned = !(processed.savedToFile && processed.filepath);
-        const inlineBody =
-            params.include_metadata || !bodyIsReturned
-                ? processed.content
-                : defendForInline(processed.content, safeHostname(params.url));
+        // Absent where the body was saved: `ProcessedResponse`'s saved arm
+        // carries no `content` at all (invariant 14 stated in the type), because
+        // `formatResponse`'s file branch returns the server-authored `message`
+        // and never reads a body. There is nothing to defend and nothing to
+        // pass, so the empty string below is not a body that was dropped — it is
+        // the argument `formatResponse` ignores on that branch.
+        //
+        // This used to read `processed.content` on both arms and skip the
+        // defence pass for the saved one, which was correct and rested on the
+        // two branches agreeing about which shape reads the body. They cannot
+        // now disagree: on the saved arm there is no field to read.
+        const inlineBody = processed.savedToFile
+            ? ""
+            : params.include_metadata
+              ? processed.content
+              : defendForInline(processed.content, safeHostname(params.url));
 
         const output = formatResponse(
             inlineBody,
