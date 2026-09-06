@@ -264,3 +264,78 @@ deployment, this is P1"*, and for an orchestrated agent fleet they are.
   a performance one — `security-sentinel`'s call, not something to take casually.
 - `utils/json-lexeme.ts` had no colocated test where every other `utils/` file does
   (`pattern-recognition-specialist`). Fixed as part of RC-29's fix rather than tracked.
+
+## Code Review — 2026-09-06 (Surface 2, three rounds)
+
+**Certification:** complete
+**Roster closure:** closed — 8 agents (union of `review_agents` and the four-agent floor); all deferral destinations in-roster. unresolved: pattern-recognition-specialist → "whichever reviewer owns that lane"; security-sentinel → "anything genuinely outside your lane gets one line under notes: and no finding"
+**Rounds:** 3 × 8 agents = 24 dispatches, 24 returned, 0 failed, 0 not-migrated
+**Base:** `5adb7d3c9d67a349b30338e61efc1d002d1566e5` via `git merge-base --fork-point origin/HEAD HEAD`
+
+### Findings by class
+
+| # | Class | Sev | Reviewers | In diff | Disposition |
+|---|---|---|---|---|---|
+| A | remote `Content-Type` composed into server-authored model-facing prose | P1 | security ×3, architecture, typescript ×2 | yes (`savedMessage`) | fix — at the parse boundary |
+| B | `savedMessage` asserts a route it cannot know (3 arms) | P1 ↑ | data-integrity ×2, architecture ×2, simplicity | yes | fix |
+| C | message routes the model to read the artefact outside the wrap | P1 | security ×2 | yes | fix (stop advertising) |
+| F | tests that cannot fail | P1 ↑ | data-integrity, pattern, simplicity, typescript ×2 | yes | fix |
+| D | `ARCHITECTURE.md` invariant 16 truncated, invariant 14's claim spliced in | P2 | security, typescript | yes | fix |
+| E | `docs/todos/012` records the wrong collision mechanism | P2 | data-integrity | yes | fix |
+| J | docblock costs measured at 16–35% of the permitted bound, and indexed on the wrong axis | P2 | performance ×2 | yes | fix |
+| K | timing-guard calibration comment optimistic in both numbers | P3 | performance | yes | fix |
+| L | `savedMessage` docblock claims the over-cap clause is absent on the `save_to_file` arm | P3 | performance | yes | fix |
+| M | `register-all-tools.test.ts` cites `processor.ts` as the Node-22 guard's home | P3 | typescript | yes | fix |
+| N | `jq/filter.ts` deep-imports `../utils/json-lexeme.js`, bypassing the barrel (21 of 22 use it) | P3 | pattern | yes | fix |
+| O | stacked docblocks orphan `exceedsInlineCap`'s original block and its `@param` | P3 | security | yes | fix |
+| P | `ProcessedResponse` docblock claims a defended route that exists only for JSON | P3 | architecture | yes | fix |
+| G | `parseJsonDocument` defaults to the lossy arm; `contentTypeUndetermined` optional where `defendText`'s is required | P2 | data-integrity, typescript | **no** | declined — out of scope |
+| H | inline-budget rule has one implementation and three bypasses | P2 | architecture, pattern, simplicity | 1 of 3 | in-diff instance dies with A; 2 pre-existing declined |
+| I | lexeme reviver cost on the two jq paths | P2 | performance ×3 | yes | **declined with measurement** |
+
+↑ = severity raised one level per `plugin:commands/review.md` §4.1 on a `class-id` recurrence: **B** on RC-29 (`misplaced-decision`, recorded in this very PR) and **F** on RC-28 (`unchecked-assertion`, also this PR — *"a guard written to replace a false green inherits the pressure that produced the first one"*).
+
+### Escalated to the operator — out-of-scope P1s (at the deferral cap of 2)
+
+1. **Invariant-16 bypass via a stale byte measurement.** `parseJsonDocument`'s gate reads pre-sanitise bytes (`processor.ts:153`); `defendText`'s `exceedsStripCap` reads post-sanitise. A >256 KB JSON body carrying ≥18 KB of collapsible padding declines the region-wise arm, then passes the strip cap after collapse and is scanned undivided — so `stripHtmlComments` pairs `<!--` in one field with `-->` in another and deletes the keys between. Remote-selectable at both ends. The repo's own docblock records the **mirror** half of this mechanism (263,900 in → 407,401 out) as a closed invariant-14 problem; the invariant-16 half is unaddressed. Verified out of diff: gate at line 153, hunk begins at old 158.
+2. **The invariant-1 class has six instances, not two.** Confirmed further unwrapped `CallToolResult` exits: `hook-executor.ts::executeWithHooks` (wrap fires at 2 of 4 exits; a throwing `beforeRequest` hook skips both the wrap *and* the `onError` chain), both `!enabled` early returns in `tool-wrapper.ts`, and `schema/generator.ts::createToolHandler`'s catch arms plus trailing throw — and `registerEndpointTools` **is** published from `src/lib.ts`. Two instances is a pair of edits; six is a seam needing one enforced exit.
+
+### Declines, with the evidence
+
+- **I — reviver cost.** Measured on shipped `dist/` at base and HEAD, against the real canonical Lighthouse `sample_v2.json` in a PSI v5 envelope and Toggl bodies at documented page sizes: PageSpeed **+2.0–2.5 ms / +1.0–1.4 MB**, Toggl 50-entry page **+0.3 ms**. For every saved body the PR is net **10–49 ms faster**. Round 1's "+274 MB RSS" was **uncollected garbage, not footprint** — real per-call heap delta is 1.8–19.2 MB; performance-oracle corrected itself in round 3. Bounded: cost is linear in *numbers per document* (~0.34–0.98 µs each), not bytes — two 450 KB bodies differing only in number count measured 7.6× apart. `JQ.MAX_QUERY_FILE_SIZE` remains the lever. **The proposed benchmark fixture is also declined**: a wall-clock threshold with a measured 2–4× median-vs-min GC spread would flake, be quarantined, and then guard a cost already accepted — rule 42's guard-nobody-needed.
+- **G — lossy default.** `preserveNumberLexemes = false` is byte-identical at base; `git diff` shows no change to it. Real mechanism (a future caller re-creating RC-27 silently), empty population today, out of scope. Recorded here rather than filed so the next caller meets it.
+- **H — the two pre-existing bound instances.** `git diff … -- src/lib/tools/curl-execute.ts | rg defendedStderr` returns nothing: not in the diff. Pattern sized the class at 3 confirmed instances (no fourth; `applyJqFilter`'s 200-byte preview excluded because 200 < the schema's `max_result_size` floor of 1,000, so `min()` holds trivially), and both architecture and pattern judged 3 instances insufficient to justify extracting `boundInlineText`.
+
+### Reviewer declines worth preserving
+
+`FileSaveInfo` re-widening — declined twice as K-14, population re-tested against every entry point and confirmed empty. A branded `ServerAuthored` string type — declined because TypeScript has no taint propagation: `` `${a}${b}` `` on two branded strings yields plain `string`, so the brand dies at exactly the operation it would police. `include_metadata` gating `sanitizeErrorMessage` — K-14, the success path returns absolute paths unconditionally because the model needs them. JSON key-order discrepancy between file and inline copy — real, insignificant under RFC 8259, no nameable harm.
+
+### Verified handoff claims
+
+| Claim | Result |
+|---|---|
+| `ProcessedResponse` reaches no npm entry point | **confirmed** — absent from every shipped `.d.ts`; no wildcard exports on any of the four entries |
+| `formatResponse`'s saved branch ignores `stdout` | **confirmed** — both JSON and plain arms return before reading it |
+| `savedMessage`'s byte count is "bytes on disk" | **confirmed** — `writeFile` persists exactly `content`; the count is `Buffer.byteLength` of the same string |
+| 40% CPU saving on the deleted pass | **confirmed independently** — 201.4 → 121.2 ms median on 9.86 MB, compiled base vs HEAD |
+| Timing guard has teeth | **confirmed** — 2.30–2.73 with the pass reintroduced vs 0.76–1.32 clean |
+| Suite state | **1248 passed / 3 failed / 7 skipped / 272 suites**; all 3 failures are the pre-existing `strip-blocks.test.ts` ReDoS wall-clock cases (todo 013) |
+| Number-lexeme class closed | **confirmed** — every `JSON.parse` in production `src/` routes through `keepNumberLexeme`; 4 of 4 structural marker guards present |
+
+### Handoff assessment
+
+Honest and unusually self-critical — it surfaced both of its own false greens, corrected three of its own earlier claims inline, and reported the suite as not-clean on either branch rather than rounding up. Two things it got wrong that review caught: the "+274 MB" memory figure it relayed (garbage, not footprint), and `docs/todos/012`'s recorded collision mechanism. Its *"What to pay attention to"* section correctly predicted the marker-leakage risk, and that lane came back clean at 4-for-4.
+
+### Blockers
+
+Four P1 classes (A, B, C, F), all in scope, all in or adjacent to `savedMessage`. Plus two escalations awaiting a scope decision.
+
+### The remedy question — three candidates, unresolved by review
+
+Rounds disagreed, and the disagreement is a scope call rather than a finding.
+
+- **Wide cut** (simplicity R2; architecture R3 endorsing it but rejecting the `disableJqQuery` threading as `fail-open-default`, citing todo 006): drop `contentType` and the whole route clause; move the hint to the static `CURL_EXECUTE_TOOL_META.description`. Closes A-at-`savedMessage`, B and C's advertisement. Costs one wasted `jq_query` call per non-JSON save (`saveResponseToFile` always appends `.txt`, so the artefact carries no signal), breaks three tests, and per typescript R3 makes C's *other* instance more reachable.
+- **Narrow fix** (simplicity R3, reversing itself): keep the two-branch route, reduce `contentType` to a boolean before it reaches the string. Closes A at `savedMessage` only; keeps C verbatim, keeps two of B's arms wrong, keeps the false green.
+- **Parse-boundary validation** (security R3): constrain `contentType` to the RFC 6838 media-type grammar at `parseResponseWithMetadata`, `undefined` on mismatch. Rung 1 rather than rung 4 — closes **all four** of A's instances, present and future. Addresses neither B nor C.
+
+`LESSONS.md` precedent: **RC-17** is the template for relocating a decision a layer cannot answer; **RC-26** already fired rule 42's convergence rule on this codebase and concluded *"the right response is not a third patch"*; **RC-21** sets the bar for the replacement (assertions must match the registration set). No prior art warns against moving a hint into a static description, and none records removing a model-facing affordance making behaviour worse.
