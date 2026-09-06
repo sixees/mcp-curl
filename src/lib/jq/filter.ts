@@ -4,7 +4,7 @@
 import { JQ } from "../config/jq.js";
 import { LIMITS } from "../config/limits.js";
 import { parseJqFilter, splitJqFilters } from "./parser.js";
-import { isRawNumber, keepNumberLexeme } from "../utils/json-lexeme.js";
+import { isRawNumber, keepNumberLexeme } from "../utils/index.js";
 
 /**
  * Type guard for plain objects (not arrays or null).

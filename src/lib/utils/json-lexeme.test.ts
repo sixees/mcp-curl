@@ -2,6 +2,23 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { keepNumberLexeme, isRawNumber } from "./json-lexeme.js";
 
+/**
+ * A `JSON` double that keeps every real method and replaces only what is named.
+ *
+ * `Object.create(JSON)` puts the genuine object on the prototype chain, so
+ * `parse`, `stringify` and `Symbol.toStringTag` all resolve, while the own
+ * properties defined here shadow them. `defineProperty` rather than assignment
+ * because an own property of `undefined` is what the module's destructure must
+ * see — a plain `= undefined` on an inherited accessor would not shadow it.
+ */
+function withoutRawJson(overrides: Record<string, unknown>): typeof JSON {
+    const double = Object.create(JSON) as typeof JSON;
+    for (const [key, value] of Object.entries(overrides)) {
+        Object.defineProperty(double, key, { value, configurable: true, enumerable: true });
+    }
+    return double;
+}
+
 describe("keepNumberLexeme", () => {
     const parse = (text: string) => JSON.stringify(JSON.parse(text, keepNumberLexeme));
 
@@ -68,7 +85,14 @@ describe("the Node >= 22 capability guard", () => {
         // import paths that happened to pull that file in. Nothing here imports
         // `response/` — if the guard drifts back out of `json-lexeme.ts`, this
         // case stops throwing (RC-29).
-        const stubbed = { ...JSON, rawJSON: undefined, isRawJSON: hostJson.isRawJSON };
+        // **Not `{ ...JSON }`.** Every built-in method is non-enumerable
+        // (ECMA-262 §17), so a spread copies NONE of them — the double would be
+        // `{ rawJSON, isRawJSON }` with no `parse` and no `stringify`, i.e. a
+        // runtime with no JSON at all rather than the Node-21 runtime this case
+        // claims to model. Anything touching `JSON.parse` inside the stub window
+        // would then throw a TypeError that does not match the expectation
+        // below, turning an intact guard red for the wrong reason.
+        const stubbed = withoutRawJson({ rawJSON: undefined, isRawJSON: hostJson.isRawJSON });
         vi.stubGlobal("JSON", stubbed);
         vi.resetModules();
 
@@ -79,7 +103,7 @@ describe("the Node >= 22 capability guard", () => {
         // Both halves, because the guard tests both and a one-sided check would
         // leave `isRawNumber` returning `undefined` — falsy, so every structural
         // guard would read a marker as a composite and descend into it.
-        const stubbed = { ...JSON, rawJSON: hostJson.rawJSON, isRawJSON: undefined };
+        const stubbed = withoutRawJson({ rawJSON: hostJson.rawJSON, isRawJSON: undefined });
         vi.stubGlobal("JSON", stubbed);
         vi.resetModules();
 

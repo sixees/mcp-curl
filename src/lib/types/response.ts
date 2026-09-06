@@ -53,9 +53,14 @@ export interface ProcessResponseOptions {
  * from the inline arm's at the call site while meaning the opposite, and the
  * first caller to read it would breach the byte ceiling with nothing erroring.
  *
- * The body reaches the model through {@link ProcessedResponse.filepath} and the
- * `jq_query` tool, which applies its own defence and its own cap to whatever it
- * extracts.
+ * The body reaches the model through {@link ProcessedResponse.filepath}. For a
+ * JSON artefact that route is `jq_query`, which applies its own defence and its
+ * own cap to whatever it extracts. **For any other grammar there is no such
+ * route** — the model reads the path with its own tooling, which applies
+ * neither, so the *byte-ceiling* half of this justification holds on every arm
+ * and the *defence* half holds only on the JSON one. Stated rather than implied
+ * because a reader checking invariant 1 against this type would otherwise
+ * conclude the saved path is covered for `text/html`, and it is not.
  */
 export type ProcessedResponse =
     | {

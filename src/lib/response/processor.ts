@@ -611,18 +611,26 @@ const MAX_INLINE_GROWTH_RATIO =
  * nowhere near its cap.
  *
  * @param hostname - label for the detection log, on the rare arm that runs it
- */
-/**
+ *
  * **The growth-band double-compute is a known, declined cost — do not "fix" it
  * with the shortcut that looks obvious.**
  *
  * For a body in the growth band that stays inline, this function runs
  * `defendForInline` as a measurement, discards it, and `curl-execute.ts` then
- * runs the identical pass to produce what it returns. Measured at ~4 ms on a
- * 500 KB body under a 600 KB cap. Declined rather than fixed: threading the
- * defended string back out re-creates the two-shapes-of-content hazard that
- * removing `content` from `ProcessedResponse`'s saved arm just eliminated, and
- * 4 ms on a body bounded by `max_result_size` does not buy that back.
+ * runs the identical pass to produce what it returns. Declined rather than
+ * fixed: threading the defended string back out re-creates the
+ * two-shapes-of-content hazard that removing `content` from
+ * `ProcessedResponse`'s saved arm just eliminated.
+ *
+ * **Priced at the worst `max_result_size` the schema admits, not at the
+ * default** — the earlier note here measured 500 KB under a 600 KB cap and read
+ * as settled, but that band sits ABOVE `STRIP_PATH_MAX_BYTES` and so takes the
+ * cheap sanitise arm. Any `max_result_size` ≤ 262,144 puts the whole band
+ * `(0.6·max, max]` below the strip cap, where the expensive JSON-walk arm runs:
+ * measured 39.8–70.7 ms at 244 KB against 3.4 ms at 273 KB — the cost is
+ * INVERTED in body size across that boundary, and `curl-execute.ts` then pays
+ * it a second time. The decline stands at the default (5.6 ms measured) and is
+ * an operator call at a small cap. `LESSONS.md` RC-30.
  *
  * **The shortcut that is unsound**, recorded so a later round does not spend a
  * measurement rediscovering it: you cannot skip the expensive arm above
@@ -660,29 +668,63 @@ export function exceedsInlineCap(text: string, hostname: string, maxBytes: numbe
  *   gets the same file back. The size is labelled as the on-disk size and the
  *   limit is labelled as applying after the pass, so both are true together.
  *
+ * - **The noun has to name what is on disk.** With a `jq_filter` the artefact
+ *   is the FILTER's output, not the response — so a model that queries the file
+ *   for a sibling field gets `null`, which is jq's answer for an absent path,
+ *   and reports that the origin never sent it. `tools/jq-query.ts` already says
+ *   `Result (…)` for the same class of artefact, with the same reasoning; two
+ *   tools writing one kind of file should not use two nouns for it.
+ * - **A content type is never echoed.** The origin writes that header. Anything
+ *   remote-authored inside a sentence this server speaks is indistinguishable
+ *   to the reader from the server's own words, and the inline defence pass
+ *   removes markup and beacons but not prose. `parser.ts`'s `MEDIA_TYPE_PATTERN`
+ *   now bounds the field at the boundary; not interpolating it here is the
+ *   second half, and it is what makes this whole function server-authored.
+ * - **Absence is its own arm.** `isJsonContentType(undefined)` is `false`, so a
+ *   two-way split states "not JSON" about a body whose grammar was never
+ *   declared — and `jq_query` would have parsed it. Unknown gets its own
+ *   clause, which costs one speculative call and never withholds the payload.
+ *
  * `save_to_file` is a request rather than a limit, which is why the over-cap
- * clause is absent on that arm entirely: telling the model it exceeded a limit
- * it did not exceed is a falsehood about its own request.
+ * clause is gated on the bytes genuinely exceeding the cap rather than on which
+ * arm asked for the save: telling the model it exceeded a limit it did not
+ * exceed is a falsehood about its own request. Both arms are reachable with
+ * `save_to_file: true`, and `processor.test.ts` pins each.
+ *
+ * `LESSONS.md` RC-30.
  */
 function savedMessage(
     diskBytes: number,
     filepath: string,
     maxSize: number,
     overCap: boolean,
-    contentType: string | undefined
+    contentType: string | undefined,
+    filtered: boolean
 ): string {
+    const subject = filtered ? "Result of jq_filter" : "Response";
+
     const cause = overCap
-        ? `Response (${diskBytes} bytes on disk) was saved to: ${filepath} — it exceeds the ` +
+        ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} — it exceeds the ` +
           `${maxSize}-byte inline limit once the inline defence pass is applied, so no body is ` +
           `returned here.`
-        : `Response (${diskBytes} bytes) saved to: ${filepath}`;
+        : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
 
-    const route = isJsonContentType(contentType)
-        ? " Use the jq_query tool on that path to extract fields."
-        : ` The body is ${contentType ? `\`${contentType}\`` : "not JSON"}, which the jq_query ` +
-          `tool cannot parse — read the path with your own file tooling.`;
+    // The filter ran, so the artefact is JSON by construction whatever the
+    // origin declared — `applyJqFilterToParsed` returns `JSON.stringify` output.
+    const route =
+        filtered || isJsonContentType(contentType)
+            ? " Use the jq_query tool on that path to extract fields."
+            : contentType === undefined
+              ? " The content type was not declared, so the grammar is unknown — try the jq_query" +
+                " tool on that path; it reports plainly if the file is not JSON."
+              : " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
+                " your own tooling.";
 
-    return cause + route;
+    const scope = filtered
+        ? " That file holds the FILTER OUTPUT, not the full response body."
+        : "";
+
+    return cause + route + scope;
 }
 
 /**
@@ -868,7 +910,8 @@ export async function processResponse(
                 filepath,
                 maxSize,
                 overCap,
-                options.contentType
+                options.contentType,
+                options.jqFilter !== undefined
             ),
         };
     }

@@ -21,9 +21,13 @@ error on either side.
 
 Three things compound:
 
+- **The query string is never part of the name, at any length.**
+  `saveResponseToFile` passes `urlObj.hostname + urlObj.pathname`, and WHATWG
+  `URL.pathname` excludes `?search` entirely — so two URLs differing only in
+  their query always collide, whether the path is 5 characters or 500.
 - `createSafeFilenameBase` maps every non-alphanumeric to `_` and slices to
-  `LIMITS.FILENAME_MAX_LENGTH` (50) **before** trimming, so a URL's query string
-  never reaches the name on any path longer than 50 characters.
+  `LIMITS.FILENAME_MAX_LENGTH` (50), which is a **second, independent** collision
+  source for long paths. It is not the cause of the query-string case.
 - `Date.now()` is millisecond resolution.
 - `writeFile` carries no `flag: "wx"`, so an existing path is overwritten rather
   than refused.
@@ -33,10 +37,20 @@ Three things compound:
 Measured, not argued:
 
 ```
-?page=1 -> https___api_example_com_v1_reports_regional_summar
-?page=2 -> https___api_example_com_v1_reports_regional_summar
-SAME BASE: true
+new URL("https://api.example.com/items?page=1").hostname + .pathname
+  -> api.example.com/items          (21 chars — nowhere near the 50 cap)
+new URL("https://api.example.com/items?page=2").hostname + .pathname
+  -> api.example.com/items
+IDENTICAL: true
 ```
+
+**Corrected 2026-09-06.** The first version of this block measured
+`createSafeFilenameBase(url)` directly and recorded a base beginning `https___`
+— reachable only through the `catch (error instanceof TypeError)` fallback for
+an INVALID URL, which the real path never takes. It therefore recorded
+truncation-to-50 as the mechanism. That is wrong in a way that matters: an
+implementer raising `FILENAME_MAX_LENGTH` to 200 would re-run the old
+measurement, see two distinct bases, and close this P1 with the defect live.
 
 - `src/lib/response/file-saver.ts:92` — `` const filename = `${safeName}_${Date.now()}.txt`; ``
 - `src/lib/response/file-saver.ts:95` — `writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 })`, no flag
@@ -45,7 +59,9 @@ SAME BASE: true
 - `src/lib/tools/jq-query.ts:150,154` — the same construction and the same non-exclusive write
 
 An agent batching two `curl_execute` calls in one turn — `?page=1` and `?page=2`
-— that both go over cap and complete in the same millisecond gets one file. The
+— that both go over cap and complete in the same millisecond gets one file. Note
+the two conditions are independent: the identical base holds always, and only
+the millisecond collision is a race. The
 first caller's `jq_query` on its own filepath returns the second caller's body,
 reported as its own.
 
@@ -90,7 +106,11 @@ site has to remember: there are two sites today with the same shape, which is
 
 ## Acceptance criteria
 
-- [ ] Two concurrent saves of the same URL with `Date.now` stubbed to a constant
-      produce two distinct paths, with both files' bytes intact.
+- [ ] Two concurrent saves of **two URLs differing only in their query string**
+      (`?page=1` / `?page=2`), with `Date.now` stubbed to a constant, produce two
+      distinct paths with both files' bytes intact. Stated this way and not "the
+      same URL" because the same-URL case is the narrower one — the query-string
+      case is what an agent paginating an API actually produces, and a fix that
+      only lengthens the filename passes the same-URL test and fails this one.
 - [ ] `jq_query`'s save path takes the same helper — asserted, not assumed.
 - [ ] A collision surfaces as an error rather than as a successful overwrite.

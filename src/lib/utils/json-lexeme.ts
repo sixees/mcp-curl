@@ -104,21 +104,43 @@ export const isRawNumber: (value: unknown) => boolean = isRawJsonImpl;
  * a 5 MB document when it does not fire, and it early-exits into the reviver on
  * any document containing a decimal — i.e. most of them).
  *
- * Measured, Node 24, per parse:
+ * **The cost scales with the NUMBER COUNT, not the byte count, and an earlier
+ * version of this table was indexed on bytes.** That is not a rounding error:
+ * two 450 KB bodies differing only in how many numbers they hold measured 7.6x
+ * apart in CPU and 5x in heap (2,234 numbers → +1.5 ms / +1.0 MB; 34,380
+ * numbers → +11.6 ms / +5.1 MB). Anyone sizing a third API from a
+ * megabytes-indexed row is wrong in the permissive direction. The rate is
+ * **~0.34–0.98 µs per number**, stable across every shape measured, and that is
+ * the figure to extrapolate from.
  *
- * | body                       | plain   | with this reviver |
- * |----------------------------|---------|-------------------|
- * | PageSpeed-shaped, 3.5 MB   | 12.3 ms | 34.8 ms           |
- * | Toggl-shaped, 1.6 MB       |  3.2 ms | 24.3 ms           |
- * | numeric, 9.5 MB            |   18 ms | 384 ms            |
+ * Measured on the shipped `dist/`, Node 24, per call through `applyJqFilter`,
+ * against the real canonical Lighthouse `sample_v2.json` in a PSI v5 envelope
+ * and Toggl Reports v3 bodies at documented page sizes:
  *
- * The 9.5 MB row also peaks ~308 MB RSS against ~83 MB. **Accepted rather than
- * fixed**, because the realistic payloads this proxy exists for cost ~+22 ms and
- * the alternative — falling back to a plain parse above a threshold — would
- * re-corrupt exactly the large bodies `jq_query` is now the advertised route to,
- * which is one invariant's fix reintroducing another's violation. **If that
- * trade ever needs revisiting, the lever is `JQ.MAX_QUERY_FILE_SIZE` (10 MB
- * today), not this function.**
+ * | body                                   | bytes  | numbers | added CPU | added heap |
+ * |----------------------------------------|--------|---------|-----------|------------|
+ * | Toggl detailed, 50 entries (default)   |  22 KB |     421 |  +0.3 ms  |          — |
+ * | PageSpeed v5, performance category     | 351 KB |   2,216 |  +2.0 ms  |    +1.0 MB |
+ * | PageSpeed v5, all categories           | 437 KB |   2,573 |  +2.5 ms  |    +1.4 MB |
+ * | Toggl detailed, 1,000 entries          | 452 KB |   8,416 |  +7.5 ms  |    +3.3 MB |
+ * | Toggl detailed, 5,000 entries          | 2.3 MB |  42,083 |   +51 ms  |     +16 MB |
+ * | at the `JQ.MAX_QUERY_FILE_SIZE` bound  |  10 MB | ~190000 |  ~+130 ms |      ~+9x  |
+ *
+ * **Accepted rather than fixed**, because the realistic payloads this proxy
+ * exists for cost +0.3–2.5 ms — invisible beside the 10–30 s a PageSpeed call
+ * spends upstream — and because for every body large enough to be SAVED the
+ * change this shipped in is net 10–49 ms faster overall. The alternative,
+ * falling back to a plain parse above a threshold, would re-corrupt exactly the
+ * large bodies `jq_query` is the advertised route to; a hard refusal instead
+ * makes that route unusable for the bodies it exists for. **If that trade ever
+ * needs revisiting, the lever is `JQ.MAX_QUERY_FILE_SIZE` (10 MB today), and
+ * that gate covers only `jq_query` — the other two call sites are bounded by
+ * `LIMITS.MAX_RESPONSE_SIZE` and `STRIP_PATH_MAX_BYTES` respectively, so
+ * turning one lever alone leaves two sites at full cost.**
+ *
+ * A previous revision recorded ~308 MB RSS here. **That was uncollected
+ * garbage, not footprint** — sampled live heap with a forced-GC baseline gives
+ * the per-call figures above. `LESSONS.md` RC-30.
  *
  * **This lives here, and not beside one of its callers, because the rule has
  * three of them** — the response defence's region-wise walk, `curl_execute`'s

@@ -175,7 +175,7 @@ removed by the lifecycle below rather than annotated.
 
 | File | Priority | Description | Source |
 |---|---|---|---|
-| `docs/todos/012-P1-saved-files-can-silently-overwrite.md` | P1 | Saved response files collide on a 50-char truncated name plus a millisecond clock, and `writeFile` has no `flag: "wx"`. Pre-existing; this branch removed the preview that made a substitution detectable. | Escalated to and settled by the operator |
+| `docs/todos/012-P1-saved-files-can-silently-overwrite.md` | P1 | Saved response files collide because `URL.pathname` drops the query string entirely (mechanism corrected 2026-09-06; truncation-to-50 is a separate, secondary source), plus a millisecond clock, and `writeFile` has no `flag: "wx"`. Pre-existing; this branch removed the preview that made a substitution detectable. | Escalated to and settled by the operator |
 | `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md` | P2 | `strip-blocks.test.ts`'s absolute wall-clock ReDoS budgets fail on every full-suite run on `main` as well as here, so the suite has no reliable green. | Found while verifying this branch's own test claim |
 
 Both are pre-existing and out of this branch's scope. 013 in particular should be read
@@ -228,7 +228,7 @@ Eight reviewers (six configured + the four-agent floor, deduped) plus the built-
 ### Escalated, and settled by the operator
 
 **Saved files can silently overwrite each other** (`data-integrity-guardian`, P2 with
-the P1 tension named). `?page=1` and `?page=2` both truncate to the identical 50-char
+the P1 tension named). `?page=1` and `?page=2` both reduce to the identical 21-char
 base; `Date.now()` is millisecond; `writeFile` has no `flag: "wx"`. Pre-existing and
 out of scope — but this branch removed the inline preview that made a substitution
 detectable. The reviewer said explicitly *"if concurrent tool calls are normal in the

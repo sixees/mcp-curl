@@ -31,6 +31,28 @@ function inlineContent(result: ProcessedResponse): string {
     return result.content;
 }
 
+/**
+ * The mirror of {@link inlineContent}, and it exists for the same reason.
+ *
+ * Asserting on the filepath needs the union narrowed, and every call site was
+ * doing it by hand with a ternary — one of which supplied `""` for the arm it
+ * believed unreachable. `toContain("")` is true of every string, so that
+ * assertion checked nothing while reading as though it did; it was live only
+ * because a preceding `expect(savedToFile).toBe(true)` happened to sit above
+ * it, and deleting that line as a duplicate would have silently removed the
+ * check. Throwing here makes the vacuous arm unconstructible rather than merely
+ * currently-unreached.
+ */
+function savedFilepath(result: ProcessedResponse): string {
+    if (!result.savedToFile) {
+        throw new Error(
+            "expected a saved response, but the body was returned inline — " +
+                "the fixture stayed under max_result_size and took the inline path"
+        );
+    }
+    return result.filepath;
+}
+
 // Silence console.error during tests (injection detection logs to stderr).
 // Also clear the throttle map so each test gets a fresh detection state.
 beforeEach(() => {
@@ -1220,10 +1242,16 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         // costs. So the defect shows up as a doubling. Measured on a 2.9 MB
         // body, three paired runs each side:
         //
-        //   with the discarded pass    ratio 1.93 – 2.20
-        //   without it                 ratio 1.04 – 1.15
+        //   with the discarded pass    ratio 2.30 – 2.73
+        //   without it                 ratio 0.76 – 1.32
         //
-        // 1.5 sits clear of both bands. Medians rather than single runs because
+        // Both bands re-measured over 21 runs on the fixed build and 3 on a
+        // build with the pass reintroduced; an earlier note here recorded
+        // 1.04-1.15 from three runs and so claimed ~30% headroom where the
+        // observed worst case leaves 13%. Recorded at the observed extreme
+        // rather than a comfortable sample, because the number's whole job is
+        // to tell the next reader how much room they have to widen the fixture.
+        // 1.5 still sits clear of both bands. Medians rather than single runs because
         // the arms are ~27 ms apiece, where one descheduled run would otherwise
         // decide the verdict.
         const body = "lorem ipsum dolor sit amet <b>x</b> [a](https://e.test/p) ".repeat(50000);
@@ -1241,9 +1269,13 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         // this session watched `strip-blocks.test.ts`'s wall-clock ReDoS budgets
         // fail twice under load and pass 3/3 isolated.
         //
-        // CPU time also excludes the file write the over-cap arm does and the
-        // inline arm does not (2.79 ms, ~10% of an arm), which would otherwise
-        // put the ratio at ~2.08 on correct code on a slow filesystem.
+        // The file write the over-cap arm does and the inline arm does not is
+        // COUNTED here, not excluded — `process.cpuUsage()` sums every thread in
+        // the process, the libuv threadpool included, and the write measured
+        // 3.97-4.48 ms CPU against 3.99-4.76 ms wall on this fixture. It sits
+        // permanently in the numerator at ~12% of an arm. An earlier note here
+        // claimed the opposite; it is the reason the fixed band's upper end is
+        // 1.32 rather than the 1.15 that note implied.
         const timed = async (maxResultSize: number) => {
             const started = process.cpuUsage();
             const result = await processResponse(body, {
@@ -1273,18 +1305,93 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         expect(median(overCapRuns) / median(inlineRuns)).toBeLessThan(1.5);
     }, 60_000);
 
-    it("names jq_query in the message, so the body stays reachable", async () => {
+    it("names jq_query as the READER on the JSON arm, so the body stays reachable", async () => {
         // Dropping the preview removes the model's only inline view of the
         // body, which is only acceptable because a route to it survives. This
         // is that route, and it is server-authored: nothing here is remote text.
+        //
+        // **Assert the recommending clause, never the bare token.** The earlier
+        // version of this case ran a `text/plain` fixture and asserted
+        // `toContain("jq_query")` — which the NON-JSON arm satisfies too, via
+        // the words "the jq_query tool cannot parse". It passed by negation, on
+        // text saying the opposite of this test's own name, and the two arms
+        // could have been swapped wholesale with it still green. `LESSONS.md`
+        // RC-28 predicted exactly this: a guard written to replace a false green
+        // inherits the pressure that produced the first one.
+        const result = await processResponse(JSON.stringify({ big: BEACON_BODY }), {
+            url: "http://example.com",
+            contentType: "application/json",
+            maxResultSize: CAP,
+        });
+        expect(result.savedToFile).toBe(true);
+        expect(result.message).toContain("Use the jq_query tool on that path");
+        expect(result.message).toContain(savedFilepath(result));
+    });
+
+    it("does NOT recommend jq_query for a saved non-JSON body", async () => {
         const result = await processResponse(BEACON_BODY, {
             url: "http://example.com",
             contentType: "text/plain",
             maxResultSize: CAP,
         });
-        expect(result.savedToFile).toBe(true);
+        expect(result.message).not.toContain("Use the jq_query tool on that path");
+        expect(result.message).toContain("cannot parse it");
+        expect(result.message).toContain(savedFilepath(result));
+    });
+
+    it("does not assert a grammar when the content type was never declared", async () => {
+        // `isJsonContentType(undefined)` is false, so a two-way split states
+        // "not JSON" about a body whose grammar the origin never declared — and
+        // `jq_query` would have parsed it. Absence gets its own arm.
+        const result = await processResponse(JSON.stringify({ big: BEACON_BODY }), {
+            url: "http://example.com",
+            maxResultSize: CAP,
+        });
+        expect(result.message).not.toContain("The body is not JSON");
+        expect(result.message).toContain("grammar is unknown");
         expect(result.message).toContain("jq_query");
-        expect(result.message).toContain(result.savedToFile ? result.filepath : "");
+    });
+
+    it("names the artefact as FILTER OUTPUT when a jq_filter produced it", async () => {
+        // The file holds `applyJqFilterToParsed`'s output, not the response. A
+        // model that queries it for a sibling field gets `null` — jq's answer
+        // for an absent path — and reports the origin never sent it.
+        const result = await processResponse(
+            JSON.stringify({ items: [{ a: BEACON_BODY }], meta: { total: 9 } }),
+            {
+                url: "http://example.com",
+                contentType: "application/json",
+                jqFilter: ".items[0]",
+                maxResultSize: CAP,
+                saveToFile: true,
+            }
+        );
+        expect(result.message).toContain("Result of jq_filter");
+        expect(result.message).toContain("FILTER OUTPUT");
+        expect(result.message).not.toContain("Response (");
+    });
+
+    it("does not claim a limit was exceeded on a forced save that stayed under it", async () => {
+        // `save_to_file` is a request, not a limit breach. Both arms are
+        // reachable with it set, and the docblock used to claim the over-cap
+        // clause was absent on this arm entirely — it is gated on the bytes, not
+        // on which arm asked.
+        const small = await processResponse('{"a":1}', {
+            url: "http://example.com",
+            contentType: "application/json",
+            maxResultSize: CAP,
+            saveToFile: true,
+        });
+        expect(small.message).not.toContain("exceeds the");
+        expect(small.message).toContain("saved to:");
+
+        const big = await processResponse(JSON.stringify({ big: BEACON_BODY }), {
+            url: "http://example.com",
+            contentType: "application/json",
+            maxResultSize: CAP,
+            saveToFile: true,
+        });
+        expect(big.message).toContain("exceeds the");
     });
 
     it("leaves a body that stays inside the cap after defence inline", async () => {
