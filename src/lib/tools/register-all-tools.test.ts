@@ -648,6 +648,110 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
             expect(text).not.toContain("THIS-MUST-NOT-BE-RETURNED");
             expect(text).toContain("saved to:");
+            // `save_to_file` is a request, not a limit. The over-cap arm's
+            // message says the body "exceeded the N-byte inline limit", and
+            // claiming that here would be a server-authored falsehood about
+            // the caller's own request — this body is 45 bytes against a
+            // 500 KB default. Asserted because the two arms share a code path
+            // and a later edit could collapse them into one message.
+            expect(text).not.toContain("exceeded");
+        });
+
+        // The sibling above forces the file with `save_to_file`. This is the
+        // OTHER cause of the same branch — the body crossed `max_result_size`
+        // — and it is the one `docs/todos/008` was about: that arm used to
+        // build a defended preview of the whole body, which `formatResponse`
+        // then discarded. Both causes are covered because the two arms compose
+        // different messages, and an assertion on one says nothing about the
+        // other.
+        it("does not put body bytes in an over-cap response", async () => {
+            const marker = "THIS-MUST-NOT-BE-RETURNED";
+            // Comfortably past the cap set below, so the size gate is what
+            // sends this to a file rather than any flag.
+            const body = JSON.stringify({ secret_marker: marker, filler: "x".repeat(4000) });
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ max_result_size: 1000 }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(text).not.toContain(marker);
+            // Names the limit it crossed, so the model can tell this apart from
+            // a file it asked for.
+            expect(text).toContain("exceeded the");
+        });
+
+        it.each([
+            ["over-cap", { max_result_size: 1000 }],
+            ["forced", { save_to_file: true }],
+        ])("points the model at jq_query on the %s save path", async (_label, extra) => {
+            // Dropping the preview removed the model's only inline view of a
+            // saved body. That is acceptable only because a route to the body
+            // survives, and this is the route — asserted on BOTH arms, since
+            // each composes its own message and one could lose the pointer
+            // while the other kept it.
+            const body = JSON.stringify({ secret_marker: "m", filler: "x".repeat(4000) });
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(params(extra), { sessionId: undefined })
+            );
+
+            expect(text).toContain("jq_query");
+        });
+    });
+
+    describe("curl_execute's jq_filter branch keeps number spelling (RC-27)", () => {
+        // A SEPARATE parse from the one `jq_query` uses — `processResponse`'s
+        // own, in its Step 6 branch. Both were missing the reviver, and an
+        // assertion on either says nothing about the other, which is how the
+        // class kept one uncorrected site through its first fix.
+        it.each([
+            [".id", "9223372036854775807"],
+            [".exp", "1e400"],
+            [".pi", "3.140"],
+        ])("returns %s exactly as the origin spelled it", async (filter, expected) => {
+            const body = '{"id":9223372036854775807,"exp":1e400,"pi":3.140}';
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ jq_filter: filter }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(text).toContain(expected);
+        });
+
+        it("agrees with the no-filter path on the same body", async () => {
+            // The property the whole RC is about: one body, two routes, one
+            // spelling. Asserted as an equality between the routes rather than
+            // as two independent literals, so the two cannot drift apart while
+            // both still pass.
+            const body = '{"id":9223372036854775807}';
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+
+            const handlers = registerViaShippedPath();
+            const plain = textOf(
+                await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
+            );
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+            const filtered = textOf(
+                await handlers.get("curl_execute")!(
+                    params({ jq_filter: ".id" }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(plain).toContain("9223372036854775807");
+            expect(filtered).toContain("9223372036854775807");
         });
     });
 
@@ -662,6 +766,29 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
         afterEach(async () => {
             await rm(dir, { recursive: true, force: true });
+        });
+
+        // The load-bearing half of the RC-27 fix. The unit cases in
+        // `jq/filter.test.ts` feed `applyJqFilter` directly; these drive the
+        // registered tool, which is the boundary a real response reaches — and
+        // the one `processResponse`'s save message now points the model at.
+        it.each([
+            [".id", "9223372036854775807"],
+            [".exp", "1e400"],
+            [".pi", "3.140"],
+        ])("returns %s from a saved file exactly as the origin spelled it", async (filter, expected) => {
+            const file = join(dir, "numbers.json");
+            await writeFile(file, '{"id":9223372036854775807,"exp":1e400,"pi":3.140}', "utf-8");
+
+            const handlers = registerViaShippedPath();
+            const text = textOf(
+                await handlers.get("jq_query")!(
+                    JqQuerySchema.parse({ filepath: file, jq_filter: filter }),
+                    { sessionId: undefined }
+                )
+            );
+
+            expect(text).toContain(expected);
         });
 
         it("strips a markdown beacon from a queried JSON file", async () => {

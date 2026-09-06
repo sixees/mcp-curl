@@ -1190,3 +1190,62 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
   the layer rather than the arm. `.claude/rules/42-ship-what-matters.md`'s
   convergence rule had already fired on this surface a round earlier, and the
   right response to it is not a third patch.
+
+### RC-27 — the number-lexeme fix had one implementation and three call sites
+
+**Date:** 2026-09-06 · **PR:** — · **Plan:** `docs/todos/008-P2-over-cap-preview-is-computed-then-discarded.md`
+
+**Class:** K-12, K-11, K-4
+
+- **The plan said:** nothing about numbers at all. Todo 008 was a performance and
+  altitude finding about the over-cap preview, and RC-24 was already recorded as
+  closed — `defendForInline` preserves every number's source lexeme through
+  `keepNumberLexeme`, measured byte-exact on `9223372036854775807` and `1e400`.
+- **Reality was:** RC-24 fixed the site it was reported against. Two siblings did
+  the same parse-and-reserialise without the reviver — `jq/filter.ts::applyJqFilter`
+  and `response/processor.ts::processResponse`'s Step 6 `jq_filter` branch — so the
+  SAME body returned its numbers exactly when inline and corrupted through jq.
+  Measured against the shipped binary over stdio: `9223372036854775807` came back
+  `9223372036854776000` (out by 193), `1e400` came back `null`, `3.140` came back
+  `3.14`. Found by driving `jq_query` on a saved file to check that this todo's new
+  save message — which now tells the model to use that tool — was truthful.
+- **What changed:** `keepNumberLexeme`, `rawJson` and `isRawNumber` moved to
+  `utils/json-lexeme.ts` and are imported by all three sites, so the rule has one
+  implementation. `jq/filter.ts::isRecord` gained an `isRawNumber` arm: a marker is
+  an object at runtime, so without it `.pi.rawJSON` returned the string `"3.140"`
+  and leaked the internal representation as though the origin had sent it.
+  Regression tests at the tool boundary in `tools/register-all-tools.test.ts` cover
+  the two jq surfaces separately — verified by probe that restoring one reviver
+  alone still fails the other's cases.
+- **What this costs next time:** when an RC's fix is a *rule about a primitive*
+  rather than a repair to one function, the sweep query is the primitive, not the
+  symptom. `rg 'JSON\.parse\(' src` returns three lines and would have found all of
+  this on the day RC-24 landed. A fix that leaves its rule with one implementation
+  and two bypasses has closed the instance and not the class.
+
+### RC-28 — the invariant-14 guard measured a value its own consumer discards
+
+**Date:** 2026-09-06 · **PR:** — · **Plan:** `docs/todos/008-P2-over-cap-preview-is-computed-then-discarded.md`
+
+**Class:** K-1, K-3
+
+- **The plan said:** delete the over-cap preview, because `formatResponse`'s saved
+  branch never reads it. Todo 008 named no test as depending on it.
+- **Reality was:** `response/processor.test.ts`'s *"the bytes the MODEL receives are
+  inside the cap, end to end"* asserted invariant 14 by defending `result.content`
+  on the saved path — which passed only because the preview truncated it. Applying
+  the plan literally would have deleted a live invariant-14 guard. The guard was
+  itself wrong: `result.content` is not what the model receives there, so a test
+  named "end to end" stopped one call short of the end and would have gone on
+  passing had the preview been corrupted.
+- **What changed:** the assertion moved to `formatResponse`'s own output, on both
+  the metadata and plain branches, plus a sibling asserting no body bytes appear
+  at all. `ProcessedResponse`'s saved arm no longer carries `content`, so the raw
+  body is unreachable there by construction rather than by comment. Both new cases
+  were themselves false greens on first writing — they passed `""` as `stdout`, a
+  value the test controlled — and were only caught by probing them.
+- **What this costs next time:** a test that reads a field is also claiming that
+  field is what the consumer reads, and that half is never asserted. When a fix
+  removes a value, check what asserts on it *before* deciding the removal is safe —
+  and probe the replacement, because a guard written to replace a false green is
+  written under the same pressure that produced the first one.

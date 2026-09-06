@@ -305,6 +305,14 @@ function createConfigError(configName, value, reason) {
   return new Error(`Invalid ${configName} value "${safeValue}": ${reason}.`);
 }
 
+// src/lib/utils/json-lexeme.ts
+var { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON;
+var rawJson = rawJsonImpl;
+var isRawNumber = isRawJsonImpl;
+function keepNumberLexeme(_key, value, context) {
+  return typeof value === "number" && typeof context?.source === "string" ? rawJson(context.source) : value;
+}
+
 // src/lib/utils/content-type.ts
 function parseMimeType(contentType) {
   if (typeof contentType !== "string" || !contentType) return "";
@@ -885,6 +893,7 @@ function splitJqFilters(filter) {
 
 // src/lib/jq/filter.ts
 function isRecord(value) {
+  if (isRawNumber(value)) return false;
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 function applySingleJqFilter(data, filter) {
@@ -951,7 +960,7 @@ function applyJqFilterToParsed(data, filter) {
 function applyJqFilter(jsonString, filter) {
   let data;
   try {
-    data = JSON.parse(jsonString);
+    data = JSON.parse(jsonString, keepNumberLexeme);
   } catch (error) {
     if (error instanceof SyntaxError) {
       const preview = jsonString.slice(0, LIMITS.ERROR_PREVIEW_LENGTH);
@@ -2000,10 +2009,6 @@ function parseJsonDocument(text, preserveNumberLexemes = false) {
     return void 0;
   }
 }
-function keepNumberLexeme(_key, value, context) {
-  return typeof value === "number" && typeof context?.source === "string" ? rawJson(context.source) : value;
-}
-var { rawJSON: rawJson, isRawJSON: isRawNumber } = JSON;
 if (typeof rawJson !== "function" || typeof isRawNumber !== "function") {
   throw new Error(
     `mcp-curl requires Node >= 22: JSON.rawJSON / JSON.isRawJSON are unavailable on this runtime, and the response defence cannot preserve JSON number values without them. Detected ${process.version}.`
@@ -2134,7 +2139,7 @@ async function processResponse(response, options) {
       }
     }
     try {
-      parsedData = JSON.parse(trimmed);
+      parsedData = JSON.parse(trimmed, keepNumberLexeme);
     } catch (error) {
       if (error instanceof SyntaxError) {
         throw new Error(
@@ -2151,16 +2156,21 @@ async function processResponse(response, options) {
   const shouldSave = options.saveToFile || overCap;
   if (shouldSave) {
     const filepath = await saveResponseToFile(content, options.url, options.outputDir);
-    let displayContent = content;
-    if (overCap) {
-      displayContent = Buffer.from(defendForInline(content, hostname), "utf8").subarray(0, maxSize).toString("utf8");
-    }
     return {
-      content: displayContent,
       savedToFile: true,
       filepath,
+      // Server-authored, and the model's only route to the body from here,
+      // so it names the next call rather than just the path. `jq_query`
+      // applies its own defence and its own cap to whatever it extracts,
+      // which is why handing over a filepath is not handing over the cap.
+      //
       // Describes the artefact on disk, which is the origin-grammar copy.
-      message: `Response (${Buffer.byteLength(content, "utf8")} bytes) saved to: ${filepath}`
+      // Two arms because `shouldSave` has two causes and only one of
+      // them is a limit: `save_to_file` forces the file for a body that
+      // was never over the cap, and telling the model it exceeded a limit
+      // it did not exceed is a server-authored falsehood about its own
+      // request.
+      message: overCap ? `Response (${Buffer.byteLength(content, "utf8")} bytes) exceeded the ${maxSize}-byte inline limit and was saved to: ${filepath} \u2014 use the jq_query tool on that path to extract fields.` : `Response (${Buffer.byteLength(content, "utf8")} bytes) saved to: ${filepath} \u2014 use the jq_query tool on that path to extract fields.`
     };
   }
   return {
@@ -2737,8 +2747,7 @@ async function executeCurlRequest(params, extra = {}) {
       hostname: safeHostname(params.url),
       decodeEntities: false
     }) : result.stderr;
-    const bodyIsReturned = !(processed.savedToFile && processed.filepath);
-    const inlineBody = params.include_metadata || !bodyIsReturned ? processed.content : defendForInline(processed.content, safeHostname(params.url));
+    const inlineBody = processed.savedToFile ? "" : params.include_metadata ? processed.content : defendForInline(processed.content, safeHostname(params.url));
     const output = formatResponse(
       inlineBody,
       defendedStderr,

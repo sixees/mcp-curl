@@ -9,6 +9,7 @@ export {
     createConfigError,
 } from "./error.js";
 
+export { rawJson, isRawNumber, keepNumberLexeme } from "./json-lexeme.js";
 export { resolveBaseUrl, createHttpOnlyUrlSchema, safeHostname } from "./url.js";
 export type { CreateHttpOnlyUrlSchemaOptions } from "./url.js";
 
