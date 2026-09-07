@@ -110,3 +110,45 @@ describe('applyJqFilter — return type contract', () => {
             .toThrow('unsupported jq syntax');
     });
 });
+
+describe('number lexemes survive the filter (RC-27)', () => {
+    // `applyJqFilter` parses and re-serialises, and `JSON.parse` routes every
+    // number through a double unless a reviver intervenes. `keepNumberLexeme`
+    // is that reviver, so a 64-bit id and an overflowing exponent survive this
+    // path exactly as the origin spelled them. This is the path a too-large
+    // response is sent down, which is where the corruption would be silent —
+    // and it is a SEPARATE parse from the inline one, so an assertion there
+    // says nothing about here.
+    const body = '{"id":9223372036854775807,"exp":1e400,"pi":3.140,"neg":-0.0,"pad":0.1000}';
+
+    it.each([
+        ['.id', '9223372036854775807'],
+        ['.exp', '1e400'],
+        ['.pi', '3.140'],
+        ['.neg', '-0.0'],
+        ['.pad', '0.1000'],
+    ])('returns %s exactly as the origin spelled it', (filter, expected) => {
+        expect(applyJqFilter(body, filter)).toBe(expected);
+    });
+
+    it('keeps the spelling through a multi-path filter too', () => {
+        // The comma arm builds an array and stringifies that instead, so it is
+        // a separate serialisation site and asserting one says nothing about it.
+        expect(applyJqFilter(body, '.id,.pi')).toBe('[\n  9223372036854775807,\n  3.140\n]');
+    });
+
+    it('does not expose the marker as a navigable object', () => {
+        // A preserved lexeme is an object at runtime. Without the `isRawNumber`
+        // arm in `isRecord`, this returns the string "3.140" — an internal
+        // representation surfaced as if the origin had sent it.
+        expect(applyJqFilter(body, '.pi.rawJSON')).toBe('null');
+    });
+
+    it('still reports a genuinely missing key as null', () => {
+        // The guard above returns `false` from `isRecord`, which is the same
+        // answer a real primitive gives — so this must not have become the way
+        // every lookup ends.
+        expect(applyJqFilter(body, '.nope')).toBe('null');
+        expect(applyJqFilter('{"a":{"b":1}}', '.a.b')).toBe('1');
+    });
+});

@@ -13,6 +13,8 @@ created: 2026-09-03
 
 # defendText's channel profile is a flag product space
 
+> **See `018`** — largely subsumed if 018 lands: it leaves two channel profiles, both constants, and removes the per-response metadata that makes `meta` non-optional below. Re-read this against what survives rather than fixing it first.
+
 ## Problem
 
 `DefendTextOptions` carries four independent selectors — `contentType`,

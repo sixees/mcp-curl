@@ -11,6 +11,8 @@ created: 2026-09-02
 
 # The entity-decode stage serves two channels with opposite requirements
 
+> **See `018`** — mostly moot if 018 lands: both surviving text channels already pass `decodeEntities: false`, and the JSON path stops decoding at all. Do not close this here.
+
 ## Problem
 
 `stripBlocksFixedPoint` decodes numeric HTML entities so the strip can see

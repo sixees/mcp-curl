@@ -205,6 +205,23 @@ what a violation looks like, it does not belong on this list.
     `max_result_size`, and the wrap still has no file to save what it would
     trim — so the cap stays upstream, where both are in hand.
 
+    **On the saved path the ceiling is enforced by the type**, not by a
+    truncation: `ProcessedResponse`'s `savedToFile: true` arm carries no
+    `content` field, so there are no body bytes to bound. `LESSONS.md` RC-28.
+    This bounds the *body* and nothing else — `message` is composed after the
+    gate, so what it may carry is bounded at each value's own source rather than
+    weighed here. **It carries the filepath (`FILENAME_MAX_LENGTH`, plus a
+    validated output directory), two server-computed byte counts, and
+    server-authored literals. It does not carry the content type at all** — that
+    absence is the closure, not a bound on the field, and naming a bound here
+    instead would read as a licence to interpolate it back. Two channels
+    are still bounded by constants unrelated to `max_result_size` and are
+    recorded as such: `curl-execute.ts`'s `stderr` under `verbose`
+    (`MAX_RESPONSE_SIZE`, 10 MB) and `processResponse`'s jq-filter error, which
+    echoes `contentType` — a type/subtype with the parameter tail already
+    discarded at the parse boundary, so it is a bounded token and not a prose
+    channel. `LESSONS.md` RC-30, RC-31.
+
 15. **Every regex in the strip path is linear in the size of its input, and the
     byte cap is not what makes it so.** A `g`-flagged replace starts a match
     attempt at every position, so a pattern that is linear *per attempt* is
@@ -282,6 +299,17 @@ what a violation looks like, it does not belong on this list.
     to ask of any new call is *what regions are in this string, and does the
     pass respect them?*
 
+    **One arm takes the undivided scan deliberately, and it is not the
+    violation above.** Past `processor.ts::MAX_INLINE_DEFENCE_DEPTH` (100)
+    `defendForInline` stops descending and scans the serialised document whole,
+    because the region-wise walk is recursive and a body of `"["` repeated 2,000
+    times overflows the stack inside it — at which point `createWrapper` catches,
+    tags the UNDEFENDED result as wrapped, and a beacon reaches the model
+    verbatim. So the trade runs in the safe direction: the defence still runs,
+    and a pathologically nested document may lose a field to the splice this
+    invariant describes. Recorded here because without it the arm reads as the
+    defect, and removing the bound reintroduces the fail-open it exists for.
+
     **Re-serialising is indented only where indenting does not GROW the
     document**, because a sparsely formatted one re-inflates by its nesting
     depth — 53 bytes in, 140 out, measured — and no constant bounds that, so
@@ -291,9 +319,21 @@ what a violation looks like, it does not belong on this list.
 
     Object keys are deliberately left undefended: two keys defending to the
     same string would collapse into one, which is the very loss this invariant
-    exists to stop. Re-serialising also normalises number spelling (`1.50` →
-    `1.5`); nothing inline reads meaning from it, and the persisted artefact
-    never takes this path. `LESSONS.md` RC-16.
+    exists to stop. `LESSONS.md` RC-16.
+
+    **A duplicate key collapses before the walk ever runs**, at `JSON.parse`,
+    which keeps the last occurrence — so `{"total":5,"total":9}` re-serialises
+    as `{"total":9}` and a field disappears from a document that stays valid
+    JSON. That is this invariant's own failure mode arriving through the parse
+    rather than through the defence, and nothing in the walk can recover it.
+    Stated rather than fixed: RFC 8259 leaves duplicate names undefined, and
+    preserving them needs a custom parser. Distinct from key ORDER, which is a
+    rearrangement and was declined as harmless. `LESSONS.md` RC-31.
+
+    Number spelling is NOT normalised — `1.50`, `1e400` and an
+    integer past `Number.MAX_SAFE_INTEGER` all come back byte-exact, because
+    the parse preserves each number's source lexeme and the serialiser re-emits
+    it verbatim. `LESSONS.md` RC-16, RC-24.
 
 ## Environments
 

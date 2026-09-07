@@ -26,7 +26,16 @@ export interface ProcessResponseOptions {
     maxResultSize?: number;
     /** Force saving response to file regardless of size */
     saveToFile?: boolean;
-    /** Content-Type header from response (used to detect JSON) */
+    /**
+     * The response's media type as **type/subtype only** — never its parameters.
+     *
+     * `parseResponseWithMetadata` is the producer and
+     * `ParsedResponse.contentType` owns the reason. Stated here too because this
+     * is the declaration a *caller* reads, and `processResponse`'s jq-filter
+     * error interpolates this value into model-facing text: a caller passing a
+     * raw header instead would widen that sentence into a remote-authored
+     * channel, which is the class `LESSONS.md` RC-30 is about.
+     */
     contentType?: string;
     /**
      * True when the content type could not be DETERMINED — the `-w` metadata
@@ -43,6 +52,24 @@ export interface ProcessResponseOptions {
 /**
  * Result of response processing - uses discriminated union to enforce
  * that filepath is present if and only if savedToFile is true.
+ *
+ * **`content` exists on the inline arm only, and its absence from the saved arm
+ * is invariant 14 stated in the type rather than in prose.** The saved arm
+ * carries no body bytes because none are returnable: the body on that path is
+ * the whole response, unbounded by `max_result_size` — that is what put it in a
+ * file — and it has had no inline defence pass, because the pass would be over
+ * bytes no consumer may emit. A `content: string` here would be indistinguishable
+ * from the inline arm's at the call site while meaning the opposite, and the
+ * first caller to read it would breach the byte ceiling with nothing erroring.
+ *
+ * The body reaches the model through {@link ProcessedResponse.filepath}. For a
+ * JSON artefact that route is `jq_query`, which applies its own defence and its
+ * own cap to whatever it extracts. **For any other grammar there is no such
+ * route** — the model reads the path with its own tooling, which applies
+ * neither, so the *byte-ceiling* half of this justification holds on every arm
+ * and the *defence* half holds only on the JSON one. Stated rather than implied
+ * because a reader checking invariant 1 against this type would otherwise
+ * conclude the saved path is covered for `text/html`, and it is not.
  */
 export type ProcessedResponse =
     | {
@@ -54,8 +81,6 @@ export type ProcessedResponse =
           message?: string;
       }
     | {
-          /** Processed response content (may be filtered via jq) */
-          content: string;
           /** Response was saved to file (exceeded size limit or forced) */
           savedToFile: true;
           /** Absolute path to the saved file */
