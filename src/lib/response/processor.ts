@@ -783,7 +783,14 @@ export function exceedsInlineCap(text: string, hostname: string, maxBytes: numbe
  * `LESSONS.md` RC-30.
  */
 interface SavedMessageFacts {
-    /** Byte length of what was written, measured on the string written. */
+    /**
+     * Byte length of the buffer that was written — `diskContent.length`.
+     *
+     * Measured on the buffer rather than re-derived from the string it came
+     * from, because this number is quoted to the model as the size of a file it
+     * is about to read, and the two stop agreeing the moment `diskContent` is
+     * built from anything other than a straight encode of `content`.
+     */
     diskBytes: number;
     /** Absolute path of the artefact. */
     filepath: string;
@@ -882,29 +889,71 @@ function savedMessage(facts: SavedMessageFacts): string {
  *    bytes) which can be longer than a minimal source like `[a](http://x)`.
  *    The post-pipeline size check is therefore required, not redundant.
  *
- * @param response - Response content to process; runtime-checked to be a
- *                   string (the type system enforces this for TS callers,
- *                   but JS callers from custom-tool hooks could bypass).
+ * **Takes the wire octets, not a decoded string**, for two reasons: the size
+ * guard must be able to quote a byte count the origin can be held to, and taking
+ * the buffer rather than a `(text, bytes)` pair makes it impossible for the two
+ * to disagree. The decode happens once, here, for the defence pipeline and the
+ * inline body. `LESSONS.md` RC-33.
+ *
+ * **The persisted artefact is the defended text, not these octets.**
+ * `docs/todos/018` owns the fidelity question; the save arm states why.
+ *
+ * @param responseBytes - The body's wire octets, from
+ *                        {@link ParsedResponse.bodyBytes}. Runtime-checked
+ *                        because this function is not on a published entry
+ *                        point and so has no compiler-checked caller but its
+ *                        one in-repo one — the guard costs nothing and fails
+ *                        closed, which is the only reason it is worth keeping
  * @param options - Processing options (url, jqFilter, maxResultSize, etc.)
  * @returns ProcessedResponse — the inline arm carries `content`; the saved arm
  *          carries `filepath` and `message` and no body bytes at all
- * @throws TypeError if `response` is not a string
+ * @throws TypeError if `responseBytes` is not a Buffer
  * @throws Error if response exceeds the absolute size cap or jq_filter
  *   is used on non-JSON content
  */
 export async function processResponse(
-    response: string,
+    responseBytes: Buffer,
     options: ProcessResponseOptions
 ): Promise<ProcessedResponse> {
-    if (typeof response !== "string") {
-        throw new TypeError("processResponse: response must be a string");
+    if (!Buffer.isBuffer(responseBytes)) {
+        throw new TypeError("processResponse: responseBytes must be a Buffer");
     }
 
-    // Step 1: Early size guard — runs BEFORE sanitization to avoid wasting CPU on oversized responses
-    const rawBytes = Buffer.byteLength(response, "utf8");
+    // Step 1: size guard, on both representations. `ARCHITECTURE.md` invariant
+    // 14 owns the reasoning and the measurement.
+    //
+    // This arm is defence-in-depth: `command-executor.ts`'s `accountFor`
+    // enforces the same ceiling while the body is still streaming, so nothing
+    // arriving through `curl_execute` reaches here over-cap. It is kept because
+    // it is what lets the decoded arm below claim the body is not valid UTF-8 —
+    // with this check first, that arm can only fire on a body that isn't.
+    const rawBytes = responseBytes.length;
     if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
         throw new Error(
             `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
+        );
+    }
+
+    // The request's only decode of the body. `ParsedResponse` carries octets
+    // alone so that this is the single place it happens: on a 10 MB body a
+    // second decode costs both the CPU and a second live copy.
+    //
+    // Lossy for any non-UTF-8 origin, which is why the message above quotes the
+    // wire count rather than this string's length.
+    const response = responseBytes.toString("utf8");
+
+    // **The binding gate.** This is the arm that bounds every stage below, and
+    // it is reachable only for a body whose decode inflated past the ceiling
+    // while its wire form fit — i.e. a body that is not valid UTF-8, which is
+    // why the message may say so. Both numbers are reported, because a caller
+    // told only the inflated one cannot tell an oversized response from an
+    // undecodable one.
+    const decodedBytes = Buffer.byteLength(response, "utf8");
+    if (decodedBytes > LIMITS.MAX_RESPONSE_SIZE) {
+        throw new Error(
+            `Response size (${rawBytes} bytes on the wire, ${decodedBytes} bytes decoded) ` +
+                `exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes). The body is not ` +
+                `valid UTF-8, and replacement characters make the decoded form larger than the wire form.`
         );
     }
 
@@ -946,7 +995,19 @@ export async function processResponse(
         hostname,
     });
 
-    // Step 6: Apply jq filter if provided AND response is JSON
+    // Step 6: Apply jq filter if provided AND response is JSON.
+    //
+    // **"A filter produced this content" and "a filter was requested" are
+    // different questions, and `savedMessage` needs the first.** They diverge on
+    // any falsy-but-present filter: the gate below skips, so the content is the
+    // whole body, while `options.jqFilter !== undefined` would say otherwise —
+    // and `savedMessage` would then name the file as filter output and tell the
+    // model to expect a subset. One flag set where the transform happens is what
+    // makes the wrong answer unavailable rather than merely unused.
+    //
+    // Its one reader is `savedMessage`'s `filtered`. The disk decision does not
+    // consult it; the save arm below says why.
+    let filterApplied = false;
     if (options.jqFilter) {
         const isJson = isJsonContentType(options.contentType);
         const trimmed = content.trim();
@@ -982,6 +1043,9 @@ export async function processResponse(
 
         // Apply filter to pre-parsed data (avoids double parse)
         content = applyJqFilterToParsed(parsedData, options.jqFilter);
+        // Set HERE, past every throw above, so it means "a filter produced this
+        // content" rather than "a filter was requested".
+        filterApplied = true;
 
         // Re-sanitize and re-detect after filter: JSON.parse decodes Unicode escapes in string
         // values (e.g. {"cmd":"Ig​nore..."} → zero-width space in jq output), so attack
@@ -1027,7 +1091,26 @@ export async function processResponse(
     const shouldSave = options.saveToFile || overCap;
 
     if (shouldSave) {
-        const filepath = await saveResponseToFile(content, options.url, options.outputDir);
+        // **The artefact is the defended text, on both arms. Writing
+        // `responseBytes` here instead is the change to not make** — it is a
+        // one-word edit that removes a defence, so the reason is stated at the
+        // site rather than left to `docs/todos/018`, which owns the decision.
+        //
+        // Why: `savedMessage` routes a non-JSON artefact to the model's own file
+        // tooling, because `jq_query` cannot open one. That route has no defence
+        // pass, so whatever lands here must already be safe to read — including
+        // the Step 2 sanitisation that removes invisible and bidirectional
+        // characters, which no strip stage replaces. On the over-cap arm this
+        // file is the only representation, which is what makes it the model's
+        // only route rather than a convenience.
+        //
+        // Byte fidelity is sequenced behind that, not given up: it needs the
+        // non-JSON arm settled first, which is `docs/todos/018`'s to do.
+        //
+        // The encode is explicit here so `saveResponseToFile` can refuse a
+        // `string | Buffer` union — one spelling of "these are the bytes".
+        const diskContent = Buffer.from(content, "utf8");
+        const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
         // **No body bytes are returned on this arm, and that is the whole
         // saving.** `formatResponse`'s file branch emits `saved_to_file`,
         // `filepath` and `message` and never reads the body, so a defence pass
@@ -1039,18 +1122,20 @@ export async function processResponse(
         // returned. `ProcessedResponse`'s saved arm carries no `content` field
         // at all, so this is enforced by the type and not by this comment.
         //
-        // The body is not lost — it is on disk in origin grammar, and `message`
-        // below names the tool that reads it.
+        // The body is not lost — it is on disk in the origin's grammar, and
+        // `message` below names the tool that reads it.
         return {
             savedToFile: true,
             filepath,
             message: savedMessage({
-                diskBytes: Buffer.byteLength(content, "utf8"),
+                // Measured on the buffer that was written, so the number
+                // describes the file whatever `diskContent` is built from.
+                diskBytes: diskContent.length,
                 filepath,
                 maxSize,
                 overCap,
                 contentType: options.contentType,
-                filtered: options.jqFilter !== undefined,
+                filtered: filterApplied,
             }),
         };
     }

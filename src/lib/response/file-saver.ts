@@ -53,13 +53,28 @@ export function createSafeFilenameBase(input: string, fallback = "response"): st
  * Creates a safe filename from the URL and adds a timestamp for uniqueness.
  * File is written with mode 0o600 (owner-only access).
  *
- * @param content - The content to save
+ * **`Buffer` only — no `string | Buffer` union.** The caller decides what bytes
+ * land on disk, and it is the only party that can: a union would take a
+ * lossily-decoded string at any call site with no compiler objection, so the
+ * encode would stop being visible at the point the decision is made. A caller
+ * holding text encodes it itself, in one line the diff shows.
+ *
+ * `LESSONS.md` RC-33 for what a silent decode on this path costs.
+ *
+ * @param content - The exact bytes to write
  * @param url - The request URL (used for generating filename)
- * @param outputDir - Optional output directory (must already be validated)
+ * @param outputDir - Optional output directory. **Must arrive already resolved
+ *   and validated against the allowed roots.** That policy is enforced at
+ *   `tools/curl-execute.ts::executeCurlRequest` (`resolveOutputDir` then
+ *   `validateOutputDir`), and nothing here re-establishes it. The `realpath`
+ *   comparison below resolves this path against *itself* whenever one is
+ *   supplied — `targetDir` is `outputDir` on that branch — so it cannot detect
+ *   a post-validation swap and is not a second line of defence.
+ *   `ProcessResponseOptions.outputDir` carries the same precondition
  * @returns Absolute path to the saved file
  */
 export async function saveResponseToFile(
-    content: string,
+    content: Buffer,
     url: string,
     outputDir?: string
 ): Promise<string> {
@@ -92,6 +107,9 @@ export async function saveResponseToFile(
     const filename = `${safeName}_${Date.now()}.txt`;
     const filepath = join(targetDir, filename);
 
-    await writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 }); // Owner-only access
+    // No `encoding`: the argument is octets. An encoding is inert for a Buffer,
+    // so setting one would only be reassurance — and it would become a live
+    // lossy conversion the day this parameter accepts a string.
+    await writeFile(filepath, content, { mode: 0o600 }); // Owner-only access
     return filepath;
 }

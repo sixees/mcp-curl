@@ -554,7 +554,7 @@ var CurlExecuteSchema = z2.object({
 });
 var JqQuerySchema = z2.object({
   filepath: z2.string().describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
-  jq_filter: z2.string().describe('JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported.'),
+  jq_filter: z2.string().min(1, "jq_filter must not be empty").describe('JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported.'),
   max_result_size: z2.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger results auto-save to file"),
   save_to_file: z2.boolean().optional().describe("Force save result to file. Returns filepath instead of content"),
   output_dir: z2.string().optional().describe("Directory to save result files (must exist and be writable)")
@@ -994,7 +994,7 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
   if (separatorIndex === -1) {
     return {
-      body: raw.toString("utf8"),
+      bodyBytes: raw,
       metadataFound: false
     };
   }
@@ -1003,7 +1003,7 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const contentType = metadata.trim();
   const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
   return {
-    body: bodyBytes.toString("utf8"),
+    bodyBytes,
     contentType: validContentType,
     metadataFound: true
   };
@@ -1472,7 +1472,7 @@ async function saveResponseToFile(content, url, outputDir) {
   const safeName = createSafeFilenameBase(baseName);
   const filename = `${safeName}_${Date.now()}.txt`;
   const filepath = join2(targetDir, filename);
-  await writeFile(filepath, content, { encoding: "utf-8", mode: 384 });
+  await writeFile(filepath, content, { mode: 384 });
   return filepath;
 }
 
@@ -1793,7 +1793,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "3.6.0" : "0.0.0"
+  VERSION: true ? "3.7.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -2128,14 +2128,21 @@ function savedMessage(facts) {
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
   return cause + route + scope;
 }
-async function processResponse(response, options) {
-  if (typeof response !== "string") {
-    throw new TypeError("processResponse: response must be a string");
+async function processResponse(responseBytes, options) {
+  if (!Buffer.isBuffer(responseBytes)) {
+    throw new TypeError("processResponse: responseBytes must be a Buffer");
   }
-  const rawBytes = Buffer.byteLength(response, "utf8");
+  const rawBytes = responseBytes.length;
   if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
     throw new Error(
       `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
+    );
+  }
+  const response = responseBytes.toString("utf8");
+  const decodedBytes = Buffer.byteLength(response, "utf8");
+  if (decodedBytes > LIMITS.MAX_RESPONSE_SIZE) {
+    throw new Error(
+      `Response size (${rawBytes} bytes on the wire, ${decodedBytes} bytes decoded) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes). The body is not valid UTF-8, and replacement characters make the decoded form larger than the wire form.`
     );
   }
   const hostname = safeHostname(options.url);
@@ -2169,6 +2176,7 @@ async function processResponse(response, options) {
     contentTypeUndetermined: options.contentTypeUndetermined ?? options.contentType === void 0,
     hostname
   });
+  let filterApplied = false;
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);
     const trimmed = content.trim();
@@ -2192,23 +2200,27 @@ async function processResponse(response, options) {
       throw error;
     }
     content = applyJqFilterToParsed(parsedData, options.jqFilter);
+    filterApplied = true;
     content = sanitizeAndDetect(content, hostname);
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
   const overCap = exceedsInlineCap(content, hostname, maxSize);
   const shouldSave = options.saveToFile || overCap;
   if (shouldSave) {
-    const filepath = await saveResponseToFile(content, options.url, options.outputDir);
+    const diskContent = Buffer.from(content, "utf8");
+    const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
     return {
       savedToFile: true,
       filepath,
       message: savedMessage({
-        diskBytes: Buffer.byteLength(content, "utf8"),
+        // Measured on the buffer that was written, so the number
+        // describes the file whatever `diskContent` is built from.
+        diskBytes: diskContent.length,
         filepath,
         maxSize,
         overCap,
         contentType: options.contentType,
-        filtered: options.jqFilter !== void 0
+        filtered: filterApplied
       })
     };
   }
@@ -2752,7 +2764,6 @@ async function executeCurlRequest(params, extra = {}) {
     let headerBytesReturned;
     const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
     const { contentType, metadataFound } = parsed;
-    const body = parsed.body;
     let responseHeaders;
     let headersUndetermined = false;
     let headersUnsupported = false;
@@ -2771,7 +2782,7 @@ async function executeCurlRequest(params, extra = {}) {
       headerBytesReceived = channel.bytesReceived;
       headerBytesReturned = channel.bytesReturned;
     }
-    const processed = await processResponse(body, {
+    const processed = await processResponse(parsed.bodyBytes, {
       url: params.url,
       jqFilter: params.jq_filter,
       maxResultSize: params.max_result_size,

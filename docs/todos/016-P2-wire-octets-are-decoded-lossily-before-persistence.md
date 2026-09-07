@@ -12,9 +12,12 @@ created: 2026-09-07
 
 # Wire octets are decoded lossily at ingest, and the replacement is what gets persisted
 
-> **See `018`** — this becomes a PREREQUISITE. "Return the origin bytes unmodified" is unreachable while ingest hands downstream a lossy `string`. Either this lands first or 018 absorbs it.
+> **PARTLY LANDED 2026-09-07 and deliberately still open** — see the work log. The plumbing and the size gate are done; **the artefact's form moved to `018`**, and the reader half (`jq-query.ts`) is untouched. Do not close this on the write half alone.
 
 ## Problem
+
+> _Original finding, 2026-09-07, in its original tense. Four of the six instances
+> it describes have since changed — see the state markers under **Findings**._
 
 `parseResponseWithMetadata` decodes the wire body with `raw.toString("utf8")`, so
 any byte that is not valid UTF-8 becomes U+FFFD. Every downstream consumer then
@@ -33,21 +36,38 @@ not for bytes, on the same file.
 
 ## Findings
 
+> **State as at 2026-09-07, after the partial landing.** The prose below is the
+> original finding and is left in its original tense; the bracketed state on each
+> instance is what is true at HEAD. Read this list with the work log, not instead
+> of it — four of the six no longer describe live code, and a reader re-running the
+> recorded sweep to close the class needs to know which.
+
 Confirmed instances, all reading what the boundary produced:
 
-- `src/lib/response/parser.ts::parseResponseWithMetadata` — the decode, on both
-  the separator-found and separator-absent arms. **This is the root**; every
-  other instance is a consumer.
-- `src/lib/response/file-saver.ts::saveResponseToFile` — signature takes `string`
-  and writes `encoding: "utf-8"`, so the artefact carries the replacement.
-- `src/lib/response/processor.ts::processResponse` — gates `MAX_RESPONSE_SIZE`
-  and `exceedsInlineCap` on the decoded length, and persists the decoded string.
-- `src/lib/response/processor.ts::savedMessage` — reports
-  `Buffer.byteLength(content, "utf8")` as the response's size. True of the file,
-  and not an answer to *"how big was the response"*.
-- `src/lib/tools/jq-query.ts::executeJqQuery` — `readFile(..., "utf-8")` returns
-  the replacement as origin content.
-- `src/lib/response/header-channel.ts::extractHeaderChannel` — sibling instance
+- **[LANDED]** `src/lib/response/parser.ts::parseResponseWithMetadata` — the
+  decode, on both the separator-found and separator-absent arms. **This was the
+  root**; every other instance is a consumer. Now returns `bodyBytes: Buffer` and
+  no decoded field at all.
+- **[LANDED, but see the caveat]** `src/lib/response/file-saver.ts::saveResponseToFile`
+  — took a `string` and wrote `encoding: "utf-8"`. Now takes a `Buffer` with no
+  union. **The signature is fixed and the artefact is not**: its caller passes
+  `Buffer.from(content, "utf8")`, so the replacement still reaches disk. That half
+  moved to `018`.
+- **[LANDED, superseded]** `src/lib/response/processor.ts::processResponse` —
+  gated `MAX_RESPONSE_SIZE` on the decoded length. Now checks both
+  representations, which is **not** what AC 2 below asked for; `LESSONS.md` RC-34
+  records why the wire-only form was wrong. `exceedsInlineCap` weighing the
+  defended text was never a defect — that is invariant 14 working.
+- **[WITHDRAWN — not a defect]** `src/lib/response/processor.ts::savedMessage` —
+  this entry was wrong. At the base ref `saveResponseToFile(content)` wrote that
+  same string as UTF-8, so `Buffer.byteLength(content, "utf8")` was exactly the
+  file's size. It measures `diskContent.length` now, which is equivalent and
+  harder to drift. `LESSONS.md` RC-33 carries the correction.
+- **[OPEN — the last live member]** `src/lib/tools/jq-query.ts::executeJqQuery` —
+  `readFile(..., "utf-8")` returns the replacement as origin content. Untouched.
+  Flagged independently by three reviewers on 2026-09-07. **This instance is why
+  this todo is still open.**
+- **[SCOPED OUT, re-verified unchanged]** `src/lib/response/header-channel.ts::extractHeaderChannel` — sibling instance
   with a *different* consequence: a byte-slice can cut a multi-byte sequence
   mid-character. Not persisted, and the truncation is announced via
   `headers_truncated`, so it does not carry the silent half.
@@ -127,6 +147,48 @@ genuinely have sent.
 
 - 2026-09-07 — filed from PR #37 review round 4. Declined in-branch on
   convergence grounds; see above.
+- 2026-09-07 — **partly implemented on `fix/016-carry-wire-octets-through-to-persistence`
+  (`LESSONS.md` RC-33, RC-34). Left open on purpose.**
+
+  **Landed:**
+  - `ParsedResponse` carries `bodyBytes: Buffer` and **no decoded sibling** — the
+    decoded field turned out to have zero production readers once the octets
+    arrived, so keeping it meant decoding a body up to 10 MB twice per request
+    (RC-28's `repeated-computation` recurring; measured 602 → 478 ms CPU on
+    9.5 MB once removed).
+  - `processResponse(responseBytes: Buffer, …)` performs the request's single
+    decode. `saveResponseToFile(content: Buffer, …)` takes a Buffer with **no
+    `string | Buffer` union**, so the one legitimate encode is visible at its
+    call site.
+  - **AC 2, in a corrected form.** `MAX_RESPONSE_SIZE` is checked against both
+    representations rather than swapped onto the wire form. Gating the wire form
+    *alone* — what this todo's AC 2 literally asked for — removed the bound on the
+    decode. **`ARCHITECTURE.md` invariant 14 holds the measurement and
+    `LESSONS.md` RC-34 the reasoning; treat AC 2 as superseded by RC-34 rather
+    than met as written.**
+  - AC 3, and a correction to this todo's premise: the byte count in `message` is
+    the length of the buffer actually written. But **this todo was wrong to call
+    it a defect** — at base, `saveResponseToFile` wrote `content` as UTF-8 and
+    `diskBytes` was `Buffer.byteLength(content, "utf8")`, so the two agreed
+    exactly. It became wrong only under the reverted persistence change.
+  - AC 4: teeth probed. Each guard reverted in turn; each failed a distinct test.
+
+  **Reverted in review, and now `018`'s:**
+  - Persisting the origin's octets — **AC 1 is not met and is no longer this
+    todo's to meet.** `savedMessage` tells the model to read a non-JSON artefact
+    *"with your own tooling"* and `jq_query` cannot open a non-JSON file, so raw
+    octets withdrew Step 2 sanitisation from the one representation the model is
+    told to read. The artefact's safety is a property of its reader, and which
+    reader a non-JSON body gets is `018`'s decision.
+
+  **Still open here:**
+  - Instance 5, `tools/jq-query.ts::executeJqQuery` — `readFile(…, "utf-8")`
+    still substitutes U+FFFD at read time. Flagged independently by three
+    reviewers this round. It is not a regression (the artefact was already lossy)
+    but it is the class's last live silent member, and closing this todo on the
+    write half would make it unfindable to anyone re-running the recorded sweep.
+  - Instance 6, `header-channel.ts` — re-read unchanged at HEAD; the scope-out
+    reasoning above still holds.
 
 ## Resources
 

@@ -196,7 +196,6 @@ export async function executeCurlRequest(
         // descriptor — so this strips the `-w` metadata suffix and nothing else.
         const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
         const { contentType, metadataFound } = parsed;
-        const body = parsed.body;
 
         // Defending and bounding the header text is one concern with one home —
         // see `extractHeaderChannel`. Every defect this channel has produced is
@@ -234,7 +233,10 @@ export async function executeCurlRequest(
         }
 
         // Process response with filtering and size handling
-        const processed = await processResponse(body, {
+        // `processResponse` takes the octets and decodes internally. The buffer
+        // is what the size guard needs, because only wire octets give a byte
+        // count the origin can be held to.
+        const processed = await processResponse(parsed.bodyBytes, {
             url: params.url,
             jqFilter: params.jq_filter,
             maxResultSize: params.max_result_size,

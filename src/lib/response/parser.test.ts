@@ -6,13 +6,22 @@ import { LIMITS } from "../config/limits.js";
 /** parseResponseWithMetadata takes exact octets; tests mostly start from strings. */
 const buf = (s: string) => Buffer.from(s, "utf8");
 
+/**
+ * Decode a parsed body for a case whose subject is text rather than octets.
+ *
+ * `ParsedResponse` carries `bodyBytes` alone, so the decode happens at the
+ * assertion that wants characters — where it is visible, and where it costs
+ * nothing for the cases that do not.
+ */
+const text = (p: { bodyBytes: Buffer }) => p.bodyBytes.toString("utf8");
+
 describe("parseResponseWithMetadata", () => {
     const SEP = "\n---MCP-CURL-test-separator---\n";
 
     it("reads the content type from the metadata block", () => {
         const raw = `{"id":1}${SEP}application/json`;
         const parsed = parseResponseWithMetadata(buf(raw), SEP);
-        expect(parsed.body).toBe('{"id":1}');
+        expect(text(parsed)).toBe('{"id":1}');
         expect(parsed.contentType).toBe("application/json");
         expect(parsed.metadataFound).toBe(true);
     });
@@ -26,7 +35,7 @@ describe("parseResponseWithMetadata", () => {
         expect(empty.contentType).toBeUndefined();
 
         const absent = parseResponseWithMetadata(buf("plain body"), SEP);
-        expect(absent.body).toBe("plain body");
+        expect(text(absent)).toBe("plain body");
         expect(absent.metadataFound).toBe(false);
         expect(absent.contentType).toBeUndefined();
     });
@@ -47,7 +56,7 @@ describe("parseResponseWithMetadata", () => {
         const parsed = parseResponseWithMetadata(buf(`body${SEP}${hostile}`), SEP);
         expect(parsed.contentType).toBeUndefined();
         expect(parsed.metadataFound).toBe(true);
-        expect(parsed.body).toBe("body");
+        expect(text(parsed)).toBe("body");
     });
 
     it("keeps the head of a content-type carrying an instruction, never the prose", () => {
@@ -186,7 +195,7 @@ describe("parseResponseWithMetadata — window sizing", () => {
         // must still be found behind the full-length value, which is what this
         // case is actually about.
         expect(parsed.contentType).toBe("application/vnd.api+json");
-        expect(parsed.body).toBe('{"id":1}');
+        expect(text(parsed)).toBe('{"id":1}');
     });
 
     it("marks metadata as not found once the field allowance is exceeded", () => {
@@ -204,5 +213,95 @@ describe("parseResponseWithMetadata — window sizing", () => {
         const parsed = parseResponseWithMetadata(buf("plain body"), SEP);
         expect(parsed.metadataFound).toBe(false);
         expect(parsed.contentType).toBeUndefined();
+    });
+});
+
+describe("parseResponseWithMetadata — bodyBytes carries the wire octets", () => {
+    const SEP = "\n---MCP-CURL-test-separator---\n";
+
+    /** `{"name":"Jos\xe9"}` — legal JSON, and not valid UTF-8. */
+    const latin1Json = Buffer.concat([
+        Buffer.from('{"name":"Jos', "utf8"),
+        Buffer.from([0xe9]),
+        Buffer.from('"}', "utf8"),
+    ]);
+
+    it("returns the exact octets, separator present", () => {
+        const raw = Buffer.concat([latin1Json, Buffer.from(`${SEP}application/json`, "utf8")]);
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(parsed.bodyBytes.equals(latin1Json)).toBe(true);
+        // And the decode of those same octets is lossy — asserted so that the
+        // case is a comparison between two different things. Without it, a
+        // future change that stored a decoded string here would satisfy the
+        // line above on a fixture that happened to be valid UTF-8.
+        expect(text(parsed)).toContain("\uFFFD");
+        expect(Buffer.from(text(parsed), "utf8").equals(latin1Json)).toBe(false);
+    });
+
+    it("returns the exact octets, separator absent", () => {
+        // Its own `return` in the parser, so its own case: fixing one arm and
+        // not the other is `.claude/rules/01-known-shapes.md` K-11.
+        const parsed = parseResponseWithMetadata(latin1Json, SEP);
+
+        expect(parsed.metadataFound).toBe(false);
+        expect(parsed.bodyBytes.equals(latin1Json)).toBe(true);
+    });
+
+    it("stops bodyBytes at the separator, never including the metadata suffix", () => {
+        const body = Buffer.from('{"a":1}', "utf8");
+        const raw = Buffer.concat([body, Buffer.from(`${SEP}application/json`, "utf8")]);
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(parsed.bodyBytes.equals(body)).toBe(true);
+        expect(parsed.bodyBytes.toString("utf8")).not.toContain("MCP-CURL");
+        expect(parsed.bodyBytes.toString("utf8")).not.toContain("application/json");
+    });
+
+    it("round-trips a valid-UTF-8 body through the decode unchanged", () => {
+        // The complement of the lossy case: where the origin's octets ARE valid
+        // UTF-8, decoding and re-encoding must be identity. This is what makes
+        // the lossy assertion above a statement about the input rather than
+        // about the decode always mangling something.
+        const body = Buffer.from("héllo wörld", "utf8");
+        const raw = Buffer.concat([body, Buffer.from(`${SEP}text/plain`, "utf8")]);
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(parsed.bodyBytes.equals(body)).toBe(true);
+        expect(Buffer.from(text(parsed), "utf8").equals(body)).toBe(true);
+    });
+
+    it("on the not-found arm, bodyBytes is the whole buffer and not the origin's body", () => {
+        // The counterexample to "exactly as the origin sent them", and the reason
+        // that doc-block is qualified per-arm. A `Content-Type` longer than the
+        // field allowance pushes the separator out of the search window, so
+        // "not found" and "not present" become one value — and `bodyBytes` then
+        // contains this server's OWN separator plus remote header text that was
+        // never body.
+        //
+        // It fails safe: `metadataFound: false` selects the strictest grammar and
+        // the whole thing is stripped. Asserted because `docs/todos/018` AC 1
+        // wants a byte-exact body, and this is the arm where that is not
+        // available — a fidelity path built on this field must read the flag.
+        const longType = `text/plain; profile="${"x".repeat(LIMITS.MAX_METADATA_TAIL_LENGTH)}"`;
+        const raw = buf(`body${SEP}${longType}`);
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(parsed.metadataFound).toBe(false);
+        expect(parsed.bodyBytes.equals(raw)).toBe(true);
+        expect(text(parsed)).toContain("MCP-CURL");
+        expect(text(parsed)).toContain("text/plain");
+    });
+
+    it("returns an empty buffer for an empty body, not undefined", () => {
+        // A zero-length body is a real response — 204, or a HEAD. The saved and
+        // size-gate paths both read `.length` off this, so absence here would be
+        // a crash rather than a zero.
+        const raw = Buffer.from(`${SEP}application/json`, "utf8");
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(Buffer.isBuffer(parsed.bodyBytes)).toBe(true);
+        expect(parsed.bodyBytes.length).toBe(0);
+        expect(text(parsed)).toBe("");
     });
 });

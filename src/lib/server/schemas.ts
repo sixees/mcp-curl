@@ -81,6 +81,13 @@ export const CurlExecuteSchema = z.object({
         .default(false)
         .describe("Wrap response in JSON with metadata (exit code, success status)"),
     jq_filter: z.string()
+        // **No `.min(1)` here, deliberately.** `""` is falsy, so
+        // `processResponse` skips the filter block and `filterApplied` reports
+        // `filtered: false` — a silent no-op that describes itself correctly,
+        // not a wrong answer. Refusing it at this schema would narrow an
+        // accepted input on a published entry point, which invariant 11 prices
+        // as a MAJOR, and `filterApplied` is the guarantee either way.
+        // `LESSONS.md` RC-36.
         .optional()
         .describe("JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check."),
     max_result_size: z.number()
@@ -107,6 +114,13 @@ export const JqQuerySchema = z.object({
     filepath: z.string()
         .describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
     jq_filter: z.string()
+        // Required here, so `""` is the only degenerate value — and this one
+        // narrows nothing: `splitJqFilters("")` is `[]`, so
+        // `applyJqFilterToParsed` already throws *"filter must specify a path"*
+        // and only the error's site and wording change. That asymmetry is why
+        // this `.min(1)` stays while `CurlExecuteSchema`'s went — there
+        // `jq_filter` is optional and `""` meant "no filter".
+        .min(1, "jq_filter must not be empty")
         .describe("JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported."),
     max_result_size: z.number()
         .int()

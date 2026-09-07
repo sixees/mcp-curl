@@ -52,8 +52,35 @@ const MEDIA_TYPE_HEAD =
  * Parsed response with body and optional content type.
  */
 export interface ParsedResponse {
-    /** Response body content */
-    body: string;
+    /**
+     * The body's octets — the origin's, **on the arm where the boundary was
+     * found**.
+     *
+     * On `metadataFound: true` this is `raw.subarray(0, separatorIndex)`: the
+     * origin's body bytes and nothing else. On `metadataFound: false` it is the
+     * whole of cURL's stdout, which is normally all body — but is also what a
+     * `Content-Type` longer than `LIMITS.MAX_METADATA_TAIL_LENGTH` produces,
+     * because that evicts the separator from the search window. So on that arm
+     * the buffer may hold this server's own separator and remote header text
+     * that was never body, and the field cannot tell you which case you have:
+     * "not found" and "not present" are one value here.
+     *
+     * **That is why the distinction is on the field rather than left to the
+     * caller.** It fails safe today — `metadataFound: false` selects the
+     * strictest grammar, so everything is stripped — but `docs/todos/018` wants
+     * a byte-exact body, and byte-exactness is only available on the
+     * `metadataFound: true` arm. A fidelity path built on this field has to read
+     * the flag.
+     *
+     * Octets rather than a decoded string because `processResponse` must be able
+     * to quote a byte count the origin can be held to, and because one
+     * representation cannot disagree with itself. `CommandResult.stdoutBytes`
+     * owns the general form of that argument.
+     *
+     * A subarray, so it costs no copy — except on the not-found arm, which
+     * returns `raw` itself.
+     */
+    bodyBytes: Buffer;
     /**
      * The type/subtype of a well-formed Content-Type — never its parameters.
      *
@@ -115,24 +142,18 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * content type, never after it — `ARCHITECTURE.md` invariant 13 states the rule
  * and `curl-args-builder.ts` is the writing half of it.
  *
- * Returns the body as a string only. Nothing indexes a wire byte count into
- * this response — the header/body split is structural, not derived — so no
- * octet copy is returned beside it: a spare Buffer whose doc-block says
- * "measure with these" but which nothing measures reads as a guarantee in
- * force.
+ * **Returns the body as octets and never as a string.** The decode belongs to
+ * whoever needs text — `processResponse`, for the defence pipeline and the
+ * inline body — so doing it here as well would decode a body up to 10 MB twice
+ * per request. The metadata block IS decoded here, because it is a bounded field
+ * this function parses itself.
  *
- * **The decode is lossy and currently unavoidable downstream.** A byte that is
- * not valid UTF-8 becomes U+FFFD here, and `saveResponseToFile` takes a
- * `string`, so the persisted artefact carries the replacement rather than the
- * wire byte — and `processResponse` reports the decoded length as the response
- * size. Restoring octet fidelity is not a matter of reading them off this
- * function: it needs `saveResponseToFile`'s signature and `processResponse`'s
- * return type to change with it. Said plainly here so the next reader does not
- * discover it halfway through.
+ * One representation also cannot disagree with itself about where the body ends.
+ * `LESSONS.md` RC-33.
  *
  * @param rawResponse - The raw response from cURL including metadata suffix
  * @param separator - The unique per-request separator used in -w format
- * @returns ParsedResponse with the decoded body and the optional contentType
+ * @returns ParsedResponse carrying the body's octets and the optional contentType
  */
 export function parseResponseWithMetadata(
     rawResponse: Buffer,
@@ -158,8 +179,11 @@ export function parseResponseWithMetadata(
     const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
 
     if (separatorIndex === -1) {
+        // Either no metadata block, or one that fell outside the search window —
+        // the two are indistinguishable here, which is why `bodyBytes` on this
+        // arm is not attributable to the origin. See `ParsedResponse.bodyBytes`.
         return {
-            body: raw.toString("utf8"),
+            bodyBytes: raw,
             metadataFound: false,
         };
     }
@@ -186,7 +210,7 @@ export function parseResponseWithMetadata(
     const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
 
     return {
-        body: bodyBytes.toString("utf8"),
+        bodyBytes,
         contentType: validContentType,
         metadataFound: true,
     };

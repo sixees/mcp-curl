@@ -24,10 +24,16 @@ recorded here so a later round does not re-litigate it — `.claude/rules/03-div
 not what it is for — if that becomes a requirement, it is a different tool. The
 body path therefore has exactly two outcomes:
 
-1. **The body parses as JSON** — whether or not the header said so — return the
-   **original bytes, unmodified**, wrapped.
-2. **The body does not parse as JSON** — return no inline body. Report the parse
-   failure, the declared content type, the byte length and a file path.
+1. **The body parses as JSON *and* the value is an object or an array** —
+   whether or not the header said so — return the **original bytes,
+   unmodified**, wrapped.
+2. **Anything else** — return no inline body. Report the parse failure, the
+   declared content type, the byte length and a file path.
+
+**Both arms turn on one gate, and *Require object-or-array* below owns it** — a
+full parse plus `isCompositeValue`, never `isDefinitelyJson`. Stated as "parses
+as JSON" alone, arm 1 admits `null`, `42` and `"<script>x</script>"`, which is
+the bare-scalar case that section rejects by name.
 
 The declared `Content-Type` stops being a decision about anything. It is carried
 to the consumer as a **reported fact** ("this is what the API claimed"), never as
@@ -124,6 +130,57 @@ as `text/plain` is technically JSON. `JSON_DOCUMENT_FIRST_CHARS`
    nature because they transform. Only the *defence* path stops needing it. Do
    not delete this module.
 
+### The artefact's form is now this todo's to settle — inherited from 016
+
+**Not an aside: it is a prerequisite of the section below.** 016's attempt to make
+the saved file byte-exact was reverted in review because the artefact's safety is
+a property of *who reads it*, and that is undecided until this todo lands:
+
+- On a body that passes the gate — parses, and is an object or an array — the
+  reader is `jq_query`, which is inside the process and applies a defence pass. Byte-exact octets are safe there, and that
+  is exactly where RC-33's data loss actually hurts — duplicate keys, integers
+  past `Number.MAX_SAFE_INTEGER`, `"1.50"`.
+- On a body that does **not** parse, `jq_query` cannot open the file at all, so
+  the only route is the host's own file tooling — outside every defence. Raw
+  octets there withdraw Step 2 sanitisation (invisible-character and bidi
+  stripping) from the one representation the model is instructed to read.
+
+**So the artefact's form must be decided on whether the body parses — a property
+of the bytes — and never on the declared header**, which is invariant 1a's named
+failure shape.
+
+**Use the gate this todo settles under *Require object-or-array* — a full parse
+plus `isCompositeValue` — and NOT `isDefinitelyJson`.** An earlier draft of this
+section named `isDefinitelyJson`, and review found it cannot answer the question,
+wrongly in both directions:
+
+- **It says no to everything that matters.** `parseJsonDocument` returns
+  `undefined` above `STRIP_PATH_MAX_BYTES` (262,144), and
+  `DEFAULT_MAX_RESULT_SIZE` is 500,000 — so `overCap` implies over 256 KB implies
+  *"not JSON"*. The arm where the artefact question exists at all is the arm
+  where that predicate always answers no, and the byte-exactness this todo
+  promises for JSON would have been unreachable at the default.
+- **And yes to the one case that is dangerous.** `isDefinitelyJson('"<script>x</script>"')`
+  is **true** — `JSON_DOCUMENT_FIRST_CHARS` admits `"` — while *Require
+  object-or-array* below classifies a bare scalar as non-JSON, i.e. the arm
+  routed to the host's own file tooling with no defence. Following the earlier
+  draft would have persisted raw origin octets for exactly that body: the P1 the
+  016 revert closed, arriving back through the section written to prevent it.
+
+`isDefinitelyJson` is correct for the job it has — selecting the strip exemption,
+where the strip cap makes its early return exactly right. It is the wrong
+predicate for a decision taken on bodies that are over the inline cap by
+construction. **The artefact gate must not inherit `STRIP_PATH_MAX_BYTES`, and it
+must be the same rule as the body gate, spelled once.**
+
+Whatever this todo decides for the non-JSON arm below governs what may be written
+to disk for it. `ARCHITECTURE.md` invariant 14 asserts nothing about the
+artefact's form, deliberately, because this is where that belongs.
+
+`LESSONS.md` RC-33 holds the measurement; `ARCHITECTURE.md` invariant 14 no longer
+asserts anything about the artefact's form, deliberately, because this is where
+that belongs.
+
 ### Bad JSON: report, save, do not inline
 
 An agent can often recover from a body that nearly parses — a PHP warning
@@ -133,14 +190,44 @@ unparseable bytes inline is the arbitrary-remote-text case this whole design
 removes.
 
 So: **no inline body; return the parse failure, the declared content type, the
-byte length and the file path.** `Unexpected token '<' at position 0` tells the
-agent it got an HTML error page with zero remote bytes in the message.
+byte length and the file path.** The failure is reported as a classification
+drawn from the closed set that item 1 under *What to do instead* establishes,
+plus a position only where V8 supplies one — enough for the agent to tell an
+HTML error page from a truncated body, and carrying no remote bytes by
+construction. **Never V8's own message**, which the block immediately below
+measures and rules on.
 
-**Open, and it is a trap:** V8's `JSON.parse` error message can quote the
-offending token, which would put remote bytes back into server-authored prose —
-the exact channel `MEDIA_TYPE_HEAD` exists to close. **Report a position and a
-fixed classification, not the engine's raw message string.** Verify what V8
-actually emits before writing the reporting code.
+**SETTLED, by measurement on node v24.18.0 (2026-09-07). The trap is real and
+worse than assumed, and the remedy this todo originally proposed does not work as
+written.** V8 emits two message families:
+
+| Input | Message |
+|---|---|
+| `Warning: mysql_connect()…{"ok":true}` | `Unexpected token 'W', "Warning: m"... is not valid JSON` |
+| `{"a": SUPERSECRET}` | `Unexpected token 'S', "{"a": SUPERSECRET}" is not valid JSON` |
+| `{"a":1,}` | `Expected double-quoted property name in JSON at position 7 (line 1 column 8)` |
+| `{"a":"leaky` | `Unterminated string in JSON at position 22 (line 1 column 23)` |
+| `""` / `{"a":1,"b":` | `Unexpected end of JSON input` |
+
+**It embeds up to ten bytes of the body verbatim — and the WHOLE body when the
+body is short**, as row 2 shows. So `e.message` is a remote-authored channel and
+must never be interpolated.
+
+**The reason the original instruction fails: the leaking family carries no
+position, and the family with a position never leaks.** "Report a position and a
+fixed classification" is therefore unimplementable on the case that needs it.
+
+**What to do instead:**
+
+1. **Classify from a vocabulary this repo owns** — a closed set, per
+   `.claude/rules/04-no-instance-literals.md`. Zero remote bytes by
+   construction. Do not derive the classification by pattern-matching V8's
+   prose, which is not a stable contract.
+2. **Take the position only from `/ at position (\d+)/`, and only when it
+   matches.** A decimal integer is not remote bytes. Where there is no match,
+   report no position rather than inventing one.
+3. **Never pass `e.message` to any model-facing surface**, including a log line
+   that a `verbose` transcript could carry.
 
 ### Where the declared content type is reported decides ~45 lines
 
@@ -153,10 +240,14 @@ actually emits before writing the reporting code.
   `[mcp-curl] …` prefix lines. Putting the header there makes it prose and the
   constraint comes straight back.
 
-**Recommendation: the JSON field only; the plain branch says nothing about the
-content type.** A declared-vs-actual mismatch is metadata, and the caller who
-wants it can ask for metadata. Confirm with the director before deleting
-`MEDIA_TYPE_HEAD`.
+**SETTLED by the director, 2026-09-07: the JSON metadata field only. The plain
+branch says nothing about the content type, and `MEDIA_TYPE_HEAD` deletes
+outright** — the regex, its 41-line doc-block, and `ParsedResponse.contentType`'s
+role as a constrained token. A declared-vs-actual mismatch is metadata, and the
+caller who wants it asks for metadata.
+
+Recorded per `.claude/rules/03-divergence.md` → *Settled conflicts stay settled*.
+A later round proposing the plain-branch notice is answered by citing this line.
 
 ## What this deletes
 
@@ -174,6 +265,29 @@ Selection machinery, all of it driven by the remote-controlled header:
 Estimate: **700-900 lines of production code, 2,500+ of tests.** A deletion, not
 a refactor.
 
+### The published exports go with them — SETTLED by the director, 2026-09-07
+
+Four of the deletions above are on published entry points, which invariant 11
+makes wire contracts:
+
+- `src/lib.ts` exports `defendText` and `DefendTextOptions`;
+  `DefendTextOptions.contentTypeUndetermined` is a **required** field whose whole
+  purpose is fail-safe grammar selection.
+- `src/lib/utils/index.ts` re-exports `isMarkdownContentType`,
+  `isSniffableContentType` and `supportsMarkupComments` on the `./lib` entry.
+
+**Decision: delete them outright rather than keep deprecated no-op shims.** The
+population test (`.claude/rules/42-ship-what-matters.md`) is a measurement here,
+not an assumption: **this package has one consumer — the operator and an agent.**
+No third party pins these exports, so a compatibility shim would be ~40 lines
+guarding nobody.
+
+**Semver: this is a MAJOR by the letter of the contract, and the version number
+is the director's call at merge.** Stated plainly so that neither half is
+inferred from the other — the deletion is authorised; the number is not decided
+here. Todo `010` flagged the same removal as MAJOR and is superseded on that
+point by this line.
+
 ## Existing todos this affects
 
 **Do not close any of these here** — `skill: file-todos` owns the lifecycle, and a
@@ -185,7 +299,7 @@ todo closed as a side effect of another is a todo nobody dispositioned.
 | **017** — unregistered media types get no strip path | **Moot.** There is no media-type classification to be unregistered in |
 | **014** — JSON region defence skipped on a stale byte measurement | **Moot.** There is no region-wise re-serialising defence |
 | **004** — entity decode serves two channels with opposite requirements | **Mostly moot.** Both surviving text channels already pass `decodeEntities: false`; the JSON path does not decode at all |
-| **016** — wire octets decoded lossily before persistence | **Becomes load-bearing, and is a prerequisite.** "Return the original bytes" is not achievable while ingest hands downstream a lossy `string` — `parseResponseWithMetadata` decodes with U+FFFD replacement and `saveResponseToFile` takes a `string`. Either 016 lands first or 018 absorbs it |
+| **016** — wire octets decoded lossily before persistence | **PARTLY LANDED, STILL OPEN — and 018 now OWNS the artefact's form** (2026-09-07, `LESSONS.md` RC-33, RC-34). Landed: `ParsedResponse.bodyBytes` carries the origin octets, `processResponse` takes a `Buffer` and performs the request's single decode, `saveResponseToFile` takes a `Buffer` with no union, and `MAX_RESPONSE_SIZE` is checked on both representations. **Reverted in review: persisting those octets.** `savedMessage` tells the model to read a non-JSON artefact "with your own tooling", and `jq_query` cannot open a non-JSON file — so raw octets removed Step 2 sanitisation from the one representation the model is told to read. **The artefact cannot be made byte-exact until this todo settles what a non-JSON body gets**, which is why it is 018's and not 016's. Also still open in 016: `jq-query.ts`'s `readFile(…, "utf-8")` |
 | **005** — bracketed label defeats beacon strip | **Unchanged.** The strip stages survive on the header and stderr channels, so this is still live there |
 | **015** — the wrap has six exits and guards two | **Unchanged and more important.** The wrap becomes the *only* content defence on the JSON path, so its unguarded exits carry more weight |
 
@@ -201,6 +315,11 @@ todo closed as a side effect of another is a todo nobody dispositioned.
 - [ ] The parse-failure report contains **no bytes from the response body** —
       including via V8's error message
 - [ ] A bare-scalar body (`null`, `42`, `"x"`) is treated as non-JSON
+- [ ] **The artefact gate is the same rule as the body gate, and inherits no
+      strip cap.** Probe both directions at a size that reaches the save arm: a
+      600 KB *object* body produces the byte-exact artefact; a 600 KB bare-string
+      body (`"` + 600 KB + `"`, valid JSON, non-composite) takes the non-JSON arm
+      and never produces raw origin octets. Both fail against `isDefinitelyJson`
 - [ ] Header and stderr channels still run every strip stage, verified by probe
       (remove a stage; their tests must fail)
 - [ ] `utils/json-lexeme.ts` still covers both jq paths

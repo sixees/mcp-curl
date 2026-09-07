@@ -222,6 +222,29 @@ what a violation looks like, it does not belong on this list.
     discarded at the parse boundary, so it is a bounded token and not a prose
     channel. `LESSONS.md` RC-30, RC-31.
 
+    **The request-level ceiling is a different property, enforced upstream, and
+    it is named here so that changing it has an invariant to violate.**
+    `MAX_RESPONSE_SIZE` is enforced streaming in
+    `execution/command-executor.ts::accountFor`, which aborts the child before
+    the over-cap chunk is retained, with `--max-filesize` from
+    `curl-args-builder.ts` as the cURL-side half. **Raising or removing either is
+    a change to this invariant** — the gap that existed while the ceiling was
+    documented only at `processResponse`.
+
+    `processResponse` bounds the DECODE of that already-bounded buffer, and
+    bounding only the wire form is the violation. A decode only ever inflates, at
+    a multiplier the origin picks: an ordinary 9.5 MB gzip inflates 1.81x, and a
+    wire-only gate took one request from refused to accepted at 3.9x CPU and
+    10.3x peak RSS (+19 MB to +196 MB) — past `MAX_TOTAL_RESPONSE_MEMORY`, which
+    the neighbouring constant documents as covering *all* concurrent requests.
+    Its wire-length check is defence-in-depth for a direct internal caller, not a
+    production path: `accountFor` refuses such a body first, so that arm is
+    unreachable through `curl_execute` and its message is observable only with
+    the executor stubbed. `LESSONS.md` RC-34.
+
+    `exceedsInlineCap` is this invariant's own gate and weighs the DEFENDED text,
+    because it answers *how much reaches the model*.
+
 15. **Every regex in the strip path is linear in the size of its input, and the
     byte cap is not what makes it so.** A `g`-flagged replace starts a match
     attempt at every position, so a pattern that is linear *per attempt* is

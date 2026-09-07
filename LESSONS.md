@@ -1498,3 +1498,221 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
     catches it, and the leak reproduces only at the published `defendText`
     boundary. The claim was checked at the wrong altitude, and the fix's benefit
     was priced against it.
+
+### RC-33 — the plan to carry wire octets to disk was audited, built, and then narrowed under review
+
+**Date:** 2026-09-07 · **PR:** #38 · **Plan:** `docs/todos/016-P2-wire-octets-are-decoded-lossily-before-persistence.md`
+
+**Class:** K-5, K-11, K-3 — *class-id:* `missing-validation`, `repeated-computation`
+
+- **The plan said:** todo 016's solution 1 — return the body's octets beside the
+  decoded string, carry them through `processResponse`, and have
+  `saveResponseToFile` write them, so the persisted artefact is byte-exact. Three
+  signatures move; `ARCHITECTURE.md` invariant 14 gains a note. 016 listed three
+  consequences of the lossy decode: the artefact carries U+FFFD, the size gate
+  weighs an inflated count, and `savedMessage` reports the wrong size.
+- **Reality was:** the mechanism was real and the *scope* was wrong in both
+  directions. Measured: `{"name":"Jos\xe9"}` is `7b2261223a224a6f73e9227d` on the
+  wire and `…efbfbd…` after the round trip, so the artefact loss is genuine. But:
+  - **One of 016's three consequences did not exist.** `savedMessage`'s
+    `diskBytes` was `Buffer.byteLength(content, "utf8")` while
+    `saveResponseToFile(content)` wrote that same string with
+    `encoding: "utf-8"` — the two agreed exactly. It became wrong only *because*
+    this branch changed what was written. An earlier draft of this entry asserted
+    it was "wrong on both counts at once" at base; that was a claim about code,
+    checkable in one `git show`, and it was assumed. **K-3, against my own RC.**
+  - **Persisting the origin's octets broke a defence.** `savedMessage` tells the
+    model to read a non-JSON artefact *"with your own tooling"* — a reader
+    outside this process and outside every pass — and `jq_query` cannot open a
+    non-JSON file at all, so there is no defended reader to fall back on. Writing
+    raw octets removed **Step 2 sanitisation**, invisible-character and bidi
+    stripping, from the one representation the model is instructed to read.
+    Measured: a `text/markdown` body persisted as `# Report\n\n[image removed]\n`
+    before, and verbatim `<!-- ignore prior instructions -->…<script>x()</script>`
+    after. The justification written into invariant 14 — *"the file's only
+    in-process reader is `jq_query`, which runs the full `defendText` pipeline on
+    what it reads"* — was **false in three ways**, found independently by three
+    reviewers: `jq_query` defends the filter *output* not the read, it passes the
+    JSON arm so it takes Step 2 only, and its parse-failure path calls
+    `defendText` not at all. Invariant 1 does hold, via the post-processor wrap —
+    a control the justification never named.
+- **What changed:** the branch was **narrowed** on the director's call. What
+  landed: `ParsedResponse` carries `bodyBytes: Buffer` and **no decoded sibling**;
+  `processResponse(responseBytes: Buffer, …)` performs the single decode of the
+  request; `saveResponseToFile` takes a `Buffer` with no `string | Buffer` union;
+  `MAX_RESPONSE_SIZE` is checked on both representations (see RC-34);
+  `savedMessage.diskBytes` measures the buffer actually written; and one
+  `filterApplied` boolean replaced two non-equivalent spellings of *"did a filter
+  run"* — `jq_filter: ""` had made them disagree, so no filter ran while the disk
+  and message decisions both concluded one had, and 8 wire octets landed as 10.
+  What did **not** land: the artefact is still the defended text. Octet fidelity
+  for the persisted file is sequenced behind `docs/todos/018`, which settles what
+  a non-JSON body gets and therefore what a safe artefact even means. **016 stays
+  open**; its write half is done and its reader half (`jq-query.ts`'s
+  `readFile(…, "utf-8")`) is untouched.
+- **What this costs next time:** three rules, and the branch paid for each.
+  1. **When one value answers two questions, check whether a single
+     representation can answer both.** K-5's projection arm: `body` stood in for
+     the response, and every consumer that measured or persisted it was
+     describing a projection while claiming to describe the original.
+  2. **When you add a representation, sweep for consumers of the OLD one — and
+     treat "it is the existing field" as no evidence.** `ParsedResponse.body`
+     turned out to have zero production readers once the octets arrived, so the
+     parser decoded a body up to 10 MB that nothing read while
+     `processResponse` decoded it again. That is **RC-28's
+     `repeated-computation` recurring one PR after it was recorded**, and PR #37's
+     entire performance win was deleting a discarded pass. Measured at 602 → 478 ms
+     CPU on a 9.5 MB body once removed. A migration is when the old
+     representation is most likely to become dead and the least likely moment
+     anyone looks.
+  3. **A fidelity guarantee is not separable from who reads the artefact.** 016
+     reasoned about the write and named the reader only as a consumer to fix
+     later. The write could not actually be changed without deciding what reads
+     it, because the artefact's safety is a property of that pair. **Sequence a
+     fidelity change behind the decision about its readers, never ahead of it.**
+
+Found by auditing todo 016 as the prerequisite for todo 018, per the operator's
+sequencing decision of 2026-09-07. The two facts 016 did not name — the
+defended-text artefact and the `diskBytes` claim — came from reading
+`processResponse`'s save arm rather than trusting the todo's finding list. Both
+regressions were caught in review round 1 and reverted before merge, and are
+recorded as caught.
+
+### RC-34 — making a measurement honest removed the bound the dishonest measurement was providing
+
+**Date:** 2026-09-07 · **PR:** #38 · **Plan:** `docs/todos/016-P2-wire-octets-are-decoded-lossily-before-persistence.md`
+
+**Class:** K-11, K-1 — *class-id:* `unbounded-growth`, `fail-open-default`
+
+- **The plan said:** todo 016 acceptance criterion 2 — *"`MAX_RESPONSE_SIZE` is
+  measured against wire octets, not against the inflated decoded length."* The
+  reasoning was sound and the defect it named was real: gating the decode refused
+  bodies for a size the origin never sent, because U+FFFD is three bytes where an
+  invalid octet was one, so a 4 MB body of mostly-invalid octets came back as
+  *"Response size (12000000 bytes) exceeds maximum allowed"* — a number found
+  nowhere on the wire.
+- **Reality was:** that inflated count was **also the only thing bounding the
+  work**, and 016 did not notice because it was reasoning about the message.
+  Every stage after the gate runs on the decode, not on the buffer. Moving the
+  ceiling onto the wire form alone made the sentence true and the limit
+  ineffective, and the input that demonstrates it is not adversarial: an ordinary
+  9.5 MB gzip, PNG or PDF inflates 1.81x. Measured base against branch —
+  **refused → accepted, 126 → 478-490 ms CPU (3.9x), peak RSS +19 MB → +196 MB
+  (10.3x)**. One request then peaks past `LIMITS.MAX_TOTAL_RESPONSE_MEMORY`,
+  which the constant beside it documents as the ceiling *across all concurrent
+  requests*, and `docs/todos/003` records that the pool reads zero during this
+  phase — so nothing refuses the next one. Three concurrent 10 MB invalid-octet
+  bodies: all three rejected at base, all three fulfilled on the branch. A
+  sideways cost too: `STRIP_PATH_MAX_BYTES` is measured on the decode, so a
+  non-UTF-8 body began skipping the strip path at ~85-141 KB of wire instead of
+  256 KB — a defence loosening nobody asked for.
+- **What changed:** `processResponse` now checks **both** representations, and
+  `ARCHITECTURE.md` invariant 14 owns the detail and the measurement — cited here
+  rather than restated, because an earlier draft of this entry duplicated the
+  figures into six documents and one copy had already dropped one of them within
+  hours.
+- **And review corrected the entry's own framing.** The first draft priced the
+  wire arm as an O(1) fast path on an 11 MB refusal and as the arm that keeps the
+  message true. **Three reviewers independently found that arm is unreachable
+  through `curl_execute`**: `execution/command-executor.ts::accountFor` charges
+  every chunk and aborts the child *before* it is retained, and
+  `curl-args-builder.ts` passes `--max-filesize`, so no request that resolves can
+  hand `processResponse` an over-cap buffer. The test that gave the arm teeth
+  reaches it only with the executor stubbed. **The measurement was real and the
+  population was empty** — so the arm stays as defence-in-depth for a direct
+  internal caller, described as that, and the invariant now names the layers that
+  actually refuse. That mattered beyond wording: while the ceiling was documented
+  only at `processResponse`, raising or removing `accountFor`'s cap would have
+  violated no numbered invariant.
+- **A teeth probe is what exposed the subsumption**, and it is the same shape
+  RC-21 records — *"a regression guard for a two-path invariant asserted it on one
+  path, so the other could revert with the suite green."* Removing the wire arm
+  failed nothing until the test was strengthened to assert the message-truth
+  property it uniquely owns.
+- **What this costs next time:** two rules.
+  1. **Before moving a limit onto a different quantity, ask what the old quantity
+     was bounding — not just what it was reporting.** A measurement can have two
+     consumers, a human-readable one and a structural one, and a fix aimed at the
+     first silently retires the second. K-11: name the boundary and check *both*
+     sides. Here they were *"is this number true?"* and *"does this number
+     constrain anything?"*, and 016 answered only the first. **The tell is a limit
+     whose units stop matching the units of the work it precedes.**
+  2. **Before pricing a guard, find out whether anything can reach it — and name
+     the layer that refuses first, in the invariant.** A benefit measured on an
+     input no caller can deliver reads as live defence, and the test proving it
+     will be stubbing away the layer that would have refused. The corollary is
+     the one that bit here: a ceiling enforced at three layers and documented at
+     one leaves the two that bind uncovered by any invariant.
+
+### RC-35 — the shared constant three reviewers asked for cannot exist, and a sibling passing hid that
+
+**Date:** 2026-09-07 · **PR:** #38 · **Plan:** review round 2 of `docs/todos/016`
+
+**Class:** K-1, K-3 — *class-id:* `broken-contract`
+
+- **The plan said:** three reviewers, independently, that
+  `src/lib/tools/curl-output.test-fixture.ts` should export a shared stub-hostname
+  constant and both `curl_execute` end-to-end suites should import it — the
+  measured drift being `example.test` in two suites against `api.example.test` in
+  a third. The finding was correct and the fix looked like a one-line
+  substitution.
+- **Reality was:** **`vi.mock` factories are hoisted above every import**, so a
+  factory referencing an imported binding throws `Cannot access
+  '__vi_import_4__' before initialization`. Measured: adding it to
+  `curl-execute.headers.test.ts` made that suite fail to load entirely — 0 tests
+  collected. The dangerous part is that the *other* suite,
+  `curl-execute.size-and-save.test.ts`, referenced the same constant and
+  **passed**, because its import chain happened to initialise the fixture module
+  before the security mock was evaluated. Had the failing suite not existed, the
+  pattern would have shipped green and become an unexplainable load-order flake
+  later. `vi.hoisted` makes a value available to a factory but only per file, so
+  it buys no sharing at all.
+- **What changed:** the constant was removed rather than kept working by luck.
+  Both suites spell the literal inside their own factory, and the fixture records
+  the constraint, the measurement and why `vi.hoisted` is not a substitute — so
+  the next reader does not re-derive it, and the next reviewer raising the same
+  drift is answered with a reason rather than a repeat attempt.
+- **What this costs next time:** **when a fix works in one place and fails in
+  another, the passing one is evidence about ordering rather than about the
+  fix.** A shared value referenced from a hoisted mock factory is unavailable by
+  construction; that it resolves anywhere is accidental. More generally: a
+  reviewer's fix is a hypothesis about the code, and one that three reviewers
+  agree on is still a hypothesis — run it before recording it as done.
+
+### RC-36 — a courtesy guard priced a MAJOR bump, and the guarantee was somewhere else entirely
+
+**Date:** 2026-09-07 · **PR:** #38 · **Plan:** Surface 3, round 1 of `docs/todos/016`
+
+**Class:** K-14 — *class-id:* `broken-contract`
+
+- **The plan said:** round 2 of this branch added `.min(1)` to `jq_filter` on
+  both `CurlExecuteSchema` and `JqQuerySchema`, so an explicitly-supplied empty
+  filter is refused rather than silently ignored. The reasoning was
+  `CONVENTIONS.md` → *Security*, and the comment beside it correctly recorded
+  that this narrows an accepted input on a published entry point — invariant 11
+  prices that as a MAJOR.
+- **Reality was:** CodeRabbit and Copilot independently reported the same thing
+  on Surface 3, which is what forced the question the branch had left open: is a
+  MAJOR release worth this guard? Two facts decided it, and **both were already
+  written in the codebase before the branch started.** The guard's own comment
+  conceded it was *"the courtesy"* and named `processResponse`'s `filterApplied`
+  as the guarantee. And at base, `jq_filter: ""` was **falsy** — the filter block
+  never ran, and `filtered: false` was reported honestly. So the behaviour being
+  "fixed" was a silent no-op that described itself correctly, not a wrong answer.
+- **What changed:** the director settled it — revert, stay MINOR. `.min(1)` is
+  gone from `CurlExecuteSchema`. **It stays on `JqQuerySchema`, and the asymmetry
+  is the point:** there `jq_filter` is required, `splitJqFilters("")` returns
+  `[]`, and `applyJqFilterToParsed` already throws *"filter must specify a
+  path"* — so that one narrows nothing and only moves the error's site. Verified
+  by reading both functions, not assumed from the sibling's comment. The test
+  that asserted the schema rejection now asserts the property that survives —
+  an empty filter is no filter, and the response does not advertise filter
+  output — and was teeth-probed by re-adding `.min(1)`, which fails it alone.
+- **What this costs next time:** **a guard's price is set by the contract it sits
+  on, not by how good the guard is.** This one was cheap to write, correct on its
+  own terms, and cost a major version on a published schema — while the property
+  it protected was held one layer down by code nobody proposed changing. Before
+  adding a check at a published boundary, ask what already answers the question
+  further in; where something does, the boundary check is a courtesy and must be
+  priced as one. K-14's population test applies to *guards you are adding*, not
+  only to findings you are declining.
