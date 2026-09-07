@@ -53,32 +53,27 @@ const MEDIA_TYPE_HEAD =
  */
 export interface ParsedResponse {
     /**
-     * Response body, decoded as UTF-8 — for the DEFENCE and INLINE paths only.
-     *
-     * **Lossy by construction, and that is why {@link ParsedResponse.bodyBytes}
-     * sits beside it.** Any octet that is not valid UTF-8 becomes U+FFFD here,
-     * so this string is not the origin's body and must never be what gets
-     * persisted or measured. The defence pipeline needs a `string` and the model
-     * receives text, so the decode has to happen somewhere; what changed is that
-     * it is no longer the ONLY representation. `LESSONS.md` RC-33.
-     */
-    body: string;
-    /**
      * The body's wire octets, exactly as the origin sent them.
      *
-     * **This is the representation that gets written to disk and weighed
-     * against `MAX_RESPONSE_SIZE`**, because those are the two questions only
-     * the octets can answer: what the artefact should contain, and how big the
-     * response was. `body` answers neither — a `windows-1252` page or an
-     * ISO-8859-1 JSON body decodes to a different byte sequence of a different
-     * length, and U+FFFD is three bytes where the origin sent one, so a body of
-     * mostly-invalid octets measures up to 3x its real size and is refused for a
-     * count the origin never sent.
+     * **The only representation of the body this type carries, and there is
+     * deliberately no decoded sibling.** Todo 016 planned for one — octets
+     * *alongside* the decoded string — and the audit found the string had no
+     * production consumer once persistence and the size gate stopped using it:
+     * `processResponse` needs text for the defence pipeline and decodes the
+     * buffer itself, so a `body: string` here bought a second full
+     * `toString("utf8")` of the same bytes and a second live copy of a body up
+     * to 10 MB. Measured at ~1 ms per decode at that size. `LESSONS.md` RC-33.
      *
-     * **Not a spare copy nobody reads.** `processResponse` persists it on the
-     * unfiltered arm and gates on its length; that is the whole reason it
-     * exists, and if those two consumers ever go away this field should go with
-     * them rather than stay as a doc-block promising a fidelity nothing keeps.
+     * Keeping it would also have re-created the shape this doc-block used to
+     * warn about in the other direction — a field whose text promises a
+     * guarantee no consumer relies on.
+     *
+     * **Octets rather than a string because of what is asked of them:** the
+     * artefact written to disk and the `MAX_RESPONSE_SIZE` gate are both
+     * questions only the wire bytes can answer. A decode answers neither — an
+     * ISO-8859-1 body decodes to a different byte sequence of a different
+     * length, and U+FFFD is three bytes where the origin sent one, so a body of
+     * mostly-invalid octets measures up to 3x its real size.
      *
      * A subarray of cURL's stdout buffer, so it costs no copy.
      */
@@ -144,22 +139,19 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * content type, never after it — `ARCHITECTURE.md` invariant 13 states the rule
  * and `curl-args-builder.ts` is the writing half of it.
  *
- * **Returns the body twice, in both representations, and both have a consumer.**
- * `body` is the UTF-8 decode the defence pipeline and the inline path need;
- * `bodyBytes` is the wire octets that get persisted and measured. Neither is
- * derivable from the other — the decode replaces every invalid octet with
- * U+FFFD, which is not reversible and not even length-preserving — so a single
- * representation cannot answer both questions. It answered whichever one the
- * caller happened to ask, which is the defect `LESSONS.md` RC-33 records.
+ * **Returns the body as octets and never as a string.** The decode belongs to
+ * whoever needs text — `processResponse`, for the defence pipeline and the
+ * inline body — and doing it here as well cost a second full decode of the same
+ * buffer that nothing read. The metadata block IS decoded here, because it is a
+ * bounded field this function parses itself.
  *
- * The two are produced from one subarray and cannot disagree about where the
- * body ends: `bodyBytes` is that subarray and `body` is its decode. There is no
- * arm on which one is set and the other is not.
+ * Returning one representation is also what stops the two disagreeing about
+ * where the body ends, which a `(body, bodyBytes)` pair made expressible.
+ * `LESSONS.md` RC-33.
  *
  * @param rawResponse - The raw response from cURL including metadata suffix
  * @param separator - The unique per-request separator used in -w format
- * @returns ParsedResponse carrying the octets, their decode, and the optional
- *          contentType
+ * @returns ParsedResponse carrying the body's octets and the optional contentType
  */
 export function parseResponseWithMetadata(
     rawResponse: Buffer,
@@ -185,10 +177,8 @@ export function parseResponseWithMetadata(
     const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
 
     if (separatorIndex === -1) {
-        // No metadata block, so the whole buffer is body. Both representations
-        // come off the same value for the same reason as the arm below.
+        // No metadata block, so the whole buffer is body.
         return {
-            body: raw.toString("utf8"),
             bodyBytes: raw,
             metadataFound: false,
         };
@@ -216,9 +206,6 @@ export function parseResponseWithMetadata(
     const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
 
     return {
-        // Both off `bodyBytes`, so the decode can never describe a different
-        // span of the buffer than the octets do.
-        body: bodyBytes.toString("utf8"),
         bodyBytes,
         contentType: validContentType,
         metadataFound: true,

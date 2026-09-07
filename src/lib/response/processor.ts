@@ -933,9 +933,12 @@ export async function processResponse(
         );
     }
 
-    // The decode, once. Lossy for any non-UTF-8 origin — see
-    // `ParsedResponse.body` — which is why it feeds the defence and the inline
-    // body and never the size gate above or the artefact below.
+    // **The decode, and the only one in the request.** `ParsedResponse` carries
+    // octets alone precisely so that this is the single `toString("utf8")` of
+    // the body — the parser used to do it too, for a string nothing read.
+    //
+    // Lossy for any non-UTF-8 origin, which is why it feeds the defence and the
+    // inline body and never the size gate above or the artefact below.
     const response = responseBytes.toString("utf8");
 
     // Resolve hostname once for injection-detection logging; the defence

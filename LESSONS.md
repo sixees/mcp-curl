@@ -1503,7 +1503,7 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
 
 **Date:** 2026-09-07 · **PR:** #38 · **Plan:** `docs/todos/016-P2-wire-octets-are-decoded-lossily-before-persistence.md`
 
-**Class:** K-5, K-11 — *class-id:* `missing-validation`
+**Class:** K-5, K-11, K-3 — *class-id:* `missing-validation`, `repeated-computation`
 
 - **The plan said:** `parseResponseWithMetadata` decodes the wire body with
   `raw.toString("utf8")`, so any non-UTF-8 octet becomes U+FFFD, and six named
@@ -1526,29 +1526,64 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
   fidelity was lost a second way independent of the encoding; and
   `savedMessage`'s byte count was measured on that string, so the number quoted
   to the model was wrong on both counts at once.
-- **What changed:** `ParsedResponse` gained `bodyBytes: Buffer`, set from the
-  same subarray as `body` on both arms so the two cannot describe different
-  spans. `processResponse(responseBytes: Buffer, …)` decodes once for the
-  defence and inline paths, gates `MAX_RESPONSE_SIZE` on `responseBytes.length`,
-  and persists `responseBytes` on the unfiltered arm and
-  `Buffer.from(content, "utf8")` on the filtered one — where the artefact is our
-  own serialiser's output and there are no origin octets to keep.
-  `saveResponseToFile` takes `Buffer` with **no `string | Buffer` union**, so
-  the encode is visible at the one call site that needs it.
-  `savedMessage.diskBytes` is `diskContent.length`. `ARCHITECTURE.md`
+- **What changed:** `ParsedResponse` now carries `bodyBytes: Buffer` and **no
+  decoded sibling at all** — see the next bullet, which is why.
+  `processResponse(responseBytes: Buffer, …)` performs the single decode of the
+  request, gates `MAX_RESPONSE_SIZE` on `responseBytes.length`, and persists
+  `responseBytes` on the unfiltered arm and `Buffer.from(content, "utf8")` on
+  the filtered one — where the artefact is our own serialiser's output and there
+  are no origin octets to keep. `saveResponseToFile` takes `Buffer` with **no
+  `string | Buffer` union**, so the encode is visible at the one call site that
+  needs it. `savedMessage.diskBytes` is `diskContent.length`. `ARCHITECTURE.md`
   invariant 14 gained both halves: the two size gates weigh different bytes by
   design, and the saved artefact is the origin's octets.
-- **What this costs next time:** **when one value answers two questions, check
-  whether a single representation can answer both — and if it cannot, do not
-  put the second one in the same parameter list as the first.** A `(text,
-  bytes)` signature makes disagreement expressible; taking the bytes and
-  deriving the text makes it unreachable. The wider rule this instantiates is
-  K-5's projection arm: a field standing in for the record. `body` stood in for
-  the response, and every consumer that measured it, persisted it, or reported
-  its length was measuring a projection while claiming to describe the original.
+- **And then reality diverged twice, in the same direction.** Todo 016 planned
+  for the octets to sit *alongside* the decoded string, and the first
+  implementation did exactly that. **A self-review sweep for consumers found
+  `ParsedResponse.body` had none** — not one production read survived once
+  persistence and the size gate moved to the octets, because `processResponse`
+  decodes the buffer itself. So the parser was computing a full
+  `toString("utf8")` of a body up to 10 MB that nothing read, and
+  `processResponse` was decoding the same bytes again: **measured at ~1.1 ms per
+  decode at 10 MB, and two live 10 MB strings where there had been one.** The
+  field was dropped; `parseResponseWithMetadata` returns octets only, and the
+  bounded metadata tail is the one thing it still decodes.
+
+  **This is `repeated-computation` recurring, and RC-28 is the prior instance —
+  on this same path, one PR earlier.** RC-28 was *"the invariant-14 guard
+  measured a value its own consumer discards"*, and PR #37's whole performance
+  win was deleting a defence pass whose output was thrown away. The very next
+  branch re-created the shape with a decode instead of a defence pass. Note the
+  asymmetry that made it easy: the original doc-block on this function argued
+  **against** returning a Buffer, on the grounds that *"a spare Buffer whose
+  doc-block says 'measure with these' but which nothing measures reads as a
+  guarantee in force"* — the argument was right, and the fix inverted which
+  field was the spare one without re-running it.
+- **What this costs next time:** two rules, and the second was learned the hard
+  way inside this very entry.
+
+  1. **When one value answers two questions, check whether a single
+     representation can answer both — and if it cannot, do not put the second
+     one in the same parameter list as the first.** A `(text, bytes)` signature
+     makes disagreement expressible; taking the bytes and deriving the text
+     makes it unreachable. The wider rule this instantiates is K-5's projection
+     arm: a field standing in for the record. `body` stood in for the response,
+     and every consumer that measured it, persisted it, or reported its length
+     was measuring a projection while claiming to describe the original.
+  2. **When you add a representation, sweep for consumers of the OLD one before
+     you decide it survives — and treat "it is the existing field" as no
+     evidence at all.** The reason this was nearly missed is that the redundant
+     value was the *incumbent*: nobody audits a field that was already there.
+     One `rg` for its reads answered it in seconds, which makes it K-3 — a
+     checkable premise that was assumed. **A migration is the moment the old
+     representation is most likely to become dead, and the least likely moment
+     anyone looks.**
 
 Found while auditing todo 016 as the prerequisite for todo 018, per the
 operator's sequencing decision of 2026-09-07. The two facts 016 itself did not
 name — the defended-text artefact and the doubly-wrong byte count — were found
 by reading `processResponse`'s save arm rather than by trusting the todo's
-finding list, which is `.claude/rules/01-known-shapes.md` K-3 doing its job.
+finding list, which is `.claude/rules/01-known-shapes.md` K-3 doing its job. The
+redundant decode was found the same way one step later, by asking who reads the
+field rather than by trusting that a pre-existing field must have a reader —
+caught pre-merge, and recorded as caught.

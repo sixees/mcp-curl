@@ -6,13 +6,24 @@ import { LIMITS } from "../config/limits.js";
 /** parseResponseWithMetadata takes exact octets; tests mostly start from strings. */
 const buf = (s: string) => Buffer.from(s, "utf8");
 
+/**
+ * Decode a parsed body for a case whose subject is text rather than octets.
+ *
+ * `ParsedResponse` carries `bodyBytes` alone — no decoded sibling — so a case
+ * asserting on characters decodes here, at the assertion, where the conversion
+ * is visible. The parser used to do it for everyone, which cost a second full
+ * `toString("utf8")` of a body up to 10 MB that no production caller read
+ * (`LESSONS.md` RC-33, and RC-28's `repeated-computation` recurring).
+ */
+const text = (p: { bodyBytes: Buffer }) => p.bodyBytes.toString("utf8");
+
 describe("parseResponseWithMetadata", () => {
     const SEP = "\n---MCP-CURL-test-separator---\n";
 
     it("reads the content type from the metadata block", () => {
         const raw = `{"id":1}${SEP}application/json`;
         const parsed = parseResponseWithMetadata(buf(raw), SEP);
-        expect(parsed.body).toBe('{"id":1}');
+        expect(text(parsed)).toBe('{"id":1}');
         expect(parsed.contentType).toBe("application/json");
         expect(parsed.metadataFound).toBe(true);
     });
@@ -26,7 +37,7 @@ describe("parseResponseWithMetadata", () => {
         expect(empty.contentType).toBeUndefined();
 
         const absent = parseResponseWithMetadata(buf("plain body"), SEP);
-        expect(absent.body).toBe("plain body");
+        expect(text(absent)).toBe("plain body");
         expect(absent.metadataFound).toBe(false);
         expect(absent.contentType).toBeUndefined();
     });
@@ -47,7 +58,7 @@ describe("parseResponseWithMetadata", () => {
         const parsed = parseResponseWithMetadata(buf(`body${SEP}${hostile}`), SEP);
         expect(parsed.contentType).toBeUndefined();
         expect(parsed.metadataFound).toBe(true);
-        expect(parsed.body).toBe("body");
+        expect(text(parsed)).toBe("body");
     });
 
     it("keeps the head of a content-type carrying an instruction, never the prose", () => {
@@ -186,7 +197,7 @@ describe("parseResponseWithMetadata — window sizing", () => {
         // must still be found behind the full-length value, which is what this
         // case is actually about.
         expect(parsed.contentType).toBe("application/vnd.api+json");
-        expect(parsed.body).toBe('{"id":1}');
+        expect(text(parsed)).toBe('{"id":1}');
     });
 
     it("marks metadata as not found once the field allowance is exceeded", () => {
@@ -222,13 +233,12 @@ describe("parseResponseWithMetadata — bodyBytes carries the wire octets", () =
         const parsed = parseResponseWithMetadata(raw, SEP);
 
         expect(parsed.bodyBytes.equals(latin1Json)).toBe(true);
-        // The decode is still offered and is still lossy — both facts, side by
-        // side, because the point of the pair is that neither is derivable from
-        // the other. Asserting only the Buffer would leave a future change free
-        // to make `body` the raw octets reinterpreted, which would break the
-        // defence pipeline's input contract silently.
-        expect(parsed.body).toContain("\uFFFD");
-        expect(Buffer.from(parsed.body, "utf8").equals(latin1Json)).toBe(false);
+        // And the decode of those same octets is lossy — asserted so that the
+        // case is a comparison between two different things. Without it, a
+        // future change that stored a decoded string here would satisfy the
+        // line above on a fixture that happened to be valid UTF-8.
+        expect(text(parsed)).toContain("\uFFFD");
+        expect(Buffer.from(text(parsed), "utf8").equals(latin1Json)).toBe(false);
     });
 
     it("returns the exact octets, separator absent", () => {
@@ -250,15 +260,17 @@ describe("parseResponseWithMetadata — bodyBytes carries the wire octets", () =
         expect(parsed.bodyBytes.toString("utf8")).not.toContain("application/json");
     });
 
-    it("describes the same span in both representations", () => {
-        // The two fields cannot disagree about where the body ends, because both
-        // come off one subarray. Asserted rather than trusted: a later edit that
-        // sliced them separately would compile and pass every case above.
+    it("round-trips a valid-UTF-8 body through the decode unchanged", () => {
+        // The complement of the lossy case: where the origin's octets ARE valid
+        // UTF-8, decoding and re-encoding must be identity. This is what makes
+        // the lossy assertion above a statement about the input rather than
+        // about the decode always mangling something.
         const body = Buffer.from("héllo wörld", "utf8");
         const raw = Buffer.concat([body, Buffer.from(`${SEP}text/plain`, "utf8")]);
         const parsed = parseResponseWithMetadata(raw, SEP);
 
-        expect(parsed.bodyBytes.toString("utf8")).toBe(parsed.body);
+        expect(parsed.bodyBytes.equals(body)).toBe(true);
+        expect(Buffer.from(text(parsed), "utf8").equals(body)).toBe(true);
     });
 
     it("returns an empty buffer for an empty body, not undefined", () => {
@@ -270,6 +282,6 @@ describe("parseResponseWithMetadata — bodyBytes carries the wire octets", () =
 
         expect(Buffer.isBuffer(parsed.bodyBytes)).toBe(true);
         expect(parsed.bodyBytes.length).toBe(0);
-        expect(parsed.body).toBe("");
+        expect(text(parsed)).toBe("");
     });
 });

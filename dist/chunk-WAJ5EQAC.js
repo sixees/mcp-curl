@@ -994,7 +994,6 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
   if (separatorIndex === -1) {
     return {
-      body: raw.toString("utf8"),
       bodyBytes: raw,
       metadataFound: false
     };
@@ -1004,9 +1003,6 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const contentType = metadata.trim();
   const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
   return {
-    // Both off `bodyBytes`, so the decode can never describe a different
-    // span of the buffer than the octets do.
-    body: bodyBytes.toString("utf8"),
     bodyBytes,
     contentType: validContentType,
     metadataFound: true
