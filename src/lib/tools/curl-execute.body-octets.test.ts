@@ -15,7 +15,7 @@ import { readFile, rm } from "fs/promises";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { defendText } from "../response/index.js";
 import { LIMITS } from "../config/index.js";
-import { METADATA_SEPARATOR as SEP, curlOutputFor } from "./curl-output-fixture.js";
+import { METADATA_SEPARATOR as SEP, curlOutputFor } from "./curl-output.test-fixture.js";
 
 vi.mock("../types/index.js", async () => {
     const actual = await vi.importActual<typeof import("../types/index.js")>("../types/index.js");
@@ -105,7 +105,7 @@ describe("curl_execute body octets — the saved artefact is the origin's bytes"
         // explicitly that the lossy form is NOT what landed — a test that only
         // checked "the file exists" passed throughout the defect's life.
         mockedExecuteCommand.mockResolvedValue(
-            curlOutputFor("", LATIN1_JSON, "application/json")
+            curlOutputFor({ body: LATIN1_JSON, contentType: "application/json" })
         );
 
         const result = await executeCurlRequest(params({
@@ -167,7 +167,7 @@ describe("curl_execute body octets — the saved artefact is the origin's bytes"
             "utf8"
         );
         mockedExecuteCommand.mockResolvedValue(
-            curlOutputFor("", withMarkup, "text/markdown")
+            curlOutputFor({ body: withMarkup, contentType: "text/markdown" })
         );
 
         const result = await executeCurlRequest(params({
@@ -196,7 +196,7 @@ describe("curl_execute body octets — the saved artefact is the origin's bytes"
         // preserve — so "always write responseBytes" would be wrong, and this is
         // the case that fails if the arm is collapsed.
         const body = Buffer.from('{"keep":"yes","drop":"no"}', "utf8");
-        mockedExecuteCommand.mockResolvedValue(curlOutputFor("", body, "application/json"));
+        mockedExecuteCommand.mockResolvedValue(curlOutputFor({ body: body, contentType: "application/json" }));
 
         const result = await executeCurlRequest(params({
             url: "https://example.test/pick",
@@ -217,7 +217,7 @@ describe("curl_execute body octets — the reported size is the size on disk", (
         // two bytes per invalid octet here, and by the strip stages' delta on
         // any body carrying markup.
         mockedExecuteCommand.mockResolvedValue(
-            curlOutputFor("", LATIN1_JSON, "application/json")
+            curlOutputFor({ body: LATIN1_JSON, contentType: "application/json" })
         );
 
         const result = await executeCurlRequest(params({
@@ -250,7 +250,7 @@ describe("curl_execute body octets — the size cap weighs wire octets", () => {
         expect(Buffer.byteLength(body.toString("utf8"), "utf8")).toBeGreaterThan(cap);
 
         mockedExecuteCommand.mockResolvedValue(
-            curlOutputFor("", body, "application/json")
+            curlOutputFor({ body: body, contentType: "application/json" })
         );
 
         const result = await executeCurlRequest(params({
@@ -269,7 +269,7 @@ describe("curl_execute body octets — the size cap weighs wire octets", () => {
         // altogether — measured in the direction that matters for a limit.
         const body = Buffer.alloc(LIMITS.MAX_RESPONSE_SIZE + 1, 0x61);
         mockedExecuteCommand.mockResolvedValue(
-            curlOutputFor("", body, "text/plain")
+            curlOutputFor({ body: body, contentType: "text/plain" })
         );
 
         const result = await executeCurlRequest(params({

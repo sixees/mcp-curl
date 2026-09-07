@@ -979,7 +979,19 @@ export async function processResponse(
         hostname,
     });
 
-    // Step 6: Apply jq filter if provided AND response is JSON
+    // Step 6: Apply jq filter if provided AND response is JSON.
+    //
+    // **One boolean, set where the filter actually runs, and read everywhere the
+    // answer is needed.** Two spellings of "did a filter run" disagreed on
+    // `jq_filter: ""`: this gate is falsy so no filter ran, while the disk and
+    // message decisions below tested `!== undefined` and concluded one had. The
+    // artefact became the re-encoded defended text instead of the origin's
+    // octets — 8 wire octets measured as 10 on disk, `0xA9` replaced — which is
+    // the RC-33 defect this change exists to remove, reintroduced by a predicate
+    // rather than by a decode. The message then called it "FILTER OUTPUT".
+    //
+    // There is no predicate to re-spell now, so the three sites cannot diverge.
+    let filterApplied = false;
     if (options.jqFilter) {
         const isJson = isJsonContentType(options.contentType);
         const trimmed = content.trim();
@@ -1015,6 +1027,9 @@ export async function processResponse(
 
         // Apply filter to pre-parsed data (avoids double parse)
         content = applyJqFilterToParsed(parsedData, options.jqFilter);
+        // Set HERE, past every throw above, so it means "a filter produced this
+        // content" rather than "a filter was requested".
+        filterApplied = true;
 
         // Re-sanitize and re-detect after filter: JSON.parse decodes Unicode escapes in string
         // values (e.g. {"cmd":"Ig​nore..."} → zero-width space in jq output), so attack
@@ -1084,9 +1099,7 @@ export async function processResponse(
         // The filtered arm is different and deliberately so: there the artefact
         // is this server's OWN `JSON.stringify` output, not the origin's body,
         // so there are no origin octets to preserve and the encode is exact.
-        const diskContent = options.jqFilter !== undefined
-            ? Buffer.from(content, "utf8")
-            : responseBytes;
+        const diskContent = filterApplied ? Buffer.from(content, "utf8") : responseBytes;
         const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
         // **No body bytes are returned on this arm, and that is the whole
         // saving.** `formatResponse`'s file branch emits `saved_to_file`,
@@ -1115,7 +1128,7 @@ export async function processResponse(
                 maxSize,
                 overCap,
                 contentType: options.contentType,
-                filtered: options.jqFilter !== undefined,
+                filtered: filterApplied,
             }),
         };
     }

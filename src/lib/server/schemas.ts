@@ -81,6 +81,12 @@ export const CurlExecuteSchema = z.object({
         .default(false)
         .describe("Wrap response in JSON with metadata (exit code, success status)"),
     jq_filter: z.string()
+        // Rejected rather than silently ignored. An empty filter used to pass
+        // validation, skip the filter step, and still be counted as "filtered"
+        // by two downstream decisions — see `processResponse`'s `filterApplied`.
+        // The predicate is fixed there; this stops the disagreeing value being
+        // constructible at all.
+        .min(1, "jq_filter must not be empty")
         .optional()
         .describe("JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check."),
     max_result_size: z.number()
@@ -107,6 +113,9 @@ export const JqQuerySchema = z.object({
     filepath: z.string()
         .describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
     jq_filter: z.string()
+        // Required here, so an empty string is the only degenerate value; same
+        // reasoning as `CurlExecuteSchema.jq_filter`.
+        .min(1, "jq_filter must not be empty")
         .describe("JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported."),
     max_result_size: z.number()
         .int()

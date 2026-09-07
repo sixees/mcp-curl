@@ -547,14 +547,14 @@ var CurlExecuteSchema = z2.object({
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
-  jq_filter: z2.string().optional().describe('JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check.'),
+  jq_filter: z2.string().min(1, "jq_filter must not be empty").optional().describe('JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check.'),
   max_result_size: z2.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger responses auto-save to temp file"),
   save_to_file: z2.boolean().optional().describe("Force save response to temp file. Returns filepath instead of content"),
   output_dir: z2.string().optional().describe("Directory to save response files (must exist and be writable). Overrides MCP_CURL_OUTPUT_DIR env var. Falls back to system temp directory.")
 });
 var JqQuerySchema = z2.object({
   filepath: z2.string().describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
-  jq_filter: z2.string().describe('JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported.'),
+  jq_filter: z2.string().min(1, "jq_filter must not be empty").describe('JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported.'),
   max_result_size: z2.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger results auto-save to file"),
   save_to_file: z2.boolean().optional().describe("Force save result to file. Returns filepath instead of content"),
   output_dir: z2.string().optional().describe("Directory to save result files (must exist and be writable)")
@@ -2170,6 +2170,7 @@ async function processResponse(responseBytes, options) {
     contentTypeUndetermined: options.contentTypeUndetermined ?? options.contentType === void 0,
     hostname
   });
+  let filterApplied = false;
   if (options.jqFilter) {
     const isJson = isJsonContentType(options.contentType);
     const trimmed = content.trim();
@@ -2193,13 +2194,14 @@ async function processResponse(responseBytes, options) {
       throw error;
     }
     content = applyJqFilterToParsed(parsedData, options.jqFilter);
+    filterApplied = true;
     content = sanitizeAndDetect(content, hostname);
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
   const overCap = exceedsInlineCap(content, hostname, maxSize);
   const shouldSave = options.saveToFile || overCap;
   if (shouldSave) {
-    const diskContent = options.jqFilter !== void 0 ? Buffer.from(content, "utf8") : responseBytes;
+    const diskContent = filterApplied ? Buffer.from(content, "utf8") : responseBytes;
     const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
     return {
       savedToFile: true,
@@ -2215,7 +2217,7 @@ async function processResponse(responseBytes, options) {
         maxSize,
         overCap,
         contentType: options.contentType,
-        filtered: options.jqFilter !== void 0
+        filtered: filterApplied
       })
     };
   }
