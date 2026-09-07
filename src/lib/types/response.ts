@@ -50,9 +50,9 @@ export interface ProcessResponseOptions {
      *
      * **Must arrive already validated** — resolved, symlinks followed, and
      * checked against the allowed roots. `processResponse` passes it straight to
-     * `saveResponseToFile`, which re-resolves the path and rejects it if
-     * normalisation moves it, but never checks it against the allowed roots — so
-     * this type is the last place the policy can be stated before the write. The
+     * `saveResponseToFile`, whose own `realpath` comparison resolves the path
+     * against itself and so checks nothing here — this type is the last place
+     * the policy can be stated before the write. The
      * validation lives at `tools/curl-execute.ts::executeCurlRequest`
      * (`resolveOutputDir` then `validateOutputDir`).
      */

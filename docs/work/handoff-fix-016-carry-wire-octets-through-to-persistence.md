@@ -676,3 +676,48 @@ timing flake only, different tests each run. `tsc` errors confined to the same
 three pre-existing files (`src/lib.test.ts`,
 `src/lib/response/post-processor.test.ts`, `src/lib/schema/schema.test.ts`), all
 of which fail at `ccf6e62` too.
+
+## Review Comments Addressed — 2026-09-07 (Surface 3, round 2) — CUT SHORT FOR MERGE
+
+**The director authorised the merge ~14 minutes into round 2's wait, so this
+round is incomplete by instruction.** Recorded as cut short rather than as a
+round that came back quiet.
+
+Round-2 triggers went to `codex`, `copilot-pull-request-reviewer` and
+`coderabbitai` against `1d777ef`. **CodeRabbit had posted only its "Full review
+triggered" acknowledgement (`ack: true`) when the merge was called** — its
+round-2 findings, if any, were never fetched and are therefore undispositioned.
+Copilot returned one finding, below. Codex returned nothing new beyond a note
+that answering follow-ups here needs a configured environment.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `file-saver.ts:71` — the docblock claims the `realpath` comparison "catches a symlink swapped in after validation", but `targetDir === outputDir` whenever one is supplied, so both sides resolve the same string and the check cannot fire | copilot | Fix needed — `stale-comment` | Took the first of the two remedies Copilot offered: **tightened the docs to match behaviour.** Both docblocks now say the check resolves the path against itself and is not a second line of defence. Sibling instance in `types/response.ts` fixed in the same commit |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| The same comment's second remedy — *"change the check to compare the fresh `realpath(...)` against the provided `outputDir` string so a post-validation swap actually diverges"* | copilot | P2 | **out of scope** | The guard is pre-existing: it is present verbatim at the merge base `ccf6e62`, and `git diff ccf6e62..HEAD -- src/lib/response/file-saver.ts` changes none of its code lines. What was in scope was the docblock overclaim this branch wrote in `1d777ef`, and that is fixed. Changing the comparison's semantics is a behaviour change on a security path, taken during a merge, on code this branch never touched. **Per `pr-resolver-safety` → *Severity against scope*, an out-of-scope P2 is declined and left there — no todo.** The allowed-root policy is genuinely enforced upstream at `executeCurlRequest` (`resolveOutputDir` then `validateOutputDir`); what the dead guard fails to add is a narrower TOCTOU window, whose population is someone with local filesystem write access racing the process — not a boundary this project defends (`ARCHITECTURE.md` → trust boundaries: hostile URL, hostile response bytes) |
+
+**Reopening trigger, since a decline is not a silence:** if `validateOutputDir`
+ever moves, or `output_dir` becomes reachable from a less trusted caller than the
+tool schema, the guard stops being merely inert and becomes the only check at the
+write — re-price it then.
+
+### Outstanding Todos
+
+**0 filed this round. 0 open against #38.**
+
+### Files Modified
+
+`src/lib/response/file-saver.ts`, `src/lib/types/response.ts`, `package.json`,
+`package-lock.json`, `dist/` (rebuilt for the version bump), and this handoff.
+
+**Version bumped 3.6.0 → 3.7.0** before the merge, per the release convention and
+the director's MINOR decision in RC-36.
+
+**Suite:** 1282 passed, 7 skipped, 1 failed — the todo-013 timing flake.
+`tsc` errors confined to the same three pre-existing files.
