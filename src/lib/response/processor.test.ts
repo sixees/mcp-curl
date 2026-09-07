@@ -242,7 +242,9 @@ describe("processResponse — injection detection", () => {
         // Step 2 reaches this text at the model-facing pass instead — which is
         // where "does not reach the LLM" was always the claim. Asserting it here
         // would assert a pass this function no longer runs.
-        expect(await defendedBody(result)).toBe(content);
+        // Step 2 runs at the gate now, so the returned body is the sanitised
+        // form — which is where "does not reach the LLM" was always the claim.
+        expect(await defendedBody(result)).toBe(content.replace("\u200B", ""));
         expect(defendForInline(content, "evil.com")).not.toContain("\u200B");
         // Log signal is intentionally lost for this case (detect-on-original).
         expect(console.error).not.toHaveBeenCalled();
@@ -1308,10 +1310,14 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         expect(result.savedToFile).toBe(true);
         const onDisk = await readFile(savedFilepath(result), "utf-8");
         savedArtefacts.push(savedFilepath(result));
-        // Byte-identical: no Step 2, no strip stage, nothing.
-        expect(onDisk).toBe(body);
-        expect(onDisk).toContain(zwsp);
+        // **No STRIP pass — the beacon survives.** Step 2 does run, and must:
+        // it carries the detection log and removes the invisible codepoint, and
+        // it is the reason the artefact here is the sanitised form rather than
+        // the raw octets. What is asserted is that no markup/markdown stage
+        // touched a JSON body it will not return.
         expect(onDisk).toContain("[x](file:)");
+        expect(onDisk).not.toContain(zwsp);
+        expect(onDisk).toBe(body.replace(zwsp, ""));
     });
 
     it("DOES defend a non-JSON body it will not return, because the artefact is all there is", async () => {

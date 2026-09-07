@@ -193,15 +193,17 @@ export function formatResponse(
     // Written by us and placed BEFORE the remote text, which is a position an
     // origin cannot occupy — so this is a server-authored prefix rather than
     // the forgeable in-band marker the out-of-band fields exist to avoid.
-    // **The notices are NOT joined to the body here.** They go back as their own
-    // MCP content entry, emitted by `tools/curl-execute.ts` — see
-    // {@link plainBranchNotices} for the measurement that forced the move. They
-    // ARE joined to the saved-to-file message below, and the difference is the
-    // whole rule: that message is server-authored end to end, so the join has
-    // no remote region on either side of it. What may never be joined is server
-    // prose to remote bytes.
-    const notices = !includeMetadata ? plainBranchNotices(exitCode, headerInfo) : "";
-    const withNotice = (text: string) => (notices ? `${notices}\n\n${text}` : text);
+    // **This function never emits the notices at all.** They are
+    // `tools/curl-execute.ts`'s to append as their own MCP content entry — see
+    // {@link plainBranchNotices}.
+    //
+    // An earlier revision kept the join for the saved-to-file arm, on the
+    // reasoning that both sides are server-authored there so no region is
+    // spliced. That reasoning is sound and the result was still wrong: the
+    // caller appends the notice entry unconditionally, so the model received it
+    // TWICE on that branch — measured on a non-zero exit. Two spellings of one
+    // rule, which is what the exception bought. One rule now: notices travel as
+    // their own entry, always.
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
         if (includeMetadata) {
@@ -218,7 +220,7 @@ export function formatResponse(
         }
         // Plain text - just return the message or fallback to filepath
         const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-        return withNotice(message);
+        return message;
     }
 
     // Normal response

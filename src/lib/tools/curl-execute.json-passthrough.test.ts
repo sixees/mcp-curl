@@ -275,6 +275,74 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The four cases Surface 2 round 1 found in the arms above — each an ordinary
+// response from an ordinary API, none of them adversarial.
+// ---------------------------------------------------------------------------
+describe("018 — the ordinary-response cases round 1 found", () => {
+    it("returns an empty body inline and writes NO file (204 / HEAD / 304)", async () => {
+        // `empty-body` was taking the save arm, so a `204 No Content` wrote a
+        // ZERO-BYTE file and told the model to read it with its own tooling.
+        // 018 justifies that arm on recoverability; there is nothing to recover.
+        // `LESSONS.md` RC-44.
+        const text = await fetchBody("", "");
+        expect(text).toBe("");
+        expect(text).not.toContain("saved to:");
+    });
+
+    it("still honours an explicit save_to_file for an empty body", async () => {
+        // The exclusion is about the automatic arm. An explicit request is a
+        // request, and silently ignoring it would be the opposite defect.
+        const text = await fetchBody("", "", { save_to_file: true });
+        expect(text).toContain("saved to:");
+        savedPathFrom(text);
+    });
+
+    for (const [name, body, filter, expected] of [
+        // `.data` rather than `.` — this repo's jq subset requires a path, so
+        // `.` is refused by the parser on any body and would test nothing. A
+        // path against a scalar yields jq's own answer for an absent path.
+        ["null for no-record", "null", ".data", "null"],
+        ["a bare string", '"ok"', ".data", "null"],
+    ] as Array<[string, string, string, string]>) {
+        it(`filters ${name} instead of discarding the response`, async () => {
+            // The filter gate was routed through the ARTEFACT gate, which is
+            // composite-only — so an endpoint returning `null` for "no record"
+            // made `jq_filter` throw, and the throw sits above the save arm, so
+            // the body was discarded outright. A filter only needs the body to
+            // parse. `LESSONS.md` RC-45.
+            const text = await fetchBody(body, "application/json", { jq_filter: filter });
+            expect(text).toContain(expected);
+        });
+    }
+
+    it("does not corrupt a BOM-prefixed JSON body", async () => {
+        // `\uFEFF{...}` is what .NET and Java services emit routinely. The gate
+        // classified the RAW decode, which does not parse, so the body took the
+        // non-JSON arm — and `defendText` then sanitised the BOM away and ran
+        // the full strip over what was by then valid JSON, splicing a field out
+        // of the only copy. Sanitise now precedes the classification.
+        // `LESSONS.md` RC-44.
+        const body = '\uFEFF{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}';
+        const text = await fetchBody(body, "application/json");
+        // Classified as the JSON document it is, so returned inline, BOM gone.
+        expect(Object.keys(JSON.parse(text) as object)).toEqual(["a", "b", "c", "d"]);
+        expect(text).toContain('"b":"secret"');
+        expect(text).not.toContain("\uFEFF");
+    });
+
+    it("persists a BOM-prefixed body in a form jq_query can open", async () => {
+        // The trap in the fix: raw octets for this class would put a BOM on disk
+        // and `applyJqFilter` cannot parse one. Byte-exactness is therefore
+        // conditional on Step 2 having been a no-op.
+        const body = '\uFEFF{"pad":"' + "z".repeat(600_000) + '","k":"v"}';
+        const text = await fetchBody(body, "application/json");
+        const onDisk = await readFile(savedPathFrom(text), "utf-8");
+        expect(onDisk.startsWith("\uFEFF")).toBe(false);
+        expect(() => JSON.parse(onDisk)).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
 // AC 6 — the artefact gate is the same rule as the body gate, and inherits no
 // strip cap.
 //
@@ -299,16 +367,21 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
     const ZWSP = "\u200b";
 
     it("persists a 600 KB OBJECT body as the origin's exact octets", async () => {
+        // **No ZWSP here any more**, and the reason is the point: Step 2 now runs
+        // before the classification, so a body carrying an attack codepoint is
+        // deliberately NOT byte-exact — the sanitised form is persisted instead,
+        // because raw octets carrying a BOM would be a file `jq_query` cannot
+        // open. Byte-exactness is conditional on the sanitise being a no-op,
+        // which is true of every legitimate document.
+        //
+        // Teeth for the artefact gate itself live in the non-UTF-8 case below —
+        // for a valid-UTF-8 body the two arms produce identical bytes, so no
+        // assertion here can separate them.
         const filler = "x".repeat(600_000);
-        const body = `{"pad":"${filler}","note":"a${ZWSP}b","dup":1,"dup":2,"big":9223372036854775807}`;
+        const body = `{"pad":"${filler}","dup":1,"dup":2,"big":9223372036854775807}`;
         const text = await fetchBody(body, "application/json");
         const onDisk = await readFile(savedPathFrom(text));
-        // Byte for byte, the zero-width space included — the artefact is the
-        // origin's octets, and its reader (`jq_query`) applies the full defence
-        // when it opens the file. Had this arm written the defended text, the
-        // ZWSP would be gone and this comparison would fail.
         expect(onDisk.equals(Buffer.from(body, "utf8"))).toBe(true);
-        expect(onDisk.toString("utf8")).toContain(ZWSP);
         // And the losses a round trip would have caused are simply absent.
         expect(onDisk.toString("utf8")).toContain('"dup":1,"dup":2');
         expect(onDisk.toString("utf8")).toContain("9223372036854775807");
@@ -442,6 +515,23 @@ describe("018 — two remote regions, two content entries", () => {
             expect(notice, "no notice was produced, so the case is vacuous").toBeDefined();
         });
     }
+
+    it("emits the notice exactly ONCE on the saved plain branch", async () => {
+        // **The fix for the notice prefix introduced this, and no test caught
+        // it.** `formatResponse` kept joining the notice to the saved-to-file
+        // MESSAGE — sound in itself, since both sides are server-authored — while
+        // `curl-execute.ts` also appends the notice entry unconditionally. So on
+        // a non-zero exit with a saved body the model received it twice. One
+        // rule now: notices travel as their own entry, always. `LESSONS.md` RC-46.
+        const base = curlOutputFor({ body: "<html>nope</html>", contentType: "text/html" });
+        mockedExecuteCommand.mockResolvedValue({ ...base, exitCode: 18 });
+        const result = await executeCurlRequest(
+            params({ url: "https://example.test/x", include_metadata: false })
+        );
+        const occurrences = result.content.filter((c) => c.text.includes("[mcp-curl] cURL exited"));
+        expect(occurrences).toHaveLength(1);
+        savedPathFrom(result.content[0]!.text);
+    });
 
     it("emits a single entry when no header text was reported", async () => {
         mockedExecuteCommand.mockResolvedValue(

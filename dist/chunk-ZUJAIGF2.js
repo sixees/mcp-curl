@@ -2073,9 +2073,10 @@ async function processResponse(responseBytes, options) {
     );
   }
   const hostname = safeHostname(options.url);
-  const classified = classifyBody(response);
-  sanitizeAndDetect(response, hostname);
-  let content = classified.json ? response : defendText(response, {
+  const sanitised = sanitizeAndDetect(response, hostname);
+  const classified = classifyBody(sanitised);
+  const sanitiseWasNoOp = sanitised === response;
+  let content = classified.json ? sanitised : defendText(sanitised, {
     contentTypeUndetermined: true,
     excludeJsonDocuments: false,
     hostname
@@ -2083,7 +2084,8 @@ async function processResponse(responseBytes, options) {
   let filterApplied = false;
   if (options.jqFilter) {
     const trimmed = content.trim();
-    if (!classified.json) {
+    const filterable = classified.json || classified.reason !== "empty-body" && classified.reason !== "looks-like-markup";
+    if (!filterable) {
       throw new Error(
         `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
       );
@@ -2105,9 +2107,10 @@ async function processResponse(responseBytes, options) {
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
   const overCap = exceedsInlineCap(content, hostname, maxSize);
-  const shouldSave = options.saveToFile || overCap || !classified.json;
+  const emptyBody = !classified.json && classified.reason === "empty-body";
+  const shouldSave = options.saveToFile || overCap || !classified.json && !emptyBody && !filterApplied;
   if (shouldSave) {
-    const diskContent = classified.json && !filterApplied ? responseBytes : Buffer.from(content, "utf8");
+    const diskContent = classified.json && !filterApplied && sanitiseWasNoOp ? responseBytes : Buffer.from(content, "utf8");
     const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
     return {
       savedToFile: true,
@@ -2244,10 +2247,6 @@ function plainBranchNotices(exitCode, headerInfo) {
   ].filter(Boolean).join("\n");
 }
 function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
-  const notices = !includeMetadata ? plainBranchNotices(exitCode, headerInfo) : "";
-  const withNotice = (text) => notices ? `${notices}
-
-${text}` : text;
   if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
     if (includeMetadata) {
       const output = {
@@ -2261,7 +2260,7 @@ ${text}` : text;
       return JSON.stringify(output, null, 2);
     }
     const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-    return withNotice(message);
+    return message;
   }
   if (includeMetadata) {
     const output = {

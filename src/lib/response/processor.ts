@@ -1030,7 +1030,34 @@ export async function processResponse(
     // forks on this and nothing re-derives it — `docs/todos/018` requires the
     // two decisions be the same rule spelled once, because they are the same
     // question: may these bytes be handed over unmodified?
-    const classified = classifyBody(response);
+    // **Sanitise first, then classify — the order is the fix for a measured
+    // defect.** `classifyBody` used to run on the raw decode, while every
+    // defence pass below runs on the sanitised form, so the two disagreed on
+    // any body Step 2 alters. Measured: `\uFEFF{"a":"see <!-- x -->","b":"y"}`
+    // — an ordinary BOM-prefixed JSON body, which .NET and Java services emit
+    // routinely — was classified `invalid-syntax`, forced to disk, and then
+    // handed to `defendText`, which sanitised the BOM away and ran the full
+    // strip over what was now valid JSON: the artefact came back
+    // `{"a":"see ","b":"y"}`, a field deleted, on the only copy.
+    //
+    // This is the same reorder RC-32 already applied INSIDE `defendText`, which
+    // is exactly why the outer gate looked safe and was not.
+    //
+    // The call also carries Step 2's detection side effect, which the JSON arm
+    // would otherwise lose entirely: byte-exactness withholds the sanitise and
+    // says nothing about the log, but handing the body straight through
+    // withheld both — so a saved body carrying `Ig\u200bnore previous
+    // instructions` produced no `[injection-defense]` line at all.
+    // `LESSONS.md` RC-43, RC-44.
+    const sanitised = sanitizeAndDetect(response, hostname);
+    const classified = classifyBody(sanitised);
+    // **Byte-exactness is conditional, and stating it unconditionally was
+    // wrong.** Where Step 2 altered nothing the sanitised text IS the origin's
+    // decode, so the octets can be persisted exactly. Where it altered
+    // something, persisting raw octets would put bytes on disk that `jq_query`
+    // cannot parse — a BOM defeats `applyJqFilter` — so the sanitised form is
+    // written instead and the guarantee narrows to what is true.
+    const sanitiseWasNoOp = sanitised === response;
 
     // **A JSON document is not defended here, and a non-JSON one is defended
     // with the STRICTEST grammar rather than the declared one.**
@@ -1097,11 +1124,9 @@ export async function processResponse(
     // The inline routes were never affected — `defendForInline` detects at the
     // wrap — which is why this was invisible until someone walked the SAVED
     // routes specifically. `LESSONS.md` RC-43.
-    sanitizeAndDetect(response, hostname);
-
     let content = classified.json
-        ? response
-        : defendText(response, {
+        ? sanitised
+        : defendText(sanitised, {
               contentTypeUndetermined: true,
               excludeJsonDocuments: false,
               hostname,
@@ -1123,14 +1148,25 @@ export async function processResponse(
     if (options.jqFilter) {
         const trimmed = content.trim();
 
-        // **One gate, not a second opinion.** This used to ask its own narrower
-        // question — `isJsonContentType` OR a leading `{`/`[` — which admitted a
-        // body that merely started like JSON and rejected a valid scalar
-        // document. `classified` above is a real parse plus the composite test,
-        // so it answers this strictly better, and routing through it is what
-        // stops the two decisions drifting: a body the filter accepts is exactly
-        // a body whose bytes this function will return.
-        if (!classified.json) {
+        // **Two different questions, and collapsing them onto one gate lost
+        // data.** `classified.json` answers *may these bytes be handed over
+        // unmodified* — composite only, because a bare scalar's artefact has no
+        // in-process reader. A filter asks something weaker: *does this parse at
+        // all*. A filter runs perfectly well on a top-level scalar.
+        //
+        // Routing the filter through the artefact gate made
+        // `curl_execute({ url, jq_filter })` THROW on an endpoint returning
+        // `null` for "no record", `42` for a count or `"ok"` for a health check
+        // — and the throw sits above `shouldSave`, so the body was not saved
+        // either. It was discarded outright, where the same body without a
+        // filter is persisted and reported. `LESSONS.md` RC-45.
+        //
+        // So this gate is the parse alone. `empty-body` and `looks-like-markup`
+        // still cannot be filtered; a scalar can.
+        const filterable =
+            classified.json ||
+            (classified.reason !== "empty-body" && classified.reason !== "looks-like-markup");
+        if (!filterable) {
             throw new Error(
                 `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
             );
@@ -1209,7 +1245,24 @@ export async function processResponse(
     // from a proxy — so the bytes are kept and the path is reported; what is not
     // returned is arbitrary remote text inline, which is the case this whole
     // design removes.
-    const shouldSave = options.saveToFile || overCap || !classified.json;
+    // **`empty-body` is excluded, and it is the one member of the set the save
+    // rule was never argued for.** `docs/todos/018` justifies the save arm
+    // entirely on recoverability — "a PHP warning prepended, a BOM, a truncated
+    // body, an HTML error page from a proxy" — and none of those describes a
+    // body that is not there. A `204 No Content`, a `HEAD`, or a `304` from an
+    // ordinary REST endpoint was writing a ZERO-BYTE file and telling the model
+    // to read it with its own tooling. An empty body is returned as empty,
+    // which is the truth, unless the caller explicitly asked for a file.
+    // **`filterApplied` is in this condition because the classification above
+    // describes the ORIGINAL body, and a filter has replaced it.** Once
+    // `applyJqFilterToParsed` has run, the content is our own serialiser's
+    // output and therefore valid JSON by construction — so keying the save on
+    // the original body's verdict forced a 4-byte filter result to disk and
+    // reported it as an unreturnable non-JSON body. Found by the case that
+    // exercises a scalar body with a filter. `LESSONS.md` RC-45.
+    const emptyBody = !classified.json && classified.reason === "empty-body";
+    const shouldSave =
+        options.saveToFile || overCap || (!classified.json && !emptyBody && !filterApplied);
 
     if (shouldSave) {
         // **The artefact's form is decided by the gate, never by the declared
@@ -1234,7 +1287,9 @@ export async function processResponse(
         //
         // `ARCHITECTURE.md` invariant 14 states both halves.
         const diskContent =
-            classified.json && !filterApplied ? responseBytes : Buffer.from(content, "utf8");
+            classified.json && !filterApplied && sanitiseWasNoOp
+                ? responseBytes
+                : Buffer.from(content, "utf8");
         const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
         // **No body bytes are returned on this arm, and that is the whole
         // saving.** `formatResponse`'s file branch emits `saved_to_file`,

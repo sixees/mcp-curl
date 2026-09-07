@@ -1851,3 +1851,93 @@ recorded as caught.
   representation, re-price every exemption that was safe because that representation
   existed** — the same shape as RC-33's *the artefact's safety is a property of its
   reader*.
+
+### RC-44 — the gate classified the bytes it was handed while every pass below it ran on the sanitised form
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-9 — *class-id:* `stale-observation`
+
+- **The plan said:** classify the body once, and route the inline copy and the artefact
+  on that verdict. Nothing about where in the pipeline the classification sits.
+- **Reality was:** `classifyBody(response)` ran on the raw decode, while `defendText`
+  and `defendForInline` both run on the *sanitised* form — so the two disagreed on any
+  body Step 2 alters. Measured on `﻿{"a":"open <!--","b":"secret","c":"close
+  -->","d":"kept"}`, an ordinary BOM-prefixed JSON body of the kind .NET and Java
+  services emit routinely: classified `invalid-syntax`, forced to disk, then handed to
+  `defendText`, which sanitised the BOM away and ran the full strip over what was by
+  then valid JSON — the artefact came back `{"a":"see ","b":"y"}` with a field spliced
+  out, on the only copy. **This is the same reorder RC-32 had already applied INSIDE
+  `defendText`**, which is exactly why the outer gate looked safe: the inner one had
+  been fixed and the new outer one repeated the original mistake one layer up.
+  Separately, the same call site was withholding Step 2's *detection* side effect from
+  every saved JSON body, so a body carrying `Ig​nore previous instructions`
+  produced no `[injection-defense]` line at all.
+- **What changed:** `const sanitised = sanitizeAndDetect(response, hostname)` above the
+  fork, `classifyBody(sanitised)`, and the body handed on is the sanitised form. **Byte
+  exactness became conditional and the claim narrowed to what is true**: the artefact is
+  the origin's octets only where `sanitised === response`, because raw octets carrying a
+  BOM would be a file `jq_query` cannot open — which was the trap in the obvious version
+  of this fix. `empty-body` was also excluded from the save arm: a `204 No Content` was
+  writing a zero-byte file and telling the model to read it with its own tooling, and
+  `docs/todos/018` justifies that arm entirely on recoverability.
+- **What this costs next time:** **when you add a gate above an existing pipeline, check
+  which representation each stage below it reads** — a classification and the passes it
+  routes must see the same bytes, and "the raw input" is the intuitive choice and the
+  wrong one wherever any stage normalises. The RC that already fixed this one layer down
+  is the tell: **a reorder recorded as a lesson applies to the next layer that gets
+  built, not only to the layer it was recorded against.**
+
+### RC-45 — one gate was made to answer two questions, and the stricter answer discarded the response
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-13 — *class-id:* `lost-code-path`
+
+- **The plan said:** one rule, spelled once — the body gate and the artefact gate are the
+  same question. Consolidating the `jq_filter` branch's own narrower check onto it looked
+  like the same tidy-up, and the commit called it "strictly better".
+- **Reality was:** it is a *third* question and the gate cannot answer it. `classified.json`
+  asks *may these bytes be handed over unmodified*, which is composite-only because a bare
+  scalar's artefact has no in-process reader. A filter asks something weaker — *does this
+  parse* — and runs perfectly well on a top-level scalar. So an endpoint returning `null`
+  for "no record", `42` for a count or `"ok"` for a health check made
+  `curl_execute({ url, jq_filter })` **throw**, and the throw sits above `shouldSave`, so
+  the body was not saved either: it was discarded outright, where the same body without a
+  filter is persisted and reported. A second defect fell out of fixing the first —
+  `shouldSave` still keyed on the ORIGINAL body's verdict after a filter had replaced the
+  content, so a 4-byte filter result was forced to disk and reported as an unreturnable
+  non-JSON body.
+- **What changed:** the filter branch gates on parseability (`empty-body` and
+  `looks-like-markup` still refused, a scalar allowed), and `shouldSave` accounts for
+  `filterApplied` because the classification describes bytes the filter has replaced.
+- **What this costs next time:** **"one rule spelled once" is about one QUESTION, and
+  consolidating two call sites onto one predicate is only DRY if they were asking the same
+  thing.** The check that finds this: state each caller's question in words before merging
+  them, and if the sentences differ, the predicates should. Also — **a throw placed above a
+  save arm converts a degraded answer into no answer**, so the ordering of a refusal
+  against a persistence step is itself a decision.
+
+### RC-46 — the fix kept an exception for the safe case, and the exception was the defect
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-12 — *class-id:* `duplicated-logic`
+
+- **The plan said:** stop joining server prose to remote bytes (RC-41). The saved-to-file
+  arm joins the notice to `savedMessage`, which is server-authored on both sides, so there
+  is no region to splice — and that reasoning is correct.
+- **Reality was:** correct and still wrong, because the *caller* appends the notice entry
+  unconditionally. Keeping the join for the "safe" arm meant the model received the notice
+  **twice** on every saved plain-branch response with a non-zero exit — and after this
+  branch every non-JSON body saves, so that is most of them. Two spellings of one rule,
+  which is precisely what the exception bought. **No test caught it**: the teeth probe on
+  the fix failed nothing until a case was written for it.
+- **What changed:** `formatResponse` emits no notice on any branch; notices travel as their
+  own content entry, always. One rule.
+- **What this costs next time:** **an exception carved out for the case that is safe still
+  has to be checked against what the other side of the boundary does.** The join was safe
+  in isolation and duplicative in composition, which is the same shape as RC-37 — a
+  property that holds locally and not across a layer. And the smaller lesson, paid for
+  twice on this branch now: **probe every fix, including the ones that look like tidying**,
+  because a fix with no failing test is a fix nothing will keep.
