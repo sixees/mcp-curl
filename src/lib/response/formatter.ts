@@ -50,6 +50,62 @@ function applyHeaderFields(
 }
 
 /**
+ * The server-authored `[mcp-curl] …` lines for the plain branch, or `""`.
+ *
+ * **Exported because they must travel as their own MCP content entry, not as a
+ * prefix on remote bytes.** Prefixing them was a defence argument — a position
+ * an origin cannot occupy — and it was sound for that. What it was not is a
+ * REGION boundary: `defendForInline` keys its verbatim-JSON arm on the whole
+ * text part being a composite document, so a prefix demoted a JSON body to the
+ * undivided scan, which then paired `<!--` in one field with `-->` in a later
+ * one and deleted what lay between. Measured:
+ * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returned
+ * `{"a":"open ","d":"kept"}` on any non-darwin host with `include_headers`.
+ *
+ * A separate content entry is a STRONGER boundary than an unoccupiable
+ * position, so the original argument survives the move intact. ARCHITECTURE.md
+ * invariants 13 and 16; `LESSONS.md` RC-37, RC-41.
+ */
+export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo): string {
+    return [
+        // A non-zero exit has no field to land in on this branch, so without
+        // this line a FAILED request is byte-identical to an empty successful
+        // one — the shape the reassurance below would otherwise make worse by
+        // naming the body sound.
+        exitCode !== 0
+            ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete`
+            : null,
+        // Two arms, because the pair is only sometimes statable. Where the
+        // defence grew the text past the ceiling, how many origin octets
+        // survived is genuinely unknown — so the fact of the cut is reported
+        // and the ratio is not invented.
+        headerInfo?.truncated
+            ? headerInfo.bytesReturned !== undefined
+                ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used`
+                : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received`
+            : null,
+        // A fact about this host, so it is stated whatever the exit code was:
+        // the flag is never added here, which is a decision taken before the
+        // request and independent of how the request went.
+        headerInfo?.unsupported
+            ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent"
+            : null,
+        // The reassurance is claimed only on a CLEAN exit. Keyed on
+        // `undetermined` alone it asserts the body is sound on every cURL
+        // failure after connect — exit 23, 35, 56, 63 — where the body is empty
+        // precisely BECAUSE the request failed. This flag's domain cannot answer
+        // a question about the body; `exitCode` can.
+        headerInfo?.undetermined
+            ? exitCode === 0
+                ? "[mcp-curl] response headers were requested but none were received; the body is unaffected"
+                : "[mcp-curl] response headers were requested but none were received"
+            : null,
+    ]
+        .filter(Boolean)
+        .join("\n");
+}
+
+/**
  * Format the response for MCP output.
  *
  * When includeMetadata is true, returns a JSON object with:
@@ -137,43 +193,15 @@ export function formatResponse(
     // Written by us and placed BEFORE the remote text, which is a position an
     // origin cannot occupy — so this is a server-authored prefix rather than
     // the forgeable in-band marker the out-of-band fields exist to avoid.
-    const plainNotice = !includeMetadata
-        ? [
-              // A non-zero exit has no field to land in on this branch, so
-              // without this line a FAILED request is byte-identical to an
-              // empty successful one — the shape the reassurance below would
-              // otherwise make worse by naming the body sound.
-              exitCode !== 0
-                  ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete`
-                  : null,
-              // Two arms, because the pair is only sometimes statable. Where
-              // the defence grew the text past the ceiling, how many origin
-              // octets survived is genuinely unknown — so the fact of the cut
-              // is reported and the ratio is not invented.
-              headerInfo?.truncated
-                  ? headerInfo.bytesReturned !== undefined
-                      ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used`
-                      : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received`
-                  : null,
-              // A fact about this host, so it is stated whatever the exit code
-              // was: the flag is never added here, which is a decision taken
-              // before the request and independent of how the request went.
-              headerInfo?.unsupported
-                  ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent"
-                  : null,
-              // The reassurance is claimed only on a CLEAN exit. Keyed on
-              // `undetermined` alone it asserts the body is sound on every cURL
-              // failure after connect — exit 23, 35, 56, 63 — where the body is
-              // empty precisely BECAUSE the request failed. This flag's domain
-              // cannot answer a question about the body; `exitCode` can.
-              headerInfo?.undetermined
-                  ? exitCode === 0
-                      ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected"
-                      : "[mcp-curl] response headers were requested but none were received"
-                  : null,
-          ].filter(Boolean).join("\n")
-        : "";
-    const withNotice = (text: string) => (plainNotice ? `${plainNotice}\n\n${text}` : text);
+    // **The notices are NOT joined to the body here.** They go back as their own
+    // MCP content entry, emitted by `tools/curl-execute.ts` — see
+    // {@link plainBranchNotices} for the measurement that forced the move. They
+    // ARE joined to the saved-to-file message below, and the difference is the
+    // whole rule: that message is server-authored end to end, so the join has
+    // no remote region on either side of it. What may never be joined is server
+    // prose to remote bytes.
+    const notices = !includeMetadata ? plainBranchNotices(exitCode, headerInfo) : "";
+    const withNotice = (text: string) => (notices ? `${notices}\n\n${text}` : text);
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
         if (includeMetadata) {
@@ -203,5 +231,7 @@ export function formatResponse(
         applyHeaderFields(output, responseHeaders, headerInfo, stderr);
         return JSON.stringify(output, null, 2);
     }
-    return withNotice(stdout);
+    // No `withNotice` — see above. `stdout` is remote bytes and nothing
+    // server-authored may share this string with them.
+    return stdout;
 }

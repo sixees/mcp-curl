@@ -1803,3 +1803,51 @@ recorded as caught.
   field stays a live gap even after the field stops selecting anything on the path
   you are looking at** — this one survived on the artefact arm precisely because
   attention was on the inline arm.
+
+### RC-39 — a settled exemption was reversed, because the change under review removed the thing that made it safe
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-11 — *class-id:* `fail-open-default`
+
+- **The plan said:** nothing about scalar JSON documents' *strip* treatment. RC-10
+  round 4 had settled it — a scalar JSON document keeps the strip exemption, so a
+  beacon inside `"![x](…)"` is not rewritten, on the reasoning that rewriting would
+  alter a persisted document the origin sent. `018` settles only the *artefact gate*
+  for a bare scalar (non-JSON, therefore not raw octets).
+- **Reality was:** a reviewer found `processResponse`'s non-JSON arm calling
+  `defendText(response, { contentTypeUndetermined: true, hostname })` and relying on
+  `excludeJsonDocuments`'s default of `true`. That let `defendText` re-ask the JSON
+  question with a **looser** predicate and cancel the strictest grammar the call had
+  just requested: `isDefinitelyJson('"<script>x</script>"')` is `true`, so
+  `looksLikeJsonBody` became true, `strictestGrammar` false, `isMarkup`/`isMarkdown`
+  fell through to `undefined` (both false), and `sniffedAsMarkup` was blocked by the
+  same flag. **`needsStripPath` was false and no strip stage ran** — measured:
+  `<script>alert(1)</script>`, a markdown beacon and an HTML comment all survived
+  verbatim in a bare-scalar body, while the control (plain markup) was stripped. And
+  `savedMessage` told the model those bytes "have been through the full defence
+  pipeline".
+- **What changed:** `excludeJsonDocuments: false` at that call site, mirroring
+  `defendInlineString`. That fixes the bypass and, as a consequence, reverses RC-10
+  round 4's scalar exemption. **The reversal is justified by 018 having removed the
+  exemption's premise, not by re-weighing it.** RC-10's split was *persisted keeps
+  the exemption; returned does not*, and it was safe because a scalar document was
+  ALSO returned inline, where `defendForInline` stripped it — the model saw a
+  defended copy while the artefact kept the origin's bytes. 018 classifies a bare
+  scalar as non-JSON, so there is no inline copy: the artefact is the only
+  representation. And its reader is the host's own file tooling rather than
+  `jq_query` — **verified rather than assumed**: `applyJqFilter('"…"', ".")` is
+  refused, because a top-level scalar has no path to address. RC-12's other half,
+  never entity-decoding such a document, is untouched and still guarded
+  independently by `isDefinitelyJson(content)` in the decode gate.
+- **What this costs next time:** **an option's DEFAULT is part of a call site's
+  meaning, and a caller that states an intent in a comment has not stated it to the
+  callee.** The comment said "the full pipeline with the grammar declared
+  UNDETERMINED, so every strip stage runs"; the argument list said something weaker,
+  and the callee's default won. The question that finds this: *for every option I did
+  not pass, which way does its default resolve, and does the callee re-decide
+  anything I just decided?* That is K-2's fail-open question asked of an argument
+  list rather than of a conditional. Second lesson: **when a change removes a
+  representation, re-price every exemption that was safe because that representation
+  existed** — the same shape as RC-33's *the artefact's safety is a property of its
+  reader*.

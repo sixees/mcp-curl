@@ -12,6 +12,7 @@ import {
     parseResponseWithMetadata,
     sanitizeErrorMessage,
     formatResponse,
+    plainBranchNotices,
     processResponse,
     defendText,
     extractHeaderChannel,
@@ -343,6 +344,27 @@ export async function executeCurlRequest(
         // hand an existing reader the wrong region. Appending only ever ADDS an
         // element.
         const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : undefined;
+        // **The server-authored notices are a THIRD region, and they were the
+        // second join in the same function.** Fixing the header prefix and
+        // leaving this one is `.claude/rules/01-known-shapes.md` K-4 — a sweep
+        // narrower than its own class. `formatResponse`'s plain branch prefixed
+        // `[mcp-curl] …` lines to the body, which demoted a JSON body to
+        // `defendForInline`'s undivided arm and let the strip pair `<!--` in one
+        // field with `-->` in a later one. Measured `["a","d"]` from
+        // `["a","b","c","d"]` on any non-darwin host with `include_headers`,
+        // which is the DEFAULT `include_metadata: false` path.
+        //
+        // Its own entry is a stronger boundary than the unoccupiable position
+        // the prefix relied on, so nothing is given up. `LESSONS.md` RC-41.
+        const noticePart = !params.include_metadata
+            ? plainBranchNotices(result.exitCode, {
+                  truncated: headerTruncated,
+                  bytesReceived: headerBytesReceived,
+                  bytesReturned: headerBytesReturned,
+                  undetermined: headersUndetermined,
+                  unsupported: headersUnsupported,
+              }) || undefined
+            : undefined;
         return {
             content: [
                 {
@@ -350,6 +372,7 @@ export async function executeCurlRequest(
                     text: output,
                 },
                 ...(headerPart === undefined ? [] : [{ type: "text" as const, text: headerPart }]),
+                ...(noticePart === undefined ? [] : [{ type: "text" as const, text: noticePart }]),
             ],
         };
     } catch (error) {

@@ -979,47 +979,6 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
   return applyJqFilterToParsed(data, filter);
 }
 
-// src/lib/response/parser.ts
-var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
-function isJsonContentType(contentType) {
-  const mime = parseMimeType(contentType);
-  return mime === "application/json" || mime.endsWith("+json");
-}
-function parseResponseWithMetadata(rawResponse, separator) {
-  const raw = rawResponse;
-  const sep = Buffer.from(separator, "utf8");
-  const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
-  const searchStart = Math.max(0, raw.length - windowBytes);
-  const indexInWindow = raw.subarray(searchStart).lastIndexOf(sep);
-  const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
-  if (separatorIndex === -1) {
-    return {
-      bodyBytes: raw,
-      metadataFound: false
-    };
-  }
-  const bodyBytes = raw.subarray(0, separatorIndex);
-  const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
-  const contentType = metadata.trim();
-  const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
-  return {
-    bodyBytes,
-    contentType: validContentType,
-    metadataFound: true
-  };
-}
-function sanitizeErrorMessage(message, includeDetails) {
-  if (includeDetails) {
-    return message;
-  }
-  let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
-  sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
-  if (sanitized !== message) {
-    sanitized += " (use include_metadata: true for details)";
-  }
-  return sanitized;
-}
-
 // src/lib/response/file-saver.ts
 import { join as join2, resolve as resolve2 } from "path";
 import { writeFile, realpath as realpath2 } from "fs/promises";
@@ -2012,7 +1971,7 @@ function isDefinitelyJson(text) {
     return false;
   }
 }
-var JSON_PARSE_POSITION = / at position (\d+)/;
+var JSON_PARSE_POSITION = / at position (\d+) \(line \d+ column \d+\)$/;
 function classifyBody(text) {
   const trimmed = text.trim();
   if (trimmed.length === 0) return { json: false, reason: "empty-body" };
@@ -2092,15 +2051,7 @@ function savedMessage(facts) {
   const subject = filtered ? "Result of jq_filter" : "Response";
   const capClause = overCap ? ` It also exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied.` : "";
   const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not a JSON object or array (${rejection.reason}${rejection.position === void 0 ? "" : ` at byte ${rejection.position}`}), so no body is returned here.${capClause}` : overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling. The bytes on disk have been through the full defence pipeline, so they are not the origin's exact bytes." : filtered || isJsonContentType(contentType) ? " Use the jq_query tool on that path to extract fields." : contentType === void 0 ? (
-    // NOT "was not declared". This arm is also reached when the origin
-    // DID declare a content type and it was rejected as malformed, so
-    // asserting the origin sent nothing would be a server-authored
-    // falsehood about the origin. Both causes mean the same thing to
-    // the reader — there is no usable grammar — so the wording says
-    // that rather than guessing which one happened. `LESSONS.md` RC-31.
-    " No usable content type was declared, so the grammar is unknown \u2014 try the jq_query tool on that path; it reports plainly if the file is not JSON."
-  ) : " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling.";
+  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling. The bytes on disk have been through the full defence pipeline, so they are not the origin's exact bytes." : " Use the jq_query tool on that path to extract fields.";
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
   return cause + route + scope;
 }
@@ -2123,7 +2074,12 @@ async function processResponse(responseBytes, options) {
   }
   const hostname = safeHostname(options.url);
   const classified = classifyBody(response);
-  let content = classified.json ? response : defendText(response, { contentTypeUndetermined: true, hostname });
+  sanitizeAndDetect(response, hostname);
+  let content = classified.json ? response : defendText(response, {
+    contentTypeUndetermined: true,
+    excludeJsonDocuments: false,
+    hostname
+  });
   let filterApplied = false;
   if (options.jqFilter) {
     const trimmed = content.trim();
@@ -2177,6 +2133,43 @@ async function processResponse(responseBytes, options) {
   };
 }
 
+// src/lib/response/parser.ts
+var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
+function parseResponseWithMetadata(rawResponse, separator) {
+  const raw = rawResponse;
+  const sep = Buffer.from(separator, "utf8");
+  const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
+  const searchStart = Math.max(0, raw.length - windowBytes);
+  const indexInWindow = raw.subarray(searchStart).lastIndexOf(sep);
+  const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
+  if (separatorIndex === -1) {
+    return {
+      bodyBytes: raw,
+      metadataFound: false
+    };
+  }
+  const bodyBytes = raw.subarray(0, separatorIndex);
+  const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
+  const contentType = metadata.trim();
+  const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
+  return {
+    bodyBytes,
+    contentType: validContentType,
+    metadataFound: true
+  };
+}
+function sanitizeErrorMessage(message, includeDetails) {
+  if (includeDetails) {
+    return message;
+  }
+  let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
+  sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
+  if (sanitized !== message) {
+    sanitized += " (use include_metadata: true for details)";
+  }
+  return sanitized;
+}
+
 // src/lib/response/header-channel.ts
 function extractHeaderChannel(headerBytes, bytesReceived, url, maxResultSize) {
   if (!headerBytes || headerBytes.length === 0) {
@@ -2226,30 +2219,33 @@ function applyHeaderFields(output, responseHeaders, headerInfo, stderr) {
   if (headerInfo?.unsupported) output.headers_unsupported = true;
   if (stderr) output.stderr = stderr;
 }
-function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
-  const plainNotice = !includeMetadata ? [
-    // A non-zero exit has no field to land in on this branch, so
-    // without this line a FAILED request is byte-identical to an
-    // empty successful one — the shape the reassurance below would
-    // otherwise make worse by naming the body sound.
+function plainBranchNotices(exitCode, headerInfo) {
+  return [
+    // A non-zero exit has no field to land in on this branch, so without
+    // this line a FAILED request is byte-identical to an empty successful
+    // one — the shape the reassurance below would otherwise make worse by
+    // naming the body sound.
     exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete` : null,
-    // Two arms, because the pair is only sometimes statable. Where
-    // the defence grew the text past the ceiling, how many origin
-    // octets survived is genuinely unknown — so the fact of the cut
-    // is reported and the ratio is not invented.
+    // Two arms, because the pair is only sometimes statable. Where the
+    // defence grew the text past the ceiling, how many origin octets
+    // survived is genuinely unknown — so the fact of the cut is reported
+    // and the ratio is not invented.
     headerInfo?.truncated ? headerInfo.bytesReturned !== void 0 ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used` : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received` : null,
-    // A fact about this host, so it is stated whatever the exit code
-    // was: the flag is never added here, which is a decision taken
-    // before the request and independent of how the request went.
+    // A fact about this host, so it is stated whatever the exit code was:
+    // the flag is never added here, which is a decision taken before the
+    // request and independent of how the request went.
     headerInfo?.unsupported ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent" : null,
     // The reassurance is claimed only on a CLEAN exit. Keyed on
     // `undetermined` alone it asserts the body is sound on every cURL
-    // failure after connect — exit 23, 35, 56, 63 — where the body is
-    // empty precisely BECAUSE the request failed. This flag's domain
-    // cannot answer a question about the body; `exitCode` can.
-    headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
-  ].filter(Boolean).join("\n") : "";
-  const withNotice = (text) => plainNotice ? `${plainNotice}
+    // failure after connect — exit 23, 35, 56, 63 — where the body is empty
+    // precisely BECAUSE the request failed. This flag's domain cannot answer
+    // a question about the body; `exitCode` can.
+    headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
+  ].filter(Boolean).join("\n");
+}
+function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
+  const notices = !includeMetadata ? plainBranchNotices(exitCode, headerInfo) : "";
+  const withNotice = (text) => notices ? `${notices}
 
 ${text}` : text;
   if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
@@ -2276,7 +2272,7 @@ ${text}` : text;
     applyHeaderFields(output, responseHeaders, headerInfo, stderr);
     return JSON.stringify(output, null, 2);
   }
-  return withNotice(stdout);
+  return stdout;
 }
 
 // src/lib/response/post-processor.ts
@@ -2767,13 +2763,21 @@ async function executeCurlRequest(params, extra = {}) {
       }
     );
     const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : void 0;
+    const noticePart = !params.include_metadata ? plainBranchNotices(result.exitCode, {
+      truncated: headerTruncated,
+      bytesReceived: headerBytesReceived,
+      bytesReturned: headerBytesReturned,
+      undetermined: headersUndetermined,
+      unsupported: headersUnsupported
+    }) || void 0 : void 0;
     return {
       content: [
         {
           type: "text",
           text: output
         },
-        ...headerPart === void 0 ? [] : [{ type: "text", text: headerPart }]
+        ...headerPart === void 0 ? [] : [{ type: "text", text: headerPart }],
+        ...noticePart === void 0 ? [] : [{ type: "text", text: noticePart }]
       ]
     };
   } catch (error) {

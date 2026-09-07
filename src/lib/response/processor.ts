@@ -3,7 +3,6 @@
 
 import { LIMITS } from "../config/limits.js";
 import { applyJqFilterToParsed } from "../jq/index.js";
-import { isJsonContentType } from "./parser.js";
 import { saveResponseToFile } from "./file-saver.js";
 import {
     IMAGE_REMOVED_PLACEHOLDER,
@@ -187,14 +186,22 @@ export type JsonRejectionReason =
 /**
  * The one place V8's parse message is read, and it yields an integer or nothing.
  *
- * **The two message families are disjoint in exactly the wrong way**, measured
- * on node v24.18.0 and recorded in `docs/todos/018`: the family that embeds body
- * bytes (`Unexpected token 'S', "…"`) carries no position, and the family
- * carrying a position (`Expected double-quoted property name in JSON at
- * position 7`) never embeds bytes. So a position is safe wherever it exists,
- * and where it does not exist none is invented.
+ * **The two families are NOT disjoint, and the first version of this regex was
+ * wrong about that.** The measurement in `docs/todos/018` held for the bodies it
+ * used, but the disjointness is a property of message LENGTH, not of family: a
+ * body short enough for V8 to quote whole can contain the phrase itself.
+ * Measured — `JSON.parse("B at position 777")` reports
+ * ``Unexpected token 'B', "B at position 777" is not valid JSON``, and an
+ * unanchored `/ at position (\d+)/` extracts **777 out of the body's own text**.
+ * A remote thereby chose the integer this server reports as a byte offset, in a
+ * sentence the design calls server-authored.
+ *
+ * So the pattern is anchored to the shape only the position-carrying family has:
+ * that family always ENDS with ` at position N (line L column C)`, which cannot
+ * occur inside a quoted snippet because the snippet is followed by
+ * ` is not valid JSON`. `LESSONS.md` RC-42.
  */
-const JSON_PARSE_POSITION = / at position (\d+)/;
+const JSON_PARSE_POSITION = / at position (\d+) \(line \d+ column \d+\)$/;
 
 /**
  * What the body path decided about a response body.
@@ -225,7 +232,7 @@ export type BodyClassification =
  * directions for this job:
  *
  * - **It says no to everything that matters here.**
- *   {@link parseJsonDocument} returns `undefined` above
+ *   `isDefinitelyJson` returns `false` above
  *   {@link STRIP_PATH_MAX_BYTES} (262,144) as a cost optimisation, while
  *   `LIMITS.DEFAULT_MAX_RESULT_SIZE` is 500,000. The save arm exists precisely
  *   for bodies between those numbers, so the arm where the artefact question
@@ -358,7 +365,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // over-cap arm that file is the ONLY copy. Sanitise removes the zero-width
     // space, so the document the strip actually ran on DID parse.
     //
-    // The same reordering closes the byte-count half: `parseJsonDocument`'s
+    // The same reordering closes the byte-count half: `isDefinitelyJson`'s
     // `STRIP_PATH_MAX_BYTES` gate now measures the same bytes as
     // `exceedsStripCap`, where before a body could sit above the gate raw,
     // collapse below it during sanitise, and take a strip its size had exempted
@@ -782,10 +789,15 @@ export function exceedsInlineCap(text: string, hostname: string, maxBytes: numbe
  *   keeps only the type/subtype, so the field is a bounded token; not
  *   interpolating it here is the second half, and it is what makes this whole
  *   function server-authored.
- * - **Absence is its own arm.** `isJsonContentType(undefined)` is `false`, so a
- *   two-way split states "not JSON" about a body whose grammar was never
- *   declared — and `jq_query` would have parsed it. Unknown gets its own
- *   clause, which costs one speculative call and never withholds the payload.
+ * - **The declared type is not consulted AT ALL any more, not even for absence.**
+ *   This used to carry a three-way split — declared-JSON, declared-non-JSON, and
+ *   an "unknown grammar" arm for `isJsonContentType(undefined)` — because the
+ *   header was the only thing available to ask. `docs/todos/018` gives this
+ *   function `classifyBody`'s verdict instead, which is a fact about the BYTES,
+ *   so absence has nothing to be an arm of: the body either is a composite JSON
+ *   document or it is not, and `rejection` says which. The three-way split is
+ *   gone with the question it was answering. `LESSONS.md` RC-31 recorded the
+ *   absence arm; RC-40 records why it retired.
  *
  * `save_to_file` is a request rather than a limit, which is why the over-cap
  * clause is gated on the bytes genuinely exceeding the cap rather than on which
@@ -872,24 +884,26 @@ function savedMessage(facts: SavedMessageFacts): string {
 
     // The filter ran, so the artefact is JSON by construction whatever the
     // origin declared — `applyJqFilterToParsed` returns `JSON.stringify` output.
+    // **Two arms, and neither reads the declared content type.** `rejection` is
+    // present exactly when `classifyBody` said the body is not a composite JSON
+    // document, so the other arm's body IS one — and `jq_query` can always read
+    // it. Re-deriving that from `isJsonContentType(contentType)` asked a
+    // remote-written header a question this function had already had answered,
+    // and got it wrong whenever an origin served valid JSON as `text/html` or
+    // `text/plain`.
+    //
+    // **That was not merely a wrong sentence.** On the JSON arm the artefact is
+    // the origin's RAW OCTETS, and the whole basis for that is `jq_query` being
+    // the reader — in-process, applying the full defence to what it reads. A
+    // message routing the model to "your own tooling" instead withdraws that
+    // premise and points it at undefended bytes. Reachable by an origin
+    // declaring a non-JSON type on a JSON body over the inline cap.
     const route =
         rejection !== undefined
             ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
               " your own tooling. The bytes on disk have been through the full defence pipeline," +
               " so they are not the origin's exact bytes."
-            : filtered || isJsonContentType(contentType)
-            ? " Use the jq_query tool on that path to extract fields."
-            : contentType === undefined
-              ? // NOT "was not declared". This arm is also reached when the origin
-                // DID declare a content type and it was rejected as malformed, so
-                // asserting the origin sent nothing would be a server-authored
-                // falsehood about the origin. Both causes mean the same thing to
-                // the reader — there is no usable grammar — so the wording says
-                // that rather than guessing which one happened. `LESSONS.md` RC-31.
-                " No usable content type was declared, so the grammar is unknown — try the" +
-                " jq_query tool on that path; it reports plainly if the file is not JSON."
-              : " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
-                " your own tooling.";
+            : " Use the jq_query tool on that path to extract fields.";
 
     const scope = filtered
         ? " That file holds the FILTER OUTPUT, not the full response body."
@@ -1051,9 +1065,47 @@ export async function processResponse(
     // file the model is told to read with its own tooling. It had been masked
     // because such a body used to be returned inline, where the wrap applied
     // exactly this pass. Two existing cases caught it.
+    // **`excludeJsonDocuments: false` is load-bearing here, not tidiness.**
+    // Without it `defendText` re-asks the JSON question with a LOOSER predicate
+    // and cancels the strictest grammar this call just requested. Measured:
+    // `isDefinitelyJson('"<script>x</script>"')` is `true` — a bare-scalar JSON
+    // string is syntactically a JSON document — so `looksLikeJsonBody` became
+    // true, `strictestGrammar` false, `isMarkup`/`isMarkdown` fell through to
+    // `undefined` (both false), and `sniffedAsMarkup` was blocked by the same
+    // flag. `needsStripPath` was false and NO strip stage ran, on the exact body
+    // `docs/todos/018` names as the dangerous one — while `savedMessage` told the
+    // model those bytes had been through the full pipeline.
+    //
+    // `classifyBody` has already answered this question, correctly and more
+    // strictly (`bare-scalar` is non-JSON for defence purposes). A second,
+    // weaker test inside the callee must not be able to overturn it — the same
+    // reason `defendInlineString` passes `false`.
+    // **Detection runs on the JSON arm too, and its RETURN VALUE is discarded.**
+    // Step 2 has two jobs: it sanitises, and it logs. Byte-exactness needs the
+    // first withheld from a JSON body and says nothing about the second — but
+    // handing the body straight through withheld both, so an origin sending
+    // `{"note":"Ig\u200bnore previous instructions"}` with `save_to_file` (or
+    // any body over the cap) produced NO `[injection-defense]` line at all. An
+    // operator watching that log saw a clean fetch.
+    //
+    // It sits above the fork rather than inside the JSON arm so a future arm
+    // cannot forget it, and the string is dropped so nothing downstream can
+    // mistake it for the body. On the non-JSON arm `defendText` will detect
+    // again; per-host throttling makes the second call a no-op rather than a
+    // double count.
+    //
+    // The inline routes were never affected — `defendForInline` detects at the
+    // wrap — which is why this was invisible until someone walked the SAVED
+    // routes specifically. `LESSONS.md` RC-43.
+    sanitizeAndDetect(response, hostname);
+
     let content = classified.json
         ? response
-        : defendText(response, { contentTypeUndetermined: true, hostname });
+        : defendText(response, {
+              contentTypeUndetermined: true,
+              excludeJsonDocuments: false,
+              hostname,
+          });
 
     // Step 6: Apply jq filter if provided AND response is JSON.
     //

@@ -442,7 +442,10 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             include_headers: true,
         }));
 
-        expect(result.content[0].text).toContain("the body below is unaffected");
+        // The notice is its own content entry now (`LESSONS.md` RC-41), so the
+        // reassurance is read there rather than off the body.
+        const notice = result.content.map((c) => c.text).find((t) => t.startsWith("[mcp-curl]"));
+        expect(notice).toContain("the body is unaffected");
         expect(result.content[0].text).not.toContain("cURL exited");
     });
 

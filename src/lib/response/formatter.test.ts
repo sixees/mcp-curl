@@ -1,6 +1,6 @@
 // src/lib/response/formatter.test.ts
 import { describe, it, expect } from "vitest";
-import { formatResponse } from "./formatter.js";
+import { formatResponse, plainBranchNotices } from "./formatter.js";
 
 const HEADERS = "HTTP/2 200 \r\ncontent-type: application/json\r\nx-records: 8";
 
@@ -106,19 +106,27 @@ describe("formatResponse — header metadata", () => {
         expect(out.headers_undetermined).toBeUndefined();
     });
 
-    it("signals degradation on the plain branch, which carries no JSON fields", () => {
+    it("does NOT carry the notice itself — that is a separate content entry", () => {
+        // **The notice moved out of this function entirely** (`LESSONS.md`
+        // RC-41). Prefixing it to the body demoted a JSON body to
+        // `defendForInline`'s undivided arm, which then spliced across two
+        // fields. `plainBranchNotices` builds it and `tools/curl-execute.ts`
+        // emits it as its own MCP entry, which is a stronger boundary than the
+        // unoccupiable position the prefix relied on.
         const out = formatResponse("body", "", 0, false, undefined, HDRS, {
             truncated: true,
             bytesReceived: 90_000,
         });
-        expect(out).toContain("[mcp-curl]");
-        expect(out).toContain("truncated");
-        // **The notice is still server-authored and still unforgeable, but the
-        // position argument moved.** It used to rest on sitting BEFORE the
-        // remote header text in the same string; the header text is now a
-        // separate content entry, so this string carries no remote-authored
-        // prefix at all and the notice leads it outright.
-        expect(out).not.toContain("HTTP/2 200");
-        expect(out.indexOf("[mcp-curl]")).toBe(0);
+        expect(out).toBe("body");
+        expect(out).not.toContain("[mcp-curl]");
+    });
+
+    it("builds the degradation notice separately, so nothing is lost", () => {
+        const notice = plainBranchNotices(0, { truncated: true, bytesReceived: 90_000 });
+        expect(notice).toContain("[mcp-curl]");
+        expect(notice).toContain("truncated");
+        // Server-authored and alone in its own entry, so there is no remote text
+        // in this string for an origin to hide behind.
+        expect(notice.startsWith("[mcp-curl]")).toBe(true);
     });
 });

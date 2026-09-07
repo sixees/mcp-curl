@@ -129,10 +129,24 @@ what a violation looks like, it does not belong on this list.
    select a defence any more**, which is what makes this invariant's named
    failure shape unreachable rather than guarded.
 
-   **`excludeJsonDocuments` still exists on `defendText` for the two text
-   channels that are never JSON** — response headers and cURL stderr — and its
-   content-type gate still behaves as described above for any direct caller of
-   the published `defendText`. It is no longer reachable from the body path.
+   **`excludeJsonDocuments` still exists on `defendText`, and the body path must
+   pass `false` explicitly — it is load-bearing there, not vestigial.** An
+   earlier revision of this paragraph said it was "no longer reachable from the
+   body path", and that was wrong in the direction that costs something: with the
+   option left at its default of `true`, `defendText` re-asks the JSON question
+   using `isDefinitelyJson`, which answers TRUE for a bare-scalar document like
+   `"<script>x</script>"` — so `looksLikeJsonBody` became true, `strictestGrammar`
+   false, and **no strip stage ran on the very body this gate had just classified
+   as non-JSON**. Measured: `<script>`, a markdown beacon and an HTML comment all
+   survived into the artefact. `LESSONS.md` RC-39.
+
+   So the body path passes two explicit opt-outs — `contentTypeUndetermined: true`
+   and `excludeJsonDocuments: false` — to neutralise its callee's defaults. **A
+   call site defending itself against its callee is a residue, not a design**, and
+   it closes when the next slice of `docs/todos/018` deletes the selection
+   machinery. Until then the comment at that call site is what holds it in place.
+   The option's content-type gate still behaves as described above for any direct
+   caller of the published `defendText`.
 
    **Above `STRIP_PATH_MAX_BYTES` (256 KB) every channel is Step 2 only.** The
    cap is a cost circuit-breaker and it is not a defence; on the custom-tool
