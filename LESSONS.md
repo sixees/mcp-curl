@@ -1499,91 +1499,128 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
     boundary. The claim was checked at the wrong altitude, and the fix's benefit
     was priced against it.
 
-### RC-33 — one representation of the body answered whichever question the caller asked
+### RC-33 — the plan to carry wire octets to disk was audited, built, and then narrowed under review
 
 **Date:** 2026-09-07 · **PR:** #38 · **Plan:** `docs/todos/016-P2-wire-octets-are-decoded-lossily-before-persistence.md`
 
 **Class:** K-5, K-11, K-3 — *class-id:* `missing-validation`, `repeated-computation`
 
-- **The plan said:** `parseResponseWithMetadata` decodes the wire body with
-  `raw.toString("utf8")`, so any non-UTF-8 octet becomes U+FFFD, and six named
-  consumers then treat that string as the origin's bytes. Todo 016 proposed
-  carrying the octets through to disk, and expected the cost to be three
-  signatures — `ParsedResponse.body`, `processResponse`'s parameter and
-  `saveResponseToFile`'s first argument — plus a note on invariant 14.
-- **Reality was:** the three signatures were right, and the framing of *one* of
-  them was not. 016 read as though the body needed a second field beside the
-  string; what it actually needed was for the two representations to have
-  **separate consumers named at the type**, because they answer different
-  questions and neither is derivable from the other. `processResponse` therefore
-  takes the Buffer and decodes internally rather than taking both — a caller
-  holding two arguments that must agree is one edit away from passing a decode
-  it made itself, with no compiler objection, which is the same shape
-  `parseResponseWithMetadata`'s own doc-block already refuses for its input.
-  Measured: `{"name":"Jos\xe9"}` is `7b2261223a224a6f73e9227d` on the wire and
-  `…efbfbd…` after the round trip. Two further facts the todo did not carry:
-  the artefact being written was the **defended** text, not the body, so byte
-  fidelity was lost a second way independent of the encoding; and
-  `savedMessage`'s byte count was measured on that string, so the number quoted
-  to the model was wrong on both counts at once.
-- **What changed:** `ParsedResponse` now carries `bodyBytes: Buffer` and **no
-  decoded sibling at all** — see the next bullet, which is why.
+- **The plan said:** todo 016's solution 1 — return the body's octets beside the
+  decoded string, carry them through `processResponse`, and have
+  `saveResponseToFile` write them, so the persisted artefact is byte-exact. Three
+  signatures move; `ARCHITECTURE.md` invariant 14 gains a note. 016 listed three
+  consequences of the lossy decode: the artefact carries U+FFFD, the size gate
+  weighs an inflated count, and `savedMessage` reports the wrong size.
+- **Reality was:** the mechanism was real and the *scope* was wrong in both
+  directions. Measured: `{"name":"Jos\xe9"}` is `7b2261223a224a6f73e9227d` on the
+  wire and `…efbfbd…` after the round trip, so the artefact loss is genuine. But:
+  - **One of 016's three consequences did not exist.** `savedMessage`'s
+    `diskBytes` was `Buffer.byteLength(content, "utf8")` while
+    `saveResponseToFile(content)` wrote that same string with
+    `encoding: "utf-8"` — the two agreed exactly. It became wrong only *because*
+    this branch changed what was written. An earlier draft of this entry asserted
+    it was "wrong on both counts at once" at base; that was a claim about code,
+    checkable in one `git show`, and it was assumed. **K-3, against my own RC.**
+  - **Persisting the origin's octets broke a defence.** `savedMessage` tells the
+    model to read a non-JSON artefact *"with your own tooling"* — a reader
+    outside this process and outside every pass — and `jq_query` cannot open a
+    non-JSON file at all, so there is no defended reader to fall back on. Writing
+    raw octets removed **Step 2 sanitisation**, invisible-character and bidi
+    stripping, from the one representation the model is instructed to read.
+    Measured: a `text/markdown` body persisted as `# Report\n\n[image removed]\n`
+    before, and verbatim `<!-- ignore prior instructions -->…<script>x()</script>`
+    after. The justification written into invariant 14 — *"the file's only
+    in-process reader is `jq_query`, which runs the full `defendText` pipeline on
+    what it reads"* — was **false in three ways**, found independently by three
+    reviewers: `jq_query` defends the filter *output* not the read, it passes the
+    JSON arm so it takes Step 2 only, and its parse-failure path calls
+    `defendText` not at all. Invariant 1 does hold, via the post-processor wrap —
+    a control the justification never named.
+- **What changed:** the branch was **narrowed** on the director's call. What
+  landed: `ParsedResponse` carries `bodyBytes: Buffer` and **no decoded sibling**;
   `processResponse(responseBytes: Buffer, …)` performs the single decode of the
-  request, gates `MAX_RESPONSE_SIZE` on `responseBytes.length`, and persists
-  `responseBytes` on the unfiltered arm and `Buffer.from(content, "utf8")` on
-  the filtered one — where the artefact is our own serialiser's output and there
-  are no origin octets to keep. `saveResponseToFile` takes `Buffer` with **no
-  `string | Buffer` union**, so the encode is visible at the one call site that
-  needs it. `savedMessage.diskBytes` is `diskContent.length`. `ARCHITECTURE.md`
-  invariant 14 gained both halves: the two size gates weigh different bytes by
-  design, and the saved artefact is the origin's octets.
-- **And then reality diverged twice, in the same direction.** Todo 016 planned
-  for the octets to sit *alongside* the decoded string, and the first
-  implementation did exactly that. **A self-review sweep for consumers found
-  `ParsedResponse.body` had none** — not one production read survived once
-  persistence and the size gate moved to the octets, because `processResponse`
-  decodes the buffer itself. So the parser was computing a full
-  `toString("utf8")` of a body up to 10 MB that nothing read, and
-  `processResponse` was decoding the same bytes again: **measured at ~1.1 ms per
-  decode at 10 MB, and two live 10 MB strings where there had been one.** The
-  field was dropped; `parseResponseWithMetadata` returns octets only, and the
-  bounded metadata tail is the one thing it still decodes.
-
-  **This is `repeated-computation` recurring, and RC-28 is the prior instance —
-  on this same path, one PR earlier.** RC-28 was *"the invariant-14 guard
-  measured a value its own consumer discards"*, and PR #37's whole performance
-  win was deleting a defence pass whose output was thrown away. The very next
-  branch re-created the shape with a decode instead of a defence pass. Note the
-  asymmetry that made it easy: the original doc-block on this function argued
-  **against** returning a Buffer, on the grounds that *"a spare Buffer whose
-  doc-block says 'measure with these' but which nothing measures reads as a
-  guarantee in force"* — the argument was right, and the fix inverted which
-  field was the spare one without re-running it.
-- **What this costs next time:** two rules, and the second was learned the hard
-  way inside this very entry.
-
+  request; `saveResponseToFile` takes a `Buffer` with no `string | Buffer` union;
+  `MAX_RESPONSE_SIZE` is checked on both representations (see RC-34);
+  `savedMessage.diskBytes` measures the buffer actually written; and one
+  `filterApplied` boolean replaced two non-equivalent spellings of *"did a filter
+  run"* — `jq_filter: ""` had made them disagree, so no filter ran while the disk
+  and message decisions both concluded one had, and 8 wire octets landed as 10.
+  What did **not** land: the artefact is still the defended text. Octet fidelity
+  for the persisted file is sequenced behind `docs/todos/018`, which settles what
+  a non-JSON body gets and therefore what a safe artefact even means. **016 stays
+  open**; its write half is done and its reader half (`jq-query.ts`'s
+  `readFile(…, "utf-8")`) is untouched.
+- **What this costs next time:** three rules, and the branch paid for each.
   1. **When one value answers two questions, check whether a single
-     representation can answer both — and if it cannot, do not put the second
-     one in the same parameter list as the first.** A `(text, bytes)` signature
-     makes disagreement expressible; taking the bytes and deriving the text
-     makes it unreachable. The wider rule this instantiates is K-5's projection
-     arm: a field standing in for the record. `body` stood in for the response,
-     and every consumer that measured it, persisted it, or reported its length
-     was measuring a projection while claiming to describe the original.
-  2. **When you add a representation, sweep for consumers of the OLD one before
-     you decide it survives — and treat "it is the existing field" as no
-     evidence at all.** The reason this was nearly missed is that the redundant
-     value was the *incumbent*: nobody audits a field that was already there.
-     One `rg` for its reads answered it in seconds, which makes it K-3 — a
-     checkable premise that was assumed. **A migration is the moment the old
-     representation is most likely to become dead, and the least likely moment
-     anyone looks.**
+     representation can answer both.** K-5's projection arm: `body` stood in for
+     the response, and every consumer that measured or persisted it was
+     describing a projection while claiming to describe the original.
+  2. **When you add a representation, sweep for consumers of the OLD one — and
+     treat "it is the existing field" as no evidence.** `ParsedResponse.body`
+     turned out to have zero production readers once the octets arrived, so the
+     parser decoded a body up to 10 MB that nothing read while
+     `processResponse` decoded it again. That is **RC-28's
+     `repeated-computation` recurring one PR after it was recorded**, and PR #37's
+     entire performance win was deleting a discarded pass. Measured at 602 → 478 ms
+     CPU on a 9.5 MB body once removed. A migration is when the old
+     representation is most likely to become dead and the least likely moment
+     anyone looks.
+  3. **A fidelity guarantee is not separable from who reads the artefact.** 016
+     reasoned about the write and named the reader only as a consumer to fix
+     later. The write could not actually be changed without deciding what reads
+     it, because the artefact's safety is a property of that pair. **Sequence a
+     fidelity change behind the decision about its readers, never ahead of it.**
 
-Found while auditing todo 016 as the prerequisite for todo 018, per the
-operator's sequencing decision of 2026-09-07. The two facts 016 itself did not
-name — the defended-text artefact and the doubly-wrong byte count — were found
-by reading `processResponse`'s save arm rather than by trusting the todo's
-finding list, which is `.claude/rules/01-known-shapes.md` K-3 doing its job. The
-redundant decode was found the same way one step later, by asking who reads the
-field rather than by trusting that a pre-existing field must have a reader —
-caught pre-merge, and recorded as caught.
+Found by auditing todo 016 as the prerequisite for todo 018, per the operator's
+sequencing decision of 2026-09-07. The two facts 016 did not name — the
+defended-text artefact and the `diskBytes` claim — came from reading
+`processResponse`'s save arm rather than trusting the todo's finding list. Both
+regressions were caught in review round 1 and reverted before merge, and are
+recorded as caught.
+
+### RC-34 — making a measurement honest removed the bound the dishonest measurement was providing
+
+**Date:** 2026-09-07 · **PR:** #38 · **Plan:** `docs/todos/016-P2-wire-octets-are-decoded-lossily-before-persistence.md`
+
+**Class:** K-11, K-1 — *class-id:* `unbounded-growth`, `fail-open-default`
+
+- **The plan said:** todo 016 acceptance criterion 2 — *"`MAX_RESPONSE_SIZE` is
+  measured against wire octets, not against the inflated decoded length."* The
+  reasoning was sound and the defect it named was real: gating the decode refused
+  bodies for a size the origin never sent, because U+FFFD is three bytes where an
+  invalid octet was one, so a 4 MB body of mostly-invalid octets came back as
+  *"Response size (12000000 bytes) exceeds maximum allowed"* — a number found
+  nowhere on the wire.
+- **Reality was:** that inflated count was **also the only thing bounding the
+  work**, and 016 did not notice because it was reasoning about the message.
+  Every stage after the gate runs on the decode, not on the buffer. Moving the
+  ceiling onto the wire form alone made the sentence true and the limit
+  ineffective, and the input that demonstrates it is not adversarial: an ordinary
+  9.5 MB gzip, PNG or PDF inflates 1.81x. Measured base against branch —
+  **refused → accepted, 126 → 478-490 ms CPU (3.9x), peak RSS +19 MB → +196 MB
+  (10.3x)**. One request then peaks past `LIMITS.MAX_TOTAL_RESPONSE_MEMORY`,
+  which the constant beside it documents as the ceiling *across all concurrent
+  requests*, and `docs/todos/003` records that the pool reads zero during this
+  phase — so nothing refuses the next one. Three concurrent 10 MB invalid-octet
+  bodies: all three rejected at base, all three fulfilled on the branch. A
+  sideways cost too: `STRIP_PATH_MAX_BYTES` is measured on the decode, so a
+  non-UTF-8 body began skipping the strip path at ~85-141 KB of wire instead of
+  256 KB — a defence loosening nobody asked for.
+- **What changed:** `processResponse` now checks **both** representations.
+  `Buffer.byteLength(decoded) >= buffer.length` always holds, so the decoded arm
+  is the one that binds and the wire arm is an O(1) fast path (3.03 → 0.06 ms on
+  an 11 MB refusal) **plus the arm that keeps the message true** — the decoded
+  arm's wording says the body is not valid UTF-8, which is right when that arm
+  fires and wrong for an oversized ASCII body. `ARCHITECTURE.md` invariant 14
+  states which arm does which. A teeth probe is what established the
+  subsumption: removing the wire arm failed no correctness case, which is how it
+  became clear it was a fast path rather than a second gate — and the test was
+  then strengthened to assert the message-truth property it does uniquely own.
+- **What this costs next time:** **before moving a limit onto a different
+  quantity, ask what the old quantity was bounding — not just what it was
+  reporting.** A measurement can have two consumers, a human-readable one and a
+  structural one, and a fix aimed at the first silently retires the second. The
+  general form is K-11: name the boundary the defect sits on and check *both*
+  sides. Here the sides were *"is this number true?"* and *"does this number
+  constrain anything?"*, and 016 answered only the first. **The tell is a limit
+  whose units stop matching the units of the work it precedes.**

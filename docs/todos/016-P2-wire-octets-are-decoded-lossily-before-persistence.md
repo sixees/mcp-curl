@@ -12,7 +12,7 @@ created: 2026-09-07
 
 # Wire octets are decoded lossily at ingest, and the replacement is what gets persisted
 
-> **See `018`** — this becomes a PREREQUISITE. "Return the origin bytes unmodified" is unreachable while ingest hands downstream a lossy `string`. Either this lands first or 018 absorbs it.
+> **PARTLY LANDED 2026-09-07 and deliberately still open** — see the work log. The plumbing and the size gate are done; **the artefact's form moved to `018`**, and the reader half (`jq-query.ts`) is untouched. Do not close this on the write half alone.
 
 ## Problem
 
@@ -127,6 +127,49 @@ genuinely have sent.
 
 - 2026-09-07 — filed from PR #37 review round 4. Declined in-branch on
   convergence grounds; see above.
+- 2026-09-07 — **partly implemented on `fix/016-carry-wire-octets-through-to-persistence`
+  (`LESSONS.md` RC-33, RC-34). Left open on purpose.**
+
+  **Landed:**
+  - `ParsedResponse` carries `bodyBytes: Buffer` and **no decoded sibling** — the
+    decoded field turned out to have zero production readers once the octets
+    arrived, so keeping it meant decoding a body up to 10 MB twice per request
+    (RC-28's `repeated-computation` recurring; measured 602 → 478 ms CPU on
+    9.5 MB once removed).
+  - `processResponse(responseBytes: Buffer, …)` performs the request's single
+    decode. `saveResponseToFile(content: Buffer, …)` takes a Buffer with **no
+    `string | Buffer` union**, so the one legitimate encode is visible at its
+    call site.
+  - **AC 2, in a corrected form.** `MAX_RESPONSE_SIZE` is checked against both
+    representations rather than swapped onto the wire form. Gating the wire form
+    *alone* — which is what this todo's AC 2 literally asked for — removed the
+    bound on the decode: an ordinary 9.5 MB gzip inflates 1.81x and went from
+    refused to accepted at 10.3x the peak RSS, past the memory ceiling documented
+    as covering all concurrent requests. **RC-34 records that; treat AC 2 as
+    superseded by it rather than as met as written.**
+  - AC 3, and a correction to this todo's premise: the byte count in `message` is
+    the length of the buffer actually written. But **this todo was wrong to call
+    it a defect** — at base, `saveResponseToFile` wrote `content` as UTF-8 and
+    `diskBytes` was `Buffer.byteLength(content, "utf8")`, so the two agreed
+    exactly. It became wrong only under the reverted persistence change.
+  - AC 4: teeth probed. Each guard reverted in turn; each failed a distinct test.
+
+  **Reverted in review, and now `018`'s:**
+  - Persisting the origin's octets — **AC 1 is not met and is no longer this
+    todo's to meet.** `savedMessage` tells the model to read a non-JSON artefact
+    *"with your own tooling"* and `jq_query` cannot open a non-JSON file, so raw
+    octets withdrew Step 2 sanitisation from the one representation the model is
+    told to read. The artefact's safety is a property of its reader, and which
+    reader a non-JSON body gets is `018`'s decision.
+
+  **Still open here:**
+  - Instance 5, `tools/jq-query.ts::executeJqQuery` — `readFile(…, "utf-8")`
+    still substitutes U+FFFD at read time. Flagged independently by three
+    reviewers this round. It is not a regression (the artefact was already lossy)
+    but it is the class's last live silent member, and closing this todo on the
+    write half would make it unfindable to anyone re-running the recorded sweep.
+  - Instance 6, `header-channel.ts` — re-read unchanged at HEAD; the scope-out
+    reasoning above still holds.
 
 ## Resources
 

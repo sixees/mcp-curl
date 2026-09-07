@@ -124,6 +124,30 @@ as `text/plain` is technically JSON. `JSON_DOCUMENT_FIRST_CHARS`
    nature because they transform. Only the *defence* path stops needing it. Do
    not delete this module.
 
+### The artefact's form is now this todo's to settle — inherited from 016
+
+**Not an aside: it is a prerequisite of the section below.** 016's attempt to make
+the saved file byte-exact was reverted in review because the artefact's safety is
+a property of *who reads it*, and that is undecided until this todo lands:
+
+- On a body that parses as JSON the reader is `jq_query`, which is inside the
+  process and applies a defence pass. Byte-exact octets are safe there, and that
+  is exactly where RC-33's data loss actually hurts — duplicate keys, integers
+  past `Number.MAX_SAFE_INTEGER`, `"1.50"`.
+- On a body that does **not** parse, `jq_query` cannot open the file at all, so
+  the only route is the host's own file tooling — outside every defence. Raw
+  octets there withdraw Step 2 sanitisation (invisible-character and bidi
+  stripping) from the one representation the model is instructed to read.
+
+**So the artefact's form must be decided on whether the body parses — a property
+of the bytes — and never on the declared header**, which is invariant 1a's named
+failure shape. `isDefinitelyJson` already answers it. Whatever this todo decides
+for the non-JSON arm below governs what may be written to disk for it.
+
+`LESSONS.md` RC-33 holds the measurement; `ARCHITECTURE.md` invariant 14 no longer
+asserts anything about the artefact's form, deliberately, because this is where
+that belongs.
+
 ### Bad JSON: report, save, do not inline
 
 An agent can often recover from a body that nearly parses — a PHP warning
@@ -238,7 +262,7 @@ todo closed as a side effect of another is a todo nobody dispositioned.
 | **017** — unregistered media types get no strip path | **Moot.** There is no media-type classification to be unregistered in |
 | **014** — JSON region defence skipped on a stale byte measurement | **Moot.** There is no region-wise re-serialising defence |
 | **004** — entity decode serves two channels with opposite requirements | **Mostly moot.** Both surviving text channels already pass `decodeEntities: false`; the JSON path does not decode at all |
-| **016** — wire octets decoded lossily before persistence | **DISCHARGED — landed first, on its own branch, 2026-09-07 (`LESSONS.md` RC-33).** `ParsedResponse.bodyBytes` now carries the origin octets, `processResponse` takes a `Buffer` and gates `MAX_RESPONSE_SIZE` on wire length, and `saveResponseToFile` writes bytes. "Return the original bytes" is now reachable, and the saved artefact is already the origin's bytes rather than the defended text — so 018's remaining work on this axis is the *inline* path only |
+| **016** — wire octets decoded lossily before persistence | **PARTLY LANDED, STILL OPEN — and 018 now OWNS the artefact's form** (2026-09-07, `LESSONS.md` RC-33, RC-34). Landed: `ParsedResponse.bodyBytes` carries the origin octets, `processResponse` takes a `Buffer` and performs the request's single decode, `saveResponseToFile` takes a `Buffer` with no union, and `MAX_RESPONSE_SIZE` is checked on both representations. **Reverted in review: persisting those octets.** `savedMessage` tells the model to read a non-JSON artefact "with your own tooling", and `jq_query` cannot open a non-JSON file — so raw octets removed Step 2 sanitisation from the one representation the model is told to read. **The artefact cannot be made byte-exact until this todo settles what a non-JSON body gets**, which is why it is 018's and not 016's. Also still open in 016: `jq-query.ts`'s `readFile(…, "utf-8")` |
 | **005** — bracketed label defeats beacon strip | **Unchanged.** The strip stages survive on the header and stderr channels, so this is still live there |
 | **015** — the wrap has six exits and guards two | **Unchanged and more important.** The wrap becomes the *only* content defence on the JSON path, so its unguarded exits carry more weight |
 

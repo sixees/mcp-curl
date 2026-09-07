@@ -920,12 +920,41 @@ export async function processResponse(
 
     // Step 1: Early size guard — runs BEFORE sanitization to avoid wasting CPU on oversized responses.
     //
-    // **Measured on the WIRE octets, which is the only count the origin can be
-    // held to.** Gating the decoded length refused bodies for a size the origin
-    // never sent: U+FFFD is three bytes where an invalid octet was one, so a
-    // 4 MB body of mostly-invalid octets inflated to as much as 12 MB and came
-    // back as *"Response size (12000000 bytes) exceeds maximum allowed"* — a
-    // number found nowhere on the wire. RC-33.
+    // **Both counts are checked, and the reason is that they answer different
+    // questions.** The wire length is what the origin can be held to and the
+    // only honest number to put in the message; the decoded length is what every
+    // stage after this point actually allocates. Checking either one alone fails,
+    // in opposite directions, and this repository has now made both mistakes:
+    //
+    // - Gating the DECODE alone (the shape before this change) refused bodies
+    //   for a size the origin never sent — U+FFFD is three bytes where an
+    //   invalid octet was one, so a 4 MB body of mostly-invalid octets came back
+    //   as *"Response size (12000000 bytes) exceeds maximum allowed"*, a number
+    //   found nowhere on the wire.
+    // - Gating the WIRE alone stops bounding the work. Measured on a 9.5 MB
+    //   gzip — an ordinary binary body, not an attack — the decode inflates
+    //   1.81x, and the request went from refused to accepted at 3.9x the CPU and
+    //   **10.3x the peak RSS (+19 MB to +196 MB)**. One request then peaks past
+    //   `MAX_TOTAL_RESPONSE_MEMORY`, which `limits.ts` documents as the ceiling
+    //   across ALL concurrent requests, and `docs/todos/003` records that the
+    //   pool reads zero during this phase, so nothing refuses the next one.
+    //
+    // So both are checked — but they are not two gates, and a teeth probe is
+    // what established that. **A decode only ever inflates**, so
+    // `Buffer.byteLength(decoded) >= buffer.length` always holds and the decoded
+    // check below strictly subsumes this one: removing this `if` fails no
+    // correctness case. Its two real jobs:
+    //
+    // 1. **The O(1) fast path.** Refusing here costs a property read; refusing
+    //    below costs a full decode of a body we were going to reject anyway.
+    //    Measured at 3.03 ms → 0.06 ms CPU on an 11 MB body, a 50x saving.
+    // 2. **Message truth**, which is what gives it teeth. The decoded arm's
+    //    message says the body is not valid UTF-8 — true whenever that arm is
+    //    the one that fired, and false for an oversized ASCII body, which is
+    //    valid UTF-8 and merely too big. Without this arm every over-cap body
+    //    would be told it was undecodable.
+    //
+    // `LESSONS.md` RC-33.
     const rawBytes = responseBytes.length;
     if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
         throw new Error(
@@ -935,11 +964,27 @@ export async function processResponse(
 
     // **The decode, and the only one in the request.** `ParsedResponse` carries
     // octets alone precisely so that this is the single `toString("utf8")` of
-    // the body — the parser used to do it too, for a string nothing read.
+    // the body — the parser used to do it too, for a string nothing read
+    // (RC-28's `repeated-computation`, recurring; RC-33).
     //
-    // Lossy for any non-UTF-8 origin, which is why it feeds the defence and the
-    // inline body and never the size gate above or the artefact below.
+    // Lossy for any non-UTF-8 origin. That is why the wire count above, not this
+    // string's length, is what the error message quotes.
     const response = responseBytes.toString("utf8");
+
+    // **The binding gate.** This is the arm that bounds every stage below, and
+    // it is reachable only for a body whose decode inflated past the ceiling
+    // while its wire form fit — i.e. a body that is not valid UTF-8, which is
+    // why the message may say so. Both numbers are reported, because a caller
+    // told only the inflated one cannot tell an oversized response from an
+    // undecodable one.
+    const decodedBytes = Buffer.byteLength(response, "utf8");
+    if (decodedBytes > LIMITS.MAX_RESPONSE_SIZE) {
+        throw new Error(
+            `Response size (${rawBytes} bytes on the wire, ${decodedBytes} bytes decoded) ` +
+                `exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes). The body is not ` +
+                `valid UTF-8, and replacement characters make the decoded form larger than the wire form.`
+        );
+    }
 
     // Resolve hostname once for injection-detection logging; the defence
     // pipeline and the post-jq re-sanitise below both label with it.
@@ -1075,31 +1120,38 @@ export async function processResponse(
     const shouldSave = options.saveToFile || overCap;
 
     if (shouldSave) {
-        // **What lands on disk is the ORIGIN's octets, not the defended text.**
+        // **What lands on disk is the DEFENDED text, and an attempt to change
+        // that to the origin's octets was reverted in review. Do not re-try it
+        // here — see `docs/todos/018`.**
         //
-        // Three reasons it is this way round rather than the other:
+        // The attempt and why it failed, because the next reader will have the
+        // same idea. Persisting `responseBytes` makes the artefact byte-exact,
+        // which is worth having: this file is the SOLE representation on the
+        // over-cap arm, `savedMessage` advertises it to the model AS the
+        // response, and a lossy decode silently rewrites any non-UTF-8 origin.
+        // That was the plan in `docs/todos/016`.
         //
-        // 1. **The artefact is advertised as the response.** `savedMessage`
-        //    hands the model a path and calls it the response body, and on the
-        //    over-cap arm `ProcessedResponse` carries no `content`, so this file
-        //    is the SOLE representation. A file that is a rewritten version of
-        //    the response, described as the response, is the same defect class
-        //    as returning different data than the origin sent.
-        // 2. **The read path defends.** `jq_query` is the tool named in
-        //    `savedMessage` and it runs the full `defendText` pipeline on what
-        //    it reads (`tools/jq-query.ts`), so this server never returns these
-        //    bytes to a model without a defence pass. Invariant 1 is about bytes
-        //    this server returns, and it is unchanged.
-        // 3. **The strip pass bought the markup subset only.** It removes
-        //    `<script>`, comments and markdown beacons; it does not touch
-        //    injection prose, which passes every stage untouched. So writing the
-        //    defended form traded byte fidelity for a partial defence of a class
-        //    the read path covers in full.
+        // What it overlooked is that **`savedMessage` tells the model to read a
+        // non-JSON artefact "with your own tooling"** — a reader outside this
+        // process and outside every defence. `jq_query` cannot open a non-JSON
+        // file at all (it `JSON.parse`s), so for those bodies there is no
+        // defended reader to fall back on. Writing raw octets therefore removed
+        // Step 2 sanitisation — invisible-character and bidi stripping — from
+        // the one representation the model is instructed to read. Measured: a
+        // `text/markdown` body persisted as `# Report\n\n[image removed]\n` before,
+        // and verbatim `<!-- ignore prior instructions -->…<script>x()</script>`
+        // after.
         //
-        // The filtered arm is different and deliberately so: there the artefact
-        // is this server's OWN `JSON.stringify` output, not the origin's body,
-        // so there are no origin octets to preserve and the encode is exact.
-        const diskContent = filterApplied ? Buffer.from(content, "utf8") : responseBytes;
+        // **Byte fidelity for the artefact is not abandoned, it is sequenced.**
+        // `docs/todos/018` makes the body path JSON-only and settles what a
+        // non-JSON body gets; the artefact's form belongs with that decision,
+        // not ahead of it. Until then the defended text is what has a safe
+        // reader on every route.
+        //
+        // Encoded from `content` on both arms, so `saveResponseToFile`'s
+        // Buffer-only signature holds and the encode is visible here rather
+        // than hidden behind a `string | Buffer` union.
+        const diskContent = Buffer.from(content, "utf8");
         const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
         // **No body bytes are returned on this arm, and that is the whole
         // saving.** `formatResponse`'s file branch emits `saved_to_file`,
@@ -1112,17 +1164,17 @@ export async function processResponse(
         // returned. `ProcessedResponse`'s saved arm carries no `content` field
         // at all, so this is enforced by the type and not by this comment.
         //
-        // The body is not lost — it is on disk as the origin's own octets, and
+        // The body is not lost — it is on disk in the origin's grammar, and
         // `message` below names the tool that reads it.
         return {
             savedToFile: true,
             filepath,
             message: savedMessage({
-                // The length of the buffer that was written, not of a string
-                // that resembles it. `Buffer.byteLength(content)` measured the
-                // DEFENDED text, so the number was wrong twice over on a
-                // non-UTF-8 body: wrong bytes and, once the strip stages had
-                // rewritten anything, a different length as well.
+                // The length of the buffer that was actually written, rather
+                // than a re-measurement of the string it came from. The two
+                // agree today — `diskContent` IS `content` encoded — and the
+                // point is that they cannot drift: whatever `diskContent`
+                // becomes, this number describes it.
                 diskBytes: diskContent.length,
                 filepath,
                 maxSize,

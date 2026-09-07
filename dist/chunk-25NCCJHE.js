@@ -2139,6 +2139,12 @@ async function processResponse(responseBytes, options) {
     );
   }
   const response = responseBytes.toString("utf8");
+  const decodedBytes = Buffer.byteLength(response, "utf8");
+  if (decodedBytes > LIMITS.MAX_RESPONSE_SIZE) {
+    throw new Error(
+      `Response size (${rawBytes} bytes on the wire, ${decodedBytes} bytes decoded) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes). The body is not valid UTF-8, and replacement characters make the decoded form larger than the wire form.`
+    );
+  }
   const hostname = safeHostname(options.url);
   let content = defendText(response, {
     contentType: options.contentType,
@@ -2201,17 +2207,17 @@ async function processResponse(responseBytes, options) {
   const overCap = exceedsInlineCap(content, hostname, maxSize);
   const shouldSave = options.saveToFile || overCap;
   if (shouldSave) {
-    const diskContent = filterApplied ? Buffer.from(content, "utf8") : responseBytes;
+    const diskContent = Buffer.from(content, "utf8");
     const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
     return {
       savedToFile: true,
       filepath,
       message: savedMessage({
-        // The length of the buffer that was written, not of a string
-        // that resembles it. `Buffer.byteLength(content)` measured the
-        // DEFENDED text, so the number was wrong twice over on a
-        // non-UTF-8 body: wrong bytes and, once the strip stages had
-        // rewritten anything, a different length as well.
+        // The length of the buffer that was actually written, rather
+        // than a re-measurement of the string it came from. The two
+        // agree today — `diskContent` IS `content` encoded — and the
+        // point is that they cannot drift: whatever `diskContent`
+        // becomes, this number describes it.
         diskBytes: diskContent.length,
         filepath,
         maxSize,
