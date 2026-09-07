@@ -995,6 +995,7 @@ function parseResponseWithMetadata(rawResponse, separator) {
   if (separatorIndex === -1) {
     return {
       body: raw.toString("utf8"),
+      bodyBytes: raw,
       metadataFound: false
     };
   }
@@ -1003,7 +1004,10 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const contentType = metadata.trim();
   const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
   return {
+    // Both off `bodyBytes`, so the decode can never describe a different
+    // span of the buffer than the octets do.
     body: bodyBytes.toString("utf8"),
+    bodyBytes,
     contentType: validContentType,
     metadataFound: true
   };
@@ -1472,7 +1476,7 @@ async function saveResponseToFile(content, url, outputDir) {
   const safeName = createSafeFilenameBase(baseName);
   const filename = `${safeName}_${Date.now()}.txt`;
   const filepath = join2(targetDir, filename);
-  await writeFile(filepath, content, { encoding: "utf-8", mode: 384 });
+  await writeFile(filepath, content, { mode: 384 });
   return filepath;
 }
 
@@ -2128,16 +2132,17 @@ function savedMessage(facts) {
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
   return cause + route + scope;
 }
-async function processResponse(response, options) {
-  if (typeof response !== "string") {
-    throw new TypeError("processResponse: response must be a string");
+async function processResponse(responseBytes, options) {
+  if (!Buffer.isBuffer(responseBytes)) {
+    throw new TypeError("processResponse: responseBytes must be a Buffer");
   }
-  const rawBytes = Buffer.byteLength(response, "utf8");
+  const rawBytes = responseBytes.length;
   if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
     throw new Error(
       `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
     );
   }
+  const response = responseBytes.toString("utf8");
   const hostname = safeHostname(options.url);
   let content = defendText(response, {
     contentType: options.contentType,
@@ -2198,12 +2203,18 @@ async function processResponse(response, options) {
   const overCap = exceedsInlineCap(content, hostname, maxSize);
   const shouldSave = options.saveToFile || overCap;
   if (shouldSave) {
-    const filepath = await saveResponseToFile(content, options.url, options.outputDir);
+    const diskContent = options.jqFilter !== void 0 ? Buffer.from(content, "utf8") : responseBytes;
+    const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
     return {
       savedToFile: true,
       filepath,
       message: savedMessage({
-        diskBytes: Buffer.byteLength(content, "utf8"),
+        // The length of the buffer that was written, not of a string
+        // that resembles it. `Buffer.byteLength(content)` measured the
+        // DEFENDED text, so the number was wrong twice over on a
+        // non-UTF-8 body: wrong bytes and, once the strip stages had
+        // rewritten anything, a different length as well.
+        diskBytes: diskContent.length,
         filepath,
         maxSize,
         overCap,
@@ -2752,7 +2763,6 @@ async function executeCurlRequest(params, extra = {}) {
     let headerBytesReturned;
     const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
     const { contentType, metadataFound } = parsed;
-    const body = parsed.body;
     let responseHeaders;
     let headersUndetermined = false;
     let headersUnsupported = false;
@@ -2771,7 +2781,7 @@ async function executeCurlRequest(params, extra = {}) {
       headerBytesReceived = channel.bytesReceived;
       headerBytesReturned = channel.bytesReturned;
     }
-    const processed = await processResponse(body, {
+    const processed = await processResponse(parsed.bodyBytes, {
       url: params.url,
       jqFilter: params.jq_filter,
       maxResultSize: params.max_result_size,

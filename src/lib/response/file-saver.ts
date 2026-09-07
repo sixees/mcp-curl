@@ -53,13 +53,23 @@ export function createSafeFilenameBase(input: string, fallback = "response"): st
  * Creates a safe filename from the URL and adds a timestamp for uniqueness.
  * File is written with mode 0o600 (owner-only access).
  *
- * @param content - The content to save
+ * **`Buffer` only, deliberately — no `string | Buffer` union.** The whole point
+ * of this signature is that the caller decides what bytes land on disk, and a
+ * union would accept a lossily-decoded string at every call site with no
+ * compiler objection: exactly the shape `parseResponseWithMetadata` refuses for
+ * its own input, and exactly how the artefact came to carry U+FFFD where the
+ * origin sent a `windows-1252` octet (`LESSONS.md` RC-33). A caller that
+ * genuinely holds text — `processResponse`'s jq-filter arm, whose artefact is
+ * this server's own `JSON.stringify` output — encodes at the call site, where
+ * the conversion is visible in the diff.
+ *
+ * @param content - The exact bytes to write
  * @param url - The request URL (used for generating filename)
  * @param outputDir - Optional output directory (must already be validated)
  * @returns Absolute path to the saved file
  */
 export async function saveResponseToFile(
-    content: string,
+    content: Buffer,
     url: string,
     outputDir?: string
 ): Promise<string> {
@@ -92,6 +102,9 @@ export async function saveResponseToFile(
     const filename = `${safeName}_${Date.now()}.txt`;
     const filepath = join(targetDir, filename);
 
-    await writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 }); // Owner-only access
+    // No `encoding`: the argument is already octets. Passing one here would be
+    // inert for a Buffer today and silently lossy the day the parameter type
+    // widens, so it is absent rather than set to something reassuring.
+    await writeFile(filepath, content, { mode: 0o600 }); // Owner-only access
     return filepath;
 }

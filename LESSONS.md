@@ -1498,3 +1498,57 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
     catches it, and the leak reproduces only at the published `defendText`
     boundary. The claim was checked at the wrong altitude, and the fix's benefit
     was priced against it.
+
+### RC-33 — one representation of the body answered whichever question the caller asked
+
+**Date:** 2026-09-07 · **PR:** #38 · **Plan:** `docs/todos/016-P2-wire-octets-are-decoded-lossily-before-persistence.md`
+
+**Class:** K-5, K-11 — *class-id:* `missing-validation`
+
+- **The plan said:** `parseResponseWithMetadata` decodes the wire body with
+  `raw.toString("utf8")`, so any non-UTF-8 octet becomes U+FFFD, and six named
+  consumers then treat that string as the origin's bytes. Todo 016 proposed
+  carrying the octets through to disk, and expected the cost to be three
+  signatures — `ParsedResponse.body`, `processResponse`'s parameter and
+  `saveResponseToFile`'s first argument — plus a note on invariant 14.
+- **Reality was:** the three signatures were right, and the framing of *one* of
+  them was not. 016 read as though the body needed a second field beside the
+  string; what it actually needed was for the two representations to have
+  **separate consumers named at the type**, because they answer different
+  questions and neither is derivable from the other. `processResponse` therefore
+  takes the Buffer and decodes internally rather than taking both — a caller
+  holding two arguments that must agree is one edit away from passing a decode
+  it made itself, with no compiler objection, which is the same shape
+  `parseResponseWithMetadata`'s own doc-block already refuses for its input.
+  Measured: `{"name":"Jos\xe9"}` is `7b2261223a224a6f73e9227d` on the wire and
+  `…efbfbd…` after the round trip. Two further facts the todo did not carry:
+  the artefact being written was the **defended** text, not the body, so byte
+  fidelity was lost a second way independent of the encoding; and
+  `savedMessage`'s byte count was measured on that string, so the number quoted
+  to the model was wrong on both counts at once.
+- **What changed:** `ParsedResponse` gained `bodyBytes: Buffer`, set from the
+  same subarray as `body` on both arms so the two cannot describe different
+  spans. `processResponse(responseBytes: Buffer, …)` decodes once for the
+  defence and inline paths, gates `MAX_RESPONSE_SIZE` on `responseBytes.length`,
+  and persists `responseBytes` on the unfiltered arm and
+  `Buffer.from(content, "utf8")` on the filtered one — where the artefact is our
+  own serialiser's output and there are no origin octets to keep.
+  `saveResponseToFile` takes `Buffer` with **no `string | Buffer` union**, so
+  the encode is visible at the one call site that needs it.
+  `savedMessage.diskBytes` is `diskContent.length`. `ARCHITECTURE.md`
+  invariant 14 gained both halves: the two size gates weigh different bytes by
+  design, and the saved artefact is the origin's octets.
+- **What this costs next time:** **when one value answers two questions, check
+  whether a single representation can answer both — and if it cannot, do not
+  put the second one in the same parameter list as the first.** A `(text,
+  bytes)` signature makes disagreement expressible; taking the bytes and
+  deriving the text makes it unreachable. The wider rule this instantiates is
+  K-5's projection arm: a field standing in for the record. `body` stood in for
+  the response, and every consumer that measured it, persisted it, or reported
+  its length was measuring a projection while claiming to describe the original.
+
+Found while auditing todo 016 as the prerequisite for todo 018, per the
+operator's sequencing decision of 2026-09-07. The two facts 016 itself did not
+name — the defended-text artefact and the doubly-wrong byte count — were found
+by reading `processResponse`'s save arm rather than by trusting the todo's
+finding list, which is `.claude/rules/01-known-shapes.md` K-3 doing its job.

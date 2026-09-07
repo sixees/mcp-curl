@@ -222,6 +222,32 @@ what a violation looks like, it does not belong on this list.
     discarded at the parse boundary, so it is a bounded token and not a prose
     channel. `LESSONS.md` RC-30, RC-31.
 
+    **The two gates weigh different bytes, on purpose, and neither may be
+    swapped for the other.** `MAX_RESPONSE_SIZE` weighs the WIRE OCTETS
+    (`processResponse`'s `responseBytes.length`) because it answers *how big was
+    the response* — a question about the origin. `exceedsInlineCap` weighs the
+    DEFENDED text because it answers *how much reaches the model* — a question
+    about this server's output. Measuring the absolute cap on the decode refused
+    bodies for a size the origin never sent: U+FFFD is three bytes where an
+    invalid octet was one, so a body of mostly-invalid octets inflated up to 3x
+    and was rejected with a byte count found nowhere on the wire.
+    `LESSONS.md` RC-33.
+
+    **The persisted artefact is the origin's octets, and it therefore diverges
+    from the defended text.** `saveResponseToFile` takes a `Buffer` and writes it
+    unmodified; on the unfiltered arm that Buffer is `ParsedResponse.bodyBytes`.
+    This is a deliberate divergence from the inline path, and it does not weaken
+    invariant 1, which governs bytes *this server returns to a model*: the file's
+    only in-process reader is `jq_query`, which runs the full `defendText`
+    pipeline on what it reads. Writing the defended form instead traded byte
+    fidelity — silently, on every non-UTF-8 origin and on every body the strip
+    stages touched — for a defence of the markup subset only, on an artefact
+    `savedMessage` advertises to the model AS the response. **A change that makes
+    the saved file anything other than the origin's octets on the unfiltered arm
+    is the violation.** The filtered arm is different by nature: there the
+    artefact is this server's own `JSON.stringify` output, so there are no origin
+    octets to preserve. `LESSONS.md` RC-33.
+
 15. **Every regex in the strip path is linear in the size of its input, and the
     byte cap is not what makes it so.** A `g`-flagged replace starts a match
     attempt at every position, so a pattern that is linear *per attempt* is

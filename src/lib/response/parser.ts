@@ -52,8 +52,37 @@ const MEDIA_TYPE_HEAD =
  * Parsed response with body and optional content type.
  */
 export interface ParsedResponse {
-    /** Response body content */
+    /**
+     * Response body, decoded as UTF-8 — for the DEFENCE and INLINE paths only.
+     *
+     * **Lossy by construction, and that is why {@link ParsedResponse.bodyBytes}
+     * sits beside it.** Any octet that is not valid UTF-8 becomes U+FFFD here,
+     * so this string is not the origin's body and must never be what gets
+     * persisted or measured. The defence pipeline needs a `string` and the model
+     * receives text, so the decode has to happen somewhere; what changed is that
+     * it is no longer the ONLY representation. `LESSONS.md` RC-33.
+     */
     body: string;
+    /**
+     * The body's wire octets, exactly as the origin sent them.
+     *
+     * **This is the representation that gets written to disk and weighed
+     * against `MAX_RESPONSE_SIZE`**, because those are the two questions only
+     * the octets can answer: what the artefact should contain, and how big the
+     * response was. `body` answers neither — a `windows-1252` page or an
+     * ISO-8859-1 JSON body decodes to a different byte sequence of a different
+     * length, and U+FFFD is three bytes where the origin sent one, so a body of
+     * mostly-invalid octets measures up to 3x its real size and is refused for a
+     * count the origin never sent.
+     *
+     * **Not a spare copy nobody reads.** `processResponse` persists it on the
+     * unfiltered arm and gates on its length; that is the whole reason it
+     * exists, and if those two consumers ever go away this field should go with
+     * them rather than stay as a doc-block promising a fidelity nothing keeps.
+     *
+     * A subarray of cURL's stdout buffer, so it costs no copy.
+     */
+    bodyBytes: Buffer;
     /**
      * The type/subtype of a well-formed Content-Type — never its parameters.
      *
@@ -115,24 +144,22 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * content type, never after it — `ARCHITECTURE.md` invariant 13 states the rule
  * and `curl-args-builder.ts` is the writing half of it.
  *
- * Returns the body as a string only. Nothing indexes a wire byte count into
- * this response — the header/body split is structural, not derived — so no
- * octet copy is returned beside it: a spare Buffer whose doc-block says
- * "measure with these" but which nothing measures reads as a guarantee in
- * force.
+ * **Returns the body twice, in both representations, and both have a consumer.**
+ * `body` is the UTF-8 decode the defence pipeline and the inline path need;
+ * `bodyBytes` is the wire octets that get persisted and measured. Neither is
+ * derivable from the other — the decode replaces every invalid octet with
+ * U+FFFD, which is not reversible and not even length-preserving — so a single
+ * representation cannot answer both questions. It answered whichever one the
+ * caller happened to ask, which is the defect `LESSONS.md` RC-33 records.
  *
- * **The decode is lossy and currently unavoidable downstream.** A byte that is
- * not valid UTF-8 becomes U+FFFD here, and `saveResponseToFile` takes a
- * `string`, so the persisted artefact carries the replacement rather than the
- * wire byte — and `processResponse` reports the decoded length as the response
- * size. Restoring octet fidelity is not a matter of reading them off this
- * function: it needs `saveResponseToFile`'s signature and `processResponse`'s
- * return type to change with it. Said plainly here so the next reader does not
- * discover it halfway through.
+ * The two are produced from one subarray and cannot disagree about where the
+ * body ends: `bodyBytes` is that subarray and `body` is its decode. There is no
+ * arm on which one is set and the other is not.
  *
  * @param rawResponse - The raw response from cURL including metadata suffix
  * @param separator - The unique per-request separator used in -w format
- * @returns ParsedResponse with the decoded body and the optional contentType
+ * @returns ParsedResponse carrying the octets, their decode, and the optional
+ *          contentType
  */
 export function parseResponseWithMetadata(
     rawResponse: Buffer,
@@ -158,8 +185,11 @@ export function parseResponseWithMetadata(
     const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
 
     if (separatorIndex === -1) {
+        // No metadata block, so the whole buffer is body. Both representations
+        // come off the same value for the same reason as the arm below.
         return {
             body: raw.toString("utf8"),
+            bodyBytes: raw,
             metadataFound: false,
         };
     }
@@ -186,7 +216,10 @@ export function parseResponseWithMetadata(
     const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
 
     return {
+        // Both off `bodyBytes`, so the decode can never describe a different
+        // span of the buffer than the octets do.
         body: bodyBytes.toString("utf8"),
+        bodyBytes,
         contentType: validContentType,
         metadataFound: true,
     };

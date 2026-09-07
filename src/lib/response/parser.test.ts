@@ -206,3 +206,70 @@ describe("parseResponseWithMetadata — window sizing", () => {
         expect(parsed.contentType).toBeUndefined();
     });
 });
+
+describe("parseResponseWithMetadata — bodyBytes carries the wire octets", () => {
+    const SEP = "\n---MCP-CURL-test-separator---\n";
+
+    /** `{"name":"Jos\xe9"}` — legal JSON, and not valid UTF-8. */
+    const latin1Json = Buffer.concat([
+        Buffer.from('{"name":"Jos', "utf8"),
+        Buffer.from([0xe9]),
+        Buffer.from('"}', "utf8"),
+    ]);
+
+    it("returns the exact octets, separator present", () => {
+        const raw = Buffer.concat([latin1Json, Buffer.from(`${SEP}application/json`, "utf8")]);
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(parsed.bodyBytes.equals(latin1Json)).toBe(true);
+        // The decode is still offered and is still lossy — both facts, side by
+        // side, because the point of the pair is that neither is derivable from
+        // the other. Asserting only the Buffer would leave a future change free
+        // to make `body` the raw octets reinterpreted, which would break the
+        // defence pipeline's input contract silently.
+        expect(parsed.body).toContain("\uFFFD");
+        expect(Buffer.from(parsed.body, "utf8").equals(latin1Json)).toBe(false);
+    });
+
+    it("returns the exact octets, separator absent", () => {
+        // Its own `return` in the parser, so its own case: fixing one arm and
+        // not the other is `.claude/rules/01-known-shapes.md` K-11.
+        const parsed = parseResponseWithMetadata(latin1Json, SEP);
+
+        expect(parsed.metadataFound).toBe(false);
+        expect(parsed.bodyBytes.equals(latin1Json)).toBe(true);
+    });
+
+    it("stops bodyBytes at the separator, never including the metadata suffix", () => {
+        const body = Buffer.from('{"a":1}', "utf8");
+        const raw = Buffer.concat([body, Buffer.from(`${SEP}application/json`, "utf8")]);
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(parsed.bodyBytes.equals(body)).toBe(true);
+        expect(parsed.bodyBytes.toString("utf8")).not.toContain("MCP-CURL");
+        expect(parsed.bodyBytes.toString("utf8")).not.toContain("application/json");
+    });
+
+    it("describes the same span in both representations", () => {
+        // The two fields cannot disagree about where the body ends, because both
+        // come off one subarray. Asserted rather than trusted: a later edit that
+        // sliced them separately would compile and pass every case above.
+        const body = Buffer.from("héllo wörld", "utf8");
+        const raw = Buffer.concat([body, Buffer.from(`${SEP}text/plain`, "utf8")]);
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(parsed.bodyBytes.toString("utf8")).toBe(parsed.body);
+    });
+
+    it("returns an empty buffer for an empty body, not undefined", () => {
+        // A zero-length body is a real response — 204, or a HEAD. The saved and
+        // size-gate paths both read `.length` off this, so absence here would be
+        // a crash rather than a zero.
+        const raw = Buffer.from(`${SEP}application/json`, "utf8");
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(Buffer.isBuffer(parsed.bodyBytes)).toBe(true);
+        expect(parsed.bodyBytes.length).toBe(0);
+        expect(parsed.body).toBe("");
+    });
+});
