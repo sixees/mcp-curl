@@ -12,6 +12,8 @@ created: 2026-09-06
 
 # A JSON document's region-wise defence is skipped on a byte count taken before the sanitiser shrinks it
 
+> **See `018`** — moot if 018 lands: there is no region-wise re-serialising defence left to skip. Do not fix this before 018 is dispositioned.
+
 ## Problem
 
 Two gates measure the same document at different points in the pipeline and

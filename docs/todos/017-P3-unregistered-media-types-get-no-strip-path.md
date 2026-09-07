@@ -12,6 +12,8 @@ created: 2026-09-07
 
 # An unregistered media type gets no strip path
 
+> **See `018`** — moot if 018 lands: there is no media-type classification left for a type to be unregistered in. Do not fix this before 018 is dispositioned.
+
 ## Problem
 
 `utils/content-type.ts::isSniffableContentType` falls through to

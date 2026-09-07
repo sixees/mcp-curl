@@ -12,6 +12,8 @@ created: 2026-09-07
 
 # Wire octets are decoded lossily at ingest, and the replacement is what gets persisted
 
+> **See `018`** — this becomes a PREREQUISITE. "Return the origin bytes unmodified" is unreachable while ingest hands downstream a lossy `string`. Either this lands first or 018 absorbs it.
+
 ## Problem
 
 `parseResponseWithMetadata` decodes the wire body with `raw.toString("utf8")`, so
