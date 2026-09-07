@@ -80,11 +80,12 @@ describe("the Node >= 22 capability guard", () => {
     };
 
     it("throws at IMPORT, naming the runtime, when JSON.rawJSON is absent", async () => {
-        // **This module is imported in isolation on purpose.** The guard used to
-        // live in `response/processor.ts`, so it protected this primitive only for
-        // import paths that happened to pull that file in. Nothing here imports
-        // `response/` — if the guard drifts back out of `json-lexeme.ts`, this
-        // case stops throwing (RC-29).
+        // **This module is imported in isolation on purpose.** The guard has to
+        // live in `json-lexeme.ts` itself so it covers every import path that
+        // reaches this primitive, not only those that also pull in
+        // `response/processor.ts`. Nothing here imports `response/` — if the
+        // guard drifts back out of `json-lexeme.ts`, this case stops throwing
+        // (RC-29).
         // **Not `{ ...JSON }`.** Every built-in method is non-enumerable
         // (ECMA-262 §17), so a spread copies NONE of them — the double would be
         // `{ rawJSON, isRawJSON }` with no `parse` and no `stringify`, i.e. a
@@ -100,9 +101,13 @@ describe("the Node >= 22 capability guard", () => {
     });
 
     it("throws when JSON.isRawJSON is absent, not only JSON.rawJSON", async () => {
-        // Both halves, because the guard tests both and a one-sided check would
-        // leave `isRawNumber` returning `undefined` — falsy, so every structural
-        // guard would read a marker as a composite and descend into it.
+        // Both halves, because the guard tests both. A one-sided check would
+        // leave `isRawNumber` BEING `undefined` rather than returning a falsy
+        // value — so every structural guard calling it throws a `TypeError`,
+        // `createWrapper` catches that and tags the UNDEFENDED result as
+        // wrapped, and the defence is skipped with nothing on the response
+        // saying so. Same conclusion as a falsy read, different route, and this
+        // is the route that reaches RC-20's fail-open.
         const stubbed = withoutRawJson({ rawJSON: hostJson.rawJSON, isRawJSON: undefined });
         vi.stubGlobal("JSON", stubbed);
         vi.resetModules();

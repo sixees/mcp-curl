@@ -104,14 +104,22 @@ export const isRawNumber: (value: unknown) => boolean = isRawJsonImpl;
  * a 5 MB document when it does not fire, and it early-exits into the reviver on
  * any document containing a decimal — i.e. most of them).
  *
- * **The cost scales with the NUMBER COUNT, not the byte count, and an earlier
- * version of this table was indexed on bytes.** That is not a rounding error:
- * two 450 KB bodies differing only in how many numbers they hold measured 7.6x
+ * **Number count is *a* driver, and it is not the only one — do not size a body
+ * from either variable alone.** At FIXED bytes the number count dominates: two
+ * 450 KB bodies differing only in how many numbers they hold measured 7.6x
  * apart in CPU and 5x in heap (2,234 numbers → +1.5 ms / +1.0 MB; 34,380
- * numbers → +11.6 ms / +5.1 MB). Anyone sizing a third API from a
- * megabytes-indexed row is wrong in the permissive direction. The rate is
- * **~0.34–0.98 µs per number**, stable across every shape measured, and that is
- * the figure to extrapolate from.
+ * numbers → +11.6 ms / +5.1 MB), which is why an earlier revision of this table
+ * was indexed on megabytes and was wrong in the permissive direction. But ACROSS
+ * sizes the cost is superlinear in the document too: 34,380 numbers at 450 KB
+ * costs +11.6 ms where 42,083 numbers at 2.3 MB costs +51 ms — 22% more numbers
+ * for 340% more time. An earlier revision of this paragraph asserted number
+ * count as *the* driver and bytes as irrelevant, which the two rows below
+ * contradict. The rate is
+ * **~0.34–1.21 µs per number**. It is NOT flat across shapes — the 42,083-number
+ * row below works out at 1.21 µs where the 421-number row is 0.71 — so
+ * extrapolate from the row nearest the body in hand, not from a single figure.
+ * An earlier revision of this paragraph claimed 0.34–0.98 "stable across every
+ * shape measured", which its own table contradicted. `LESSONS.md` RC-31.
  *
  * Measured on the shipped `dist/`, Node 24, per call through `applyJqFilter`,
  * against the real canonical Lighthouse `sample_v2.json` in a PSI v5 envelope

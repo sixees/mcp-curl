@@ -1,8 +1,11 @@
 ---
 id: 014
-priority: P1
-status: pending
+title: "A JSON document's region-wise defence is skipped on a pre-sanitise byte measurement"
+status: open
+severity: P1
 tags: [code-review, security, invariant-16]
+class-id: fail-open-default
+reviewers: [data-integrity-guardian, security-sentinel]
 created: 2026-09-06
 source: /sixees-workflow:review of PR #37 (Surface 2, round 2, data-integrity-guardian)
 ---

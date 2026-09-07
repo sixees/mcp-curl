@@ -658,12 +658,9 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
 
         // The sibling above forces the file with `save_to_file`. This is the
-        // OTHER cause of the same branch — the body crossed `max_result_size`
-        // — and it is the one `docs/todos/008` was about: that arm used to
-        // build a defended preview of the whole body, which `formatResponse`
-        // then discarded. Both causes are covered because the two arms compose
-        // different messages, and an assertion on one says nothing about the
-        // other.
+        // OTHER cause of the same branch — the body crossed `max_result_size`.
+        // Both causes are covered because the two arms compose different
+        // messages, and an assertion on one says nothing about the other.
         it("does not put body bytes in an over-cap response", async () => {
             const marker = "THIS-MUST-NOT-BE-RETURNED";
             // Comfortably past the cap set below, so the size gate is what
@@ -770,9 +767,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         it("does not report a byte count below the limit it says was exceeded", async () => {
             // `exceedsInlineCap` weighs the DEFENDED form, which the defence can
             // make longer, so a body under the cap can still be over it. The
-            // message used to read "Response (990 bytes) exceeded the 1000-byte
-            // inline limit" — a sentence no reader can reconcile, and a model
-            // that responds by raising max_result_size gets the same file back.
+            // message must therefore label the count as on-disk and the limit as
+            // applying after the defence pass: a bare "Response (990 bytes)
+            // exceeded the 1000-byte inline limit" is a sentence no reader can
+            // reconcile, and a model that answers it by raising max_result_size
+            // gets the same file back.
             const body = JSON.stringify({ v: "[](file:)".repeat(100) });
             mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 

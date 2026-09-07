@@ -113,4 +113,15 @@ site has to remember: there are two sites today with the same shape, which is
       case is what an agent paginating an API actually produces, and a fix that
       only lengthens the filename passes the same-URL test and fails this one.
 - [ ] `jq_query`'s save path takes the same helper — asserted, not assumed.
+- [ ] **Two different filters over the SAME source file** do not collide. At the
+      `jq_query` site the base is `basename(sourceFile)` and **the filter does not
+      appear in the name at all**, so the millisecond clock is the sole
+      discriminator — no differing-query-string coincidence is needed, unlike the
+      `curl_execute` case the criterion above describes. Added 2026-09-07 from
+      review; the original criteria were written around two URLs and would have
+      passed while this case still failed.
+- [ ] A colliding write does not leave a **partial** document readable. `writeFile`
+      is not atomic, so a second write truncates the first file and a concurrent
+      `jq_query` on that path can read a half-written document. Write to a temp
+      name and rename, or open with `flag: "wx"`.
 - [ ] A collision surfaces as an error rather than as a successful overwrite.

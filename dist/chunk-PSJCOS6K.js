@@ -980,7 +980,8 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 }
 
 // src/lib/response/parser.ts
-var MEDIA_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?:[ \t]*;[ \t]*[A-Za-z0-9!#$&^_.+`|~*%'-]{1,64}=(?:[A-Za-z0-9!#$&^_.+`|~*%'-]{1,256}|"[^"\\\x00-\x1f]{0,512}")){0,32}[ \t]*;?[ \t]*$/;
+var MEDIA_TYPE_MAX_LENGTH = 1024;
+var MEDIA_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?:[ \t]*;[ \t]*[A-Za-z0-9!#$&^_.+`|~*%'-]{1,64}=(?:[A-Za-z0-9!#$&^_.+`|~*%'-]{1,256}|"[^"\\\x00-\x1f]{0,512}")){0,32}(?:[ \t]*;)?[ \t]*$/;
 function isJsonContentType(contentType) {
   const mime = parseMimeType(contentType);
   return mime === "application/json" || mime.endsWith("+json");
@@ -1001,7 +1002,7 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const bodyBytes = raw.subarray(0, separatorIndex);
   const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
   const contentType = metadata.trim();
-  const validContentType = MEDIA_TYPE_PATTERN.test(contentType) ? contentType : void 0;
+  const validContentType = contentType.length <= MEDIA_TYPE_MAX_LENGTH && MEDIA_TYPE_PATTERN.test(contentType) ? contentType.split(";")[0].trim() : void 0;
   return {
     body: bodyBytes.toString("utf8"),
     contentType: validContentType,
@@ -2022,7 +2023,7 @@ function defendText(text, options) {
   const excludeJsonDocuments = options.excludeJsonDocuments ?? true;
   const jsonExemptionCouldApply = excludeJsonDocuments && (contentTypeUndetermined || isSniffableContentType(options.contentType));
   const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);
-  const strictestGrammar = contentTypeUndetermined && !looksLikeJsonBody;
+  const strictestGrammar = (contentTypeUndetermined || options.contentType === void 0) && !looksLikeJsonBody;
   const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
   const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
   content = sanitizeAndDetect(content, hostname);
@@ -2112,10 +2113,19 @@ function exceedsInlineCap(text, hostname, maxBytes) {
   if (bytes * MAX_INLINE_GROWTH_RATIO <= maxBytes) return false;
   return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
 }
-function savedMessage(diskBytes, filepath, maxSize, overCap, contentType, filtered) {
+function savedMessage(facts) {
+  const { diskBytes, filepath, maxSize, overCap, contentType, filtered } = facts;
   const subject = filtered ? "Result of jq_filter" : "Response";
   const cause = overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const route = filtered || isJsonContentType(contentType) ? " Use the jq_query tool on that path to extract fields." : contentType === void 0 ? " The content type was not declared, so the grammar is unknown \u2014 try the jq_query tool on that path; it reports plainly if the file is not JSON." : " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling.";
+  const route = filtered || isJsonContentType(contentType) ? " Use the jq_query tool on that path to extract fields." : contentType === void 0 ? (
+    // NOT "was not declared". This arm is also reached when the origin
+    // DID declare a content type and it was rejected as malformed, so
+    // asserting the origin sent nothing would be a server-authored
+    // falsehood about the origin. Both causes mean the same thing to
+    // the reader — there is no usable grammar — so the wording says
+    // that rather than guessing which one happened. `LESSONS.md` RC-31.
+    " No usable content type was declared, so the grammar is unknown \u2014 try the jq_query tool on that path; it reports plainly if the file is not JSON."
+  ) : " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling.";
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
   return cause + route + scope;
 }
@@ -2168,14 +2178,14 @@ async function processResponse(response, options) {
     return {
       savedToFile: true,
       filepath,
-      message: savedMessage(
-        Buffer.byteLength(content, "utf8"),
+      message: savedMessage({
+        diskBytes: Buffer.byteLength(content, "utf8"),
         filepath,
         maxSize,
         overCap,
-        options.contentType,
-        options.jqFilter !== void 0
-      )
+        contentType: options.contentType,
+        filtered: options.jqFilter !== void 0
+      })
     };
   }
   return {

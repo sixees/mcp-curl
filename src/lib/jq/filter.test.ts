@@ -113,10 +113,12 @@ describe('applyJqFilter — return type contract', () => {
 
 describe('number lexemes survive the filter (RC-27)', () => {
     // `applyJqFilter` parses and re-serialises, and `JSON.parse` routes every
-    // number through a double. So the jq path used to round a 64-bit id and
-    // stringify an overflowing exponent as `null`, while the SAME body returned
-    // inline kept both exact — one rule with two implementations, and the
-    // corrupted one was the path a too-large response is sent down.
+    // number through a double unless a reviver intervenes. `keepNumberLexeme`
+    // is that reviver, so a 64-bit id and an overflowing exponent survive this
+    // path exactly as the origin spelled them. This is the path a too-large
+    // response is sent down, which is where the corruption would be silent —
+    // and it is a SEPARATE parse from the inline one, so an assertion there
+    // says nothing about here.
     const body = '{"id":9223372036854775807,"exp":1e400,"pi":3.140,"neg":-0.0,"pad":0.1000}';
 
     it.each([

@@ -1,8 +1,11 @@
 ---
 id: 015
-priority: P1
-status: pending
+title: "The defence wrap has six unwrapped exits and guards two of them"
+status: open
+severity: P1
 tags: [code-review, security, invariant-1]
+class-id: unwrapped-multi-write
+reviewers: [architecture-strategist, security-sentinel]
 created: 2026-09-06
 source: /sixees-workflow:review of PR #37 (Surface 2, round 3, architecture-strategist)
 ---
