@@ -5,65 +5,48 @@ import { LIMITS } from "../config/limits.js";
 import { parseMimeType } from "../utils/index.js";
 
 /**
- * The longest `%{content_type}` this will even attempt to match.
- *
- * **A structural bound on the regex's input, not a guess at what origins
- * send.** `MAX_METADATA_TAIL_LENGTH` is 8,192, and a bound argued from reading
- * the pattern is only as good as the next edit to it — so the work the engine
- * can be asked to do is capped here, where no change to the grammar below can
- * widen it. 1 KB is roughly 4x the longest value the grammar can produce once
- * the tail is discarded, and comfortably admits a real `profile="<uri>"`.
- * `LESSONS.md` RC-31.
- */
-const MEDIA_TYPE_MAX_LENGTH = 1024;
-
-/**
- * RFC 6838 media type, with an optional parameter tail.
+ * The type/subtype of a media type, anchored, with the parameter tail ignored.
  *
  * **This is a trust boundary, not a tidiness check.** `%{content_type}` is
- * echoed verbatim from the origin, so without this the field is a
- * remote-chosen string that consumers go on to interpolate into sentences THEY
- * author and the model reads as this server speaking. The fix belongs on the
- * field rather than on each sentence, because the next consumer has not been
- * written yet.
+ * echoed verbatim from the origin, so consumers that interpolate it are
+ * composing remote-chosen text into sentences they author and the model reads
+ * as this server speaking. The fix belongs on the field, because the next
+ * consumer has not been written yet.
  *
- * **Matching is the whole of the check, and it is NOT the whole of the
- * defence.** A media type's parameter tail admits arbitrary text by design —
- * RFC 9110 puts a quoted-string in the grammar precisely so it can hold any
- * text, and the unquoted token class admits `- . _ ' * % ~ | ^`, which reads
- * to a model as prose without a single space in it. So a grammar check can
- * answer *"is this syntactically a media type"* and can never answer *"can
- * this carry an instruction"*. **What closes that channel is the projection at
- * the call site**: only the type/subtype is kept, and the parameter tail is
- * discarded after matching. Nothing in this tree reads a parameter — every
+ * **It matches only the head, and keeping only the head is the defence.** A
+ * media type's parameter tail admits arbitrary text by design — RFC 9110 puts a
+ * quoted-string in the grammar precisely so it can hold any text, and the
+ * unquoted token class admits `- . _ ' * % ~ | ^`, which reads to a model as
+ * prose without a single space in it. So no grammar over the tail can answer
+ * *"can this carry an instruction"*, and validating the tail was work whose
+ * result the caller discarded. Nothing in this tree reads a parameter: every
  * consumer passes the value through `parseMimeType`, which splits on `;` and
- * throws the tail away — so the projection costs no information and leaves the
- * field a bounded token with no space-bearing region at all.
+ * throws the tail away.
  *
- * An earlier revision of this doc-block claimed the residual was "bounded at
- * 512 characters … a 16x reduction". **That was wrong by roughly 15x**: the
- * parameter group repeats `{0,32}`, so the real bound was the whole 8,192-byte
- * metadata window, and a decline elsewhere had been priced against the smaller
- * figure. Measured: a 32-parameter value carried 7,680 characters of free-form
- * prose past this pattern intact.
+ * **Matching the head rather than the whole value is what keeps a malformed
+ * tail CLASSIFIABLE**, and that is the property an all-or-nothing grammar cost
+ * us. Rejecting `text/html;;` outright collapsed "declared, unusable" into "not
+ * declared" — and `defendText` grants the JSON exemption on that absence, so a
+ * markup body could claim the exemption and take NO strip stage at all,
+ * reopening the bypass `ARCHITECTURE.md` invariant 1a records as closed. Here
+ * `text/html;;` yields `text/html`, the exemption is correctly denied, and
+ * `undefined` regains one meaning: no parseable media type at all.
  *
- * Linear per invariant 15, and the previous claim of linearity was also
- * wrong. Every quantifier is bounded, but that is not sufficient: two
- * quantified runs over the SAME alphabet separated only by an optional element
- * at an anchor make the engine rescan a failing suffix once per starting
- * offset. The tail was `[ \t]*;?[ \t]*$`, which is exactly that shape —
- * measured quadratic at 0.71 ms for 500 trailing spaces rising to 39.4 ms at
- * 8,000, and up to 122.8 ms on other shapes at the cap, on the thread serving
- * every session. It is now one group, `(?:[ \t]*;)?[ \t]*$`, so no two
- * whitespace runs are ever adjacent: 0.033 ms at the cap, flat across sizes.
+ * **Linear per invariant 15 by construction, not by argument.** The match is
+ * anchored at `^` and every quantifier is bounded, so the attempt is O(1) in the
+ * input's length — measured flat at 0.0001–0.001 ms from 500 bytes to 131 KB,
+ * including a backtrack-bait tail. No length precondition is needed to bound the
+ * engine's work, because there is no unbounded region for it to scan.
  *
- * **The rule that finds this shape, since bounded-quantifier counting did
- * not:** for every repeated character class, name every token the match must
- * still consume after it, and check the class against all of them.
- * `LESSONS.md` RC-14, RC-31.
+ * The lookahead is load-bearing: without it `text/html<script>` would match
+ * `text/html` and a garbage header would be classified as HTML. Requiring a
+ * parameter separator, whitespace or end-of-input after the subtype makes such a
+ * value reject to `undefined`, which selects the strictest grammar.
+ *
+ * `LESSONS.md` RC-14, RC-31, RC-32.
  */
-const MEDIA_TYPE_PATTERN =
-    /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?:[ \t]*;[ \t]*[A-Za-z0-9!#$&^_.+`|~*%'-]{1,64}=(?:[A-Za-z0-9!#$&^_.+`|~*%'-]{1,256}|"[^"\\\x00-\x1f]{0,512}")){0,32}(?:[ \t]*;)?[ \t]*$/;
+const MEDIA_TYPE_HEAD =
+    /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
 
 /**
  * Parsed response with body and optional content type.
@@ -80,7 +63,7 @@ export interface ParsedResponse {
      * consumer in this tree reads it.
      *
      * Absent both where the origin sent none and where what it sent is not a
-     * media type — see `MEDIA_TYPE_PATTERN`. The two collapse deliberately:
+     * media type — see `MEDIA_TYPE_HEAD`. The two collapse deliberately:
      * both mean "no usable declared grammar", and both must select the
      * strictest one downstream. **That is a claim about a consumer, so it is
      * enforced at one** — `defendText` tests this field for `undefined`
@@ -188,7 +171,7 @@ export function parseResponseWithMetadata(
     // than becoming "", so "the origin sent no Content-Type" keeps selecting the
     // strictest grammar downstream instead of a falsy value nobody checks.
     //
-    // A value failing MEDIA_TYPE_PATTERN resolves to the SAME undefined, and
+    // A value failing MEDIA_TYPE_HEAD resolves to the SAME undefined, and
     // that is the whole defence: the origin writes these bytes, and downstream
     // every consumer composes them into a sentence it authors in its own voice.
     // Constraining the field here means it cannot carry prose at any consumer,
@@ -196,14 +179,11 @@ export function parseResponseWithMetadata(
     // one to be written wrong. A header this rejects was never usable as a
     // media type, so nothing diagnostic is lost.
     const contentType = metadata.trim();
-    // Bound the regex's input before matching, then keep ONLY the type/subtype.
-    // The match proves the value is a media type; the projection is what stops
-    // it carrying prose, because the parameter tail is where the grammar allows
-    // prose and every consumer discards it anyway (`parseMimeType`).
-    const validContentType =
-        contentType.length <= MEDIA_TYPE_MAX_LENGTH && MEDIA_TYPE_PATTERN.test(contentType)
-            ? contentType.split(";")[0].trim()
-            : undefined;
+    // Keep the matched head and nothing else. The match proves there is a media
+    // type here; discarding the tail is what stops the field carrying prose,
+    // because the tail is the only region of the grammar that admits it and
+    // every consumer throws it away regardless (`parseMimeType`).
+    const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
 
     return {
         body: bodyBytes.toString("utf8"),

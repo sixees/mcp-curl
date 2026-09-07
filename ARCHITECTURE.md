@@ -212,10 +212,9 @@ what a violation looks like, it does not belong on this list.
     gate, so what it may carry is bounded at each value's own source rather than
     weighed here. **It carries the filepath (`FILENAME_MAX_LENGTH`, plus a
     validated output directory), two server-computed byte counts, and
-    server-authored literals. It does not carry the content type at all**, and
-    that absence is the closure rather than any bound on the field: an earlier
-    revision of this paragraph named `MEDIA_TYPE_PATTERN` here as the content
-    type's bound, which read as a licence to interpolate it back. Two channels
+    server-authored literals. It does not carry the content type at all** — that
+    absence is the closure, not a bound on the field, and naming a bound here
+    instead would read as a licence to interpolate it back. Two channels
     are still bounded by constants unrelated to `max_result_size` and are
     recorded as such: `curl-execute.ts`'s `stderr` under `verbose`
     (`MAX_RESPONSE_SIZE`, 10 MB) and `processResponse`'s jq-filter error, which

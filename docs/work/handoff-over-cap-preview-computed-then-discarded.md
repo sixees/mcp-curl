@@ -497,3 +497,119 @@ the second round running.
 - `docs/todos/012`, `013`, `014`, `015` — pre-existing or previously escalated.
 - Surface 3 has **not** run. The PR is unreviewed by bots until
   `/sixees-workflow:review-pr-comments`.
+
+---
+
+## Code Review — 2026-09-07 (Surface 2, round 5)
+
+**Certification:** complete
+**Roster closure:** closed — 9 dispatched (6 configured + the 4-agent floor, deduped to 8, plus `comment-accuracy-auditor` at the operator's explicit request); all deferral destinations in-roster. unresolved: pattern-recognition-specialist → "the correctness of any single instance → whichever reviewer owns that lane"
+**Base:** `5adb7d3c9d67a349b30338e61efc1d002d1566e5` via `git merge-base --fork-point origin/HEAD HEAD` (arm 1); HEAD at dispatch `21ee446`
+**Dispatches:** 9 sent, 9 returned, 0 failed, 0 not-migrated
+
+### Why this round mattered
+
+`21ee446` was round 4's fix and **nobody had reviewed it** — the same condition that
+made round 4 valuable. It contained a P1 that was *worse than the defect it
+replaced*, which is the second time in this PR that a remedy has done that.
+
+### Findings by class
+
+| # | Class | Sev | Reviewers | Disposition |
+|---|---|---|---|---|
+| A | JSON exemption observed pre-sanitise, consumed post-sanitise → attacker-chosen keys deleted from a persisted JSON document | **P1** | data-integrity, security (merged on instance overlap) | **fix** — Step 2 before grammar selection |
+| B | all-or-nothing rejection collapses "declared, unusable" into "not declared", so a markup body claiming `text/html;;` took the JSON exemption and NO strip stage | P2 | architecture | **fix** — head match |
+| C | RFC 6838 parameter grammar validates a region its own caller discards | P2 | simplicity | **fix** — same change as B |
+| D | two dead assertions: `exceeded` vs `exceeds`, `(N bytes)` vs `bytes on disk)` | P2 | typescript | fix — assert on extracted structure |
+| E | mirrored regex in `parser.test.ts` asserts a property of itself | P3 | architecture, typescript (merged) | fix — deleted with B |
+| F | doc-block history narration violates `CONVENTIONS.md` → *Documentation* | P3 | simplicity, comment-auditor (merged, 7 sites) | fix |
+| G | 7 more history-voiced comments in `processor.test.ts` | P3 | pattern | fix |
+| H | `ProcessResponseOptions.contentType` documents the pre-projection domain | P3 | architecture, typescript (merged) | fix |
+| I | `docs/todos/014`'s acceptance criterion cannot fail; its scope claim is now false | P2 | security | fix — criterion + RC |
+| J | `docs/todos` frontmatter field order drifts three ways | P3 | pattern | fix |
+| K | `processResponse`'s `?? false` default contradicts `defendText`'s `= true` | P3 | orchestrator | fix — derived from the sibling |
+| L | strictest-grammar strip now runs twice on a typeless body: +20.5 ms at the cap, +52 ms worst shape | P3 | performance | **declined** — cost recorded, root is `docs/todos/010` |
+| M | unregistered media type gets no strip path; the predicate's doc-block claims it does | P3 | security, typescript (merged) | **filed as `docs/todos/017`** |
+| N | persisted artefact rewritten for typeless bodies | P2 | data-integrity, typescript (merged) | **declined** — folded into `docs/todos/016` |
+
+### The class that mattered
+
+**A was a regression round 4 introduced, and worse than what it replaced.** Measured
+on the shipped bundle, two routes, both origin-selectable:
+
+| body | keys before | keys after |
+|---|---|---|
+| one zero-width space between two tokens | `a,b,c,d` | `a,d` |
+| 327 KB with collapsible padding, no declared type | `a,secret,c,d,filler` | `a,d,filler` |
+
+Output stays valid JSON both times, so nothing downstream can detect it, and on
+the over-cap arm the file is the only copy. **B and C then collapsed into one
+change with A**, and the combined fix REMOVED code: the parameter grammar, the
+1,024-byte length precondition, and a mirrored-regex test helper all went.
+
+### Corrections to round 4's record
+
+- **Round 4's end-to-end claim was checked at the wrong altitude.** RC-31's defect
+  was reported as one the tool path *returned*; driven end to end the wrap catches
+  it, and the leak reproduces only at the published `defendText` boundary. Real
+  invariant-11 defect, real fix — but the benefit was priced against an
+  overstated claim, and against a P1 the fix introduced.
+- **Round 4's "primary/secondary" framing of the two ReDoS guards was wrong.**
+  Measured: each closed it independently. Moot — both are now replaced by a head
+  match that is constant-time by construction.
+- `LESSONS.md` **RC-1 rule 2 already forbade RC-31's shape** in almost these
+  words. RC-32 records that a written rule is not a control.
+
+### Declines, with the evidence
+
+- **L — the double strip pass.** `performance-oracle` measured it and said
+  explicitly *do not revert*: the strip is load-bearing on exactly this arm (the
+  beacon survives without it). The double pass is pre-existing and its
+  class-level fix is `docs/todos/010`'s. Numbers recorded in `defendText`'s
+  doc-block. **It reprices to P2 under `TRANSPORT=http` with concurrent
+  sessions** — a fact about the deployment, so the operator's call.
+- **N — persisted artefact rewritten for typeless bodies.** Real, and this branch
+  widened it from "our metadata block was not found" (rare) to "the origin sent no
+  Content-Type" (ordinary). Both reviewers offered folding it into `docs/todos/016`,
+  which already holds the sibling class, and that is what was done.
+- **`FileSaveInfo` re-widening** — declined a fourth time, citing the record per
+  `03-divergence.md`.
+
+### Teeth probes — one mutation at a time
+
+| Probe | Mutation | Result |
+|---|---|---|
+| A | exemption observed on the pre-sanitise bytes | 2 tests fail |
+| B | whole-value rejection instead of the head match | 5 tests fail |
+| C | `contentTypeUndetermined` default back to `?? false` | **nothing fails** |
+
+**C is reported as a finding about C, not hidden.** The derived default is
+genuinely unobservable — `defendText` tests `contentType === undefined` directly
+in both places it feeds, and `isSniffableContentType(undefined)` is `true`. It is a
+consistency fix, not a live guard, and the doc-block now says so rather than
+carrying an assertion that cannot fail.
+
+### Verified
+
+| Claim | Result |
+|---|---|
+| Head match is constant-time | **confirmed independently** — 0.0–1.3 ns at 8,192 bytes across five shapes; the doc-block's claim is conservative by ~100x |
+| Cost of the widened strip | **measured** — `defendText` 2.42 → 21.24 ms at 262,144 B; per-request 25.72 → 46.20 ms; worst shape composite 57.30 → 109.89 ms |
+| The ratio guard is stable | **confirmed** — p50 2.2 / worst 5.6 against a threshold of 10, under 28 concurrent CPU hogs at load average 178; 0 failures across 14 full-suite runs. Depends on vitest's `forks` pool default, now recorded in the test |
+| Suite | **1266 passed / 2 failed / 7 skipped / 274 suites.** Both failures are the pre-existing `strip-blocks` wall-clock flake (`docs/todos/013`), a different subset each run |
+| `tsc --noEmit` | 12 errors, the same pre-existing set; none in a changed file |
+| End to end, rebuilt binary | five routes, all correct; `text/html;;` now yields `{"a":""}` — byte-identical to `text/html`; 0 wrap-error lines |
+
+### Handoff assessment
+
+Round 4's record was accurate about what it did and wrong about one thing it
+claimed to have measured (the end-to-end leak). Its *"What to pay attention to"*
+section has now predicted the right risk lane three rounds running.
+
+### Outstanding
+
+- `docs/todos/016` — lossy UTF-8 decode, now also holding class N.
+- `docs/todos/017` — unregistered media types get no strip path (filed this round).
+- `docs/todos/010`, `012`, `013`, `014` — pre-existing or previously escalated;
+  `014`'s criterion and scope corrected this round.
+- Surface 3 has **not** run.

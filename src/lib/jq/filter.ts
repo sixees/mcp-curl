@@ -143,8 +143,9 @@ export function applyJqFilter(jsonString: string, filter: string): string {
         // `keepNumberLexeme`, so a number survives this parse-and-reserialise
         // exactly as the origin spelled it. This is the tool the model is sent
         // to when a response is too large to return inline, so it is the path
-        // large-body numbers actually travel — and it used to round them while
-        // the inline path kept them exact (RC-27).
+        // large-body numbers actually travel, and it is a SEPARATE parse from
+        // the inline one — so an assertion there says nothing about here
+        // (RC-27).
         data = JSON.parse(jsonString, keepNumberLexeme);
     } catch (error) {
         // SyntaxError indicates invalid JSON

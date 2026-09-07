@@ -5,9 +5,9 @@ status: open
 severity: P1
 tags: [code-review, security, invariant-1]
 class-id: unwrapped-multi-write
+source: /sixees-workflow:review of PR #37 (Surface 2, round 3, architecture-strategist)
 reviewers: [architecture-strategist, security-sentinel]
 created: 2026-09-06
-source: /sixees-workflow:review of PR #37 (Surface 2, round 3, architecture-strategist)
 ---
 
 # The post-processor wrap has six exits and guards two

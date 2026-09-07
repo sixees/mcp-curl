@@ -290,10 +290,9 @@ export async function executeCurlRequest(
         // pass, so the empty string below is not a body that was dropped — it is
         // the argument `formatResponse` ignores on that branch.
         //
-        // This used to read `processed.content` on both arms and skip the
-        // defence pass for the saved one, which was correct and rested on the
-        // two branches agreeing about which shape reads the body. They cannot
-        // now disagree: on the saved arm there is no field to read.
+        // The saved arm's `ProcessedResponse` carries no `content` field, so
+        // there is nothing to read on that branch and no way for the two arms to
+        // disagree about which shape holds the body.
         const inlineBody = processed.savedToFile
             ? ""
             : params.include_metadata

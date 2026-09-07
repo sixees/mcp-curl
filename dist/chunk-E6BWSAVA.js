@@ -980,8 +980,7 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 }
 
 // src/lib/response/parser.ts
-var MEDIA_TYPE_MAX_LENGTH = 1024;
-var MEDIA_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?:[ \t]*;[ \t]*[A-Za-z0-9!#$&^_.+`|~*%'-]{1,64}=(?:[A-Za-z0-9!#$&^_.+`|~*%'-]{1,256}|"[^"\\\x00-\x1f]{0,512}")){0,32}(?:[ \t]*;)?[ \t]*$/;
+var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
 function isJsonContentType(contentType) {
   const mime = parseMimeType(contentType);
   return mime === "application/json" || mime.endsWith("+json");
@@ -1002,7 +1001,7 @@ function parseResponseWithMetadata(rawResponse, separator) {
   const bodyBytes = raw.subarray(0, separatorIndex);
   const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
   const contentType = metadata.trim();
-  const validContentType = contentType.length <= MEDIA_TYPE_MAX_LENGTH && MEDIA_TYPE_PATTERN.test(contentType) ? contentType.split(";")[0].trim() : void 0;
+  const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
   return {
     body: bodyBytes.toString("utf8"),
     contentType: validContentType,
@@ -2020,13 +2019,13 @@ function parseJsonDocument(text, preserveNumberLexemes = false) {
 function defendText(text, options) {
   let content = text;
   const { hostname, contentTypeUndetermined = true } = options;
+  content = sanitizeAndDetect(content, hostname);
   const excludeJsonDocuments = options.excludeJsonDocuments ?? true;
   const jsonExemptionCouldApply = excludeJsonDocuments && (contentTypeUndetermined || isSniffableContentType(options.contentType));
   const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);
   const strictestGrammar = (contentTypeUndetermined || options.contentType === void 0) && !looksLikeJsonBody;
   const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
   const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
-  content = sanitizeAndDetect(content, hostname);
   const exceedsStripCap = Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
   const sniffedAsMarkup = !exceedsStripCap && !strictestGrammar && !looksLikeJsonBody && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
   const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
@@ -2142,7 +2141,32 @@ async function processResponse(response, options) {
   const hostname = safeHostname(options.url);
   let content = defendText(response, {
     contentType: options.contentType,
-    contentTypeUndetermined: options.contentTypeUndetermined ?? false,
+    // **Derived from the sibling field, because neither constant is right.**
+    // `?? false` is the permissive value `LESSONS.md` RC-1 rule 2 forbids —
+    // *"'undetermined' and 'absent' must not resolve the permissive way"* —
+    // and `?? true` contradicts an explicit determination: a caller passing
+    // `contentType: "text/plain"` plainly DID determine it, and telling
+    // `defendText` otherwise selects the strictest grammar for a declared
+    // type. So the default is the question the field actually asks: absent a
+    // declaration, the grammar is undetermined.
+    //
+    // `defendText`'s own default of `true` is right THERE for a different
+    // reason — the field is required by its type, so the default only ever
+    // guards a JavaScript caller that omitted it, and for that caller
+    // over-stripping is the safe failure. Here the field is optional and its
+    // sibling carries the answer.
+    //
+    // **Currently unobservable, and recorded as such rather than guarded by
+    // a test that cannot fail.** `defendText` tests `contentType ===
+    // undefined` directly in both places this value feeds, and
+    // `isSniffableContentType(undefined)` is `true`, so every arm resolves
+    // the same way whichever constant sits here — a teeth probe against
+    // `?? false` failed nothing. It is a consistency fix, not a live guard:
+    // two spellings of one default pointing opposite ways is what the next
+    // reader trips on, and `?? false` is the fail-open shape even while it is
+    // masked. Do not add an assertion for it; there is nothing to assert.
+    // RC-32.
+    contentTypeUndetermined: options.contentTypeUndetermined ?? options.contentType === void 0,
     hostname
   });
   if (options.jqFilter) {

@@ -648,13 +648,19 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
             expect(text).not.toContain("THIS-MUST-NOT-BE-RETURNED");
             expect(text).toContain("saved to:");
-            // `save_to_file` is a request, not a limit. The over-cap arm's
-            // message says the body "exceeded the N-byte inline limit", and
-            // claiming that here would be a server-authored falsehood about
-            // the caller's own request — this body is 45 bytes against a
-            // 500 KB default. Asserted because the two arms share a code path
-            // and a later edit could collapse them into one message.
-            expect(text).not.toContain("exceeded");
+            // `save_to_file` is a request, not a limit, so claiming a breach here
+            // would be a server-authored falsehood about the caller's own request
+            // — this body is 45 bytes against a 500 KB default. Asserted because
+            // the two arms share a code path and a later edit could collapse them
+            // into one message.
+            //
+            // **Matched against what production actually emits, not against a
+            // retyped verb.** This read `not.toContain("exceeded")` while the
+            // message said "exceeds", so it could not fail — the arm-collapse it
+            // names would have passed it. A guard that restates the subject's
+            // wording dies the next time the wording moves, silently. RC-32.
+            expect(text).not.toMatch(/exceed(s|ed)/);
+            expect(text).not.toContain("inline limit");
         });
 
         // The sibling above forces the file with `save_to_file`. This is the
@@ -734,8 +740,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             // header; interpolating it into a sentence this server authors put
             // up to 8 KB of remote-chosen text in the server's own voice, which
             // the inline defence pass strips markup from and prose not at all.
-            // `parser.ts::MEDIA_TYPE_PATTERN` now bounds the field at the
-            // boundary and nothing echoes it here. `LESSONS.md` RC-30.
+            // `parser.ts::MEDIA_TYPE_HEAD` keeps only the type/subtype, and
+            // nothing echoes it here. `LESSONS.md` RC-30, RC-32.
             expect(text).not.toContain(contentType);
         });
 
@@ -783,14 +789,21 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             expect(text).toContain("saved to:");
-            const reported = Number(/Response \((\d+) bytes/.exec(text)?.[1]);
+            // **Both numbers pulled out of the text and related, rather than a
+            // retyped sentence.** The previous form matched
+            // `/\(\d+ bytes\) exceeded the 1000-byte/` against a message reading
+            // "(N bytes on disk) … exceeds the 1000-byte", so it was dead on two
+            // independent counts and this arm had no live guard at all. RC-32.
+            const reported = Number(/\((\d+) bytes/.exec(text)?.[1]);
+            const limit = Number(/(\d+)-byte inline limit/.exec(text)?.[1]);
             expect(Number.isFinite(reported)).toBe(true);
-            // Whatever the number is, the sentence must not assert a bare breach
-            // of a larger limit by a smaller count.
-            expect(text).not.toMatch(/\(\d+ bytes\) exceeded the 1000-byte/);
-            if (reported < 1000) {
-                expect(text).toContain("once the inline defence pass is applied");
-            }
+            expect(limit).toBe(1000);
+            // The fixture is chosen so the defended form crosses a cap the raw
+            // body does not — that is the whole point of the case — so the
+            // reported count being BELOW the limit is expected, and the sentence
+            // must carry the qualifier that makes the pair reconcilable.
+            expect(reported).toBeLessThan(limit);
+            expect(text).toContain("once the inline defence pass is applied");
         });
 
     });

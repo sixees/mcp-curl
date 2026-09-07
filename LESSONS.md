@@ -1427,3 +1427,74 @@ pair absent produces *"mcp-curl requires Node >= 22"*.
   pressure that produced the first one". **It happened again in the same PR.**
   Probe each guard against its OWN mutation, one at a time, never the fix as a
   set — a set-wise probe cannot tell which member carries the teeth.
+
+### RC-32 — the fix for RC-31 deleted fields from a JSON document, and RC-1 had already forbidden the shape
+
+**Date:** 2026-09-07 · **PR:** #37 · **Plan:** `docs/todos/008-P2-over-cap-preview-is-computed-then-discarded.md`
+
+**Class:** K-9, K-11, K-1 — *class-id:* `stale-observation`, `fail-open-default`, `unchecked-assertion`
+
+- **The plan said:** RC-31's fix was the remedy. `defendText`'s `strictestGrammar`
+  now tests `options.contentType === undefined` alongside the flag, so a rejected
+  content type can no longer take the permissive path.
+- **Reality was:** it took a *destructive* path instead. `looksLikeJsonBody` was
+  computed from `content` before `sanitizeAndDetect` rewrote it and consumed
+  after, so the JSON exemption was decided on bytes the strip never saw. Two
+  routes, both measured on the shipped bundle, both with the origin choosing:
+
+  | body | keys before | keys after |
+  |---|---|---|
+  | one zero-width space between two tokens | `a,b,c,d` | **`a,d`** |
+  | 327 KB with collapsible padding, no declared type | `a,secret,c,d,filler` | **`a,d,filler`** |
+
+  In both cases the output is still valid JSON, so nothing downstream can detect
+  it, and on the over-cap arm the file is the only copy. **The second route is
+  RC-16's measured failure arriving on the persisted path**, and the widened
+  absence test is what made it reachable — before it, `MARKUP_SHAPE_PATTERN` does
+  not match `<!--`, so the strip never ran on this arm.
+- **And the mirror was left open.** The fix added the `=== undefined` test to
+  `strictestGrammar` and not to `jsonExemptionCouldApply` three lines above,
+  which keys on the same collapsed absence. So a markup body declaring
+  `text/html;;` claimed the JSON exemption and took **no strip stage at all** —
+  reopening the bypass `ARCHITECTURE.md` invariant 1a records as closed. K-11,
+  found by a different reviewer than the one that found the P1.
+- **What we did:** two changes, and together they REMOVED code.
+  1. Step 2 now runs before the grammar is selected, so every consumer reads one
+     observation of one string. `parseJsonDocument`'s byte gate and
+     `exceedsStripCap` consequently measure the same bytes and can no longer
+     disagree — which closes the byte-count route as a side effect.
+  2. `parseResponseWithMetadata` matches the type/subtype **head** and keeps it
+     whatever the tail, instead of validating the whole value and rejecting it
+     outright. `text/html;;` becomes `text/html`, so the value stays
+     *classifiable* and `undefined` regains one meaning. That deleted the RFC 6838
+     parameter grammar, the 1,024-byte length precondition it needed, and a
+     mirrored-regex test helper — and made invariant 15 hold by construction
+     rather than by argument: constant time, measured 0.0–1.3 ns at 8,192 bytes.
+- **The rule was already in this ledger, in almost these words.** RC-1 rule 2:
+  *"A boundary between remote-controlled regions is never inferred from the bytes.
+  Take it from a channel the remote cannot write to, and fail closed when it is
+  undetermined — 'undetermined' and 'absent' must not resolve the permissive
+  way."* RC-31 broke that. RC-32 is what breaking it cost the second time. **A
+  written rule is not a control; the only control is a test at the boundary it
+  governs**, which is why the four new cases in `defend-text.test.ts` assert the
+  two absences produce the *same* output rather than merely asserting one is safe.
+- **Three smaller lessons, each earned the same round:**
+  - **"Redundant after the refactor" is a claim about behaviour and needs a run.**
+    Having reordered the sanitise, the entity-decode gate's second
+    `isDefinitelyJson(content)` looked redundant and was removed. Three RC-12
+    cases went red immediately: `jsonExemptionCouldApply` is false for a
+    *declared* markup type, so on a JSON body mislabelled `text/html` the first
+    term is false while the body is plainly JSON. The two terms answer different
+    questions.
+  - **A guard that restates its subject's wording dies when the wording moves.**
+    Two assertions in `register-all-tools.test.ts` spelled `exceeded` where the
+    message says `exceeds`, and `(N bytes)` where it says `bytes on disk)`. Both
+    had teeth when written and were dead by this round, silently, and one of them
+    was the probe that had verified an earlier fix. They now extract both numbers
+    from the output and assert the relation.
+  - **An end-to-end pass is not evidence a fix changed anything unless the
+    pre-fix state was run the same way.** The RC-31 defect was reported here as
+    one the tool path *returned*; driven end to end the post-processor wrap
+    catches it, and the leak reproduces only at the published `defendText`
+    boundary. The claim was checked at the wrong altitude, and the fix's benefit
+    was priced against it.

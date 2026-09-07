@@ -5,10 +5,12 @@ status: open
 severity: P2
 tags: [code-review, data-integrity, worsened-by-008]
 class-id: missing-validation
-reviewers: [data-integrity-guardian]
 source: /sixees-workflow:review of PR #37 (Surface 2, round 4, data-integrity-guardian)
+reviewers: [data-integrity-guardian]
 created: 2026-09-07
 ---
+
+# Wire octets are decoded lossily at ingest, and the replacement is what gets persisted
 
 ## Problem
 

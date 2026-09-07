@@ -26,7 +26,16 @@ export interface ProcessResponseOptions {
     maxResultSize?: number;
     /** Force saving response to file regardless of size */
     saveToFile?: boolean;
-    /** Content-Type header from response (used to detect JSON) */
+    /**
+     * The response's media type as **type/subtype only** — never its parameters.
+     *
+     * `parseResponseWithMetadata` is the producer and
+     * `ParsedResponse.contentType` owns the reason. Stated here too because this
+     * is the declaration a *caller* reads, and `processResponse`'s jq-filter
+     * error interpolates this value into model-facing text: a caller passing a
+     * raw header instead would widen that sentence into a remote-authored
+     * channel, which is the class `LESSONS.md` RC-30 is about.
+     */
     contentType?: string;
     /**
      * True when the content type could not be DETERMINED — the `-w` metadata

@@ -5,9 +5,9 @@ status: open
 severity: P1
 tags: [code-review, security, invariant-16]
 class-id: fail-open-default
+source: /sixees-workflow:review of PR #37 (Surface 2, round 2, data-integrity-guardian)
 reviewers: [data-integrity-guardian, security-sentinel]
 created: 2026-09-06
-source: /sixees-workflow:review of PR #37 (Surface 2, round 2, data-integrity-guardian)
 ---
 
 # A JSON document's region-wise defence is skipped on a byte count taken before the sanitiser shrinks it
@@ -52,7 +52,25 @@ invariant-16 half is addressed nowhere.
 
 Sweeps: `rg -n "STRIP_PATH_MAX_BYTES" src/` → 5 sites, 4 confirmed. `rg -n "parseJsonDocument" src/` → 4.
 
-## Why this is not PR #37's
+## Scope — corrected 2026-09-07
+
+**This section previously concluded the class was not PR #37's.** Both of its
+factual statements remain true — `processor.ts`'s gate is byte-identical at
+`5adb7d3`, and the diff's nearest hunk began after it — and **the conclusion
+became false**, because PR #37 round 4 added a reachability path to the same
+mechanism through an in-diff line (`strictestGrammar`'s new
+`|| options.contentType === undefined` arm). A JSON body with no declared type
+crossed the gate and had an attacker-chosen span of keys deleted. Recorded as a
+divergence per `.claude/rules/03-divergence.md` rather than silently edited;
+`LESSONS.md` RC-32 holds it.
+
+**Round 5 then closed that route** by computing the JSON exemption on the
+post-sanitise bytes, so `parseJsonDocument`'s gate and `exceedsStripCap` now
+measure the same string and cannot disagree. **What remains open here** is
+whether any other caller of `parseJsonDocument` still decides a *defence* on a
+pre-transform byte count — `defendForInline` and `defendJsonLeaves`'s nested-leaf
+arm are the two to check — which is what this todo is now for.
+
 
 `processor.ts:153` is byte-identical at `5adb7d3`; the diff's nearest hunk begins
 at old line 158. Escalated to the operator during review of #37 and filed rather
@@ -76,9 +94,23 @@ than folded into that branch.
 
 ## Acceptance criteria
 
-- [ ] A ~280 KB `application/json` body with ~20 KB of space padding in one string
-      value, `<!--` in an early field and `-->` in a late one, returns with **every
-      top-level key intact**, driven end to end through `executeCurlRequest`.
+- [ ] **Corrected 2026-09-07 — the original criterion could not fail.** It
+      specified an `application/json` declaration, and `isSniffableContentType`
+      returns `false` for that type while neither `supportsMarkupComments` nor
+      `isMarkdownContentType` matches it — so a declared `application/json` body
+      can never reach the strip path at any size. Measured against unfixed code:
+      all six top-level keys intact, criterion green. It also sized the body at
+      ~280 KB with ~20 KB of padding, which stays above `exceedsStripCap` after
+      the collapse, so no stage would have run even had it reached the path.
+      **Derive the input from the gate it must cross, not from the defect's
+      prose.** The criterion is now:
+- [ ] A JSON body served with **no `Content-Type` header at all**, above
+      `STRIP_PATH_MAX_BYTES` (262,144) before sanitisation and below it after —
+      ~327 KB with ~60 KB of collapsible ≥50-character space runs measures
+      correctly — with `<!--` in an early field and `-->` in a late one, returns
+      with **every top-level key intact**, driven end to end through
+      `executeCurlRequest`, and asserted on the persisted file as well as the
+      inline return.
 - [ ] The nested-string arm in `defendJsonLeaves` is covered by its own case — a
       string leaf that is itself a >256 KB JSON document.
 - [ ] Removing the fix makes the end-to-end case fail (teeth probed, not assumed).
