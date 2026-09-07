@@ -1716,3 +1716,90 @@ recorded as caught.
   further in; where something does, the boundary check is a courtesy and must be
   priced as one. K-14's population test applies to *guards you are adding*, not
   only to findings you are declining.
+
+### RC-37 — removing the JSON round trip removed the region-wise divider with it, and invariant 16 had consumers outside the body path
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-11 — *class-id:* `unescaped-sink`
+
+- **The plan said:** delete `defendJsonLeaves` and its round-trip scaffolding, and
+  return a JSON body's original bytes. `018` → *What survives* keeps "the wrap plus
+  spotlighting", and states that invariant 16's region-wise premise "no longer
+  applies to the body". Both halves read as complete.
+- **Reality was:** invariant 16 was never only about the body, and its own text says
+  so — a violation is *"a defence pass whose input spans more than one region"*. The
+  per-leaf walk had been satisfying it for **two further routes**, and deleting the
+  walk re-opened the splice on both. Measured, after the deletion:
+  `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returned `["a","d"]`
+  from `["a","b","c","d"]` — the field between the paired markers deleted, output
+  still valid JSON — via (1) a jq filter returning a document as a **string leaf**,
+  and (2) `formatResponse` **prefixing the header block to the body** on the plain
+  branch. That second route had an explicit fix at `curl-execute.ts` whose comment
+  claimed it "keeps invariant 16 true across the join"; the fix worked only because
+  the leaf walk neutralised the markers before composition, so removing the walk
+  falsified the comment and the fix together. **Found by the suite, not by reading** —
+  the four `behind a header block` cases and the string-leaf case.
+- **What changed:** the rule was restated as **divide, not rewrite**, and each route
+  divided at the layer that can see its boundary. `processor.ts::defendForInline`
+  gained a three-arm shape — composite JSON verbatim, a JSON string holding a
+  composite document divided and its inner region defended, anything else scanned
+  undivided — with `compositeStringPayload` as the divider; it recurses and
+  terminates by construction, since each unwrap drops at least the two enclosing
+  quotes, which is why no depth bound came back with it.
+  `formatResponse` stopped composing header text with body text at all, and
+  `curl-execute.ts::executeCurlRequest` now emits **two MCP content entries**, body
+  first. `ToolResult.content` and `CurlExecuteResult.content` widened from a 1-tuple
+  to an array. `ARCHITECTURE.md` invariant 16 rewritten; 1a and 14 rewritten for the
+  same change.
+- **What this costs next time:** **when you delete a mechanism, sweep for what it was
+  incidentally satisfying, not only for its callers.** The callers of
+  `defendJsonLeaves` were two and both were in the plan. What was missing was the
+  set of *properties* it upheld, and one of them was an invariant with its own RC and
+  its own test suite. The question that finds this is invariant 16's own: *what
+  regions are in this string, and does the pass respect them?* — asked of every
+  surviving call, not of the one being deleted. Related: RC-33 rule 2 says to sweep
+  for consumers of the OLD representation when adding a new one; this is its mirror,
+  and the same shape from the other side.
+
+### RC-38 — the JSON exemption was reversed, and Step 2 was nearly reversed with it
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-14 — *class-id:* `misplaced-decision`
+
+- **The plan said:** `018` → *What survives* lists exactly one thing for the JSON
+  path — "the wrap plus spotlighting — structural, byte-preserving, unforgeable
+  boundary". Its whole argument for dropping the rewriting is that the strip stages
+  are **markup-enumerative**, so they catch only a subset of a class the wrap covers
+  in full.
+- **Reality was:** that argument does not reach **Step 2**. Invisible-character and
+  bidi-override stripping is not markup-enumerative, and this project's own profile
+  §3 lists those attacks as in scope at the LLM trust boundary — so a literal
+  reading of *What survives* would have withdrawn a defence 018 never argued
+  against. Measured before deciding: Step 2 is a **byte-for-byte no-op on every
+  fidelity case 018 names** — duplicate names, an integer past
+  `Number.MAX_SAFE_INTEGER`, `1e400`, `"1.50"`, non-ASCII keys, a lone surrogate —
+  and alters only a body that actually carries an attack codepoint, which still
+  parses afterwards. So the trade the plan implied did not exist: keeping Step 2
+  costs nothing the plan wanted and dropping it buys nothing.
+- **What changed:** `defendForInline`'s composite arm returns `sanitizeAndDetect`,
+  not the raw text. `018`'s *What survives* item 1 corrected to name Step 2
+  explicitly, with the measurement. Separately, and in the same audit, the
+  **non-JSON artefact** was found to take the origin's DECLARED grammar rather than
+  the strictest one: `defendText(body, { contentType: "text/plain" })` runs no strip
+  stage, so `See [the docs](https://example.test/docs)` reached the persisted
+  artefact with the beacon live — on a file `savedMessage` tells the model to read
+  with its own tooling, outside every defence. It had been masked because such a
+  body used to be returned inline, where the wrap applied exactly the missing pass.
+  `processResponse` now passes `contentTypeUndetermined: true` and no `contentType`
+  at all. **`decodeEntities` was deliberately left at its default** rather than
+  matched to `defendForInline`'s `false`: that axis is RC-3's trade and
+  `docs/todos/004` owns it, and folding it in would have settled it silently.
+- **What this costs next time:** **a plan's "what survives" list is a claim about a
+  set, and a set is checked by enumerating the members it does not mention.** 018
+  named the defence it was arguing against and one it was keeping; the one it was
+  silent about was the one at risk. Also: **an exemption keyed on a remote-written
+  field stays a live gap even after the field stops selecting anything on the path
+  you are looking at** — this one survived on the artefact arm precisely because
+  attention was on the inline arm.

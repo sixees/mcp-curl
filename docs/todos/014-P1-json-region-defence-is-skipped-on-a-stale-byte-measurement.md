@@ -13,6 +13,14 @@ created: 2026-09-06
 # A JSON document's region-wise defence is skipped on a byte count taken before the sanitiser shrinks it
 
 > **See `018`** — moot if 018 lands: there is no region-wise re-serialising defence left to skip. Do not fix this before 018 is dispositioned.
+>
+> **UPDATE 2026-09-07: 018's first slice landed and the re-serialising defence is
+> gone** (`LESSONS.md` RC-37). `defendJsonLeaves`, `serialiseWithoutGrowing` and
+> `MAX_INLINE_DEFENCE_DEPTH` are deleted, so the instances named below no longer
+> exist and the stale-byte-measurement route with them. **Left open rather than
+> closed as a side effect** — `skill: file-todos` owns the lifecycle and 018 says
+> not to close its neighbours — but re-read it against the current tree before
+> spending anything on it, because the confirmed-instance list is now historical.
 
 ## Problem
 

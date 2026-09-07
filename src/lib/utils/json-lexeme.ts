@@ -53,11 +53,13 @@ if (typeof rawJsonImpl !== "function" || typeof isRawJsonImpl !== "function") {
  * Deliberately NOT exported.
  *
  * **`isRawNumber` is `JSON.isRawJSON`, which is true for a marker built from any
- * JSON text — not only a number.** Four structural guards read it as "this is a
- * scalar, do not descend", so a marker wrapping an object would make all four
- * treat a composite as a scalar and `defendJsonLeaves` would return an
- * undefended remote object graph — the RC-16 failure arriving through the guard
- * added to prevent it. Keeping this private leaves `keepNumberLexeme` as the
+ * JSON text — not only a number.** The structural guards that read it treat it
+ * as "this is a scalar, do not descend", so a marker wrapping an object would
+ * make them treat a composite as a scalar. `docs/todos/018` deleted the per-leaf
+ * defence walk that made that an undefended-object-graph bug outright, but the
+ * misclassification itself is unchanged and still reaches
+ * `processor.ts::isCompositeValue`, which is the body gate — so a marker
+ * wrapping an object would be classified non-JSON and take the wrong arm. Keeping this private leaves `keepNumberLexeme` as the
  * only producer in the tree, so the name is true by construction rather than by
  * a convention nothing enforces. RC-29.
  */

@@ -13,6 +13,12 @@ created: 2026-09-07
 
 # The body path rewrites JSON it should return verbatim
 
+> **FIRST SLICE LANDED 2026-09-07 and deliberately still open** — `LESSONS.md`
+> RC-37, RC-38. The body path, the artefact gate and the non-JSON arm are done;
+> **the selection machinery and the four published exports are not**, and neither
+> is `declared_content_type`. See *Work log* at the end. Do not close this on the
+> body path alone.
+
 **This is a settled scope decision from the director, not a review finding.** It
 reverses the direction five consecutive review rounds took on PR #37, and it is
 recorded here so a later round does not re-litigate it — `.claude/rules/03-divergence.md`
@@ -41,7 +47,19 @@ a selector for which defences run.
 
 ## Why — the current design is losing on both sides
 
-### It corrupts data on every call, measurably
+### It corrupts data on some calls, measurably — and the P1 is real
+
+> **"On every call" was an overstatement, corrected 2026-09-07 by measurement.**
+> Six of the eight fidelity cases AC 1 names **already survived** before this
+> work: an integer past `Number.MAX_SAFE_INTEGER`, `1e400`, `"1.50"`, key order,
+> non-ASCII keys and an escaped lone surrogate all round-tripped unchanged,
+> because `keepNumberLexeme` and `serialiseWithoutGrowing` were already doing
+> that job. The two real losses were **duplicate names** and **per-leaf markup
+> rewriting inside string values**. Invariant 16 was working: a marker in one
+> value did not splice across to a later one on the inline path.
+>
+> The P1 is unchanged by that correction — silent field loss on a duplicate name,
+> from a tool contracted to return an API's data.
 
 The body path parses and **re-serialises**, and the round trip is not
 information-preserving. Every one of these is in `LESSONS.md` already:
@@ -82,7 +100,8 @@ applies to redactors: the shapes nobody enumerated pass through reading as clean
 ### It puts the trust decision on a field the attacker writes
 
 `%{content_type}` is echoed verbatim from the origin and currently selects which
-strip stages run (`response/processor.ts:284-402`). That is invariant 1a's named
+strip stages run (`response/processor.ts`, the `strictestGrammar` / `isMarkup` /
+`isMarkdown` / `sniffedAsMarkup` block inside `defendText`). That is invariant 1a's named
 failure shape, and **guarding it has produced a P1 in every one of five review
 rounds on PR #37** — including two where the previous round's own remedy was the
 defect. `.claude/rules/42-ship-what-matters.md`'s convergence rule
@@ -117,18 +136,38 @@ as `text/plain` is technically JSON. `JSON_DOCUMENT_FIRST_CHARS`
 
 ### What survives, and why
 
-1. **The wrap plus spotlighting** — structural, byte-preserving, unforgeable
-   boundary. Invariant 1 is unchanged.
+1. **The wrap plus spotlighting, AND Step 2** — structural, byte-preserving,
+   unforgeable boundary. Invariant 1 is unchanged.
+
+   **"Step 2" was missing from this item until 2026-09-07 and its absence was
+   nearly load-bearing** (`LESSONS.md` RC-38). The argument below is that the
+   strip stages are *markup-enumerative*; that argument does not reach
+   invisible-character and bidi-override stripping, which this project's profile
+   §3 lists as in scope at the LLM trust boundary. Measured before deciding:
+   Step 2 is a **byte-for-byte no-op on every fidelity case AC 1 names** —
+   duplicate names, an integer past `Number.MAX_SAFE_INTEGER`, `1e400`, `"1.50"`,
+   non-ASCII keys, a lone surrogate — and alters only a body carrying an actual
+   attack codepoint, which still parses. So it costs this design nothing and
+   dropping it would have bought nothing.
 2. **The strip stages, made unconditional, on the two channels that are never
-   JSON** — the origin's response headers (`response/header-channel.ts:109`) and
-   cURL's stderr (`tools/curl-execute.ts:252`). Both already hardcode
+   JSON** — the origin's response headers (`response/header-channel.ts`, the
+   `MARKDOWN_MIME` call) and cURL's stderr (`tools/curl-execute.ts`, likewise).
+   Both already hardcode
    `contentType: MARKDOWN_MIME` as a dial meaning *run everything*, not as a
    classification. A constant replaces a decision; this is strictly simpler than
    today.
-3. **`utils/json-lexeme.ts`** — still required by the **jq** paths
-   (`jq/filter.ts::applyJqFilter`, `tools/jq-query.ts`), which re-serialise by
-   nature because they transform. Only the *defence* path stops needing it. Do
-   not delete this module.
+3. **`utils/json-lexeme.ts`** — still required, by **one** jq path:
+   `jq/filter.ts` (`applyJqFilter` and `applyJqFilterToParsed`), which
+   re-serialises by nature because it transforms. Only the *defence* path stops
+   needing it. Do not delete this module.
+
+   **Corrected 2026-09-07 by audit — this said "the jq paths
+   (`jq/filter.ts::applyJqFilter`, `tools/jq-query.ts`)" and `tools/jq-query.ts`
+   imports nothing from the module.** Verified importers were
+   `utils/index.ts` (re-export), `jq/filter.ts` and `response/processor.ts`; the
+   third was the defence path and is now the jq-filter branch only. So
+   acceptance criterion 8 below was unsatisfiable as written — there is one jq
+   path, not two.
 
 ### The artefact's form is now this todo's to settle — inherited from 016
 
@@ -254,13 +293,15 @@ A later round proposing the plain-branch notice is answered by citing this line.
 Selection machinery, all of it driven by the remote-controlled header:
 
 - `strictestGrammar`, `isMarkup`, `isMarkdown`, `contentTypeUndetermined`
-  (`response/processor.ts:284-402`)
+  (`response/processor.ts`, inside `defendText` — **cited by symbol, not by line
+  range: the `:284-402` here was already stale**)
 - `isSniffableContentType`, `supportsMarkupComments`, `isMarkdownContentType` —
   most of `utils/content-type.ts` (206 lines)
 - `defendJsonLeaves` and its round-trip scaffolding
 - `MEDIA_TYPE_HEAD` (conditional on the reporting decision above)
-- `utils/content-type.test.ts` (79 fixtures) and the bulk of
-  `response/processor.test.ts`'s 90
+- `utils/content-type.test.ts` (**49** `it` blocks, no `.each` tables — the
+  "79 fixtures" here was wrong) and the bulk of `response/processor.test.ts`'s
+  (**110** after this slice, not 90)
 
 Estimate: **700-900 lines of production code, 2,500+ of tests.** A deletion, not
 a refactor.
@@ -305,28 +346,29 @@ todo closed as a side effect of another is a todo nobody dispositioned.
 
 ## Acceptance criteria
 
-- [ ] A JSON body is returned **byte-identical** to what the origin sent. Test with
+- [x] A JSON body is returned **byte-identical** to what the origin sent. Test with
       a duplicate key, an integer past `Number.MAX_SAFE_INTEGER`, `1e400`, `"1.50"`,
       a lone surrogate, and non-ASCII keys — all must survive unchanged
-- [ ] The declared content type selects **nothing**. Probe: a body that parses as
+- [x] The declared content type selects **nothing**. Probe: a body that parses as
       JSON returns identically under `application/json`, `text/html`, `image/png`,
       a malformed header and no header at all
-- [ ] A non-JSON body returns **no inline body bytes** on any route
-- [ ] The parse-failure report contains **no bytes from the response body** —
+- [x] A non-JSON body returns **no inline body bytes** on any route
+- [x] The parse-failure report contains **no bytes from the response body** —
       including via V8's error message
-- [ ] A bare-scalar body (`null`, `42`, `"x"`) is treated as non-JSON
-- [ ] **The artefact gate is the same rule as the body gate, and inherits no
+- [x] A bare-scalar body (`null`, `42`, `"x"`) is treated as non-JSON
+- [x] **The artefact gate is the same rule as the body gate, and inherits no
       strip cap.** Probe both directions at a size that reaches the save arm: a
       600 KB *object* body produces the byte-exact artefact; a 600 KB bare-string
       body (`"` + 600 KB + `"`, valid JSON, non-composite) takes the non-JSON arm
       and never produces raw origin octets. Both fail against `isDefinitelyJson`
 - [ ] Header and stderr channels still run every strip stage, verified by probe
       (remove a stage; their tests must fail)
-- [ ] `utils/json-lexeme.ts` still covers both jq paths
+- [ ] `utils/json-lexeme.ts` still covers the jq path — `jq/filter.ts`. **One
+      path, not two**; see *What survives* item 3 for the correction
 - [ ] `ARCHITECTURE.md` invariants **1a, 14 and 16** rewritten — all three
       currently assume the content type is a decision. Invariant 16's region-wise
       premise no longer applies to the body
-- [ ] RC filed per `.claude/rules/03-divergence.md`, recording this as a settled
+- [x] RC filed per `.claude/rules/03-divergence.md`, recording this as a settled
       reversal of PR #37 rounds 1-5
 
 ## Known residual, stated rather than fixed
@@ -336,3 +378,56 @@ limit of spotlighting and this change does not close it. Leaf rewriting did not
 close it either — it made a smaller, differently-shaped hole and charged data
 corruption for it. Recorded here so the next reader does not mistake the residual
 for a regression this change introduced.
+
+## Work log
+
+- 2026-09-07 — filed as a settled operator scope decision after `/sixees-workflow:review`
+  round 5 on PR #37. Four further decisions recorded the same day.
+- 2026-09-07 — **first slice implemented on
+  `fix/018-parse-to-validate-return-original-bytes`** (`LESSONS.md` RC-37, RC-38).
+  Sliced on the director's call rather than landing whole: ~700-900 production lines
+  and 2,500+ test lines in one diff, on the surface where `42-ship-what-matters.md`'s
+  convergence rule had already fired three times, against a P1 worth having sooner.
+
+  **Landed — AC 1-6, 9, 10:**
+  - `processor.ts::classifyBody` is the gate, once, for the body AND the artefact:
+    full parse plus `isCompositeValue`, inheriting no strip cap. `JsonRejectionReason`
+    is a closed four-member vocabulary; V8's message is never interpolated and only
+    `/ at position (\d+)/` is read from it.
+  - A JSON body is handed through untouched and Step 2 reaches it at the wrap. A
+    non-JSON body returns no inline bytes: reason, byte count, path.
+  - The artefact is decided by the same gate — origin octets for JSON (**this closes
+    `016`'s AC 1**, which was unreachable until this todo settled who reads the file),
+    defended text otherwise, with the grammar declared undetermined.
+  - `defendJsonLeaves`, `serialiseWithoutGrowing`, `MAX_INLINE_DEFENCE_DEPTH` and
+    `exceedsDefenceDepth` deleted; `parseJsonDocument` collapsed into
+    `isDefinitelyJson`, which survives for the strip exemption only.
+  - Invariants 1a, 14 and 16 rewritten. Invariant 16 is now a **divider** rule.
+  - 40 acceptance cases at `executeCurlRequest`; five guards teeth-probed, each
+    failing a distinct case.
+
+  **Two things this todo did not anticipate, both filed as RCs:**
+  - **RC-37** — deleting the per-leaf walk removed the region-wise divider, and
+    invariant 16 had two live consumers outside the body path. Fixed at both layers;
+    header text is now its own MCP content entry.
+  - **RC-38** — *What survives* omitted Step 2, and the non-JSON artefact was taking
+    the origin's declared grammar rather than the strictest one.
+
+  **Still open here — AC 7, 8, and the reporting field:**
+  - **The selection machinery**: `strictestGrammar`, `isMarkup`, `isMarkdown`,
+    `contentTypeUndetermined`, most of `utils/content-type.ts`, `MEDIA_TYPE_HEAD`.
+    Now dead weight on the body path but still live for `defendText`'s two text
+    channels, which AC 7 makes unconditional.
+  - **The four published exports** (`defendText`, `DefendTextOptions`,
+    `isMarkdownContentType`, `isSniffableContentType`, `supportsMarkupComments`) —
+    the MAJOR half.
+  - **`declared_content_type` on the `include_metadata` envelope.** Not added by this
+    slice and nothing regressed: it was never reported on any branch. It is coupled
+    to `MEDIA_TYPE_HEAD`'s deletion, so it goes with the next slice.
+  - **A conflict inside this todo, resolved and recorded rather than left:** *Bad
+    JSON: report, save, do not inline* asks the report to carry "the declared content
+    type", while *Where the declared content type is reported* settles it onto the
+    JSON metadata field only. The later, explicitly-settled decision wins — the plain
+    `savedMessage` sentence echoes no remote token, and two existing test cases
+    caught a first draft that did. Re-read those two sections together before the
+    next slice.

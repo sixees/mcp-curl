@@ -385,11 +385,13 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(Object.keys(returned)).toEqual(["a", "b", "c", "d"]);
         });
 
-        // Positive control for the composites-only rule in `defendJsonLeaves`.
+        // Positive control for the composites-only rule, which outlived the
+        // per-leaf walk it was written for and now lives on
+        // `processor.ts::compositeStringPayload`.
         // `JSON_DOCUMENT_FIRST_CHARS` admits digits and `-`, so a scalar leaf
-        // parses as JSON too — and recursing into one would re-serialise it,
+        // parses as JSON too — and unwrapping one would re-serialise it,
         // turning the string "1.50" into "1.5" and "007" into "7". A scalar
-        // has no fields and cannot be spliced, so this arm must leave it
+        // has no fields and cannot be spliced, so the divider must leave it
         // exactly as the origin sent it.
         it("does not rewrite scalar-shaped string values", async () => {
             // `padded` and `trailing` are what give the raw-number guard in
