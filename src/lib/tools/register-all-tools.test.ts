@@ -18,6 +18,11 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
+// Explicit return type on the local builder below: one line that makes a
+// `CommandResult` change a compile error at the builder rather than at each of
+// its call sites. This suite keeps its own builder deliberately — see
+// `curl-output.test-fixture.ts` — so this is what ties it to the contract.
+import type { CommandResult } from "../execution/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 
 // The real separator length, not a short stand-in: the metadata search window
@@ -59,7 +64,12 @@ vi.mock("../execution/index.js", async () => {
 const executionModule = await import("../execution/index.js");
 const { registerAllCapabilities } = await import("../server/registration.js");
 
-const mockedExecuteCommand = executionModule.executeCommand as Mock;
+// `vi.mocked`, not `as Mock`. The bare `Mock` type erases the signature, so
+// `mockResolvedValue` accepts `any` and every hand-built fixture in this file is
+// unchecked against `CommandResult` — a new required field on it would arrive as
+// `undefined` in each of them with the suite green. `vi.mocked` preserves the
+// signature, so each site is checked at the point it is written.
+const mockedExecuteCommand = vi.mocked(executionModule.executeCommand);
 
 /**
  * Build cURL output as the real executor hands it back.
@@ -69,7 +79,11 @@ const mockedExecuteCommand = executionModule.executeCommand as Mock;
  * descriptors in production (invariant 13) — a test that concatenated them
  * would be asserting against a composition the executor never produces.
  */
-function curlOutput(body: string, contentType: string, headerBlock?: string) {
+function curlOutput(
+    body: string,
+    contentType: string,
+    headerBlock?: string
+): CommandResult {
     return {
         stdoutBytes: Buffer.concat([
             Buffer.from(body, "utf8"),

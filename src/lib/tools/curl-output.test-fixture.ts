@@ -10,14 +10,18 @@
 // handler, so the name is the only thing distinguishing them.
 // `CONVENTIONS.md` → *Naming* owns the rule.
 //
-// **Extracted rather than copied, because the shape is the assertion.** Three
-// suites stub the executor — the header channel, the body's octet fidelity, and
-// the full registration path — and all three depend on cURL's actual output
-// shape: the header block on its own field, the `-w` metadata suffix on stdout,
-// and a separator of the real length. A hand-written copy drifts silently, and
-// the direction it drifts is toward a fixture that passes against a handler
-// which infers the header/body boundary from the body — the exact defect
-// `ARCHITECTURE.md` invariant 13 forbids.
+// **Shared by two of the three suites that stub the executor**, because the
+// shape is the assertion: the header block on its own field, the `-w` metadata
+// suffix on stdout, and a separator of the real length. A hand-written copy
+// drifts toward a fixture that passes against a handler which infers the
+// header/body boundary from the body — the defect `ARCHITECTURE.md` invariant 13
+// forbids.
+//
+// `register-all-tools.test.ts` is the third and keeps its own builder and
+// separator literal, deliberately: retiring its 31 positional call sites would
+// churn a file no current change touches. What binds it instead is the typed
+// mock — `vi.mocked` gives its every `mockResolvedValue` the real
+// `CommandResult` contract — plus an explicit return type on its own builder.
 //
 // The `vi.mock` declarations stay in each test file: vitest hoists them per
 // module, so they cannot live here.
@@ -33,28 +37,34 @@ import type { CommandResult } from "../execution/index.js";
  */
 export const METADATA_SEPARATOR = "\n---MCP-CURL-00000000-0000-4000-8000-000000000000---\n";
 
-/**
- * The hostname every stubbed `validateUrlAndResolveDns` resolves to.
- *
- * One value, because three suites mock that call and two of them had already
- * drifted from the third (`example.test` against `api.example.test`). Nothing
- * currently branches on it — which is exactly why the drift was invisible, and
- * why a future per-host rate-limit key or log label would have been exercised by
- * two suites and silently not by the third.
- */
-export const STUB_HOSTNAME = "example.test";
+// **There is deliberately no shared stub-hostname constant here, and the reason
+// is a vitest constraint rather than a preference.** `vi.mock` factories are
+// hoisted above every import, so a factory referencing an imported binding
+// throws `Cannot access '__vi_import_N__' before initialization` — measured, on
+// `curl-execute.headers.test.ts`, whose whole suite failed to load. A sibling
+// suite referencing the same constant happened to pass, because its import chain
+// initialised this module first; that is module-ordering luck, not a working
+// pattern, and it would have become an unexplainable flake later.
+//
+// `vi.hoisted` would make the value available, but only per file — so it buys no
+// sharing and costs machinery. Each suite therefore spells its own hostname
+// literal inside its own factory. Three reviewers flagged the resulting drift
+// (`example.test` twice, `api.example.test` once) and it is real; nothing
+// branches on the hostname today, and if something ever does, the fix is to
+// assert the value rather than to share it.
 
 /**
  * What `executeCommand` resolves with, as `executeCurlRequest` reads it.
  *
  * **Derived from `CommandResult`, never restated.** The two header fields are
  * intersected back to required-but-nullable on purpose: a builder must *decide*
- * whether a header block is present rather than silently omitting it, and the
- * intersection means a field added to `CommandResult` is a compile error here
- * instead of arriving as `undefined` in every end-to-end case that stubs the
- * executor. Those cases are the only proof invariant 13's header/body split
- * holds, so a silent lapse in them is a lapse in the one guarantee they exist
- * for.
+ * whether a header block is present rather than silently omitting it.
+ *
+ * A new **required** field on `CommandResult` is then a compile error here. A new
+ * **optional** one is not — it arrives as `undefined` with nothing erroring, and
+ * no type can close that. What covers it is `vi.mocked` at each suite's mock
+ * declaration, which types every `mockResolvedValue` against
+ * `Promise<CommandResult>` including the literals that bypass this builder.
  */
 export type CurlOutputFixture = CommandResult & {
     headerBytes: Buffer | undefined;
@@ -101,12 +111,20 @@ export function curlOutputFor({
 }): CurlOutputFixture {
     const bodyBytes = toBuffer(body);
     const meta = Buffer.from(`${METADATA_SEPARATOR}${contentType}`, "utf8");
-    // `undefined` when there is no block at all, distinguishing "capture was not
-    // requested" from "requested and the origin sent nothing" — the split
-    // invariant 13 asks `curl_execute` to report rather than guess. An EMPTY
-    // block is still a block, so a caller passing "" gets a zero-length Buffer
-    // rather than absence.
-    const header = headerBlock === undefined ? undefined : toBuffer(headerBlock);
+    // **Empty and absent collapse to `undefined`, exactly as the executor does**
+    // — `command-executor.ts`: "An empty capture and no capture collapse to
+    // `undefined`, so 'no header bytes' has one spelling rather than two."
+    //
+    // An earlier version of this line kept `""` as a zero-length Buffer and
+    // claimed it distinguished "not requested" from "requested, origin sent
+    // nothing". It does not: that question is answered by `params.include_headers`
+    // in `curl-execute.ts`, and `headerBytes` cannot answer it by design. Keeping
+    // the extra state let a fixture construct a `CommandResult` the executor
+    // cannot produce, which is a test exercising an unreachable branch (K-8).
+    const header =
+        headerBlock === undefined || toBuffer(headerBlock).length === 0
+            ? undefined
+            : toBuffer(headerBlock);
     return {
         stdoutBytes: Buffer.concat([bodyBytes, meta]),
         headerBytes: header,

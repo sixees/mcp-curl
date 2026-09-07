@@ -1606,21 +1606,75 @@ recorded as caught.
   sideways cost too: `STRIP_PATH_MAX_BYTES` is measured on the decode, so a
   non-UTF-8 body began skipping the strip path at ~85-141 KB of wire instead of
   256 KB — a defence loosening nobody asked for.
-- **What changed:** `processResponse` now checks **both** representations.
-  `Buffer.byteLength(decoded) >= buffer.length` always holds, so the decoded arm
-  is the one that binds and the wire arm is an O(1) fast path (3.03 → 0.06 ms on
-  an 11 MB refusal) **plus the arm that keeps the message true** — the decoded
-  arm's wording says the body is not valid UTF-8, which is right when that arm
-  fires and wrong for an oversized ASCII body. `ARCHITECTURE.md` invariant 14
-  states which arm does which. A teeth probe is what established the
-  subsumption: removing the wire arm failed no correctness case, which is how it
-  became clear it was a fast path rather than a second gate — and the test was
-  then strengthened to assert the message-truth property it does uniquely own.
-- **What this costs next time:** **before moving a limit onto a different
-  quantity, ask what the old quantity was bounding — not just what it was
-  reporting.** A measurement can have two consumers, a human-readable one and a
-  structural one, and a fix aimed at the first silently retires the second. The
-  general form is K-11: name the boundary the defect sits on and check *both*
-  sides. Here the sides were *"is this number true?"* and *"does this number
-  constrain anything?"*, and 016 answered only the first. **The tell is a limit
-  whose units stop matching the units of the work it precedes.**
+- **What changed:** `processResponse` now checks **both** representations, and
+  `ARCHITECTURE.md` invariant 14 owns the detail and the measurement — cited here
+  rather than restated, because an earlier draft of this entry duplicated the
+  figures into six documents and one copy had already dropped one of them within
+  hours.
+- **And review corrected the entry's own framing.** The first draft priced the
+  wire arm as an O(1) fast path on an 11 MB refusal and as the arm that keeps the
+  message true. **Three reviewers independently found that arm is unreachable
+  through `curl_execute`**: `execution/command-executor.ts::accountFor` charges
+  every chunk and aborts the child *before* it is retained, and
+  `curl-args-builder.ts` passes `--max-filesize`, so no request that resolves can
+  hand `processResponse` an over-cap buffer. The test that gave the arm teeth
+  reaches it only with the executor stubbed. **The measurement was real and the
+  population was empty** — so the arm stays as defence-in-depth for a direct
+  internal caller, described as that, and the invariant now names the layers that
+  actually refuse. That mattered beyond wording: while the ceiling was documented
+  only at `processResponse`, raising or removing `accountFor`'s cap would have
+  violated no numbered invariant.
+- **A teeth probe is what exposed the subsumption**, and it is the same shape
+  RC-21 records — *"a regression guard for a two-path invariant asserted it on one
+  path, so the other could revert with the suite green."* Removing the wire arm
+  failed nothing until the test was strengthened to assert the message-truth
+  property it uniquely owns.
+- **What this costs next time:** two rules.
+  1. **Before moving a limit onto a different quantity, ask what the old quantity
+     was bounding — not just what it was reporting.** A measurement can have two
+     consumers, a human-readable one and a structural one, and a fix aimed at the
+     first silently retires the second. K-11: name the boundary and check *both*
+     sides. Here they were *"is this number true?"* and *"does this number
+     constrain anything?"*, and 016 answered only the first. **The tell is a limit
+     whose units stop matching the units of the work it precedes.**
+  2. **Before pricing a guard, find out whether anything can reach it — and name
+     the layer that refuses first, in the invariant.** A benefit measured on an
+     input no caller can deliver reads as live defence, and the test proving it
+     will be stubbing away the layer that would have refused. The corollary is
+     the one that bit here: a ceiling enforced at three layers and documented at
+     one leaves the two that bind uncovered by any invariant.
+
+### RC-35 — the shared constant three reviewers asked for cannot exist, and a sibling passing hid that
+
+**Date:** 2026-09-07 · **PR:** #38 · **Plan:** review round 2 of `docs/todos/016`
+
+**Class:** K-1, K-3 — *class-id:* `broken-contract`
+
+- **The plan said:** three reviewers, independently, that
+  `src/lib/tools/curl-output.test-fixture.ts` should export a shared stub-hostname
+  constant and both `curl_execute` end-to-end suites should import it — the
+  measured drift being `example.test` in two suites against `api.example.test` in
+  a third. The finding was correct and the fix looked like a one-line
+  substitution.
+- **Reality was:** **`vi.mock` factories are hoisted above every import**, so a
+  factory referencing an imported binding throws `Cannot access
+  '__vi_import_4__' before initialization`. Measured: adding it to
+  `curl-execute.headers.test.ts` made that suite fail to load entirely — 0 tests
+  collected. The dangerous part is that the *other* suite,
+  `curl-execute.size-and-save.test.ts`, referenced the same constant and
+  **passed**, because its import chain happened to initialise the fixture module
+  before the security mock was evaluated. Had the failing suite not existed, the
+  pattern would have shipped green and become an unexplainable load-order flake
+  later. `vi.hoisted` makes a value available to a factory but only per file, so
+  it buys no sharing at all.
+- **What changed:** the constant was removed rather than kept working by luck.
+  Both suites spell the literal inside their own factory, and the fixture records
+  the constraint, the measurement and why `vi.hoisted` is not a substitute — so
+  the next reader does not re-derive it, and the next reviewer raising the same
+  drift is answered with a reason rather than a repeat attempt.
+- **What this costs next time:** **when a fix works in one place and fails in
+  another, the passing one is evidence about ordering rather than about the
+  fix.** A shared value referenced from a hoisted mock factory is unavailable by
+  construction; that it resolves anywhere is accidental. More generally: a
+  reviewer's fix is a hypothesis about the code, and one that three reviewers
+  agree on is still a hypothesis — run it before recording it as done.

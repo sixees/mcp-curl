@@ -222,23 +222,28 @@ what a violation looks like, it does not belong on this list.
     discarded at the parse boundary, so it is a bounded token and not a prose
     channel. `LESSONS.md` RC-30, RC-31.
 
-    **`MAX_RESPONSE_SIZE` is checked against BOTH the wire octets and the
-    decode, and the two arms have different jobs.** A decode only ever inflates —
-    U+FFFD is three bytes where an invalid octet was one — so
-    `Buffer.byteLength(decoded) >= buffer.length` always holds and the decoded
-    arm is the one that binds; it is what bounds every stage below the gate, and
-    the multiplier is the origin's to choose. The wire arm is an O(1) fast path
-    (3.03 ms → 0.06 ms on an 11 MB refusal) **and the reason the error message is
-    true**: the decoded arm's wording says the body is not valid UTF-8, which is
-    correct only when that arm fired, and false for an oversized ASCII body.
-    Removing the wire arm fails no correctness case and one message-truth case;
-    removing the decoded arm stops the ceiling bounding anything. **Checking only
-    the wire form is the violation, and it was measured**: an ordinary 9.5 MB
-    gzip inflates 1.81x and went from refused to accepted at 3.9x the CPU and
-    10.3x the peak RSS — past `MAX_TOTAL_RESPONSE_MEMORY`, which the sibling
-    constant documents as the ceiling across *all* concurrent requests.
-    `exceedsInlineCap` is a separate question and weighs the DEFENDED text,
-    because it answers *how much reaches the model*. `LESSONS.md` RC-33.
+    **The request-level ceiling is a different property, enforced upstream, and
+    it is named here so that changing it has an invariant to violate.**
+    `MAX_RESPONSE_SIZE` is enforced streaming in
+    `execution/command-executor.ts::accountFor`, which aborts the child before
+    the over-cap chunk is retained, with `--max-filesize` from
+    `curl-args-builder.ts` as the cURL-side half. **Raising or removing either is
+    a change to this invariant** — the gap that existed while the ceiling was
+    documented only at `processResponse`.
+
+    `processResponse` bounds the DECODE of that already-bounded buffer, and
+    bounding only the wire form is the violation. A decode only ever inflates, at
+    a multiplier the origin picks: an ordinary 9.5 MB gzip inflates 1.81x, and a
+    wire-only gate took one request from refused to accepted at 3.9x CPU and
+    10.3x peak RSS (+19 MB to +196 MB) — past `MAX_TOTAL_RESPONSE_MEMORY`, which
+    the neighbouring constant documents as covering *all* concurrent requests.
+    Its wire-length check is defence-in-depth for a direct internal caller, not a
+    production path: `accountFor` refuses such a body first, so that arm is
+    unreachable through `curl_execute` and its message is observable only with
+    the executor stubbed. `LESSONS.md` RC-34.
+
+    `exceedsInlineCap` is this invariant's own gate and weighs the DEFENDED text,
+    because it answers *how much reaches the model*.
 
 15. **Every regex in the strip path is linear in the size of its input, and the
     byte cap is not what makes it so.** A `g`-flagged replace starts a match

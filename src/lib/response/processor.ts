@@ -888,16 +888,15 @@ function savedMessage(facts: SavedMessageFacts): string {
  *    bytes) which can be longer than a minimal source like `[a](http://x)`.
  *    The post-pipeline size check is therefore required, not redundant.
  *
- * **Takes the wire octets, not a decoded string, and that is what makes the
- * persisted artefact the response.** A `string` parameter forced every caller
- * to decode before calling — so the size gate weighed the decode, the saved file
- * carried U+FFFD wherever the origin sent a non-UTF-8 octet, and nothing
- * downstream could tell. Both questions this function answers about bytes are
- * questions only the octets can answer, so the octets are what it receives.
- * `LESSONS.md` RC-33.
+ * **Takes the wire octets, not a decoded string**, for two reasons: the size
+ * guard must be able to quote a byte count the origin can be held to, and taking
+ * the buffer rather than a `(text, bytes)` pair makes it impossible for the two
+ * to disagree. The decode happens once, here, for the defence pipeline and the
+ * inline body. `LESSONS.md` RC-33.
  *
- * The decode happens once, here, and is used for exactly the two things a
- * `string` is genuinely needed for: the defence pipeline and the inline body.
+ * **It does NOT make the persisted artefact byte-exact.** That was attempted and
+ * reverted; the artefact is the defended text, and `docs/todos/018` owns the
+ * fidelity question. The save arm below is where that is stated.
  *
  * @param responseBytes - The body's wire octets, from
  *                        {@link ParsedResponse.bodyBytes}; runtime-checked to be
@@ -918,43 +917,17 @@ export async function processResponse(
         throw new TypeError("processResponse: responseBytes must be a Buffer");
     }
 
-    // Step 1: Early size guard — runs BEFORE sanitization to avoid wasting CPU on oversized responses.
+    // Step 1: Size guard. **Both counts are checked, and `ARCHITECTURE.md`
+    // invariant 14 owns why** — including the measurement, so it is not restated
+    // here and cannot drift from it.
     //
-    // **Both counts are checked, and the reason is that they answer different
-    // questions.** The wire length is what the origin can be held to and the
-    // only honest number to put in the message; the decoded length is what every
-    // stage after this point actually allocates. Checking either one alone fails,
-    // in opposite directions, and this repository has now made both mistakes:
-    //
-    // - Gating the DECODE alone (the shape before this change) refused bodies
-    //   for a size the origin never sent — U+FFFD is three bytes where an
-    //   invalid octet was one, so a 4 MB body of mostly-invalid octets came back
-    //   as *"Response size (12000000 bytes) exceeds maximum allowed"*, a number
-    //   found nowhere on the wire.
-    // - Gating the WIRE alone stops bounding the work. Measured on a 9.5 MB
-    //   gzip — an ordinary binary body, not an attack — the decode inflates
-    //   1.81x, and the request went from refused to accepted at 3.9x the CPU and
-    //   **10.3x the peak RSS (+19 MB to +196 MB)**. One request then peaks past
-    //   `MAX_TOTAL_RESPONSE_MEMORY`, which `limits.ts` documents as the ceiling
-    //   across ALL concurrent requests, and `docs/todos/003` records that the
-    //   pool reads zero during this phase, so nothing refuses the next one.
-    //
-    // So both are checked — but they are not two gates, and a teeth probe is
-    // what established that. **A decode only ever inflates**, so
-    // `Buffer.byteLength(decoded) >= buffer.length` always holds and the decoded
-    // check below strictly subsumes this one: removing this `if` fails no
-    // correctness case. Its two real jobs:
-    //
-    // 1. **The O(1) fast path.** Refusing here costs a property read; refusing
-    //    below costs a full decode of a body we were going to reject anyway.
-    //    Measured at 3.03 ms → 0.06 ms CPU on an 11 MB body, a 50x saving.
-    // 2. **Message truth**, which is what gives it teeth. The decoded arm's
-    //    message says the body is not valid UTF-8 — true whenever that arm is
-    //    the one that fired, and false for an oversized ASCII body, which is
-    //    valid UTF-8 and merely too big. Without this arm every over-cap body
-    //    would be told it was undecodable.
-    //
-    // `LESSONS.md` RC-33.
+    // Short version: the decoded arm is what binds, because a decode only ever
+    // inflates and every stage below allocates the decode. The wire arm below is
+    // defence-in-depth for a direct internal caller — `command-executor.ts`'s
+    // `accountFor` already refused an over-cap body streaming, so it is
+    // unreachable through `curl_execute` — and it is what keeps the decoded
+    // arm's "not valid UTF-8" wording true, since that arm can then only fire on
+    // a body that really is not.
     const rawBytes = responseBytes.length;
     if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
         throw new Error(
@@ -1026,16 +999,15 @@ export async function processResponse(
 
     // Step 6: Apply jq filter if provided AND response is JSON.
     //
-    // **One boolean, set where the filter actually runs, and read everywhere the
-    // answer is needed.** Two spellings of "did a filter run" disagreed on
-    // `jq_filter: ""`: this gate is falsy so no filter ran, while the disk and
-    // message decisions below tested `!== undefined` and concluded one had. The
-    // artefact became the re-encoded defended text instead of the origin's
-    // octets — 8 wire octets measured as 10 on disk, `0xA9` replaced — which is
-    // the RC-33 defect this change exists to remove, reintroduced by a predicate
-    // rather than by a decode. The message then called it "FILTER OUTPUT".
+    // **One boolean, set where the filter actually runs.** Two spellings of "did
+    // a filter run" disagreed on `jq_filter: ""`: this gate is falsy so no filter
+    // ran, while the message below tested `!== undefined` and concluded one had —
+    // so `savedMessage` called an unfiltered body "Result of jq_filter" and told
+    // the model the file held filter output. Both false, about the whole body.
     //
-    // There is no predicate to re-spell now, so the three sites cannot diverge.
+    // Its one reader is `savedMessage`'s `filtered` flag; the disk decision does
+    // not branch on it, because what lands on disk is the same on both arms —
+    // see the save arm below, which is the only place that fact is stated.
     let filterApplied = false;
     if (options.jqFilter) {
         const isJson = isJsonContentType(options.contentType);

@@ -82,10 +82,16 @@ export const CurlExecuteSchema = z.object({
         .describe("Wrap response in JSON with metadata (exit code, success status)"),
     jq_filter: z.string()
         // Rejected rather than silently ignored. An empty filter used to pass
-        // validation, skip the filter step, and still be counted as "filtered"
-        // by two downstream decisions — see `processResponse`'s `filterApplied`.
-        // The predicate is fixed there; this stops the disagreeing value being
-        // constructible at all.
+        // validation, skip the filter step, and still be reported as "Result of
+        // jq_filter" by `savedMessage` — see `processResponse`'s `filterApplied`,
+        // which is the fix that matters because a library caller bypasses this
+        // schema. This stops `""` specifically; `" "` is still constructible and
+        // throws from `applyJqFilterToParsed` before anything reads it.
+        //
+        // **This narrows an accepted input on a published entry point** —
+        // `CurlExecuteSchema` is exported from `src/lib/index.ts` — so invariant
+        // 11 makes it a MAJOR. `CONVENTIONS.md` → *Security* is why it is done
+        // anyway: an explicitly-supplied empty input fails closed.
         .min(1, "jq_filter must not be empty")
         .optional()
         .describe("JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check."),
@@ -113,8 +119,9 @@ export const JqQuerySchema = z.object({
     filepath: z.string()
         .describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
     jq_filter: z.string()
-        // Required here, so an empty string is the only degenerate value; same
-        // reasoning as `CurlExecuteSchema.jq_filter`.
+        // Required here, so `""` is the only degenerate value — and unlike its
+        // sibling this narrows no accepted input: `applyJqFilter` already threw
+        // on an empty filter, so only the error's site and wording move.
         .min(1, "jq_filter must not be empty")
         .describe("JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported."),
     max_result_size: z.number()

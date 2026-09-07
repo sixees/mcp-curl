@@ -273,6 +273,28 @@ describe("parseResponseWithMetadata — bodyBytes carries the wire octets", () =
         expect(Buffer.from(text(parsed), "utf8").equals(body)).toBe(true);
     });
 
+    it("on the not-found arm, bodyBytes is the whole buffer and not the origin's body", () => {
+        // The counterexample to "exactly as the origin sent them", and the reason
+        // that doc-block is qualified per-arm. A `Content-Type` longer than the
+        // field allowance pushes the separator out of the search window, so
+        // "not found" and "not present" become one value — and `bodyBytes` then
+        // contains this server's OWN separator plus remote header text that was
+        // never body.
+        //
+        // It fails safe: `metadataFound: false` selects the strictest grammar and
+        // the whole thing is stripped. Asserted because `docs/todos/018` AC 1
+        // wants a byte-exact body, and this is the arm where that is not
+        // available — a fidelity path built on this field must read the flag.
+        const longType = `text/plain; profile="${"x".repeat(LIMITS.MAX_METADATA_TAIL_LENGTH)}"`;
+        const raw = buf(`body${SEP}${longType}`);
+        const parsed = parseResponseWithMetadata(raw, SEP);
+
+        expect(parsed.metadataFound).toBe(false);
+        expect(parsed.bodyBytes.equals(raw)).toBe(true);
+        expect(text(parsed)).toContain("MCP-CURL");
+        expect(text(parsed)).toContain("text/plain");
+    });
+
     it("returns an empty buffer for an empty body, not undefined", () => {
         // A zero-length body is a real response — 204, or a HEAD. The saved and
         // size-gate paths both read `.length` off this, so absence here would be

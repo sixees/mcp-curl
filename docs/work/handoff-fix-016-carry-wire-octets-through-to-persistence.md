@@ -44,14 +44,18 @@ its fulfilment:
 
 | Arm | Job |
 |---|---|
-| wire octets (`responseBytes.length`) | O(1) fast path, and the arm that keeps the error message true |
 | decoded length (`Buffer.byteLength(response)`) | **the binding gate** — what bounds every stage below |
+| wire octets (`responseBytes.length`) | defence-in-depth for a direct internal caller, and the arm that keeps the error message true |
 
-A decode only ever inflates, so `Buffer.byteLength(decoded) >= buffer.length`
-always holds and the decoded arm subsumes the wire arm for correctness. The wire
-arm survives because refusing without decoding is 50x cheaper, and because the
-decoded arm's message says the body is not valid UTF-8 — true when it fires,
-false for an oversized ASCII body.
+A decode only ever inflates, so the decoded arm subsumes the wire arm for
+correctness. **The wire arm is not reachable through `curl_execute`** — three
+reviewers established that in round 2: `command-executor.ts::accountFor` aborts
+the child before an over-cap chunk is retained, and `--max-filesize` is the
+cURL-side half. It survives as defence-in-depth and because the decoded arm's
+"not valid UTF-8" wording would otherwise be asserted about a merely-oversized
+ASCII body. `ARCHITECTURE.md` invariant 14 now names the layers that actually
+refuse — while it did not, raising `accountFor`'s cap would have violated no
+invariant.
 
 ### One answer to "did a filter run" — `src/lib/response/processor.ts`, `src/lib/server/schemas.ts`
 
@@ -253,8 +257,12 @@ every stage after the gate runs on the decode. On an ordinary 9.5 MB gzip —
 ceiling across *all* concurrent requests. Three concurrent 10 MB invalid-octet
 bodies: all three rejected at base, all three fulfilled on the branch.
 
-**Correction:** both representations are checked. The decoded arm binds; the wire
-arm is a fast path and the message-truth arm.
+**Correction:** both representations are checked, and `ARCHITECTURE.md` invariant
+14 owns the detail and the measurement rather than this entry restating them —
+round 2 found the figures duplicated across six documents with one copy already
+drifted. The decoded arm binds. The wire arm is **defence-in-depth for a direct
+internal caller, not a fast path on a live route**: `accountFor` refuses an
+over-cap body streaming, so nothing reachable gets that far.
 
 **Files:** `src/lib/response/processor.ts::processResponse`, `ARCHITECTURE.md`
 invariant 14, `src/lib/tools/curl-execute.size-and-save.test.ts`.
@@ -385,7 +393,8 @@ removed.
 | "Tests pass" | Verified — ran the suite in JSON reporter mode and parsed structural counts. 1,281 passed, 1 failed (the todo-013 flake, in an untouched file, a different test on each of four runs) |
 | "Key files complete" | Verified — `git diff --name-only` against the resolved base matches the commit messages; no unlisted `src/` change |
 | "`processResponse` has one caller" | Verified — `rg` found exactly one production call site; the docblock's claim held |
-| "Not on a published entry point" | Verified independently by three reviewers against `package.json` exports, `src/lib.ts`, `src/lib/index.ts` and the generated `.d.ts` files. Invariant 11 untouched |
+| "`processResponse` is not on a published entry point" | Verified by three reviewers against `package.json` exports, `src/lib.ts`, `src/lib/index.ts` and the generated `.d.ts` files. **True of `processResponse`, `saveResponseToFile` and `ParsedResponse` only — it was carried as a blanket claim about the branch and that was wrong.** See the row below |
+| ~~"Invariant 11 untouched"~~ | **Refuted in round 2, by three reviewers.** `CurlExecuteSchema` IS published on the `./lib` entry (`src/lib/index.ts:31`) and is the MCP tool's input schema. At base `jq_filter: ""` parsed and returned the body; it is now rejected. Accept → reject on a published surface is a **MAJOR** by invariant 11. The narrowing is right (`CONVENTIONS.md` → *Security*: an explicitly-supplied empty input fails closed) — the version number is the director's call at merge, the same shape `docs/todos/018` → *The published exports go with them* uses. `JqQuerySchema` is **not** a break: `applyJqFilter` already threw on an empty filter, so only the error's site moves |
 | "`jq_query` runs the full `defendText` pipeline on what it reads" | **Refuted** — three ways, by two reviewers. Invariant 1 holds via the post-processor wrap instead. The claim is deleted |
 | "The strip pass bought only the markup subset" | **Refuted** on the non-JSON route — `jq_query` cannot open such a file, so there is no defended reader. This is the P1 |
 | "`savedMessage`'s byte count was wrong at base" | **Refuted by my own re-check** — `git show ccf6e62` shows the two agreed exactly. RC-33 corrected |
@@ -406,3 +415,129 @@ removed.
 
 **None outstanding.** The one P1 was escalated, answered by the director, and
 closed by narrowing the branch.
+
+---
+
+## Code Review — 2026-09-07, round 2
+
+**Certification:** complete
+**Roster closure:** closed [unresolved: pattern-recognition-specialist → "The correctness of any single instance → whichever reviewer owns that lane"]
+
+Re-run against a **frozen** tree at `77f82af` on the director's instruction, because
+round 1 had been dispatched mid-edit and the narrowing landed after most reviewers
+had read the code. Same 8-agent roster; 8 returned. No commits were made while
+they ran.
+
+### Findings by class — round 2
+
+**11 classes. Eight are prose, two are test scaffolding, one is a plan document.
+None is production behaviour.** Two reviewers verified the code clean, one by
+fuzzing the decode-inflation premise across 200,000 random buffers with no shrink.
+
+| Class | Severity | Reviewers | Disposition |
+|---|---|---|---|
+| `fail-open-default` — todo 018's artefact gate named a predicate whose domain cannot answer it | P2 | architecture | **fixed in 018** — full parse + `isCompositeValue`, no strip cap, plus a bare-scalar acceptance criterion |
+| `misplaced-decision` — the request ceiling documented at the one layer that cannot reach it | P2 | security, data-integrity, architecture | **fixed** — invariant 14 names `accountFor` and `--max-filesize`; the wire arm is described as defence-in-depth |
+| `stale-comment` — prose from the reverted design survived it | P2 | data-integrity, code-simplicity | **fixed** — three comment blocks re-derived from the landed tree |
+| `broken-contract` — `.min(1)` narrows a published contract; the handoff certified otherwise | P2 | security, data-integrity, architecture | **fixed** — the false row is struck through and corrected in *Verified claims* |
+| `untyped-boundary` — `as Mock` erased the executor's signature | P2 | typescript | **fixed** — `vi.mocked` in all three suites; probe now yields 42 errors where it yielded 0 |
+| `convention-drift` — one measurement restated in six places, one copy already drifted | P2 | pattern | **fixed** — invariant 14 owns it; RC-34, the handoff and todo 016 cite it |
+| `broken-contract` — the fixture could construct a `CommandResult` the executor cannot | P3 | typescript | **fixed** — empty and absent collapse to `undefined`, as the executor does |
+| `stale-comment` — four false claims in the fixture's docblocks, incl. the pre-rename filename | P3 | typescript | **fixed** |
+| `duplicated-logic` — the shared stub hostname reached one of two call sites | P3 | pattern, typescript, code-simplicity | **fix attempted and reverted — see RC-35.** The constant cannot exist: `vi.mock` hoists above imports |
+| `stale-comment` — `bodyBytes` claimed "exactly as the origin sent them" | P3 | data-integrity | **fixed** — qualified per arm, with the test it named |
+| `stale-comment` — todo 016's finding list in the present tense | P3 | architecture | **fixed** — all six instances carry their state at HEAD |
+
+- Rejected: **0**.
+- **Declined, out of scope, with the reason recorded here rather than as a todo:**
+  `security-sentinel`'s P3 on `saveResponseToFile`'s output-directory guard, which
+  compares `realpath(resolve(outputDir))` against `realpath(resolve(targetDir))`
+  where `targetDir = outputDir ?? …` — the same value, so it validates nothing.
+  The reviewer's own assessment is that the population is empty (the one caller
+  validates upstream via `resolveOutputDir` + `validateOutputDir`) and that the
+  lines pre-exist this branch and are untouched by it. Declining rather than
+  fixing, because widening a branch that has already been narrowed once to delete
+  a pre-existing dead guard is the scope creep that produced round 1.
+- Escalated: **0**. Todos created: **0**. Todos closed: **0**.
+
+### One finding whose fix did not survive contact — RC-35
+
+Three reviewers asked for a shared stub-hostname constant. It is **not
+implementable**: `vi.mock` factories hoist above every import, so
+`curl-execute.headers.test.ts` failed to load entirely — 0 tests collected,
+`Cannot access '__vi_import_4__' before initialization`. The other suite
+referencing the same constant **passed**, on import-order luck, and would have
+become an unexplainable flake later. The constant was removed rather than kept
+working by accident; the fixture records the constraint so the next reviewer
+raising this drift gets a reason instead of a repeat attempt.
+
+### Reviewer status — round 2
+
+| Reviewer | Floor | Envelope | Status | Classes | Note |
+|---|---|---|---|---|---|
+| `learnings-researcher` | floor | none | done | — | 7 prior RCs. **Cited RC-34 as prior art in error** — it is this branch's own entry |
+| `code-simplicity-reviewer` | floor | v1 | findings | 1 | answered the "does `bodyBytes` still earn its keep" question directly: yes, via the honest wire count and 018's scheduled need |
+| `security-sentinel` | floor | v1 | findings | 2 | both P3, and it said plainly neither is a vulnerability. Fuzzed the decode premise over 200k buffers |
+| `data-integrity-guardian` | floor | v1 | findings | 3 | scope shortfall — no `Bash`; declared it |
+| `typescript-reviewer` | optional | v1 | findings | 3 | scope shortfall — no `Bash`; declared it. Traced round 1's class to a new layer |
+| `architecture-strategist` | optional | v1 | findings | 4 | scope shortfall — no `Bash`; declared it |
+| `pattern-recognition-specialist` | optional | v1 | findings | 2 | swept 70 size-idiom candidates; found one spelling per question |
+| `performance-oracle` | optional | v1 | **clean** | 0 | re-measured the regression closed; pinned every number to `git archive` of committed refs |
+
+### `performance-oracle` — the regression is closed, measured
+
+Returned `clean`, 0 findings, with round 1's harness and inputs against
+`git archive` extractions of both refs:
+
+| Case | base `ccf6e62` | HEAD `77f82af` |
+|---|---|---|
+| 9.5 MB gzip (wire 9,500,000 → decoded 17,222,813; **1.813x**) | REFUSED | **REFUSED** |
+| 9,999,999 × `0xFF` (decoded 29,999,997) | REFUSED | **REFUSED** |
+| N=3 concurrent, same body | 0 fulfilled / 3 rejected | **0 fulfilled / 3 rejected** |
+
+It teeth-probed both arms independently and got the same result recorded above:
+disabling the decoded gate fails exactly the decode case; disabling the wire gate
+fails only the message-truth assertion.
+
+Three things it found that are better than this handoff claimed:
+
+- **HEAD does one fewer O(n) pass than base** — 3 full-body `Buffer.byteLength`
+  calls against base's 4, because the decoded gate replaced base's step-1
+  measurement and `diskBytes` became O(1). The second gate costs ~0.7–1.0% of
+  `processResponse`.
+- **The persistence revert is net-neutral, not a loss.** Round 1's 107.5 → 96.5 ms
+  win is given back, but HEAD is level with base: `Buffer.from(content, "utf8")`
+  replaces an encode `fs.writeFile` was already doing internally for a string.
+  Deltas sit inside run-to-run spread and the minima cross over.
+- **`bodyBytes` adds no retention** — identical peak RSS on every case, because
+  `result.stdoutBytes` is alive across `executeCurlRequest` on both trees anyway.
+  `docs/todos/003`'s worst case is neither better nor worse than base.
+
+Bundle impact +854 bytes; the fixture does not ship (`tsup` declares four explicit
+entries, no glob).
+
+### Coverage caveats — round 2
+
+- **The tree moved under `performance-oracle`, and that was my error again.** I
+  began applying round-2 fixes while it was still running, having said in the same
+  breath that I would not. It reported nine modified files with mtimes spanning
+  its run. **Its numbers are unaffected** because it pinned every measurement to
+  `git archive` of committed refs rather than the working tree, and it verified
+  the drift in the gate region is comment-only and byte-identical — so its verdict
+  holds for the tree as it stands. That is the reviewer defending the result, not
+  me. **Recorded as a recurrence**: the same discipline failure as round 1, made
+  once after being named. The other seven reviewers had returned before I started
+  editing.
+- Three reviewers hold no `Bash` and read files at HEAD; all three declared it.
+  Structural, not fixable by re-running.
+- **The round-2 fixes themselves are unreviewed.** Everything in *Findings by
+  class — round 2* was applied after its reviewer returned. They are prose, test
+  scaffolding and a plan document, with the code paths unchanged and re-probed —
+  but no reviewer has read them.
+- **Surface 3 has not run.** No bot reviewer has seen this branch.
+
+### Blockers
+
+**None outstanding.** No P1 in round 2. Every in-scope class is fixed, one is
+declined with its reason above, and one turned out to be unfixable and is recorded
+as RC-35.

@@ -14,11 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterAll, type Mock } from "vites
 import { readFile, rm } from "fs/promises";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
-import {
-    METADATA_SEPARATOR as SEP,
-    STUB_HOSTNAME,
-    curlOutputFor,
-} from "./curl-output.test-fixture.js";
+import { METADATA_SEPARATOR as SEP, curlOutputFor } from "./curl-output.test-fixture.js";
 
 vi.mock("../types/index.js", async () => {
     const actual = await vi.importActual<typeof import("../types/index.js")>("../types/index.js");
@@ -30,7 +26,10 @@ vi.mock("../security/index.js", async () => {
     return {
         ...actual,
         validateUrlAndResolveDns: vi.fn().mockResolvedValue({
-            hostname: STUB_HOSTNAME,
+            // A literal, not a shared constant: this factory is hoisted above
+            // every import, so an imported binding is not initialised yet.
+            // See `curl-output.test-fixture.ts`.
+            hostname: "example.test",
             resolvedIp: "93.184.216.34",
             port: 443,
         }),
@@ -45,7 +44,12 @@ vi.mock("../execution/index.js", async () => {
 
 const executionModule = await import("../execution/index.js");
 const { executeCurlRequest } = await import("./curl-execute.js");
-const mockedExecuteCommand = executionModule.executeCommand as Mock;
+// `vi.mocked`, not `as Mock`. The bare `Mock` type erases the signature, so
+// `mockResolvedValue` accepts `any` and every hand-built fixture in this file is
+// unchecked against `CommandResult` — a new required field on it would arrive as
+// `undefined` in each of them with the suite green. `vi.mocked` preserves the
+// signature, so each site is checked at the point it is written.
+const mockedExecuteCommand = vi.mocked(executionModule.executeCommand);
 
 /** Parse through the real schema so tests exercise the true input shape. */
 const params = (p: Record<string, unknown>) => CurlExecuteSchema.parse(p);
@@ -82,6 +86,13 @@ function savedPathFrom(text: string): string {
 
 describe("curl_execute size ceiling — both representations are checked", () => {
     it("refuses a body over the cap in wire octets, quoting the wire count", async () => {
+        // **This case reaches `processResponse`'s wire arm only because
+        // `executeCommand` is stubbed.** In production
+        // `command-executor.ts::accountFor` aborts the child before an over-cap
+        // chunk is retained, so no real request gets here — the arm is
+        // defence-in-depth for a direct internal caller, and this asserts its
+        // behaviour rather than an end-to-end guarantee. `ARCHITECTURE.md`
+        // invariant 14 names the layer that actually refuses.
         const body = Buffer.alloc(LIMITS.MAX_RESPONSE_SIZE + 1, 0x61);
         mockedExecuteCommand.mockResolvedValue(
             curlOutputFor({ body, contentType: "text/plain" })

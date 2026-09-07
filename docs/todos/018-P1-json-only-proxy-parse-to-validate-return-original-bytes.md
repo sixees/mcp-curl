@@ -141,8 +141,35 @@ a property of *who reads it*, and that is undecided until this todo lands:
 
 **So the artefact's form must be decided on whether the body parses — a property
 of the bytes — and never on the declared header**, which is invariant 1a's named
-failure shape. `isDefinitelyJson` already answers it. Whatever this todo decides
-for the non-JSON arm below governs what may be written to disk for it.
+failure shape.
+
+**Use the gate this todo settles under *Require object-or-array* — a full parse
+plus `isCompositeValue` — and NOT `isDefinitelyJson`.** An earlier draft of this
+section named `isDefinitelyJson`, and review found it cannot answer the question,
+wrongly in both directions:
+
+- **It says no to everything that matters.** `parseJsonDocument` returns
+  `undefined` above `STRIP_PATH_MAX_BYTES` (262,144), and
+  `DEFAULT_MAX_RESULT_SIZE` is 500,000 — so `overCap` implies over 256 KB implies
+  *"not JSON"*. The arm where the artefact question exists at all is the arm
+  where that predicate always answers no, and the byte-exactness this todo
+  promises for JSON would have been unreachable at the default.
+- **And yes to the one case that is dangerous.** `isDefinitelyJson('"<script>x</script>"')`
+  is **true** — `JSON_DOCUMENT_FIRST_CHARS` admits `"` — while *Require
+  object-or-array* below classifies a bare scalar as non-JSON, i.e. the arm
+  routed to the host's own file tooling with no defence. Following the earlier
+  draft would have persisted raw origin octets for exactly that body: the P1 the
+  016 revert closed, arriving back through the section written to prevent it.
+
+`isDefinitelyJson` is correct for the job it has — selecting the strip exemption,
+where the strip cap makes its early return exactly right. It is the wrong
+predicate for a decision taken on bodies that are over the inline cap by
+construction. **The artefact gate must not inherit `STRIP_PATH_MAX_BYTES`, and it
+must be the same rule as the body gate, spelled once.**
+
+Whatever this todo decides for the non-JSON arm below governs what may be written
+to disk for it. `ARCHITECTURE.md` invariant 14 asserts nothing about the
+artefact's form, deliberately, because this is where that belongs.
 
 `LESSONS.md` RC-33 holds the measurement; `ARCHITECTURE.md` invariant 14 no longer
 asserts anything about the artefact's form, deliberately, because this is where
@@ -278,6 +305,11 @@ todo closed as a side effect of another is a todo nobody dispositioned.
 - [ ] The parse-failure report contains **no bytes from the response body** —
       including via V8's error message
 - [ ] A bare-scalar body (`null`, `42`, `"x"`) is treated as non-JSON
+- [ ] **The artefact gate is the same rule as the body gate, and inherits no
+      strip cap.** Probe both directions at a size that reaches the save arm: a
+      600 KB *object* body produces the byte-exact artefact; a 600 KB bare-string
+      body (`"` + 600 KB + `"`, valid JSON, non-composite) takes the non-JSON arm
+      and never produces raw origin octets. Both fail against `isDefinitelyJson`
 - [ ] Header and stderr channels still run every strip stage, verified by probe
       (remove a stage; their tests must fail)
 - [ ] `utils/json-lexeme.ts` still covers both jq paths

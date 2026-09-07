@@ -16,6 +16,9 @@ created: 2026-09-07
 
 ## Problem
 
+> _Original finding, 2026-09-07, in its original tense. Four of the six instances
+> it describes have since changed — see the state markers under **Findings**._
+
 `parseResponseWithMetadata` decodes the wire body with `raw.toString("utf8")`, so
 any byte that is not valid UTF-8 becomes U+FFFD. Every downstream consumer then
 treats that converted form as the origin's bytes: `saveResponseToFile` takes a
@@ -33,21 +36,38 @@ not for bytes, on the same file.
 
 ## Findings
 
+> **State as at 2026-09-07, after the partial landing.** The prose below is the
+> original finding and is left in its original tense; the bracketed state on each
+> instance is what is true at HEAD. Read this list with the work log, not instead
+> of it — four of the six no longer describe live code, and a reader re-running the
+> recorded sweep to close the class needs to know which.
+
 Confirmed instances, all reading what the boundary produced:
 
-- `src/lib/response/parser.ts::parseResponseWithMetadata` — the decode, on both
-  the separator-found and separator-absent arms. **This is the root**; every
-  other instance is a consumer.
-- `src/lib/response/file-saver.ts::saveResponseToFile` — signature takes `string`
-  and writes `encoding: "utf-8"`, so the artefact carries the replacement.
-- `src/lib/response/processor.ts::processResponse` — gates `MAX_RESPONSE_SIZE`
-  and `exceedsInlineCap` on the decoded length, and persists the decoded string.
-- `src/lib/response/processor.ts::savedMessage` — reports
-  `Buffer.byteLength(content, "utf8")` as the response's size. True of the file,
-  and not an answer to *"how big was the response"*.
-- `src/lib/tools/jq-query.ts::executeJqQuery` — `readFile(..., "utf-8")` returns
-  the replacement as origin content.
-- `src/lib/response/header-channel.ts::extractHeaderChannel` — sibling instance
+- **[LANDED]** `src/lib/response/parser.ts::parseResponseWithMetadata` — the
+  decode, on both the separator-found and separator-absent arms. **This was the
+  root**; every other instance is a consumer. Now returns `bodyBytes: Buffer` and
+  no decoded field at all.
+- **[LANDED, but see the caveat]** `src/lib/response/file-saver.ts::saveResponseToFile`
+  — took a `string` and wrote `encoding: "utf-8"`. Now takes a `Buffer` with no
+  union. **The signature is fixed and the artefact is not**: its caller passes
+  `Buffer.from(content, "utf8")`, so the replacement still reaches disk. That half
+  moved to `018`.
+- **[LANDED, superseded]** `src/lib/response/processor.ts::processResponse` —
+  gated `MAX_RESPONSE_SIZE` on the decoded length. Now checks both
+  representations, which is **not** what AC 2 below asked for; `LESSONS.md` RC-34
+  records why the wire-only form was wrong. `exceedsInlineCap` weighing the
+  defended text was never a defect — that is invariant 14 working.
+- **[WITHDRAWN — not a defect]** `src/lib/response/processor.ts::savedMessage` —
+  this entry was wrong. At the base ref `saveResponseToFile(content)` wrote that
+  same string as UTF-8, so `Buffer.byteLength(content, "utf8")` was exactly the
+  file's size. It measures `diskContent.length` now, which is equivalent and
+  harder to drift. `LESSONS.md` RC-33 carries the correction.
+- **[OPEN — the last live member]** `src/lib/tools/jq-query.ts::executeJqQuery` —
+  `readFile(..., "utf-8")` returns the replacement as origin content. Untouched.
+  Flagged independently by three reviewers on 2026-09-07. **This instance is why
+  this todo is still open.**
+- **[SCOPED OUT, re-verified unchanged]** `src/lib/response/header-channel.ts::extractHeaderChannel` — sibling instance
   with a *different* consequence: a byte-slice can cut a multi-byte sequence
   mid-character. Not persisted, and the truncation is announced via
   `headers_truncated`, so it does not carry the silent half.
@@ -142,11 +162,10 @@ genuinely have sent.
     call site.
   - **AC 2, in a corrected form.** `MAX_RESPONSE_SIZE` is checked against both
     representations rather than swapped onto the wire form. Gating the wire form
-    *alone* — which is what this todo's AC 2 literally asked for — removed the
-    bound on the decode: an ordinary 9.5 MB gzip inflates 1.81x and went from
-    refused to accepted at 10.3x the peak RSS, past the memory ceiling documented
-    as covering all concurrent requests. **RC-34 records that; treat AC 2 as
-    superseded by it rather than as met as written.**
+    *alone* — what this todo's AC 2 literally asked for — removed the bound on the
+    decode. **`ARCHITECTURE.md` invariant 14 holds the measurement and
+    `LESSONS.md` RC-34 the reasoning; treat AC 2 as superseded by RC-34 rather
+    than met as written.**
   - AC 3, and a correction to this todo's premise: the byte count in `message` is
     the length of the buffer actually written. But **this todo was wrong to call
     it a defect** — at base, `saveResponseToFile` wrote `content` as UTF-8 and

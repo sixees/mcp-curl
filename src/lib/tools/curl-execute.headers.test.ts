@@ -15,10 +15,11 @@ import { LIMITS } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";
 import { HEADER_DUMP_PATH } from "../execution/command-executor.js";
 
-// Both the separator and the output fixture come from `curl-output-fixture.ts`,
-// which owns cURL's output shape for every suite that stubs the executor. Kept
-// there rather than here because a second copy drifts toward a fixture that
-// passes against a handler inferring the header/body boundary from the body.
+// The separator, the stub hostname and the output builder come from
+// `curl-output.test-fixture.ts`. This file still hand-builds several executor
+// returns of its own for cases the builder cannot express (a missing metadata
+// block, a dropped stdout field) — `vi.mocked` below is what type-checks those
+// against `CommandResult`.
 import { METADATA_SEPARATOR as SEP, curlOutputFor } from "./curl-output.test-fixture.js";
 
 vi.mock("../types/index.js", async () => {
@@ -31,6 +32,9 @@ vi.mock("../security/index.js", async () => {
     return {
         ...actual,
         validateUrlAndResolveDns: vi.fn().mockResolvedValue({
+            // A literal, not a shared constant: this factory is hoisted above
+            // every import, so an imported binding is not initialised yet.
+            // See `curl-output.test-fixture.ts`.
             hostname: "example.test",
             resolvedIp: "93.184.216.34",
             port: 443,
@@ -47,7 +51,12 @@ vi.mock("../execution/index.js", async () => {
 const executionModule = await import("../execution/index.js");
 const { executeCurlRequest } = await import("./curl-execute.js");
 
-const mockedExecuteCommand = executionModule.executeCommand as Mock;
+// `vi.mocked`, not `as Mock`. The bare `Mock` type erases the signature, so
+// `mockResolvedValue` accepts `any` and every hand-built fixture in this file is
+// unchecked against `CommandResult` — a new required field on it would arrive as
+// `undefined` in each of them with the suite green. `vi.mocked` preserves the
+// signature, so each site is checked at the point it is written.
+const mockedExecuteCommand = vi.mocked(executionModule.executeCommand);
 
 /** Parse through the real schema so tests exercise the true input shape. */
 const params = (p: Record<string, unknown>) => CurlExecuteSchema.parse(p);

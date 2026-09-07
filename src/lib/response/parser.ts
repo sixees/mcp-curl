@@ -53,29 +53,34 @@ const MEDIA_TYPE_HEAD =
  */
 export interface ParsedResponse {
     /**
-     * The body's wire octets, exactly as the origin sent them.
+     * The body's octets — the origin's, **on the arm where the boundary was
+     * found**.
      *
-     * **The only representation of the body this type carries, and there is
-     * deliberately no decoded sibling.** Todo 016 planned for one — octets
-     * *alongside* the decoded string — and the audit found the string had no
-     * production consumer once persistence and the size gate stopped using it:
-     * `processResponse` needs text for the defence pipeline and decodes the
-     * buffer itself, so a `body: string` here bought a second full
-     * `toString("utf8")` of the same bytes and a second live copy of a body up
-     * to 10 MB. Measured at ~1 ms per decode at that size. `LESSONS.md` RC-33.
+     * `metadataFound: true` means the separator was located and this is
+     * `raw.subarray(0, separatorIndex)`: the origin's body bytes, nothing else.
+     * `metadataFound: false` means it was not, and this is the whole of cURL's
+     * stdout — which is normally all body, but is also what you get when a
+     * `Content-Type` longer than `LIMITS.MAX_METADATA_TAIL_LENGTH` pushes the
+     * separator out of the search window. On that arm the buffer may contain
+     * this server's own separator and remote header text that was never body.
+     * Absent and not-found are one value here, so the field cannot tell them
+     * apart and neither can this doc-block.
      *
-     * Keeping it would also have re-created the shape this doc-block used to
-     * warn about in the other direction — a field whose text promises a
-     * guarantee no consumer relies on.
+     * **That distinction is load-bearing for `docs/todos/018`**, whose AC 1 wants
+     * a byte-exact body: byte-exact pass-through is available on the
+     * `metadataFound: true` arm only. It fails safe today — `metadataFound:
+     * false` selects the strictest grammar and everything is stripped — but a
+     * fidelity path built on this field must read the flag.
      *
-     * **Octets rather than a string because of what is asked of them:** the
-     * artefact written to disk and the `MAX_RESPONSE_SIZE` gate are both
-     * questions only the wire bytes can answer. A decode answers neither — an
-     * ISO-8859-1 body decodes to a different byte sequence of a different
-     * length, and U+FFFD is three bytes where the origin sent one, so a body of
-     * mostly-invalid octets measures up to 3x its real size.
+     * **The only representation of the body this type carries**, deliberately.
+     * Todo 016 planned for a decoded sibling; the audit found it had no
+     * production consumer, so the parser was decoding a body up to 10 MB that
+     * nothing read while `processResponse` decoded the same bytes again
+     * (`LESSONS.md` RC-33, and RC-28's `repeated-computation` recurring).
      *
-     * A subarray of cURL's stdout buffer, so it costs no copy.
+     * Octets rather than a string because `processResponse` must be able to
+     * quote a byte count the origin can be held to. It is a subarray, so it
+     * costs no copy — except on the not-found arm, which returns `raw` itself.
      */
     bodyBytes: Buffer;
     /**
@@ -177,7 +182,9 @@ export function parseResponseWithMetadata(
     const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
 
     if (separatorIndex === -1) {
-        // No metadata block, so the whole buffer is body.
+        // Either no metadata block, or one that fell outside the search window —
+        // the two are indistinguishable here, which is why `bodyBytes` on this
+        // arm is not attributable to the origin. See `ParsedResponse.bodyBytes`.
         return {
             bodyBytes: raw,
             metadataFound: false,
