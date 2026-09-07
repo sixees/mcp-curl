@@ -136,11 +136,37 @@ So: **no inline body; return the parse failure, the declared content type, the
 byte length and the file path.** `Unexpected token '<' at position 0` tells the
 agent it got an HTML error page with zero remote bytes in the message.
 
-**Open, and it is a trap:** V8's `JSON.parse` error message can quote the
-offending token, which would put remote bytes back into server-authored prose —
-the exact channel `MEDIA_TYPE_HEAD` exists to close. **Report a position and a
-fixed classification, not the engine's raw message string.** Verify what V8
-actually emits before writing the reporting code.
+**SETTLED, by measurement on node v24.18.0 (2026-09-07). The trap is real and
+worse than assumed, and the remedy this todo originally proposed does not work as
+written.** V8 emits two message families:
+
+| Input | Message |
+|---|---|
+| `Warning: mysql_connect()…{"ok":true}` | `Unexpected token 'W', "Warning: m"... is not valid JSON` |
+| `{"a": SUPERSECRET}` | `Unexpected token 'S', "{"a": SUPERSECRET}" is not valid JSON` |
+| `{"a":1,}` | `Expected double-quoted property name in JSON at position 7 (line 1 column 8)` |
+| `{"a":"leaky` | `Unterminated string in JSON at position 22 (line 1 column 23)` |
+| `""` / `{"a":1,"b":` | `Unexpected end of JSON input` |
+
+**It embeds up to ten bytes of the body verbatim — and the WHOLE body when the
+body is short**, as row 2 shows. So `e.message` is a remote-authored channel and
+must never be interpolated.
+
+**The reason the original instruction fails: the leaking family carries no
+position, and the family with a position never leaks.** "Report a position and a
+fixed classification" is therefore unimplementable on the case that needs it.
+
+**What to do instead:**
+
+1. **Classify from a vocabulary this repo owns** — a closed set, per
+   `.claude/rules/04-no-instance-literals.md`. Zero remote bytes by
+   construction. Do not derive the classification by pattern-matching V8's
+   prose, which is not a stable contract.
+2. **Take the position only from `/ at position (\d+)/`, and only when it
+   matches.** A decimal integer is not remote bytes. Where there is no match,
+   report no position rather than inventing one.
+3. **Never pass `e.message` to any model-facing surface**, including a log line
+   that a `verbose` transcript could carry.
 
 ### Where the declared content type is reported decides ~45 lines
 
@@ -153,10 +179,14 @@ actually emits before writing the reporting code.
   `[mcp-curl] …` prefix lines. Putting the header there makes it prose and the
   constraint comes straight back.
 
-**Recommendation: the JSON field only; the plain branch says nothing about the
-content type.** A declared-vs-actual mismatch is metadata, and the caller who
-wants it can ask for metadata. Confirm with the director before deleting
-`MEDIA_TYPE_HEAD`.
+**SETTLED by the director, 2026-09-07: the JSON metadata field only. The plain
+branch says nothing about the content type, and `MEDIA_TYPE_HEAD` deletes
+outright** — the regex, its 41-line doc-block, and `ParsedResponse.contentType`'s
+role as a constrained token. A declared-vs-actual mismatch is metadata, and the
+caller who wants it asks for metadata.
+
+Recorded per `.claude/rules/03-divergence.md` → *Settled conflicts stay settled*.
+A later round proposing the plain-branch notice is answered by citing this line.
 
 ## What this deletes
 
@@ -174,6 +204,29 @@ Selection machinery, all of it driven by the remote-controlled header:
 Estimate: **700-900 lines of production code, 2,500+ of tests.** A deletion, not
 a refactor.
 
+### The published exports go with them — SETTLED by the director, 2026-09-07
+
+Four of the deletions above are on published entry points, which invariant 11
+makes wire contracts:
+
+- `src/lib.ts` exports `defendText` and `DefendTextOptions`;
+  `DefendTextOptions.contentTypeUndetermined` is a **required** field whose whole
+  purpose is fail-safe grammar selection.
+- `src/lib/utils/index.ts` re-exports `isMarkdownContentType`,
+  `isSniffableContentType` and `supportsMarkupComments` on the `./lib` entry.
+
+**Decision: delete them outright rather than keep deprecated no-op shims.** The
+population test (`.claude/rules/42-ship-what-matters.md`) is a measurement here,
+not an assumption: **this package has one consumer — the operator and an agent.**
+No third party pins these exports, so a compatibility shim would be ~40 lines
+guarding nobody.
+
+**Semver: this is a MAJOR by the letter of the contract, and the version number
+is the director's call at merge.** Stated plainly so that neither half is
+inferred from the other — the deletion is authorised; the number is not decided
+here. Todo `010` flagged the same removal as MAJOR and is superseded on that
+point by this line.
+
 ## Existing todos this affects
 
 **Do not close any of these here** — `skill: file-todos` owns the lifecycle, and a
@@ -185,7 +238,7 @@ todo closed as a side effect of another is a todo nobody dispositioned.
 | **017** — unregistered media types get no strip path | **Moot.** There is no media-type classification to be unregistered in |
 | **014** — JSON region defence skipped on a stale byte measurement | **Moot.** There is no region-wise re-serialising defence |
 | **004** — entity decode serves two channels with opposite requirements | **Mostly moot.** Both surviving text channels already pass `decodeEntities: false`; the JSON path does not decode at all |
-| **016** — wire octets decoded lossily before persistence | **Becomes load-bearing, and is a prerequisite.** "Return the original bytes" is not achievable while ingest hands downstream a lossy `string` — `parseResponseWithMetadata` decodes with U+FFFD replacement and `saveResponseToFile` takes a `string`. Either 016 lands first or 018 absorbs it |
+| **016** — wire octets decoded lossily before persistence | **DISCHARGED — landed first, on its own branch, 2026-09-07 (`LESSONS.md` RC-33).** `ParsedResponse.bodyBytes` now carries the origin octets, `processResponse` takes a `Buffer` and gates `MAX_RESPONSE_SIZE` on wire length, and `saveResponseToFile` writes bytes. "Return the original bytes" is now reachable, and the saved artefact is already the origin's bytes rather than the defended text — so 018's remaining work on this axis is the *inline* path only |
 | **005** — bracketed label defeats beacon strip | **Unchanged.** The strip stages survive on the header and stderr channels, so this is still live there |
 | **015** — the wrap has six exits and guards two | **Unchanged and more important.** The wrap becomes the *only* content defence on the JSON path, so its unguarded exits carry more weight |
 
