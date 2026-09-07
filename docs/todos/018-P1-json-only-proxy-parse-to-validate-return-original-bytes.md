@@ -431,3 +431,36 @@ for a regression this change introduced.
     `savedMessage` sentence echoes no remote token, and two existing test cases
     caught a first draft that did. Re-read those two sections together before the
     next slice.
+
+## Scope calls settled by the director on 2026-09-07, after Surface 2 round 1
+
+Recorded per `.claude/rules/03-divergence.md` → *Settled conflicts stay settled*. A
+later round proposing any of these is answered by citing this section.
+
+**The deployment population.** This MCP is used by **internal staff only**. No API
+call it makes will return 10 MB, and none will approach `MAX_TOTAL_RESPONSE_MEMORY`.
+Guards and tests for responses at that scale are building for something that will not
+happen, and the director named that explicitly.
+
+What that decides, and what it does not:
+
+- **Declined:** `classifyBody`'s uncapped parse as a memory amplifier (measured 29x
+  on 9.5 MB of nested arrays — real mechanism, empty population at these sizes); the
+  three-parses-per-request cost; the artefact directory's lack of eviction; the
+  `Date.now()` filename collision. **Re-open triggers are in the handoff**, and the
+  first of them is *any untrusted origin becoming reachable*.
+- **Not decided by it:** anything reachable from an ordinary internal API at ordinary
+  sizes. A BOM-prefixed JSON body, a `204 No Content`, an endpoint returning `null`
+  for "no record", and an NDJSON stream are all ordinary, and the population test does
+  not touch them. Those were fixed (or deferred with a trigger) on their merits.
+
+**Semver: decided at merge, not now.** This slice widens `ToolResult.content` and
+`CurlExecuteResult.content` from a 1-tuple to an array and stops returning inline
+bytes for a non-JSON body, both reachable from the published `./lib` entry — so it is
+a MAJOR by invariant 11 **on its own**, not only once slice 2 removes the four
+exports. The number is the director's at merge; that it is MAJOR-bound is recorded
+here so a later round cannot mistake it for a MINOR.
+
+**Still open and NOT settled:** whether withdrawing the strip stages from a JSON body
+is sound given that `enableSpotlighting` is off by default on both entry points. See
+the handoff's *Open escalation*.
