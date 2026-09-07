@@ -9,22 +9,36 @@ describe("formatResponse — response headers", () => {
         expect(formatResponse('{"id":1}', "", 0, false)).toBe('{"id":1}');
     });
 
-    it("prefixes the body with headers, preserving the previous layout", () => {
+    it("does NOT prefix the body with headers — they are their own content entry", () => {
+        // **Reversed by `docs/todos/018`, deliberately.** Prefixing merged two
+        // remote-controlled regions into one string, and the wrap's undivided
+        // scan then paired a marker in the body with one in a later field and
+        // deleted what lay between (`LESSONS.md` RC-16). That was survivable
+        // only while the wrap re-serialised each JSON leaf and so neutralised
+        // the markers first; 018 removes that round trip to make a JSON body
+        // byte-exact, which takes the mitigation with it.
+        //
+        // `tools/curl-execute.ts` emits the header text as a second MCP content
+        // entry instead — ARCHITECTURE.md invariant 13's strong form, applied at
+        // the output. This function returns the body alone.
         const out = formatResponse('{"id":1}', "", 0, false, undefined, HEADERS);
-        expect(out).toBe(`${HEADERS}\n\n{"id":1}`);
+        expect(out).toBe('{"id":1}');
+        expect(out).not.toContain("HTTP/2 200");
     });
 
-    it("reports headers alongside the save message when the body went to a file", () => {
-        // Previously headers were written INTO the file, leaving it unparseable
-        // and the caller with no headers at all — the message replaced the body.
+    it("returns the save message alone on the plain branch, headers separated out", () => {
+        // Header text still never reaches the file — that guarantee is unchanged
+        // and is what this case was originally written for. What changed is where
+        // the headers are REPORTED: a second content entry rather than a prefix
+        // on this string. See the case above.
         const out = formatResponse("", "", 0, false, {
             savedToFile: true,
             filepath: "/tmp/x.txt",
             message: "Response (11524 bytes) saved to: /tmp/x.txt",
         }, HEADERS);
 
-        expect(out).toContain("x-records: 8");
-        expect(out).toContain("saved to: /tmp/x.txt");
+        expect(out).toBe("Response (11524 bytes) saved to: /tmp/x.txt");
+        expect(out).not.toContain("x-records: 8");
     });
 
     it("still returns the bare message when saved without headers", () => {
@@ -99,8 +113,12 @@ describe("formatResponse — header metadata", () => {
         });
         expect(out).toContain("[mcp-curl]");
         expect(out).toContain("truncated");
-        // Server-authored and placed BEFORE the remote text, so an origin
-        // cannot occupy the position and forge it.
-        expect(out.indexOf("[mcp-curl]")).toBeLessThan(out.indexOf("HTTP/2 200"));
+        // **The notice is still server-authored and still unforgeable, but the
+        // position argument moved.** It used to rest on sitting BEFORE the
+        // remote header text in the same string; the header text is now a
+        // separate content entry, so this string carries no remote-authored
+        // prefix at all and the notice leads it outright.
+        expect(out).not.toContain("HTTP/2 200");
+        expect(out.indexOf("[mcp-curl]")).toBe(0);
     });
 });

@@ -14,16 +14,23 @@ import type {
  * Result returned by tool executor functions.
  * Includes index signature for MCP SDK compatibility.
  *
- * `content` is *declared* as a single-element tuple, but the `[key: string]: unknown`
- * index signature relaxes structural enforcement — a value reaching consumers via
- * cast or spread from a less-specific source may not actually have that shape.
- * Consumers that depend on the tuple shape (notably the spotlighting boundary in
- * `post-processor.ts`'s `createWrapper`) MUST runtime-check `content[0]` before
- * using it.
+ * **`content` carries one entry per remote-controlled region, and it stopped
+ * being a single-element tuple in `docs/todos/018`.** `curl_execute` returns a
+ * second entry for response header text on the plain branch, because one entry
+ * spanning both the header and the body regions is what ARCHITECTURE.md
+ * invariant 16 names as a violation — a defence pass whose input spans more than
+ * one region — and the wrap defends each entry independently. `content[0]` is
+ * still the body on every branch, so a reader indexing it is unaffected.
+ *
+ * The `[key: string]: unknown` index signature relaxes structural enforcement
+ * regardless — a value reaching consumers via cast or spread from a
+ * less-specific source may not actually have this shape. Consumers **MUST**
+ * runtime-check the entry they read (notably the spotlighting boundary in
+ * `post-processor.ts`'s `createWrapper`) rather than trusting the declaration.
  */
 export interface ToolResult {
     [key: string]: unknown;
-    content: [{ type: "text"; text: string }];
+    content: Array<{ type: "text"; text: string }>;
     isError?: boolean;
 }
 

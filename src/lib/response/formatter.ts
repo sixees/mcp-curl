@@ -81,15 +81,30 @@ function applyHeaderFields(
  *
  * When includeMetadata is false:
  * - If file was saved: returns the message or filepath
- * - Otherwise: returns header text (if any), a blank line, then stdout
+ * - Otherwise: returns the server-authored notices, then stdout
  *
- * **The two branches differ in more than shape.** Under `include_metadata` the
- * header text is a discrete `headers` key and the body in `response` is the body
- * alone. On the plain branch there is only one string, so header text is
- * prefixed to the body with a blank line — the caller gets a blob that is not
- * JSON-parseable. What holds on BOTH branches, and is the guarantee worth
- * relying on, is that header text never reaches the saved file and never reaches
- * `jq_filter`.
+ * **This function never composes header text with body text, on either branch,
+ * and that is a defence rather than a formatting choice.** Under
+ * `include_metadata` the header text is a discrete `headers` key and the body in
+ * `response` is the body alone. On the plain branch the header text is not
+ * returned here at all — `tools/curl-execute.ts` emits it as its own MCP content
+ * part, because two remote-controlled regions may not share a channel
+ * (ARCHITECTURE.md invariant 13) and the post-processor wrap defends each part
+ * independently.
+ *
+ * **It used to prefix the header block to the body with a blank line, and that
+ * merged two regions into one string the wrap could not divide.** The cost was
+ * measured: a body holding `<!--` and a later field holding `-->` had
+ * `stripHtmlComments` pair them ACROSS the join and delete the field between —
+ * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returned as
+ * `{"a":"open ","d":"kept"}`, still valid JSON, with nothing downstream able to
+ * tell. That was survivable only while the wrap re-serialised each JSON leaf and
+ * so neutralised the tokens before composition; `docs/todos/018` removes that
+ * round trip to make a JSON body byte-exact, which takes the mitigation with it.
+ * ARCHITECTURE.md invariants 7, 13 and 16, and `LESSONS.md` RC-16.
+ *
+ * What holds on BOTH branches, and is the guarantee worth relying on, is that
+ * header text never reaches the saved file and never reaches `jq_filter`.
  *
  * @param stdout - Standard output from the command
  * @param stderr - Standard error from the command
@@ -175,7 +190,7 @@ export function formatResponse(
         }
         // Plain text - just return the message or fallback to filepath
         const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-        return withNotice(responseHeaders ? `${responseHeaders}\n\n${message}` : message);
+        return withNotice(message);
     }
 
     // Normal response
@@ -188,5 +203,5 @@ export function formatResponse(
         applyHeaderFields(output, responseHeaders, headerInfo, stderr);
         return JSON.stringify(output, null, 2);
     }
-    return withNotice(responseHeaders ? `${responseHeaders}\n\n${stdout}` : stdout);
+    return withNotice(stdout);
 }

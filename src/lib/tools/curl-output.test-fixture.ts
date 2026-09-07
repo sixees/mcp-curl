@@ -119,3 +119,22 @@ export function curlOutputFor({
         exitCode: 0,
     };
 }
+
+/**
+ * Pull the saved path out of a tool result's server-authored message.
+ *
+ * **Throws with the message text rather than returning `undefined`**: when the
+ * save path is not taken, the reason is in that text, and an earlier version
+ * that swallowed it reported a byte comparison against an empty file.
+ *
+ * Shared rather than copied — `docs/todos/018` gave a second suite the same need
+ * the moment a non-JSON body started taking the save arm unconditionally, and
+ * two spellings of "find the path" is the shape `.claude/rules/02-reuse-first.md`
+ * names. The caller owns cleanup: push the return onto whatever list its
+ * `afterAll` removes.
+ */
+export function savedPathFrom(text: string): string {
+    const match = /saved to: (\S+?)(?:\s|$)/.exec(text);
+    if (!match) throw new Error(`no saved path in result text: ${text.slice(0, 400)}`);
+    return match[1]!.replace(/[.,]$/, "");
+}

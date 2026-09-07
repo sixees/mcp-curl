@@ -2001,20 +2001,31 @@ var JSON_DOCUMENT_FIRST_CHARS = /* @__PURE__ */ new Set([
   "n"
 ]);
 function isDefinitelyJson(text) {
-  return parseJsonDocument(text) !== void 0;
-}
-function parseJsonDocument(text, preserveNumberLexemes = false) {
   const trimmed = text.trimStart();
-  if (trimmed.length === 0) return void 0;
-  if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return void 0;
-  if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return void 0;
+  if (trimmed.length === 0) return false;
+  if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return false;
+  if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
   try {
-    return {
-      value: preserveNumberLexemes ? JSON.parse(text, keepNumberLexeme) : JSON.parse(text)
-    };
+    JSON.parse(text);
+    return true;
   } catch {
-    return void 0;
+    return false;
   }
+}
+var JSON_PARSE_POSITION = / at position (\d+)/;
+function classifyBody(text) {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return { json: false, reason: "empty-body" };
+  if (trimmed.startsWith("<")) return { json: false, reason: "looks-like-markup" };
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    const matched = error instanceof SyntaxError ? JSON_PARSE_POSITION.exec(error.message) : null;
+    const position = matched ? Number(matched[1]) : void 0;
+    return position === void 0 ? { json: false, reason: "invalid-syntax" } : { json: false, reason: "invalid-syntax", position };
+  }
+  return isCompositeValue(value) ? { json: true } : { json: false, reason: "bare-scalar" };
 }
 function defendText(text, options) {
   let content = text;
@@ -2041,31 +2052,20 @@ function defendText(text, options) {
   return content;
 }
 function defendForInline(text, hostname) {
-  const parsed = parseJsonDocument(text, true);
-  if (parsed === void 0) return defendInlineString(text, hostname);
-  if (exceedsDefenceDepth(parsed.value, MAX_INLINE_DEFENCE_DEPTH)) {
-    return defendInlineString(text, hostname);
-  }
-  return serialiseWithoutGrowing(defendJsonLeaves(parsed.value, hostname), text);
+  if (classifyBody(text).json) return sanitizeAndDetect(text, hostname);
+  const nested = compositeStringPayload(text);
+  if (nested !== void 0) return JSON.stringify(defendForInline(nested, hostname));
+  return defendInlineString(text, hostname);
 }
-function serialiseWithoutGrowing(defended, original) {
-  const indented = JSON.stringify(defended, null, 2);
-  return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(original, "utf8") ? indented : JSON.stringify(defended);
-}
-var MAX_INLINE_DEFENCE_DEPTH = 100;
-function exceedsDefenceDepth(value, limit) {
-  const stack = [{ node: value, depth: 0 }];
-  while (stack.length > 0) {
-    const { node, depth } = stack.pop();
-    if (depth > limit) return true;
-    if (isRawNumber(node)) continue;
-    if (Array.isArray(node)) {
-      for (const item of node) stack.push({ node: item, depth: depth + 1 });
-    } else if (node !== null && typeof node === "object") {
-      for (const item of Object.values(node)) stack.push({ node: item, depth: depth + 1 });
-    }
+function compositeStringPayload(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return void 0;
   }
-  return false;
+  if (typeof value !== "string") return void 0;
+  return classifyBody(value).json ? value : void 0;
 }
 function isCompositeValue(value) {
   if (isRawNumber(value)) return false;
@@ -2079,31 +2079,6 @@ function defendInlineString(text, hostname) {
     decodeEntities: false
   });
 }
-function defendJsonLeaves(value, hostname, depth = 0) {
-  if (typeof value === "string") {
-    const budget = MAX_INLINE_DEFENCE_DEPTH - depth;
-    const nested = budget > 0 ? parseJsonDocument(value, true) : void 0;
-    if (nested !== void 0 && isCompositeValue(nested.value) && !exceedsDefenceDepth(nested.value, budget)) {
-      return serialiseWithoutGrowing(
-        defendJsonLeaves(nested.value, hostname, depth + 1),
-        value
-      );
-    }
-    return defendInlineString(value, hostname);
-  }
-  if (isRawNumber(value)) return value;
-  if (Array.isArray(value)) {
-    return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
-  }
-  if (value !== null && typeof value === "object") {
-    const defended = /* @__PURE__ */ Object.create(null);
-    for (const [key, item] of Object.entries(value)) {
-      defended[key] = defendJsonLeaves(item, hostname, depth + 1);
-    }
-    return defended;
-  }
-  return value;
-}
 var SHORTEST_REPLACED_BEACON = "[](file:)".length;
 var MAX_INLINE_GROWTH_RATIO = Math.max(IMAGE_REMOVED_PLACEHOLDER.length, LINK_REMOVED_PLACEHOLDER.length) / SHORTEST_REPLACED_BEACON;
 function exceedsInlineCap(text, hostname, maxBytes) {
@@ -2113,10 +2088,11 @@ function exceedsInlineCap(text, hostname, maxBytes) {
   return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
 }
 function savedMessage(facts) {
-  const { diskBytes, filepath, maxSize, overCap, contentType, filtered } = facts;
+  const { diskBytes, filepath, maxSize, overCap, contentType, filtered, rejection } = facts;
   const subject = filtered ? "Result of jq_filter" : "Response";
-  const cause = overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const route = filtered || isJsonContentType(contentType) ? " Use the jq_query tool on that path to extract fields." : contentType === void 0 ? (
+  const capClause = overCap ? ` It also exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied.` : "";
+  const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not a JSON object or array (${rejection.reason}${rejection.position === void 0 ? "" : ` at byte ${rejection.position}`}), so no body is returned here.${capClause}` : overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
+  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling. The bytes on disk have been through the full defence pipeline, so they are not the origin's exact bytes." : filtered || isJsonContentType(contentType) ? " Use the jq_query tool on that path to extract fields." : contentType === void 0 ? (
     // NOT "was not declared". This arm is also reached when the origin
     // DID declare a content type and it was rejected as malformed, so
     // asserting the origin sent nothing would be a server-authored
@@ -2146,49 +2122,17 @@ async function processResponse(responseBytes, options) {
     );
   }
   const hostname = safeHostname(options.url);
-  let content = defendText(response, {
-    contentType: options.contentType,
-    // **Derived from the sibling field, because neither constant is right.**
-    // `?? false` is the permissive value `LESSONS.md` RC-1 rule 2 forbids —
-    // *"'undetermined' and 'absent' must not resolve the permissive way"* —
-    // and `?? true` contradicts an explicit determination: a caller passing
-    // `contentType: "text/plain"` plainly DID determine it, and telling
-    // `defendText` otherwise selects the strictest grammar for a declared
-    // type. So the default is the question the field actually asks: absent a
-    // declaration, the grammar is undetermined.
-    //
-    // `defendText`'s own default of `true` is right THERE for a different
-    // reason — the field is required by its type, so the default only ever
-    // guards a JavaScript caller that omitted it, and for that caller
-    // over-stripping is the safe failure. Here the field is optional and its
-    // sibling carries the answer.
-    //
-    // **Currently unobservable, and recorded as such rather than guarded by
-    // a test that cannot fail.** `defendText` tests `contentType ===
-    // undefined` directly in both places this value feeds, and
-    // `isSniffableContentType(undefined)` is `true`, so every arm resolves
-    // the same way whichever constant sits here — a teeth probe against
-    // `?? false` failed nothing. It is a consistency fix, not a live guard:
-    // two spellings of one default pointing opposite ways is what the next
-    // reader trips on, and `?? false` is the fail-open shape even while it is
-    // masked. Do not add an assertion for it; there is nothing to assert.
-    // RC-32.
-    contentTypeUndetermined: options.contentTypeUndetermined ?? options.contentType === void 0,
-    hostname
-  });
+  const classified = classifyBody(response);
+  let content = classified.json ? response : defendText(response, { contentTypeUndetermined: true, hostname });
   let filterApplied = false;
   if (options.jqFilter) {
-    const isJson = isJsonContentType(options.contentType);
     const trimmed = content.trim();
-    let parsedData;
-    if (!isJson) {
-      const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
-      if (!looksLikeJson) {
-        throw new Error(
-          `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
-        );
-      }
+    if (!classified.json) {
+      throw new Error(
+        `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
+      );
     }
+    let parsedData;
     try {
       parsedData = JSON.parse(trimmed, keepNumberLexeme);
     } catch (error) {
@@ -2205,9 +2149,9 @@ async function processResponse(responseBytes, options) {
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
   const overCap = exceedsInlineCap(content, hostname, maxSize);
-  const shouldSave = options.saveToFile || overCap;
+  const shouldSave = options.saveToFile || overCap || !classified.json;
   if (shouldSave) {
-    const diskContent = Buffer.from(content, "utf8");
+    const diskContent = classified.json && !filterApplied ? responseBytes : Buffer.from(content, "utf8");
     const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
     return {
       savedToFile: true,
@@ -2220,7 +2164,10 @@ async function processResponse(responseBytes, options) {
         maxSize,
         overCap,
         contentType: options.contentType,
-        filtered: filterApplied
+        filtered: filterApplied,
+        // Only where the body itself was the reason. An over-cap JSON
+        // document is saved too, and there is nothing wrong with it.
+        ...classified.json ? {} : { rejection: classified }
       })
     };
   }
@@ -2318,9 +2265,7 @@ ${text}` : text;
       return JSON.stringify(output, null, 2);
     }
     const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-    return withNotice(responseHeaders ? `${responseHeaders}
-
-${message}` : message);
+    return withNotice(message);
   }
   if (includeMetadata) {
     const output = {
@@ -2331,9 +2276,7 @@ ${message}` : message);
     applyHeaderFields(output, responseHeaders, headerInfo, stderr);
     return JSON.stringify(output, null, 2);
   }
-  return withNotice(responseHeaders ? `${responseHeaders}
-
-${stdout}` : stdout);
+  return withNotice(stdout);
 }
 
 // src/lib/response/post-processor.ts
@@ -2664,11 +2607,12 @@ Args:
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
   - include_headers (boolean): Report response headers. With include_metadata they
-    arrive under a separate "headers" key; without it they are prefixed to the returned
-    text followed by a blank line, so that result is NOT JSON-parseable. cURL writes
-    the headers to their own descriptor, so they are never part of the body: they
-    cannot reach the saved file or jq_filter, and combining this with save_to_file or
-    jq_filter is safe unconditionally. Header text is capped at
+    arrive under a separate "headers" key; without it they arrive as a SECOND content
+    entry after the body, so the body entry stays parseable on its own. Either way the
+    header text is never mixed into the body text. cURL writes the headers to their own
+    descriptor, so they are never part of the body: they cannot reach the saved file or
+    jq_filter, and combining this with save_to_file or jq_filter is safe
+    unconditionally. Header text is capped at
     min(64KB, max_result_size); truncation is reported as headers_truncated under
     include_metadata, and as a leading [mcp-curl] notice otherwise. If headers were
     asked for and none arrived, that is reported as headers_undetermined (or a leading
@@ -2797,7 +2741,7 @@ async function executeCurlRequest(params, extra = {}) {
       hostname: safeHostname(params.url),
       decodeEntities: false
     }) : result.stderr;
-    const inlineBody = processed.savedToFile ? "" : params.include_metadata ? processed.content : defendForInline(processed.content, safeHostname(params.url));
+    const inlineBody = processed.savedToFile ? "" : processed.content;
     const output = formatResponse(
       inlineBody,
       defendedStderr,
@@ -2822,12 +2766,14 @@ async function executeCurlRequest(params, extra = {}) {
         unsupported: headersUnsupported
       }
     );
+    const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : void 0;
     return {
       content: [
         {
           type: "text",
           text: output
-        }
+        },
+        ...headerPart === void 0 ? [] : [{ type: "text", text: headerPart }]
       ]
     };
   } catch (error) {

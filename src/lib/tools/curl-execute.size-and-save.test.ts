@@ -13,7 +13,11 @@ import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { readFile, rm } from "fs/promises";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
-import { METADATA_SEPARATOR as SEP, curlOutputFor } from "./curl-output.test-fixture.js";
+import {
+    METADATA_SEPARATOR as SEP,
+    curlOutputFor,
+    savedPathFrom as sharedSavedPathFrom,
+} from "./curl-output.test-fixture.js";
 
 vi.mock("../types/index.js", async () => {
     const actual = await vi.importActual<typeof import("../types/index.js")>("../types/index.js");
@@ -67,18 +71,9 @@ afterAll(async () => {
     await Promise.all(written.map((f) => rm(f, { force: true })));
 });
 
-/**
- * Pull the saved path out of the tool result's server-authored message, and
- * register it for cleanup.
- *
- * Throws with the message text rather than returning undefined: when the save
- * path is not taken, the reason is in that text, and a helper that swallowed it
- * reported a byte comparison against an empty file.
- */
+/** Local wrapper: shared finder plus this suite's cleanup registration. */
 function savedPathFrom(text: string): string {
-    const match = /saved to: (\S+?)(?:\s|$)/.exec(text);
-    if (!match) throw new Error(`no saved path in result text: ${text.slice(0, 400)}`);
-    const path = match[1]!.replace(/[.,]$/, "");
+    const path = sharedSavedPathFrom(text);
     written.push(path);
     return path;
 }

