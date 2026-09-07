@@ -53,19 +53,20 @@ export function createSafeFilenameBase(input: string, fallback = "response"): st
  * Creates a safe filename from the URL and adds a timestamp for uniqueness.
  * File is written with mode 0o600 (owner-only access).
  *
- * **`Buffer` only, deliberately — no `string | Buffer` union.** The whole point
- * of this signature is that the caller decides what bytes land on disk, and a
- * union would accept a lossily-decoded string at every call site with no
- * compiler objection: exactly the shape `parseResponseWithMetadata` refuses for
- * its own input, and exactly how the artefact came to carry U+FFFD where the
- * origin sent a `windows-1252` octet (`LESSONS.md` RC-33). A caller that
- * genuinely holds text — `processResponse`'s jq-filter arm, whose artefact is
- * this server's own `JSON.stringify` output — encodes at the call site, where
- * the conversion is visible in the diff.
+ * **`Buffer` only — no `string | Buffer` union.** The caller decides what bytes
+ * land on disk, and it is the only party that can: a union would take a
+ * lossily-decoded string at any call site with no compiler objection, so the
+ * encode would stop being visible at the point the decision is made. A caller
+ * holding text encodes it itself, in one line the diff shows.
+ *
+ * `LESSONS.md` RC-33 for what a silent decode on this path costs.
  *
  * @param content - The exact bytes to write
  * @param url - The request URL (used for generating filename)
- * @param outputDir - Optional output directory (must already be validated)
+ * @param outputDir - Optional output directory. **Must already be resolved and
+ *   validated by the caller** — nothing here checks it. `ProcessResponseOptions.outputDir`
+ *   carries the same precondition, and `tools/curl-execute.ts::executeCurlRequest`
+ *   is where it is met
  * @returns Absolute path to the saved file
  */
 export async function saveResponseToFile(
@@ -102,9 +103,9 @@ export async function saveResponseToFile(
     const filename = `${safeName}_${Date.now()}.txt`;
     const filepath = join(targetDir, filename);
 
-    // No `encoding`: the argument is already octets. Passing one here would be
-    // inert for a Buffer today and silently lossy the day the parameter type
-    // widens, so it is absent rather than set to something reassuring.
+    // No `encoding`: the argument is octets. An encoding is inert for a Buffer,
+    // so setting one would only be reassurance — and it would become a live
+    // lossy conversion the day this parameter accepts a string.
     await writeFile(filepath, content, { mode: 0o600 }); // Owner-only access
     return filepath;
 }

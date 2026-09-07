@@ -212,6 +212,13 @@ export async function executeCommand(
          * the pool and the ceiling can drift apart while each site still reads
          * as correct.
          *
+         * **This is where `MAX_RESPONSE_SIZE` binds for a request**, because it
+         * refuses while the body is still arriving. `processResponse` checks the
+         * same ceiling again on what it is handed, but as defence-in-depth —
+         * nothing coming through `curl_execute` can reach it over-cap. Raising or
+         * removing the check here therefore leaves the request unbounded, whatever
+         * that later check says; `ARCHITECTURE.md` invariant 14 records the pair.
+         *
          * @returns false when the caller must stop accumulating; the promise
          *   has already been rejected by then.
          */

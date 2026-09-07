@@ -541,3 +541,55 @@ entries, no glob).
 **None outstanding.** No P1 in round 2. Every in-scope class is fixed, one is
 declined with its reason above, and one turned out to be unfixable and is recorded
 as RC-35.
+
+---
+
+## Comment pass — 2026-09-07
+
+A pass over every site this branch touched, against three criteria from the
+director: comments describe the current code and not its history; they give the
+why rather than restating the logic; and parents and children agree on the facts
+that cross between them.
+
+**The history criterion cut the most.** Comments had accumulated what was tried
+and reverted, what an earlier version did, and what a review round found — a
+running commentary on the branch's own argument with itself. That belongs in
+`LESSONS.md` RC-33/34/35 and the todos, which already hold it. Removed from
+`processResponse`'s doc-block and save arm, the Step 1 gate, the decode, the
+`filterApplied` block, `ParsedResponse.bodyBytes`, `saveResponseToFile`,
+`curl-execute.ts`'s call site, both `jq_filter` schema comments, six blocks in
+`curl-output.test-fixture.ts`, and four test comments. The save arm went from 30
+lines to 16 and says more.
+
+One was a comment *about a previous comment* — `curl-execute.ts` explained why it
+no longer contrasted against a removed field. Deleted; the field is gone and the
+contrast has no reader.
+
+### Two false claims the pass found
+
+- **`SavedMessageFacts.diskBytes` said the buffer length and the string
+  measurement "diverge on every non-UTF-8 body".** They do not: `diskContent` is
+  `content` encoded, so they agree exactly. A leftover from the octet-persistence
+  version, and the kind of claim a reader would have trusted.
+- **`processResponse`'s `@param responseBytes` justified its runtime guard as
+  defending against "a JS caller from a custom-tool hook".** No such caller can
+  exist — three reviewers verified the function is on no published entry point.
+  Restated as what it is: a free fail-closed check on a function with one
+  compiler-checked caller.
+
+### Call-chain dispositions, now reconciled
+
+| Fact | Chain | Was |
+|---|---|---|
+| Who enforces `MAX_RESPONSE_SIZE` | `accountFor` → `processResponse` → invariant 14 | the parent did not say it was the binding one; the child called its own check a fast path |
+| What `bodyBytes` is | `CommandResult.stdoutBytes` → `ParsedResponse.bodyBytes` → `processResponse` | the child restated the parent's argument instead of citing it |
+| **`outputDir` must arrive validated** | `executeCurlRequest` → `ProcessResponseOptions` → `saveResponseToFile` | **a real gap — the middle link dropped a security precondition its child depends on.** `ProcessResponseOptions.outputDir` now carries it, and `saveResponseToFile`'s `@param` names where it is met |
+| What is on disk | save arm → `saveResponseToFile` → `savedMessage` → `jq_query` → invariant 1a | agreed already; verified rather than assumed |
+| `filterApplied` → `filtered` | `processResponse` → `savedMessage` | agreed |
+
+One code change, disclosed because it is not a comment: the fixture's header
+collapse called `toBuffer` twice for a non-empty block. Now once.
+
+Suite after the pass: 1,281 passed, 7 skipped, 2 failed — both the `strip-blocks`
+wall-clock flake. `git diff` over `src/` adds no non-comment line apart from that
+one.

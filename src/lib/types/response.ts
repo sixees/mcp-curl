@@ -45,7 +45,16 @@ export interface ProcessResponseOptions {
      * metadata can never be a way to switch a strip stage off.
      */
     contentTypeUndetermined?: boolean;
-    /** Directory for saving large responses (default: temp dir) */
+    /**
+     * Directory for saving large responses (default: temp dir).
+     *
+     * **Must arrive already validated** — resolved, symlinks followed, and
+     * checked against the allowed roots. `processResponse` passes it straight to
+     * `saveResponseToFile`, which does not validate it either, so this type is
+     * the last place the precondition can be stated before the write. The
+     * validation lives at `tools/curl-execute.ts::executeCurlRequest`
+     * (`resolveOutputDir` then `validateOutputDir`).
+     */
     outputDir?: string;
 }
 

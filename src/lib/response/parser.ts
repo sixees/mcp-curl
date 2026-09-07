@@ -56,31 +56,29 @@ export interface ParsedResponse {
      * The body's octets — the origin's, **on the arm where the boundary was
      * found**.
      *
-     * `metadataFound: true` means the separator was located and this is
-     * `raw.subarray(0, separatorIndex)`: the origin's body bytes, nothing else.
-     * `metadataFound: false` means it was not, and this is the whole of cURL's
-     * stdout — which is normally all body, but is also what you get when a
-     * `Content-Type` longer than `LIMITS.MAX_METADATA_TAIL_LENGTH` pushes the
-     * separator out of the search window. On that arm the buffer may contain
-     * this server's own separator and remote header text that was never body.
-     * Absent and not-found are one value here, so the field cannot tell them
-     * apart and neither can this doc-block.
+     * On `metadataFound: true` this is `raw.subarray(0, separatorIndex)`: the
+     * origin's body bytes and nothing else. On `metadataFound: false` it is the
+     * whole of cURL's stdout, which is normally all body — but is also what a
+     * `Content-Type` longer than `LIMITS.MAX_METADATA_TAIL_LENGTH` produces,
+     * because that evicts the separator from the search window. So on that arm
+     * the buffer may hold this server's own separator and remote header text
+     * that was never body, and the field cannot tell you which case you have:
+     * "not found" and "not present" are one value here.
      *
-     * **That distinction is load-bearing for `docs/todos/018`**, whose AC 1 wants
-     * a byte-exact body: byte-exact pass-through is available on the
-     * `metadataFound: true` arm only. It fails safe today — `metadataFound:
-     * false` selects the strictest grammar and everything is stripped — but a
-     * fidelity path built on this field must read the flag.
+     * **That is why the distinction is on the field rather than left to the
+     * caller.** It fails safe today — `metadataFound: false` selects the
+     * strictest grammar, so everything is stripped — but `docs/todos/018` wants
+     * a byte-exact body, and byte-exactness is only available on the
+     * `metadataFound: true` arm. A fidelity path built on this field has to read
+     * the flag.
      *
-     * **The only representation of the body this type carries**, deliberately.
-     * Todo 016 planned for a decoded sibling; the audit found it had no
-     * production consumer, so the parser was decoding a body up to 10 MB that
-     * nothing read while `processResponse` decoded the same bytes again
-     * (`LESSONS.md` RC-33, and RC-28's `repeated-computation` recurring).
+     * Octets rather than a decoded string because `processResponse` must be able
+     * to quote a byte count the origin can be held to, and because one
+     * representation cannot disagree with itself. `CommandResult.stdoutBytes`
+     * owns the general form of that argument.
      *
-     * Octets rather than a string because `processResponse` must be able to
-     * quote a byte count the origin can be held to. It is a subarray, so it
-     * costs no copy — except on the not-found arm, which returns `raw` itself.
+     * A subarray, so it costs no copy — except on the not-found arm, which
+     * returns `raw` itself.
      */
     bodyBytes: Buffer;
     /**
@@ -146,12 +144,11 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  *
  * **Returns the body as octets and never as a string.** The decode belongs to
  * whoever needs text — `processResponse`, for the defence pipeline and the
- * inline body — and doing it here as well cost a second full decode of the same
- * buffer that nothing read. The metadata block IS decoded here, because it is a
- * bounded field this function parses itself.
+ * inline body — so doing it here as well would decode a body up to 10 MB twice
+ * per request. The metadata block IS decoded here, because it is a bounded field
+ * this function parses itself.
  *
- * Returning one representation is also what stops the two disagreeing about
- * where the body ends, which a `(body, bodyBytes)` pair made expressible.
+ * One representation also cannot disagree with itself about where the body ends.
  * `LESSONS.md` RC-33.
  *
  * @param rawResponse - The raw response from cURL including metadata suffix

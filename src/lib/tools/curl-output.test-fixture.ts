@@ -11,17 +11,16 @@
 // `CONVENTIONS.md` → *Naming* owns the rule.
 //
 // **Shared by two of the three suites that stub the executor**, because the
-// shape is the assertion: the header block on its own field, the `-w` metadata
-// suffix on stdout, and a separator of the real length. A hand-written copy
-// drifts toward a fixture that passes against a handler which infers the
-// header/body boundary from the body — the defect `ARCHITECTURE.md` invariant 13
+// shape is what those suites assert against: the header block on its own field,
+// the `-w` metadata suffix on stdout, and a separator of the real length. A
+// per-suite copy drifts toward a fixture that passes against a handler inferring
+// the header/body boundary from the body, which `ARCHITECTURE.md` invariant 13
 // forbids.
 //
-// `register-all-tools.test.ts` is the third and keeps its own builder and
-// separator literal, deliberately: retiring its 31 positional call sites would
-// churn a file no current change touches. What binds it instead is the typed
-// mock — `vi.mocked` gives its every `mockResolvedValue` the real
-// `CommandResult` contract — plus an explicit return type on its own builder.
+// `register-all-tools.test.ts` keeps its own builder, so this module is not the
+// single source of that shape. What ties that suite to the contract instead is
+// `vi.mocked` on its executor stub plus an explicit `CommandResult` return type
+// on its builder — a compile error at one site rather than at 31 call sites.
 //
 // The `vi.mock` declarations stay in each test file: vitest hoists them per
 // module, so they cannot live here.
@@ -37,21 +36,17 @@ import type { CommandResult } from "../execution/index.js";
  */
 export const METADATA_SEPARATOR = "\n---MCP-CURL-00000000-0000-4000-8000-000000000000---\n";
 
-// **There is deliberately no shared stub-hostname constant here, and the reason
-// is a vitest constraint rather than a preference.** `vi.mock` factories are
-// hoisted above every import, so a factory referencing an imported binding
-// throws `Cannot access '__vi_import_N__' before initialization` — measured, on
-// `curl-execute.headers.test.ts`, whose whole suite failed to load. A sibling
-// suite referencing the same constant happened to pass, because its import chain
-// initialised this module first; that is module-ordering luck, not a working
-// pattern, and it would have become an unexplainable flake later.
+// **No shared stub-hostname constant here, and it is a vitest constraint rather
+// than a preference.** `vi.mock` factories hoist above every import, so a factory
+// referencing an imported binding throws `Cannot access '__vi_import_N__' before
+// initialization`. `vi.hoisted` makes a value reachable from a factory but only
+// within one file, so it buys no sharing at all.
 //
-// `vi.hoisted` would make the value available, but only per file — so it buys no
-// sharing and costs machinery. Each suite therefore spells its own hostname
-// literal inside its own factory. Three reviewers flagged the resulting drift
-// (`example.test` twice, `api.example.test` once) and it is real; nothing
-// branches on the hostname today, and if something ever does, the fix is to
-// assert the value rather than to share it.
+// Each suite therefore spells its own hostname inside its own factory, and they
+// have drifted — `example.test` here, `api.example.test` in
+// `register-all-tools.test.ts`. Nothing branches on the hostname, so if anything
+// ever does, the fix is to assert the value rather than to share it.
+// `LESSONS.md` RC-35.
 
 /**
  * What `executeCommand` resolves with, as `executeCurlRequest` reads it.
@@ -61,10 +56,9 @@ export const METADATA_SEPARATOR = "\n---MCP-CURL-00000000-0000-4000-8000-0000000
  * whether a header block is present rather than silently omitting it.
  *
  * A new **required** field on `CommandResult` is then a compile error here. A new
- * **optional** one is not — it arrives as `undefined` with nothing erroring, and
- * no type can close that. What covers it is `vi.mocked` at each suite's mock
- * declaration, which types every `mockResolvedValue` against
- * `Promise<CommandResult>` including the literals that bypass this builder.
+ * **optional** one is not, and no type can close that — it arrives as `undefined`
+ * with nothing erroring. What covers the gap, and the literals that bypass this
+ * builder entirely, is `vi.mocked` at each suite's mock declaration.
  */
 export type CurlOutputFixture = CommandResult & {
     headerBytes: Buffer | undefined;
@@ -83,18 +77,15 @@ const toBuffer = (value: Bytes): Buffer =>
  * The header block goes on its OWN field, never onto stdout, because that is
  * what cURL does once `--dump-header` points at a descriptor.
  *
- * **An options object rather than positionals, because the arguments are not
- * distinguishable by type.** `body` and `headerBlock` are both `Buffer | string`,
- * so two builders with opposite orders — which is what this module replaced —
- * compiled either way and produced a fixture with the header block on *stdout*.
- * `processor.ts::SavedMessageFacts` takes an object for the same reason, stated
- * in its own doc-block: two parameters whose meanings are not interchangeable
- * must not be positionally interchangeable.
+ * **An options object, because `body` and `headerBlock` are both
+ * `Buffer | string`.** Positionally they are interchangeable to the compiler and
+ * not to the reader, so transposing them yields a fixture with the header block
+ * on *stdout* — the composition invariant 13 forbids — and it compiles.
+ * `processor.ts::SavedMessageFacts` takes an object for the same reason.
  *
- * Takes Buffers so a test can put non-UTF-8 bytes on either stream — the point
- * for the octet-fidelity suite, since `Buffer.from(s, "utf8")` cannot produce an
- * invalid sequence and a string-only fixture could not express the input under
- * test.
+ * Accepts Buffers so a test can put non-UTF-8 bytes on either stream:
+ * `Buffer.from(s, "utf8")` cannot produce an invalid sequence, so a string-only
+ * fixture could not express the size-guard cases at all.
  *
  * @param body - the response body's octets, before the metadata suffix
  * @param contentType - the value cURL's `-w` block carries
@@ -111,20 +102,15 @@ export function curlOutputFor({
 }): CurlOutputFixture {
     const bodyBytes = toBuffer(body);
     const meta = Buffer.from(`${METADATA_SEPARATOR}${contentType}`, "utf8");
-    // **Empty and absent collapse to `undefined`, exactly as the executor does**
-    // — `command-executor.ts`: "An empty capture and no capture collapse to
-    // `undefined`, so 'no header bytes' has one spelling rather than two."
+    // **Empty and absent collapse to `undefined`, matching the executor** — a
+    // fixture that can express a state the producer cannot is a fixture that can
+    // give a test an unreachable branch to pass against.
     //
-    // An earlier version of this line kept `""` as a zero-length Buffer and
-    // claimed it distinguished "not requested" from "requested, origin sent
-    // nothing". It does not: that question is answered by `params.include_headers`
-    // in `curl-execute.ts`, and `headerBytes` cannot answer it by design. Keeping
-    // the extra state let a fixture construct a `CommandResult` the executor
-    // cannot produce, which is a test exercising an unreachable branch (K-8).
-    const header =
-        headerBlock === undefined || toBuffer(headerBlock).length === 0
-            ? undefined
-            : toBuffer(headerBlock);
+    // `headerBytes` cannot distinguish "capture not requested" from "requested,
+    // origin sent nothing"; `params.include_headers` in `curl-execute.ts` is what
+    // answers that.
+    const headerCandidate = headerBlock === undefined ? undefined : toBuffer(headerBlock);
+    const header = headerCandidate?.length ? headerCandidate : undefined;
     return {
         stdoutBytes: Buffer.concat([bodyBytes, meta]),
         headerBytes: header,

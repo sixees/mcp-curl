@@ -9,11 +9,9 @@ const buf = (s: string) => Buffer.from(s, "utf8");
 /**
  * Decode a parsed body for a case whose subject is text rather than octets.
  *
- * `ParsedResponse` carries `bodyBytes` alone — no decoded sibling — so a case
- * asserting on characters decodes here, at the assertion, where the conversion
- * is visible. The parser used to do it for everyone, which cost a second full
- * `toString("utf8")` of a body up to 10 MB that no production caller read
- * (`LESSONS.md` RC-33, and RC-28's `repeated-computation` recurring).
+ * `ParsedResponse` carries `bodyBytes` alone, so the decode happens at the
+ * assertion that wants characters — where it is visible, and where it costs
+ * nothing for the cases that do not.
  */
 const text = (p: { bodyBytes: Buffer }) => p.bodyBytes.toString("utf8");
 

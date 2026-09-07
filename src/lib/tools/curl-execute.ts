@@ -233,15 +233,9 @@ export async function executeCurlRequest(
         }
 
         // Process response with filtering and size handling
-        // `processResponse` takes the body's octets, decodes internally for the
-        // defence and the inline body, and keeps the buffer for the size gate and
-        // the saved artefact — the two answers a lossy decode cannot give.
-        // RC-33.
-        //
-        // Stated as what is, not as a contrast with a field that no longer
-        // exists: `ParsedResponse` carries no decoded sibling to distinguish
-        // this from, so the old wording sent a reader grepping for a symbol
-        // they could not find.
+        // `processResponse` takes the octets and decodes internally. The buffer
+        // is what the size guard needs, because only wire octets give a byte
+        // count the origin can be held to.
         const processed = await processResponse(parsed.bodyBytes, {
             url: params.url,
             jqFilter: params.jq_filter,

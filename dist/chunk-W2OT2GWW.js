@@ -2213,11 +2213,8 @@ async function processResponse(responseBytes, options) {
       savedToFile: true,
       filepath,
       message: savedMessage({
-        // The length of the buffer that was actually written, rather
-        // than a re-measurement of the string it came from. The two
-        // agree today — `diskContent` IS `content` encoded — and the
-        // point is that they cannot drift: whatever `diskContent`
-        // becomes, this number describes it.
+        // Measured on the buffer that was written, so the number
+        // describes the file whatever `diskContent` is built from.
         diskBytes: diskContent.length,
         filepath,
         maxSize,

