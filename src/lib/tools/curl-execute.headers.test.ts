@@ -9,7 +9,7 @@
 // exactly a composition defect — both halves were individually defensible and
 // the caller wired them together through a shorter pipeline.
 
-import { describe, it, expect, vi, beforeEach, afterAll, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";

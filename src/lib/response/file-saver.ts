@@ -63,10 +63,12 @@ export function createSafeFilenameBase(input: string, fallback = "response"): st
  *
  * @param content - The exact bytes to write
  * @param url - The request URL (used for generating filename)
- * @param outputDir - Optional output directory. **Must already be resolved and
- *   validated by the caller** — nothing here checks it. `ProcessResponseOptions.outputDir`
- *   carries the same precondition, and `tools/curl-execute.ts::executeCurlRequest`
- *   is where it is met
+ * @param outputDir - Optional output directory. **The allowed-root policy is
+ *   the caller's and is not enforced here** — the check below only re-resolves
+ *   the path and rejects it if normalisation moves it, which catches a symlink
+ *   swapped in after validation but says nothing about where the directory is.
+ *   `ProcessResponseOptions.outputDir` carries the same precondition, and
+ *   `tools/curl-execute.ts::executeCurlRequest` is where it is met
  * @returns Absolute path to the saved file
  */
 export async function saveResponseToFile(

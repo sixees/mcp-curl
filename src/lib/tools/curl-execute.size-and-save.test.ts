@@ -9,7 +9,7 @@
 // so it cannot see a count taken on one representation and applied to another.
 // `LESSONS.md` RC-33.
 
-import { describe, it, expect, vi, beforeEach, afterAll, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { readFile, rm } from "fs/promises";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
@@ -230,13 +230,26 @@ describe("curl_execute saved artefact — 'did a filter run' has one answer", ()
         expect(onDisk).not.toContain("drop");
     });
 
-    it("rejects an empty jq_filter at the schema rather than half-applying it", async () => {
-        // The boundary half of a two-layer guard. `.min(1)` refuses the value
-        // here; `processResponse`'s `filterApplied` is what makes it harmless if
-        // it ever arrives anyway, which it can — a library caller reaches that
-        // function without passing through this schema. There is no reachable
-        // input left to test the second layer through, and that is the point of
-        // having it.
-        expect(() => params({ url: "https://example.test/x", jq_filter: "" })).toThrow();
+    it("treats an empty jq_filter as no filter, and says so", async () => {
+        // `filterApplied` is the whole guarantee — the schema accepts `""`
+        // rather than narrowing a published input (RC-36), so this is the only
+        // layer that answers "did a filter produce this content". The wrong
+        // outcome it excludes is a body returned whole while the response
+        // advertises it as filter output.
+        mockedExecuteCommand.mockResolvedValue(
+            curlOutputFor({ body: '{"keep":"yes","drop":"no"}', contentType: "application/json" })
+        );
+
+        const result = await executeCurlRequest(params({
+            url: "https://example.test/x",
+            jq_filter: "",
+            include_metadata: true,
+        }));
+
+        const text = result.content[0].text;
+        expect(text).not.toContain("Result of jq_filter");
+        const body = JSON.parse(text).response;
+        expect(body).toContain("keep");
+        expect(body).toContain("drop");
     });
 });

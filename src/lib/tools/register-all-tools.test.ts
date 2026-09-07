@@ -13,7 +13,7 @@
 // executor, `processResponse`, `defendText`, the post-processor wrap — runs, so
 // these assert the composition rather than any one stage's contract.
 
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";

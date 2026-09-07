@@ -547,7 +547,7 @@ var CurlExecuteSchema = z2.object({
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
-  jq_filter: z2.string().min(1, "jq_filter must not be empty").optional().describe('JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check.'),
+  jq_filter: z2.string().optional().describe('JSON path filter to extract specific data. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .["key"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported. Applied after response, before max_result_size check.'),
   max_result_size: z2.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger responses auto-save to temp file"),
   save_to_file: z2.boolean().optional().describe("Force save response to temp file. Returns filepath instead of content"),
   output_dir: z2.string().optional().describe("Directory to save response files (must exist and be writable). Overrides MCP_CURL_OUTPUT_DIR env var. Falls back to system temp directory.")

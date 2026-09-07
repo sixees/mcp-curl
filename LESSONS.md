@@ -1678,3 +1678,41 @@ recorded as caught.
   construction; that it resolves anywhere is accidental. More generally: a
   reviewer's fix is a hypothesis about the code, and one that three reviewers
   agree on is still a hypothesis — run it before recording it as done.
+
+### RC-36 — a courtesy guard priced a MAJOR bump, and the guarantee was somewhere else entirely
+
+**Date:** 2026-09-07 · **PR:** #38 · **Plan:** Surface 3, round 1 of `docs/todos/016`
+
+**Class:** K-14 — *class-id:* `broken-contract`
+
+- **The plan said:** round 2 of this branch added `.min(1)` to `jq_filter` on
+  both `CurlExecuteSchema` and `JqQuerySchema`, so an explicitly-supplied empty
+  filter is refused rather than silently ignored. The reasoning was
+  `CONVENTIONS.md` → *Security*, and the comment beside it correctly recorded
+  that this narrows an accepted input on a published entry point — invariant 11
+  prices that as a MAJOR.
+- **Reality was:** CodeRabbit and Copilot independently reported the same thing
+  on Surface 3, which is what forced the question the branch had left open: is a
+  MAJOR release worth this guard? Two facts decided it, and **both were already
+  written in the codebase before the branch started.** The guard's own comment
+  conceded it was *"the courtesy"* and named `processResponse`'s `filterApplied`
+  as the guarantee. And at base, `jq_filter: ""` was **falsy** — the filter block
+  never ran, and `filtered: false` was reported honestly. So the behaviour being
+  "fixed" was a silent no-op that described itself correctly, not a wrong answer.
+- **What changed:** the director settled it — revert, stay MINOR. `.min(1)` is
+  gone from `CurlExecuteSchema`. **It stays on `JqQuerySchema`, and the asymmetry
+  is the point:** there `jq_filter` is required, `splitJqFilters("")` returns
+  `[]`, and `applyJqFilterToParsed` already throws *"filter must specify a
+  path"* — so that one narrows nothing and only moves the error's site. Verified
+  by reading both functions, not assumed from the sibling's comment. The test
+  that asserted the schema rejection now asserts the property that survives —
+  an empty filter is no filter, and the response does not advertise filter
+  output — and was teeth-probed by re-adding `.min(1)`, which fails it alone.
+- **What this costs next time:** **a guard's price is set by the contract it sits
+  on, not by how good the guard is.** This one was cheap to write, correct on its
+  own terms, and cost a major version on a published schema — while the property
+  it protected was held one layer down by code nobody proposed changing. Before
+  adding a check at a published boundary, ask what already answers the question
+  further in; where something does, the boundary check is a courtesy and must be
+  priced as one. K-14's population test applies to *guards you are adding*, not
+  only to findings you are declining.

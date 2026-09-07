@@ -24,10 +24,16 @@ recorded here so a later round does not re-litigate it — `.claude/rules/03-div
 not what it is for — if that becomes a requirement, it is a different tool. The
 body path therefore has exactly two outcomes:
 
-1. **The body parses as JSON** — whether or not the header said so — return the
-   **original bytes, unmodified**, wrapped.
-2. **The body does not parse as JSON** — return no inline body. Report the parse
-   failure, the declared content type, the byte length and a file path.
+1. **The body parses as JSON *and* the value is an object or an array** —
+   whether or not the header said so — return the **original bytes,
+   unmodified**, wrapped.
+2. **Anything else** — return no inline body. Report the parse failure, the
+   declared content type, the byte length and a file path.
+
+**Both arms turn on one gate, and *Require object-or-array* below owns it** — a
+full parse plus `isCompositeValue`, never `isDefinitelyJson`. Stated as "parses
+as JSON" alone, arm 1 admits `null`, `42` and `"<script>x</script>"`, which is
+the bare-scalar case that section rejects by name.
 
 The declared `Content-Type` stops being a decision about anything. It is carried
 to the consumer as a **reported fact** ("this is what the API claimed"), never as
@@ -130,8 +136,8 @@ as `text/plain` is technically JSON. `JSON_DOCUMENT_FIRST_CHARS`
 the saved file byte-exact was reverted in review because the artefact's safety is
 a property of *who reads it*, and that is undecided until this todo lands:
 
-- On a body that parses as JSON the reader is `jq_query`, which is inside the
-  process and applies a defence pass. Byte-exact octets are safe there, and that
+- On a body that passes the gate — parses, and is an object or an array — the
+  reader is `jq_query`, which is inside the process and applies a defence pass. Byte-exact octets are safe there, and that
   is exactly where RC-33's data loss actually hurts — duplicate keys, integers
   past `Number.MAX_SAFE_INTEGER`, `"1.50"`.
 - On a body that does **not** parse, `jq_query` cannot open the file at all, so
@@ -184,8 +190,12 @@ unparseable bytes inline is the arbitrary-remote-text case this whole design
 removes.
 
 So: **no inline body; return the parse failure, the declared content type, the
-byte length and the file path.** `Unexpected token '<' at position 0` tells the
-agent it got an HTML error page with zero remote bytes in the message.
+byte length and the file path.** The failure is reported as a classification
+drawn from the closed set that item 1 under *What to do instead* establishes,
+plus a position only where V8 supplies one — enough for the agent to tell an
+HTML error page from a truncated body, and carrying no remote bytes by
+construction. **Never V8's own message**, which the block immediately below
+measures and rules on.
 
 **SETTLED, by measurement on node v24.18.0 (2026-09-07). The trap is real and
 worse than assumed, and the remedy this todo originally proposed does not work as

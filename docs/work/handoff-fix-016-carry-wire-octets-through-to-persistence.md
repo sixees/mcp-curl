@@ -94,6 +94,7 @@ where it is visible in a diff. This is plumbing 018 needs.
 | Check both size representations rather than swapping | The inflated count was doing real work as a bound. Honesty and bounding are two different consumers of one measurement. | Wire only (016's AC 2 as written — measured 10.3x peak RSS); decode only (the pre-existing message defect) |
 | **016 stays open** | Its AC 1 is now 018's, its AC 2 is superseded by RC-34, and `jq-query.ts`'s lossy read is still its instance 5. Closing it on the write half would make that instance unfindable to anyone re-running the recorded sweep. | Mark it resolved and file a fresh todo for the reader (a duplicate weaker than the record that exists) |
 | No new todo filed for `jq-query.ts` | 016 already lists it as a confirmed instance and 016 remains open, so it is tracked where a future reviewer will look. | File `019` — would have been a second record of one instance |
+| **`jq_filter` keeps accepting `""` on `curl_execute`** — *revised during review (Surface 3), from round 2's decision to add `.min(1)`, on @coderabbitai's and @copilot-pull-request-reviewer's feedback* | The guard was a courtesy on a published export and cost a MAJOR bump; `filterApplied` holds the property either way, and `""` was already a self-describing no-op. Kept on `JqQuerySchema`, where it narrows nothing. `LESSONS.md` RC-36 | Bump to 4.0.0 and keep it (break costs nothing with one consumer, but the version claim would outrun the change); MINOR plus a documented changelog exception (leaves version and changelog making different severity claims) |
 
 ## What to pay attention to during review
 
@@ -593,3 +594,85 @@ collapse called `toBuffer` twice for a non-empty block. Now once.
 Suite after the pass: 1,281 passed, 7 skipped, 2 failed — both the `strip-blocks`
 wall-clock flake. `git diff` over `src/` adds no non-comment line apart from that
 one.
+
+## Review Comments Addressed — 2026-09-07 (Surface 3, round 1)
+
+**Reviewers engaged:** `codex` (mention trigger, scoped to the branch's diff) and
+`copilot-pull-request-reviewer` (requested via `gh api … /requested_reviewers`,
+`201 Created`). Copilot is off `/sixees-workflow:review-pr-comments`'s roster by
+decision; the director named it explicitly and named the mechanism, so it was
+engaged through the API rather than by mention.
+
+**Baseline before the triggers:** `count=3`, `openCount=3` — three CodeRabbit
+inline threads were already open from an earlier automatic run. **After:** 11
+entries, merging to **5 distinct findings**. 11 comments is not 11 findings.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| 018's opening decision admits every `JSON.parse` success, contradicting its own settled composite gate (`018:168`, `018:220`) | coderabbitai ×2 | Fix needed — `stale-comment` | Opening decision now requires object-or-array and points at *Require object-or-array* as the single owner; the V8-message example replaced with the repo-owned classification. **Sweep found a third instance neither bot saw** — `018:139`, the bullet carrying the artefact-safety argument |
+| `.min(1)` on `jq_filter` narrows an accepted input on a published entry point (`schemas.ts:93`, `schemas.ts:95`) | coderabbitai + copilot | Decision conflict → director settled | **Reverted on `CurlExecuteSchema`; kept on `JqQuerySchema`.** Release stays MINOR. `LESSONS.md` RC-36 |
+| `@param outputDir` claims "nothing here checks it" while the function re-resolves the path (`file-saver.ts:69`, `types/response.ts:56`) | copilot ×2 | Fix needed — `stale-comment` | Both docblocks now state the real precondition: the **allowed-root policy** is not enforced here; the normalisation cross-check is defence-in-depth |
+| `type Mock` imported but unused after the move to `vi.mocked` (three test files) | copilot ×3 | Fix needed — `dead-code` | Import removed from all three. `tsconfig.json` sets no `noUnusedLocals`, so nothing was failing — a genuine dead import left by this branch's own edit |
+| Codex review summary; "Didn't find any major issues" on `3cb27d6` | chatgpt-codex-connector ×2 | Question/ack — no defect | **Answered.** No thread to resolve on either — `kind: "issue"` carries no resolved state |
+
+### Declined Findings
+
+**None this round.** Every finding was real and in scope, which is not the usual
+shape of a bot round — read it as this diff carrying a lot of prose rather than
+as the reviewers being unusually accurate. Recorded explicitly because an absent
+table reads as "declines were not written down".
+
+### Decisions Revised
+
+| Original decision | New approach | Reason | Reviewer |
+|---|---|---|---|
+| Add `.min(1)` to `jq_filter` on both schemas, per `CONVENTIONS.md` → *Security* (round 2 of this branch) | `.min(1)` removed from `CurlExecuteSchema`; retained on `JqQuerySchema` | Two facts already in the codebase: the guard's own comment conceded it was *"the courtesy"* and named `filterApplied` as the guarantee, and `""` was falsy at base so the filter block never ran and `filtered: false` was already honest. The guard cost a MAJOR bump on a published export and protected a property held one layer down. Director settled it: revert, stay MINOR. `LESSONS.md` RC-36 | coderabbitai, copilot |
+
+**The asymmetry is deliberate and was verified rather than assumed.** On
+`JqQuerySchema`, `jq_filter` is required, `splitJqFilters("")` returns `[]`, and
+`applyJqFilterToParsed` already throws *"filter must specify a path"* — so that
+`.min(1)` narrows nothing and only moves the error's site. Confirmed by reading
+`src/lib/jq/parser.ts::splitJqFilters` and `src/lib/jq/filter.ts::applyJqFilterToParsed`,
+because the sibling's comment asserting it was a checkable premise (K-3).
+
+**Teeth probed.** The test that asserted the schema rejection now asserts the
+property that survives — an empty filter is no filter, and the response does not
+advertise filter output. Re-adding `.min(1)` fails that test and only that test;
+restored from a `cp` backup, not from git.
+
+### Outstanding Todos
+
+**0 filed this round. 0 open against #38.**
+
+### Observed, not filed — the suite's timing guards
+
+`processor.test.ts`'s *"does not run a defence pass over a body it will not
+return"* failed once under full-suite parallelism and passes in isolation
+(109/109, 686 ms). Across four consecutive full runs the failing set moved every
+time — 2 failures, then 2, then 1 — and `numPassedTests` moved with it
+(1281/1282). That is `docs/todos/013`'s class, whose title is already "the suite
+has no reliable green"; the guard is a CPU-time ratio, not a ReDoS budget, so it
+is a second file exhibiting the same shape.
+
+**Not filed and not added to 013**: the timing test is not in this branch's diff
+(`git diff main..HEAD -- src/lib/response/processor.test.ts` touches 256 lines,
+none of them that test), so it is out of scope, and 013 already owns the class.
+Recorded here rather than as a file, per `pr-resolver-safety` → *Severity against
+scope*: an out-of-scope P2 is declined, not deferred.
+
+### Files Modified
+
+`src/lib/server/schemas.ts`, `src/lib/response/file-saver.ts`,
+`src/lib/types/response.ts`, `src/lib/tools/curl-execute.size-and-save.test.ts`,
+`src/lib/tools/curl-execute.headers.test.ts`,
+`src/lib/tools/register-all-tools.test.ts`,
+`docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`,
+`LESSONS.md` (RC-36), and this handoff.
+
+**Suite after the round:** 1281 passed, 7 skipped, 1–2 failed — the todo-013
+timing flake only, different tests each run. `tsc` errors confined to the same
+three pre-existing files (`src/lib.test.ts`,
+`src/lib/response/post-processor.test.ts`, `src/lib/schema/schema.test.ts`), all
+of which fail at `ccf6e62` too.
