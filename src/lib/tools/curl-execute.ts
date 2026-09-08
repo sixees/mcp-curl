@@ -12,16 +12,27 @@ import {
     parseResponseWithMetadata,
     sanitizeErrorMessage,
     formatResponse,
+    plainBranchNotices,
     processResponse,
     defendText,
-    defendForInline,
     extractHeaderChannel,
 } from "../response/index.js";
 
 /** Tool result type returned by executeCurlRequest */
 export interface CurlExecuteResult {
     [key: string]: unknown;
-    content: [{ type: "text"; text: string }];
+    /**
+     * One entry per remote-controlled region, never one entry spanning two.
+     *
+     * `content[0]` is the body (or the server-authored saved-to-file message) on
+     * every branch. A SECOND entry carries the response header text and a THIRD
+     * carries server-authored notices — truncation, undetermined or unsupported
+     * headers, a non-zero exit code. Both are plain-branch only: under
+     * `include_metadata` the headers travel in the envelope's `headers` key and
+     * the notices in its own fields. ARCHITECTURE.md invariant 13; the wrap
+     * defends each entry independently, which is what keeps invariant 16 true.
+     */
+    content: Array<{ type: "text"; text: string }>;
     isError?: boolean;
 }
 
@@ -43,6 +54,24 @@ export const CURL_EXECUTE_TOOL_META = {
 This tool provides a safe, structured way to make HTTP requests with common cURL options.
 It handles URL encoding, header formatting, and response processing automatically.
 
+Response contract: a body that parses as JSON is returned to you as the origin wrote it,
+whatever Content-Type it declared — duplicate names, number lexemes and key order all
+survive. There are two exceptions, and both are reported when they happen. Attack
+codepoints (invisible characters, bidi overrides, long padding runs) are removed first,
+so a body carrying one is returned without it. And a body that is not valid UTF-8 is
+decoded with each undecodable sequence replaced by U+FFFD, reported as
+body_decode_lossy; its JSON structure survives but those character values do not.
+Outside those two it is byte for byte.
+
+A body that does NOT parse as JSON is not returned inline at all — it is written to a
+file and you get the reason, the byte count and the path, to open with your own file
+tooling. That file holds the origin's exact bytes unless the same codepoint removal
+changed something, and the message says which you have. An empty body is the exception:
+nothing is saved and you get an empty response, because there is nothing to recover.
+
+A JSON body larger than max_result_size is also written to a file; use jq_query on that
+path. Above 10MB the request fails and you should narrow it with query parameters.
+
 Args:
   - url (string, required): The URL to request
   - method (string): HTTP method - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS
@@ -58,14 +87,16 @@ Args:
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
   - include_headers (boolean): Report response headers. With include_metadata they
-    arrive under a separate "headers" key; without it they are prefixed to the returned
-    text followed by a blank line, so that result is NOT JSON-parseable. cURL writes
-    the headers to their own descriptor, so they are never part of the body: they
-    cannot reach the saved file or jq_filter, and combining this with save_to_file or
-    jq_filter is safe unconditionally. Header text is capped at
+    arrive under a separate "headers" key; without it they arrive as a SECOND content
+    entry after the body, so the body entry stays parseable on its own. Either way the
+    header text is never mixed into the body text. cURL writes the headers to their own
+    descriptor, so they are never part of the body: they cannot reach the saved file or
+    jq_filter, and combining this with save_to_file or jq_filter is safe
+    unconditionally. Header text is capped at
     min(64KB, max_result_size); truncation is reported as headers_truncated under
-    include_metadata, and as a leading [mcp-curl] notice otherwise. If headers were
-    asked for and none arrived, that is reported as headers_undetermined (or a leading
+    include_metadata, and as an [mcp-curl] notice otherwise — in a THIRD content entry
+    after the body and the header entry, never prefixed to either. If headers were
+    asked for and none arrived, that is reported as headers_undetermined (or the same
     [mcp-curl] notice) rather than guessed at. Requires macOS; elsewhere no headers are
     captured and that is reported as headers_unsupported, which is a fact about the host
     and NOT a statement that the origin sent none. Note that response headers routinely
@@ -148,7 +179,6 @@ export async function executeCurlRequest(
     extra: CurlExecuteExtra = {}
 ): Promise<CurlExecuteResult> {
     try {
-        // Validate basic_auth format if provided
         if (params.basic_auth && !params.basic_auth.includes(":")) {
             throw new Error("basic_auth must be in 'username:password' format");
         }
@@ -180,8 +210,6 @@ export async function executeCurlRequest(
             dnsResolve: dnsResult,
             metadataSeparator,
         });
-
-        // Use timeout from params, or fall back to system default
         const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
         // `executeCommand` reads the header descriptor's presence off `args`,
         // so nothing here has to agree with `buildCurlArgs` about it — one
@@ -259,47 +287,23 @@ export async function executeCurlRequest(
               })
             : result.stderr;
 
-        // **The body is defended as its own region BEFORE composition, and that
-        // is what keeps invariant 16 true across the join.** On the plain
-        // branch `formatResponse` prepends the header block and the notice
-        // lines, and the result does not parse as JSON — so the wrap's
-        // `defendForInline` takes its UNDIVIDED arm over the whole composed
-        // string and pairs a marker in one body field with one in a later
-        // field, deleting everything between. Measured on the shipped
-        // registration with `include_headers: true`:
-        // `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` came
-        // back as `{"a":"open ","d":"kept"}` — `b` and `c` gone, the remainder
-        // still valid JSON. Routing this path through the wrap is what exposed
-        // it: the pre-wrap registration returned all four fields.
+        // **The body is passed on undefended, because the wrap is what defends
+        // it and there is no composition to get ahead of.** The header block is
+        // its own MCP content part (see the return below), so each part reaches
+        // the wrap as the single region it is.
         //
-        // Defending here rather than at the wrap because **the boundary is
-        // knowable only to the composer** — invariant 13's shape, that a split
-        // point comes from a source the remote cannot write to. The wrap sees
-        // one string and cannot recover where the headers stopped.
-        //
-        // Safe to run twice: the wrap's later pass over the composed text is
-        // idempotent on an already-defended region (measured: byte-identical,
-        // zero growth), and `processResponse`'s size gate already weighed
-        // exactly these defended bytes, so invariant 14's accounting is
-        // unchanged. The metadata branch is left alone — there the body is a
-        // string leaf of a JSON envelope and `defendJsonLeaves` already
-        // defends it region-wise.
+        // Defending it here would be actively wrong rather than merely
+        // redundant: a JSON body is returned as it arrived, and a pass here
+        // would rewrite the bytes the wrap is about to pass through untouched —
+        // the size gate in `processResponse` weighed one set and the model would
+        // receive another.
         //
         // Absent where the body was saved: `ProcessedResponse`'s saved arm
-        // carries no `content` at all (invariant 14 stated in the type), because
+        // carries no `content` at all (invariant 14, stated in the type), because
         // `formatResponse`'s file branch returns the server-authored `message`
-        // and never reads a body. There is nothing to defend and nothing to
-        // pass, so the empty string below is not a body that was dropped — it is
-        // the argument `formatResponse` ignores on that branch.
-        //
-        // The saved arm's `ProcessedResponse` carries no `content` field, so
-        // there is nothing to read on that branch and no way for the two arms to
-        // disagree about which shape holds the body.
-        const inlineBody = processed.savedToFile
-            ? ""
-            : params.include_metadata
-              ? processed.content
-              : defendForInline(processed.content, safeHostname(params.url));
+        // and never reads a body. The empty string below is not a dropped body —
+        // it is the argument `formatResponse` ignores on that branch.
+        const inlineBody = processed.savedToFile ? "" : processed.content;
 
         const output = formatResponse(
             inlineBody,
@@ -323,15 +327,60 @@ export async function executeCurlRequest(
                 // captured any.
                 undetermined: headersUndetermined,
                 unsupported: headersUnsupported,
-            }
+            },
+            // A fidelity fact about the body, reported on both branches: as
+            // `body_decode_lossy` under metadata, and as an appended notice
+            // without it. Silence on either branch would leave a re-encoded
+            // body indistinguishable from an exact one.
+            { decodeWasLossy: processed.decodeWasLossy }
         );
 
+        // **Two remote-controlled regions, two content parts — invariant 13's
+        // strong form, applied at the OUTPUT rather than only at the capture.**
+        //
+        // cURL keeps the header block and the body on separate descriptors, so
+        // the boundary is structural on the way in. One string spanning both is
+        // exactly what invariant 16 forbids — a defence pass whose input spans
+        // more than one region — because the wrap defends each text part
+        // independently. `LESSONS.md` RC-16 holds the measured cost.
+        //
+        // Only on the plain branch, and only when there is header text: under
+        // `include_metadata` the envelope already gives the headers their own
+        // `headers` key, which is a region boundary the serialiser enforces.
+        // **Body first, header text second, and the order is a compatibility
+        // choice rather than a defence one.** Either order separates the
+        // regions, which is all the invariant asks — but `content[0]` has been
+        // the body on every release, so prepending the headers would silently
+        // hand an existing reader the wrong region. Appending only ever ADDS an
+        // element.
+        const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : undefined;
+        // **The server-authored notices are a THIRD region**, and they get their
+        // own entry for the same reason the header text does: concatenated onto
+        // the body they would demote a JSON body to `defendForInline`'s
+        // undivided arm, where a marker in the notice can pair with one in the
+        // body across the join. Its own entry is a stronger boundary than a
+        // prefix. `LESSONS.md` RC-46.
+        const noticePart = !params.include_metadata
+            ? plainBranchNotices(result.exitCode, {
+                  truncated: headerTruncated,
+                  bytesReceived: headerBytesReceived,
+                  bytesReturned: headerBytesReturned,
+                  undetermined: headersUndetermined,
+                  unsupported: headersUnsupported,
+              },
+              {
+                  decodeWasLossy: processed.decodeWasLossy,
+                  savedToFile: processed.savedToFile,
+              }) || undefined
+            : undefined;
         return {
             content: [
                 {
                     type: "text",
                     text: output,
                 },
+                ...(headerPart === undefined ? [] : [{ type: "text" as const, text: headerPart }]),
+                ...(noticePart === undefined ? [] : [{ type: "text" as const, text: noticePart }]),
             ],
         };
     } catch (error) {

@@ -302,17 +302,50 @@ part the wrap runs:
 received it. Pre-defending is harmless but redundant; `applySpotlighting` is
 idempotent and the sanitiser is idempotent on already-sanitised text.
 
-`curl_execute` and `jq_query` results pass through the wrap too, so their text
-is defended twice: once inside the tool under the Content-Type the origin
-actually declared, and again at the wrap under the strictest grammar. That is
-deliberate defence-in-depth, not an oversight — the second pass is the
-less-informed one, and it is additive because every strip stage is idempotent.
+`curl_execute` and `jq_query` results pass through the wrap too, and what each
+layer does differs by tool — a uniform "defended twice" is not true of any of
+them:
 
-One visible consequence: a JSON body is exempt from the strip stages on the
-*persisted* copy (`save_to_file` writes what the origin sent, so `jq_query` can
-read it back) but not on the copy returned inline to the model, which the wrap
-strips like any other text. Persisted keeps the exemption; returned does not.
-See `ARCHITECTURE.md` invariant 1a.
+- **`curl_execute`** applies Step 2 alone before classifying. A non-JSON body is
+  never returned inline, so it does not reach the wrap at all; it is saved, and
+  the wrap sees only the server-authored report. An inline JSON body is
+  sanitised again at the wrap, with no strip stage.
+- **`jq_query`** runs `defendText` over the filter's output under the JSON
+  grammar, then the wrap takes its verbatim-JSON arm on the same text.
+- **A custom tool's result** reaches the wrap with no tool-local body defence at
+  all, which is why the wrap exists.
+
+Where two passes do land on one text, the second is additive rather than
+corrective: every strip stage is idempotent, and the wrap's pass is the
+less-informed one.
+
+**Where a result parses as JSON, no strip stage runs at any layer.** `curl_execute`
+returns a JSON body as the origin sent it, and the wrap's `defendForInline` takes
+its verbatim arm for any text that parses — a JSON string leaf from `jq_query`
+included. The parse is a validity check, not a transform: what comes back is the
+payload, not a re-serialisation of it.
+
+**Why the stages come off rather than being narrowed.** Running them on a JSON
+document requires walking it, and a walk requires a round trip that is not
+information-preserving: it collapses duplicate names, rewrites number lexemes and
+reorders keys, so `{"total":5,"total":9}` reaches the model as `{"total": 9}` — a
+field gone from a tool whose contract is to return an API's data. The stages
+themselves match markup shapes, so what they bought on a JSON body was the
+marked-up subset of a class the spotlighting boundary covers in full. **The trade
+is not free and it is not hidden:** a markdown beacon or a `javascript:` link
+inside a JSON string value now reaches the model, and a client that renders tool
+text as markdown will act on it.
+
+Sanitise-and-detect (invisible characters, bidirectional overrides, padding
+collapse) still runs on every layer including JSON, and a non-JSON body is not
+returned inline at all — it is saved, and its path reported.
+
+**So byte identity holds only where every applicable pass was a no-op**, and the
+response tells you when one was not: `savedMessage` says whether an artefact is
+the origin's octets or the sanitised text, and a body whose UTF-8 decode did not
+round-trip is reported as `body_decode_lossy` (or an appended notice on the plain
+branch). See `ARCHITECTURE.md` invariants 1a and 14, and `LESSONS.md` RC-47,
+RC-48.
 
 Idempotence for the wrap as a whole is enforced via a module-private symbol tag,
 so a result passing through two wraps is not processed twice. The wrap is

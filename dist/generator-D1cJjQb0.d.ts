@@ -53,10 +53,21 @@ type JqQueryInput = z.infer<typeof JqQuerySchema>;
 /** Tool result type returned by executeCurlRequest */
 interface CurlExecuteResult {
     [key: string]: unknown;
-    content: [{
+    /**
+     * One entry per remote-controlled region, never one entry spanning two.
+     *
+     * `content[0]` is the body (or the server-authored saved-to-file message) on
+     * every branch. A SECOND entry carries the response header text and a THIRD
+     * carries server-authored notices — truncation, undetermined or unsupported
+     * headers, a non-zero exit code. Both are plain-branch only: under
+     * `include_metadata` the headers travel in the envelope's `headers` key and
+     * the notices in its own fields. ARCHITECTURE.md invariant 13; the wrap
+     * defends each entry independently, which is what keeps invariant 16 true.
+     */
+    content: Array<{
         type: "text";
         text: string;
-    }];
+    }>;
     isError?: boolean;
 }
 /** Extra context passed to tool handler */

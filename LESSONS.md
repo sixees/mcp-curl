@@ -27,10 +27,11 @@ unrelated bugs to the todo system.
 feature or per theme — is declared in this project's Compound Engineering profile.
 Claim it at the time; it is durable once assigned.
 
-**Where.** Both of: inline in the PR handoff beside the work it corrected, and
-appended to the ledger below. Add a one-line `POST-AUDIT` annotation in the plan
-pointing at the RC, and **never retro-edit plan text** — the plan records what was
-believed, and correcting it in place destroys the evidence that anything diverged.
+**Where.** Appended to the ledger below, and **nowhere else.** A handoff may point
+at the ids a run filed; it does not restate the entries. Add a one-line `POST-AUDIT`
+annotation in the plan pointing at the RC, and **never retro-edit plan text** — the
+plan records what was believed, and correcting it in place destroys the evidence
+that anything diverged.
 
 ### Entry format
 
@@ -117,13 +118,22 @@ entry restating an existing class under a new name with its own counter.
 
 ## RC ledger
 
-> Newest last. Append; never edit an entry once filed. If an RC turns out to be
-> wrong, file a new one that says so and cite it.
+> Newest last. Append; **never rewrite what an entry claims.** If an RC turns out
+> to be wrong, file a new one that says so and cite it.
 >
-> **Two annotations may be added to a filed entry, and nothing else:** a
-> `**Class:**` line, and a `**Mechanism superseded:**` line naming what no longer
-> exists at HEAD and the RC that replaced it. Both are additive — they sit above
-> the body and change no word of it, because the body records what was believed.
+> **Three annotations may be added to a filed entry, and no other annotation type.** A
+> `**Class:**` line; a `**Mechanism superseded:**` line naming what no longer
+> exists at HEAD and the RC that replaced it; and an `**Also filed as:**` line
+> naming the ids folded onto this entry and whatever only they said. All three are
+> **additive** — they sit above the body and change no word of it, because the body
+> records what was believed, and correcting it in place destroys the only evidence
+> anything diverged.
+>
+> **That closes the annotation set, and nothing else** — it is not a prohibition on
+> every edit. Tightening an entry's prose and correcting a still-unmerged entry are
+> both permitted, by the two clauses below; read this sentence as bounding what may
+> be *added above* a body, never as freezing a body the freeze boundary has not yet
+> reached.
 >
 > **The body is frozen; an annotation is maintained.** It points at HEAD, so when
 > HEAD moves again the pointer names the newer RC — an annotation that has itself
@@ -133,6 +143,61 @@ entry restating an existing class under a new name with its own counter.
 > lesson outlives its fix and this format states both in one breath. A binding
 > entry is cited rather than re-checked, so stale mechanism prose inside one is
 > the most expensive a repository can hold: the next round is told not to look.
+>
+> **Condensing is not correcting.** An entry's prose may be tightened so long as
+> every claim, file, symbol, measurement and decision survives intact. What is
+> forbidden is changing what an entry *says* — the body is the record of what was
+> believed, and correcting it in place destroys the only evidence anything
+> diverged. Read the prohibition beside its own rationale: *"never edit"* is wider
+> than the property it defends, and saying the same thing in fewer words touches
+> that property not at all.
+>
+> **The freeze boundary is merge.** An entry whose branch has not merged may be
+> corrected in place — the belief and its correction sit inside one round, so there
+> is no divergence for the body to be evidence of. **Once merged the body is
+> frozen**, and a wrong claim is answered by a new RC that cites it.
+>
+> **Entries come in two lengths, and the short ones are not unfinished.** An entry
+> that something outside this file cites is kept whole, because a citation makes its
+> detail load-bearing somewhere else. An entry nothing cites keeps its heading, its
+> `Class:`, every annotation, any binding declaration and its *What this costs next
+> time* — and its plan/reality/what-changed narrative is retired. That split is this
+> preamble's own doctrine applied to itself: **an entry's lesson outlives its fix.**
+> The heading carries the narrative in one line, which is why headings here state
+> what reality turned out to be. `git grep RC-N` outside this file is the test, so
+> **a short entry becomes a candidate for restoring in full the moment something
+> cites it.**
+>
+> **This is the pass `/sixees-workflow:reconcile-lessons` performs**, once this file
+> has grown past what its readers can hold. It proposes; you authorise.
+>
+> **This preamble is shipped prose and this copy is yours** — nothing refreshes it,
+> so a repository onboarded against an older bundle keeps an older law indefinitely,
+> and the pass above then declines dispositions in exactly the ledgers that most
+> need them. `/sixees-workflow:refresh-compound` → *Step 5: Offer the ledger preamble
+> forward* reports which clauses the current scaffold carries that this copy lacks,
+> and inserts the ones you authorise — above the first entry heading and nowhere
+> else. **It never reads or writes an entry.**
+>
+> **Nothing in this law lets an entry be deleted.** A mechanism that no longer exists
+> is marked dead by the `**Mechanism superseded:**` annotation and the lesson stays;
+> an entry nothing cites is shortened to that lesson.
+> `/sixees-workflow:reconcile-lessons` carries no disposition that deletes one, so a
+> request to *"remove the RCs that no longer apply"* is answered by shortening.
+>
+> **So every id this file has ever issued still names an entry, and two properties
+> hold without anything having to check them.** The next number is allocated by
+> reading the highest `RC-[0-9]+` here, so no number can be issued twice; and a
+> citation of `RC-N` written anywhere in the repository still resolves. Both are
+> properties of entries *staying*, which is why deletion is the one operation this
+> law does not grant.
+>
+> **A project may override that on its director's authority**, recorded as an RC in
+> its own trail. The override is then the project's and nothing refreshes it away —
+> but it comes with no tooling: the deletion is performed by hand, and the two
+> properties above become a human's to hold, meaning nothing may cite the id outside
+> its own entry and the id must stay somewhere in this file so the allocation query
+> still counts it as issued.
 
 ### RC-1 — An invariant can be satisfied by the bug it was written to prevent
 
@@ -1716,3 +1781,376 @@ recorded as caught.
   further in; where something does, the boundary check is a courtesy and must be
   priced as one. K-14's population test applies to *guards you are adding*, not
   only to findings you are declining.
+
+### RC-37 — removing the JSON round trip removed the region-wise divider with it, and invariant 16 had consumers outside the body path
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-11 — *class-id:* `unescaped-sink`
+
+- **The plan said:** delete `defendJsonLeaves` and its round-trip scaffolding, and
+  return a JSON body's original bytes. `018` → *What survives* keeps "the wrap plus
+  spotlighting", and states that invariant 16's region-wise premise "no longer
+  applies to the body". Both halves read as complete.
+- **Reality was:** invariant 16 was never only about the body, and its own text says
+  so — a violation is *"a defence pass whose input spans more than one region"*. The
+  per-leaf walk had been satisfying it for **two further routes**, and deleting the
+  walk re-opened the splice on both. Measured, after the deletion:
+  `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returned `["a","d"]`
+  from `["a","b","c","d"]` — the field between the paired markers deleted, output
+  still valid JSON — via (1) a jq filter returning a document as a **string leaf**,
+  and (2) `formatResponse` **prefixing the header block to the body** on the plain
+  branch. That second route had an explicit fix at `curl-execute.ts` whose comment
+  claimed it "keeps invariant 16 true across the join"; the fix worked only because
+  the leaf walk neutralised the markers before composition, so removing the walk
+  falsified the comment and the fix together. **Found by the suite, not by reading** —
+  the four `behind a header block` cases and the string-leaf case.
+- **What changed:** the rule was restated as **divide, not rewrite**, and each route
+  divided at the layer that can see its boundary. `processor.ts::defendForInline`
+  gained a three-arm shape — composite JSON verbatim, a JSON string holding a
+  composite document divided and its inner region defended, anything else scanned
+  undivided — with `compositeStringPayload` as the divider; it recurses and
+  terminates by construction, since each unwrap drops at least the two enclosing
+  quotes, which is why no depth bound came back with it.
+  `formatResponse` stopped composing header text with body text at all, and
+  `curl-execute.ts::executeCurlRequest` now emits **two MCP content entries**, body
+  first. `ToolResult.content` and `CurlExecuteResult.content` widened from a 1-tuple
+  to an array. `ARCHITECTURE.md` invariant 16 rewritten; 1a and 14 rewritten for the
+  same change.
+- **What this costs next time:** **when you delete a mechanism, sweep for what it was
+  incidentally satisfying, not only for its callers.** The callers of
+  `defendJsonLeaves` were two and both were in the plan. What was missing was the
+  set of *properties* it upheld, and one of them was an invariant with its own RC and
+  its own test suite. The question that finds this is invariant 16's own: *what
+  regions are in this string, and does the pass respect them?* — asked of every
+  surviving call, not of the one being deleted. Related: RC-33 rule 2 says to sweep
+  for consumers of the OLD representation when adding a new one; this is its mirror,
+  and the same shape from the other side.
+
+### RC-38 — the JSON exemption was reversed, and Step 2 was nearly reversed with it
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-14 — *class-id:* `misplaced-decision`
+
+- **The plan said:** `018` → *What survives* lists exactly one thing for the JSON
+  path — "the wrap plus spotlighting — structural, byte-preserving, unforgeable
+  boundary". Its whole argument for dropping the rewriting is that the strip stages
+  are **markup-enumerative**, so they catch only a subset of a class the wrap covers
+  in full.
+- **Reality was:** that argument does not reach **Step 2**. Invisible-character and
+  bidi-override stripping is not markup-enumerative, and this project's own profile
+  §3 lists those attacks as in scope at the LLM trust boundary — so a literal
+  reading of *What survives* would have withdrawn a defence 018 never argued
+  against. Measured before deciding: Step 2 is a **byte-for-byte no-op on every
+  fidelity case 018 names** — duplicate names, an integer past
+  `Number.MAX_SAFE_INTEGER`, `1e400`, `"1.50"`, non-ASCII keys, a lone surrogate —
+  and alters only a body that actually carries an attack codepoint, which still
+  parses afterwards. So the trade the plan implied did not exist: keeping Step 2
+  costs nothing the plan wanted and dropping it buys nothing.
+- **What changed:** `defendForInline`'s composite arm returns `sanitizeAndDetect`,
+  not the raw text. `018`'s *What survives* item 1 corrected to name Step 2
+  explicitly, with the measurement. Separately, and in the same audit, the
+  **non-JSON artefact** was found to take the origin's DECLARED grammar rather than
+  the strictest one: `defendText(body, { contentType: "text/plain" })` runs no strip
+  stage, so `See [the docs](https://example.test/docs)` reached the persisted
+  artefact with the beacon live — on a file `savedMessage` tells the model to read
+  with its own tooling, outside every defence. It had been masked because such a
+  body used to be returned inline, where the wrap applied exactly the missing pass.
+  `processResponse` now passes `contentTypeUndetermined: true` and no `contentType`
+  at all. **`decodeEntities` was deliberately left at its default** rather than
+  matched to `defendForInline`'s `false`: that axis is RC-3's trade and
+  `docs/todos/004` owns it, and folding it in would have settled it silently.
+- **What this costs next time:** **a plan's "what survives" list is a claim about a
+  set, and a set is checked by enumerating the members it does not mention.** 018
+  named the defence it was arguing against and one it was keeping; the one it was
+  silent about was the one at risk. Also: **an exemption keyed on a remote-written
+  field stays a live gap even after the field stops selecting anything on the path
+  you are looking at** — this one survived on the artefact arm precisely because
+  attention was on the inline arm.
+
+### RC-39 — a settled exemption was reversed, because the change under review removed the thing that made it safe
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-11 — *class-id:* `fail-open-default`
+
+- **The plan said:** nothing about scalar JSON documents' *strip* treatment. RC-10
+  round 4 had settled it — a scalar JSON document keeps the strip exemption, so a
+  beacon inside `"![x](…)"` is not rewritten, on the reasoning that rewriting would
+  alter a persisted document the origin sent. `018` settles only the *artefact gate*
+  for a bare scalar (non-JSON, therefore not raw octets).
+- **Reality was:** a reviewer found `processResponse`'s non-JSON arm calling
+  `defendText(response, { contentTypeUndetermined: true, hostname })` and relying on
+  `excludeJsonDocuments`'s default of `true`. That let `defendText` re-ask the JSON
+  question with a **looser** predicate and cancel the strictest grammar the call had
+  just requested: `isDefinitelyJson('"<script>x</script>"')` is `true`, so
+  `looksLikeJsonBody` became true, `strictestGrammar` false, `isMarkup`/`isMarkdown`
+  fell through to `undefined` (both false), and `sniffedAsMarkup` was blocked by the
+  same flag. **`needsStripPath` was false and no strip stage ran** — measured:
+  `<script>alert(1)</script>`, a markdown beacon and an HTML comment all survived
+  verbatim in a bare-scalar body, while the control (plain markup) was stripped. And
+  `savedMessage` told the model those bytes "have been through the full defence
+  pipeline".
+- **What changed:** `excludeJsonDocuments: false` at that call site, mirroring
+  `defendInlineString`. That fixes the bypass and, as a consequence, reverses RC-10
+  round 4's scalar exemption. **The reversal is justified by 018 having removed the
+  exemption's premise, not by re-weighing it.** RC-10's split was *persisted keeps
+  the exemption; returned does not*, and it was safe because a scalar document was
+  ALSO returned inline, where `defendForInline` stripped it — the model saw a
+  defended copy while the artefact kept the origin's bytes. 018 classifies a bare
+  scalar as non-JSON, so there is no inline copy: the artefact is the only
+  representation. And its reader is the host's own file tooling rather than
+  `jq_query` — **verified rather than assumed**: `applyJqFilter('"…"', ".")` is
+  refused, because a top-level scalar has no path to address. RC-12's other half,
+  never entity-decoding such a document, is untouched and still guarded
+  independently by `isDefinitelyJson(content)` in the decode gate.
+- **What this costs next time:** **an option's DEFAULT is part of a call site's
+  meaning, and a caller that states an intent in a comment has not stated it to the
+  callee.** The comment said "the full pipeline with the grammar declared
+  UNDETERMINED, so every strip stage runs"; the argument list said something weaker,
+  and the callee's default won. The question that finds this: *for every option I did
+  not pass, which way does its default resolve, and does the callee re-decide
+  anything I just decided?* That is K-2's fail-open question asked of an argument
+  list rather than of a conditional. Second lesson: **when a change removes a
+  representation, re-price every exemption that was safe because that representation
+  existed** — the same shape as RC-33's *the artefact's safety is a property of its
+  reader*.
+
+### RC-44 — the gate classified the bytes it was handed while every pass below it ran on the sanitised form
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-9 — *class-id:* `stale-observation`
+
+- **The plan said:** classify the body once, and route the inline copy and the artefact
+  on that verdict. Nothing about where in the pipeline the classification sits.
+- **Reality was:** `classifyBody(response)` ran on the raw decode, while `defendText`
+  and `defendForInline` both run on the *sanitised* form — so the two disagreed on any
+  body Step 2 alters. Measured on `﻿{"a":"open <!--","b":"secret","c":"close
+  -->","d":"kept"}`, an ordinary BOM-prefixed JSON body of the kind .NET and Java
+  services emit routinely: classified `invalid-syntax`, forced to disk, then handed to
+  `defendText`, which sanitised the BOM away and ran the full strip over what was by
+  then valid JSON — the artefact came back `{"a":"see ","b":"y"}` with a field spliced
+  out, on the only copy. **This is the same reorder RC-32 had already applied INSIDE
+  `defendText`**, which is exactly why the outer gate looked safe: the inner one had
+  been fixed and the new outer one repeated the original mistake one layer up.
+  Separately, the same call site was withholding Step 2's *detection* side effect from
+  every saved JSON body, so a body carrying `Ig​nore previous instructions`
+  produced no `[injection-defense]` line at all.
+- **What changed:** `const sanitised = sanitizeAndDetect(response, hostname)` above the
+  fork, `classifyBody(sanitised)`, and the body handed on is the sanitised form. **Byte
+  exactness became conditional and the claim narrowed to what is true**: the artefact is
+  the origin's octets only where `sanitised === response`, because raw octets carrying a
+  BOM would be a file `jq_query` cannot open — which was the trap in the obvious version
+  of this fix. `empty-body` was also excluded from the save arm: a `204 No Content` was
+  writing a zero-byte file and telling the model to read it with its own tooling, and
+  `docs/todos/018` justifies that arm entirely on recoverability.
+- **What this costs next time:** **when you add a gate above an existing pipeline, check
+  which representation each stage below it reads** — a classification and the passes it
+  routes must see the same bytes, and "the raw input" is the intuitive choice and the
+  wrong one wherever any stage normalises. The RC that already fixed this one layer down
+  is the tell: **a reorder recorded as a lesson applies to the next layer that gets
+  built, not only to the layer it was recorded against.**
+
+### RC-45 — one gate was made to answer two questions, and the stricter answer discarded the response
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-13 — *class-id:* `lost-code-path`
+
+- **The plan said:** one rule, spelled once — the body gate and the artefact gate are the
+  same question. Consolidating the `jq_filter` branch's own narrower check onto it looked
+  like the same tidy-up, and the commit called it "strictly better".
+- **Reality was:** it is a *third* question and the gate cannot answer it. `classified.json`
+  asks *may these bytes be handed over unmodified*, which is composite-only because a bare
+  scalar's artefact has no in-process reader. A filter asks something weaker — *does this
+  parse* — and runs perfectly well on a top-level scalar. So an endpoint returning `null`
+  for "no record", `42` for a count or `"ok"` for a health check made
+  `curl_execute({ url, jq_filter })` **throw**, and the throw sits above `shouldSave`, so
+  the body was not saved either: it was discarded outright, where the same body without a
+  filter is persisted and reported. A second defect fell out of fixing the first —
+  `shouldSave` still keyed on the ORIGINAL body's verdict after a filter had replaced the
+  content, so a 4-byte filter result was forced to disk and reported as an unreturnable
+  non-JSON body.
+- **What changed:** the filter branch gates on parseability (`empty-body` and
+  `looks-like-markup` still refused, a scalar allowed), and `shouldSave` accounts for
+  `filterApplied` because the classification describes bytes the filter has replaced.
+- **What this costs next time:** **"one rule spelled once" is about one QUESTION, and
+  consolidating two call sites onto one predicate is only DRY if they were asking the same
+  thing.** The check that finds this: state each caller's question in words before merging
+  them, and if the sentences differ, the predicates should. Also — **a throw placed above a
+  save arm converts a degraded answer into no answer**, so the ordering of a refusal
+  against a persistence step is itself a decision.
+
+### RC-46 — the fix kept an exception for the safe case, and the exception was the defect
+
+**Date:** 2026-09-07 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-12 — *class-id:* `duplicated-logic`
+
+- **The plan said:** stop joining server prose to remote bytes (RC-41). The saved-to-file
+  arm joins the notice to `savedMessage`, which is server-authored on both sides, so there
+  is no region to splice — and that reasoning is correct.
+- **Reality was:** correct and still wrong, because the *caller* appends the notice entry
+  unconditionally. Keeping the join for the "safe" arm meant the model received the notice
+  **twice** on every saved plain-branch response with a non-zero exit — and after this
+  branch every non-JSON body saves, so that is most of them. Two spellings of one rule,
+  which is precisely what the exception bought. **No test caught it**: the teeth probe on
+  the fix failed nothing until a case was written for it.
+- **What changed:** `formatResponse` emits no notice on any branch; notices travel as their
+  own content entry, always. One rule.
+- **What this costs next time:** **an exception carved out for the case that is safe still
+  has to be checked against what the other side of the boundary does.** The join was safe
+  in isolation and duplicative in composition, which is the same shape as RC-37 — a
+  property that holds locally and not across a layer. And the smaller lesson, paid for
+  twice on this branch now: **probe every fix, including the ones that look like tidying**,
+  because a fix with no failing test is a fix nothing will keep.
+
+### RC-47 — the population was measured, and two settled decisions were reversed on it
+
+**Date:** 2026-09-08 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-14 — *class-id:* `empty-population`
+
+- **The plan said:** a JSON body is returned verbatim, and everything else is defended.
+  RC-10's split held — *persisted keeps the JSON exemption; returned does not* — and a bare
+  scalar was classified non-JSON so that its artefact took the strictest grammar. RC-39
+  reversed the scalar exemption on exactly that reasoning, one round earlier.
+- **Reality was:** the director named the population and it does not contain an attacker.
+  This proxy is used by internal staff querying their own APIs; the defences being priced
+  were for a remote that does not get to choose who reads the file. Measured against that,
+  two of the branch's own decisions were costing more than they bought:
+  - **The non-JSON artefact was defended before persistence**, so `stripHtmlComments`
+    deleted the `<!-- trace-id: … -->` a framework puts its diagnostic in — measured on a
+    500 page. The most useful line on the page, removed from a file whose only reader is
+    the developer who asked for it.
+  - **A bare scalar was reported as non-JSON and written to a file `jq_query` cannot
+    open**, because a top-level scalar has no path to address (`jq/filter.ts` refuses a
+    pathless filter). An endpoint answering `null` for "no record" wrote an unreadable
+    artefact instead of returning `null`.
+- **What changed:** `classifyBody` accepts any value that parses — the round trip is a
+  validity check and the payload comes back as sent. The artefact is the origin's octets on
+  both arms, substituted only where Step 2 had to alter the bytes for `jq_query` to parse
+  them, or where a filter ran. `processResponse` calls no defence pass at all: 55 tests
+  asserting a strip stage through that function were removed, because the routing they
+  described is unreachable by design rather than merely unused. `defendText` keeps every
+  stage for the channels that still need them — header text, stderr, jq output, custom
+  tools — and `defend-text.test.ts` plus `strip-blocks.test.ts` hold that coverage.
+- **What this costs next time:** **RC-10 is now reversed on both halves, and the reversal
+  reached a surface the scope call did not name.** `classifyBody` is shared with
+  `defendForInline`, so accepting scalars also stopped the wrap stripping a JSON string
+  leaf — which is `jq_query`'s return value. That was flagged before the change and
+  authorised, but the general lesson is the one to keep: **a predicate shared between a
+  gate and a defence carries any widening from one into the other**, and the blast radius
+  of a scope call has to be traced through the shared symbol, not through the diff.
+  Two smaller ones, both paid for here: **`MAX_INLINE_GROWTH_RATIO` is now dead at every
+  live call site**, because no pass grows a JSON body and only JSON reaches
+  `exceedsInlineCap` — dead machinery that ships green is the defect nothing reports. And
+  **RC-40 through RC-43 were assigned in the PR handoff and never written to this ledger**,
+  so seventeen source comments cited entries that did not exist; two independent comment
+  auditors found it. An RC number is durable only once it is *here*.
+
+### RC-48 — the remedy was recommended for three rounds and never run
+
+**Date:** 2026-09-08 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-15 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** RC-47 settled that `stripMarkdownBeacons` comes off the JSON arm,
+  because the population that a markdown beacon harms — a client rendering tool text as
+  markdown and fetching the URL — was judged empty. The handoff's *Open escalation*
+  recorded the alternative remedy beside it: *"keep `stripMarkdownBeacons` on the JSON arm
+  and withdraw only the paired-token stages … `stripMarkdownBeacons` does not pair and is
+  byte-preserving on any document containing no beacon."*
+- **Reality was:** the population is **not** empty — the director's own agent renders tool
+  output as markdown, which reverses RC-47's call on new information rather than
+  re-litigating it. And the remedy that had been sitting on the table for three rounds is
+  **unsound**. `stripMarkdownBeacons` pairs `(` with `)` exactly as `stripHtmlComments`
+  pairs `<!--` with `-->`, and a JSON string value cannot stop it. Measured against HEAD:
+
+  ```
+  in :  {"a":"![x](https://evil.test/","b":"secret","c":"x)","d":"kept"}
+  out:  {"a":"[image removed]","d":"kept"}
+  ```
+
+  Two fields deleted, the result still valid JSON, nothing downstream able to tell — RC-16's
+  defect, which is the P1 this whole branch exists to remove. The second half of the claim
+  holds: a document containing no beacon is returned byte-identical. The first half —
+  *"does not pair"* — was false, and it is the half the remedy rested on.
+- **So:** the remedy is not implemented. The beacon defence and byte-exactness cannot both
+  be had by running a whole-document pass, and the escalation is re-opened as a design
+  question rather than closed with a patch. Three sound options exist and each costs
+  something: bound the beacon patterns so they cannot cross a `"` (touches a shared,
+  ReDoS-measured regex); route a beacon-carrying JSON body to a file instead of inline
+  (byte-exact for every clean payload, and a CMS API returning markdown stops arriving
+  inline); or lex the JSON and rewrite only inside string tokens (slice-2 sized).
+- **The lesson:** a recommendation written beside a finding acquires the finding's
+  authority. This one was reviewed by two surfaces and quoted in three documents without
+  anyone running it, because it reads as the conclusion of the analysis that produced it
+  and the analysis *was* sound. **The diagnosis and the remedy are separate claims and
+  need separate evidence.** `01-known-shapes.md` → K-15 names the shape; the question it
+  asks — *"has this remedy been run against HEAD, or only read?"* — takes about ninety
+  seconds to answer here, and would have at any point in those three rounds.
+
+### RC-49 — the JSON payload is not ours to defend
+
+**Date:** 2026-09-08 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-14 — *class-id:* `oversized-payload`
+
+- **The plan said:** RC-48 re-opened the markdown-beacon question as a design decision with
+  three candidate remedies, on the finding that the operator's client renders tool output as
+  markdown and the beacon population is therefore real.
+- **Reality was:** the director settled it at the level above the remedy. **This server is
+  middleware** — a way to expose cURL to an agent with buffering and size scaffolding around
+  it. The agent calling a specific API knows what that API returns and how to handle it, so
+  the payload is not the server's to interpret, redact or rewrite. **What that settles is the
+  markup, comment and markdown-beacon stripping, which is withdrawn from the JSON arm and
+  stays withdrawn.** It does not describe the shipped byte contract on its own:
+  `sanitizeAndDetect` still runs above the fork, so a document carrying an attack codepoint
+  or a threshold-length padding run comes back without it, and `src/lib/types/public.ts`
+  documents that. Closing the remaining gap between this settlement and that pass is
+  `docs/todos/019`'s subject, not this entry's. The server owes
+  the agent exactly three things: confirm the body is JSON; say so plainly when it is not;
+  and when the body is too large, tell the agent to ask the API for less data.
+- **So:** none of RC-48's three options is implemented, and the beacon question is closed
+  rather than deferred — there is no trigger that re-opens it. A later review round proposing
+  a beacon pass, a trusted-origin gate or mandatory spotlighting on the JSON arm is answered
+  by citing this RC, per `.claude/rules/03-divergence.md` → *Settled conflicts stay settled*.
+  RC-47's original call is restored, on a firmer basis than the population argument it rested
+  on: not *"this beacon harms nobody"* but *"the payload is the agent's to interpret"*.
+- **The lesson:** three review rounds priced a remedy without anyone asking what the product
+  is. Every finding was correct — CWE-74 is real, the reachability is real, the measured
+  splice in RC-48 is real — and all of it was answering a question this server had already
+  delegated to its caller. **`01-known-shapes.md` → K-14 is found only by asking something
+  the diff cannot answer**, and the answer here was one sentence from the director. The
+  escalation was the right disposition; what took three rounds was escalating the *scope*
+  question rather than the remedy.
+
+### RC-50 — the gate narrowed on one side, and the other side still discarded the body
+
+**Date:** 2026-09-08 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-11 — *class-id:* `lost-code-path`
+
+- **The plan said:** *Bad JSON: report, save, do not inline* — a body that does not parse
+  yields the parse failure, the declared content type, the byte length and the file path.
+  Unconditional; the plan states no `jq_filter` exception, and `curl_execute`'s own
+  description promises the same save in the same terms.
+- **Reality was:** the filter gate threw ~100 lines above `shouldSave`, so a `jq_filter`
+  against a non-JSON origin discarded the body outright — no path, no byte count, nothing to
+  open. An HTML proxy error page is the ordinary case, and it is exactly the body an agent
+  most needs to read. The same page fetched *without* a filter was persisted and reported.
+- **So:** the filter is skipped rather than fatal — `if (options.jqFilter && classified.json)`
+  — leaving `filterApplied` false so `shouldSave`'s `(!classified.json && !filterApplied)` arm
+  takes it and `savedMessage` names the reason, the byte count and the path.
+- **The lesson:** **RC-45 fixed this defect's mirror and stopped there.** It found one gate
+  answering two questions and narrowed it, which rescued the bare-scalar body — `null`, `42`,
+  `"ok"` — and left the genuinely-non-JSON body discarded by the same throw, on the same line,
+  for the same reason. The RC even names the mechanism: *"the throw sits above `shouldSave`,
+  so the body was not saved either."* That sentence was written about the case that got fixed.
+  **`01-known-shapes.md` → K-11 asks which boundary the defect sat on and to check both
+  sides**, and the two sides here were *parses* and *does not parse* — one arm rescued, one
+  arm left. No test covered the unfixed side, so the suite was green either way: removing the
+  new guard fails exactly one case, and that case did not exist until this round.

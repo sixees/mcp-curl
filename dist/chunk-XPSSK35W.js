@@ -543,7 +543,7 @@ var CurlExecuteSchema = z2.object({
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
   include_headers: z2.boolean().default(false).describe(
-    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they are prefixed to the returned text followed by a blank line, so that result is not JSON-parseable. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
+    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as their OWN content entry after the body, so the body entry stays parseable on its own \u2014 never split content[0]. That entry is present only when headers were actually captured: where none were (see headers_undetermined and headers_unsupported below) it is omitted entirely, and a server notice may then occupy content[1]. Match on the entry's content rather than trusting its index. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
@@ -977,47 +977,6 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
     throw error;
   }
   return applyJqFilterToParsed(data, filter);
-}
-
-// src/lib/response/parser.ts
-var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
-function isJsonContentType(contentType) {
-  const mime = parseMimeType(contentType);
-  return mime === "application/json" || mime.endsWith("+json");
-}
-function parseResponseWithMetadata(rawResponse, separator) {
-  const raw = rawResponse;
-  const sep = Buffer.from(separator, "utf8");
-  const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
-  const searchStart = Math.max(0, raw.length - windowBytes);
-  const indexInWindow = raw.subarray(searchStart).lastIndexOf(sep);
-  const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
-  if (separatorIndex === -1) {
-    return {
-      bodyBytes: raw,
-      metadataFound: false
-    };
-  }
-  const bodyBytes = raw.subarray(0, separatorIndex);
-  const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
-  const contentType = metadata.trim();
-  const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
-  return {
-    bodyBytes,
-    contentType: validContentType,
-    metadataFound: true
-  };
-}
-function sanitizeErrorMessage(message, includeDetails) {
-  if (includeDetails) {
-    return message;
-  }
-  let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
-  sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
-  if (sanitized !== message) {
-    sanitized += " (use include_metadata: true for details)";
-  }
-  return sanitized;
 }
 
 // src/lib/response/file-saver.ts
@@ -1793,7 +1752,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "3.7.0" : "0.0.0"
+  VERSION: true ? "4.0.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -2001,20 +1960,27 @@ var JSON_DOCUMENT_FIRST_CHARS = /* @__PURE__ */ new Set([
   "n"
 ]);
 function isDefinitelyJson(text) {
-  return parseJsonDocument(text) !== void 0;
-}
-function parseJsonDocument(text, preserveNumberLexemes = false) {
   const trimmed = text.trimStart();
-  if (trimmed.length === 0) return void 0;
-  if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return void 0;
-  if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return void 0;
+  if (trimmed.length === 0) return false;
+  if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return false;
+  if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
   try {
-    return {
-      value: preserveNumberLexemes ? JSON.parse(text, keepNumberLexeme) : JSON.parse(text)
-    };
+    JSON.parse(text);
+    return true;
   } catch {
-    return void 0;
+    return false;
   }
+}
+function classifyBody(text) {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return { json: false, reason: "empty-body" };
+  if (trimmed.startsWith("<")) return { json: false, reason: "looks-like-markup" };
+  try {
+    JSON.parse(trimmed);
+  } catch {
+    return { json: false, reason: "invalid-syntax" };
+  }
+  return { json: true };
 }
 function defendText(text, options) {
   let content = text;
@@ -2041,35 +2007,8 @@ function defendText(text, options) {
   return content;
 }
 function defendForInline(text, hostname) {
-  const parsed = parseJsonDocument(text, true);
-  if (parsed === void 0) return defendInlineString(text, hostname);
-  if (exceedsDefenceDepth(parsed.value, MAX_INLINE_DEFENCE_DEPTH)) {
-    return defendInlineString(text, hostname);
-  }
-  return serialiseWithoutGrowing(defendJsonLeaves(parsed.value, hostname), text);
-}
-function serialiseWithoutGrowing(defended, original) {
-  const indented = JSON.stringify(defended, null, 2);
-  return Buffer.byteLength(indented, "utf8") <= Buffer.byteLength(original, "utf8") ? indented : JSON.stringify(defended);
-}
-var MAX_INLINE_DEFENCE_DEPTH = 100;
-function exceedsDefenceDepth(value, limit) {
-  const stack = [{ node: value, depth: 0 }];
-  while (stack.length > 0) {
-    const { node, depth } = stack.pop();
-    if (depth > limit) return true;
-    if (isRawNumber(node)) continue;
-    if (Array.isArray(node)) {
-      for (const item of node) stack.push({ node: item, depth: depth + 1 });
-    } else if (node !== null && typeof node === "object") {
-      for (const item of Object.values(node)) stack.push({ node: item, depth: depth + 1 });
-    }
-  }
-  return false;
-}
-function isCompositeValue(value) {
-  if (isRawNumber(value)) return false;
-  return Array.isArray(value) || value !== null && typeof value === "object";
+  if (classifyBody(text).json) return sanitizeAndDetect(text, hostname);
+  return defendInlineString(text, hostname);
 }
 function defendInlineString(text, hostname) {
   return defendText(text, {
@@ -2078,31 +2017,6 @@ function defendInlineString(text, hostname) {
     excludeJsonDocuments: false,
     decodeEntities: false
   });
-}
-function defendJsonLeaves(value, hostname, depth = 0) {
-  if (typeof value === "string") {
-    const budget = MAX_INLINE_DEFENCE_DEPTH - depth;
-    const nested = budget > 0 ? parseJsonDocument(value, true) : void 0;
-    if (nested !== void 0 && isCompositeValue(nested.value) && !exceedsDefenceDepth(nested.value, budget)) {
-      return serialiseWithoutGrowing(
-        defendJsonLeaves(nested.value, hostname, depth + 1),
-        value
-      );
-    }
-    return defendInlineString(value, hostname);
-  }
-  if (isRawNumber(value)) return value;
-  if (Array.isArray(value)) {
-    return value.map((item) => defendJsonLeaves(item, hostname, depth + 1));
-  }
-  if (value !== null && typeof value === "object") {
-    const defended = /* @__PURE__ */ Object.create(null);
-    for (const [key, item] of Object.entries(value)) {
-      defended[key] = defendJsonLeaves(item, hostname, depth + 1);
-    }
-    return defended;
-  }
-  return value;
 }
 var SHORTEST_REPLACED_BEACON = "[](file:)".length;
 var MAX_INLINE_GROWTH_RATIO = Math.max(IMAGE_REMOVED_PLACEHOLDER.length, LINK_REMOVED_PLACEHOLDER.length) / SHORTEST_REPLACED_BEACON;
@@ -2113,18 +2027,12 @@ function exceedsInlineCap(text, hostname, maxBytes) {
   return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
 }
 function savedMessage(facts) {
-  const { diskBytes, filepath, maxSize, overCap, contentType, filtered } = facts;
+  const { diskBytes, filepath, maxSize, overCap, filtered, rejection, originBytesExact } = facts;
   const subject = filtered ? "Result of jq_filter" : "Response";
-  const cause = overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const route = filtered || isJsonContentType(contentType) ? " Use the jq_query tool on that path to extract fields." : contentType === void 0 ? (
-    // NOT "was not declared". This arm is also reached when the origin
-    // DID declare a content type and it was rejected as malformed, so
-    // asserting the origin sent nothing would be a server-authored
-    // falsehood about the origin. Both causes mean the same thing to
-    // the reader — there is no usable grammar — so the wording says
-    // that rather than guessing which one happened. `LESSONS.md` RC-31.
-    " No usable content type was declared, so the grammar is unknown \u2014 try the jq_query tool on that path; it reports plainly if the file is not JSON."
-  ) : " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling.";
+  const capClause = overCap ? ` It also exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied.` : "";
+  const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not JSON (${rejection.reason}), so no body is returned here.${capClause}` : overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
+  const exactness = filtered ? "" : originBytesExact ? " The file holds the origin's exact bytes." : " The file holds the body with attack codepoints removed, so it is not byte-identical to what the origin sent.";
+  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling." + exactness : " Use the jq_query tool on that path to extract fields." + exactness;
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
   return cause + route + scope;
 }
@@ -2139,6 +2047,8 @@ async function processResponse(responseBytes, options) {
     );
   }
   const response = responseBytes.toString("utf8");
+  const decodeWasLossy = !Buffer.from(response, "utf8").equals(responseBytes);
+  const lossy = decodeWasLossy ? { decodeWasLossy: true } : {};
   const decodedBytes = Buffer.byteLength(response, "utf8");
   if (decodedBytes > LIMITS.MAX_RESPONSE_SIZE) {
     throw new Error(
@@ -2146,49 +2056,14 @@ async function processResponse(responseBytes, options) {
     );
   }
   const hostname = safeHostname(options.url);
-  let content = defendText(response, {
-    contentType: options.contentType,
-    // **Derived from the sibling field, because neither constant is right.**
-    // `?? false` is the permissive value `LESSONS.md` RC-1 rule 2 forbids —
-    // *"'undetermined' and 'absent' must not resolve the permissive way"* —
-    // and `?? true` contradicts an explicit determination: a caller passing
-    // `contentType: "text/plain"` plainly DID determine it, and telling
-    // `defendText` otherwise selects the strictest grammar for a declared
-    // type. So the default is the question the field actually asks: absent a
-    // declaration, the grammar is undetermined.
-    //
-    // `defendText`'s own default of `true` is right THERE for a different
-    // reason — the field is required by its type, so the default only ever
-    // guards a JavaScript caller that omitted it, and for that caller
-    // over-stripping is the safe failure. Here the field is optional and its
-    // sibling carries the answer.
-    //
-    // **Currently unobservable, and recorded as such rather than guarded by
-    // a test that cannot fail.** `defendText` tests `contentType ===
-    // undefined` directly in both places this value feeds, and
-    // `isSniffableContentType(undefined)` is `true`, so every arm resolves
-    // the same way whichever constant sits here — a teeth probe against
-    // `?? false` failed nothing. It is a consistency fix, not a live guard:
-    // two spellings of one default pointing opposite ways is what the next
-    // reader trips on, and `?? false` is the fail-open shape even while it is
-    // masked. Do not add an assertion for it; there is nothing to assert.
-    // RC-32.
-    contentTypeUndetermined: options.contentTypeUndetermined ?? options.contentType === void 0,
-    hostname
-  });
+  const sanitised = sanitizeAndDetect(response, hostname);
+  const classified = classifyBody(sanitised);
+  const sanitiseWasNoOp = sanitised === response;
+  let content = sanitised;
   let filterApplied = false;
-  if (options.jqFilter) {
-    const isJson = isJsonContentType(options.contentType);
+  if (options.jqFilter && classified.json) {
     const trimmed = content.trim();
     let parsedData;
-    if (!isJson) {
-      const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
-      if (!looksLikeJson) {
-        throw new Error(
-          `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
-        );
-      }
-    }
     try {
       parsedData = JSON.parse(trimmed, keepNumberLexeme);
     } catch (error) {
@@ -2204,14 +2079,17 @@ async function processResponse(responseBytes, options) {
     content = sanitizeAndDetect(content, hostname);
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-  const overCap = exceedsInlineCap(content, hostname, maxSize);
-  const shouldSave = options.saveToFile || overCap;
+  const overCap = classified.json && exceedsInlineCap(content, hostname, maxSize);
+  const emptyBody = !classified.json && classified.reason === "empty-body";
+  if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false, ...lossy };
+  const shouldSave = options.saveToFile || overCap || !classified.json && !filterApplied;
   if (shouldSave) {
-    const diskContent = Buffer.from(content, "utf8");
+    const diskContent = filterApplied ? Buffer.from(content, "utf8") : sanitiseWasNoOp ? responseBytes : Buffer.from(sanitised, "utf8");
     const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
     return {
       savedToFile: true,
       filepath,
+      ...lossy,
       message: savedMessage({
         // Measured on the buffer that was written, so the number
         // describes the file whatever `diskContent` is built from.
@@ -2219,15 +2097,59 @@ async function processResponse(responseBytes, options) {
         filepath,
         maxSize,
         overCap,
-        contentType: options.contentType,
-        filtered: filterApplied
+        filtered: filterApplied,
+        // The filter arm writes the filter's output, and the
+        // non-no-op arm writes sanitised text; only the third arm
+        // is the origin's octets.
+        originBytesExact: !filterApplied && sanitiseWasNoOp,
+        // Only where the body itself was the reason. An over-cap JSON
+        // document is saved too, and there is nothing wrong with it.
+        ...classified.json ? {} : { rejection: classified }
       })
     };
   }
   return {
     content,
-    savedToFile: false
+    savedToFile: false,
+    ...lossy
   };
+}
+
+// src/lib/response/parser.ts
+var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
+function parseResponseWithMetadata(rawResponse, separator) {
+  const raw = rawResponse;
+  const sep = Buffer.from(separator, "utf8");
+  const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
+  const searchStart = Math.max(0, raw.length - windowBytes);
+  const indexInWindow = raw.subarray(searchStart).lastIndexOf(sep);
+  const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
+  if (separatorIndex === -1) {
+    return {
+      bodyBytes: raw,
+      metadataFound: false
+    };
+  }
+  const bodyBytes = raw.subarray(0, separatorIndex);
+  const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
+  const contentType = metadata.trim();
+  const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
+  return {
+    bodyBytes,
+    contentType: validContentType,
+    metadataFound: true
+  };
+}
+function sanitizeErrorMessage(message, includeDetails) {
+  if (includeDetails) {
+    return message;
+  }
+  let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
+  sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
+  if (sanitized !== message) {
+    sanitized += " (use include_metadata: true for details)";
+  }
+  return sanitized;
 }
 
 // src/lib/response/header-channel.ts
@@ -2268,7 +2190,7 @@ function extractHeaderChannel(headerBytes, bytesReceived, url, maxResultSize) {
 }
 
 // src/lib/response/formatter.ts
-function applyHeaderFields(output, responseHeaders, headerInfo, stderr) {
+function applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo) {
   if (responseHeaders) output.headers = responseHeaders;
   if (responseHeaders && headerInfo?.truncated) {
     output.headers_truncated = true;
@@ -2277,34 +2199,57 @@ function applyHeaderFields(output, responseHeaders, headerInfo, stderr) {
   }
   if (headerInfo?.undetermined) output.headers_undetermined = true;
   if (headerInfo?.unsupported) output.headers_unsupported = true;
+  if (bodyInfo?.decodeWasLossy) output.body_decode_lossy = true;
   if (stderr) output.stderr = stderr;
 }
-function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
-  const plainNotice = !includeMetadata ? [
-    // A non-zero exit has no field to land in on this branch, so
-    // without this line a FAILED request is byte-identical to an
-    // empty successful one — the shape the reassurance below would
-    // otherwise make worse by naming the body sound.
-    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete` : null,
-    // Two arms, because the pair is only sometimes statable. Where
-    // the defence grew the text past the ceiling, how many origin
-    // octets survived is genuinely unknown — so the fact of the cut
-    // is reported and the ratio is not invented.
+function plainBranchNotices(exitCode, headerInfo, bodyInfo) {
+  return [
+    // A non-zero exit has no field to land in on this branch, so without
+    // this line a FAILED request is byte-identical to an empty successful
+    // one — the shape the reassurance below would otherwise make worse by
+    // naming the body sound.
+    //
+    // **"above", because these notices are APPENDED.** `curl-execute.ts`
+    // emits them as a content entry after the body so `content[0]` stays
+    // the body on every branch, which points every positional word in this
+    // function backwards. "below" points at nothing — worst on a truncated
+    // body that still parses as JSON, the one case where the warning is all
+    // that tells a reader not to trust it.
+    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}; the response above may be empty or incomplete` : null,
+    // Two arms, because the pair is only sometimes statable. Where the
+    // defence grew the text past the ceiling, how many origin octets
+    // survived is genuinely unknown — so the fact of the cut is reported
+    // and the ratio is not invented.
     headerInfo?.truncated ? headerInfo.bytesReturned !== void 0 ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used` : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received` : null,
-    // A fact about this host, so it is stated whatever the exit code
-    // was: the flag is never added here, which is a decision taken
-    // before the request and independent of how the request went.
+    // A fact about this host, so it is stated whatever the exit code was:
+    // the flag is never added here, which is a decision taken before the
+    // request and independent of how the request went.
     headerInfo?.unsupported ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent" : null,
     // The reassurance is claimed only on a CLEAN exit. Keyed on
     // `undetermined` alone it asserts the body is sound on every cURL
-    // failure after connect — exit 23, 35, 56, 63 — where the body is
-    // empty precisely BECAUSE the request failed. This flag's domain
-    // cannot answer a question about the body; `exitCode` can.
-    headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
-  ].filter(Boolean).join("\n") : "";
-  const withNotice = (text) => plainNotice ? `${plainNotice}
-
-${text}` : text;
+    // failure after connect — exit 23, 35, 56, 63 — where the body is empty
+    // precisely BECAUSE the request failed. This flag's domain cannot answer
+    // a question about the body; `exitCode` can.
+    // A fidelity fact about the body, so it is stated whatever the exit
+    // code was and whatever the headers did. A caller comparing what it got
+    // against the origin needs to know a re-encode happened, because U+FFFD
+    // from a lossy decode is indistinguishable from U+FFFD an origin
+    // actually sent.
+    //
+    // **Two wordings, because the decode and the artefact are different
+    // subjects.** Inline, the body IS returned — its JSON structure intact
+    // and only character values moved — so the notice speaks about the text
+    // beside it. On a saved branch there is no inline body, and
+    // `sanitiseWasNoOp` may have sent the origin's own octets to disk, so
+    // claiming "the text above is not byte-identical" would name text that
+    // is absent and contradict `savedMessage`, which reports the file's form
+    // itself. The decode is still worth stating: it is what the byte count
+    // and any inline preview were derived from.
+    bodyInfo?.decodeWasLossy ? bodyInfo.savedToFile ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD when it was decoded. The saved file's own message states which bytes it holds" : "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent" : null,
+    headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
+  ].filter(Boolean).join("\n");
+}
+function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo, bodyInfo) {
   if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
     if (includeMetadata) {
       const output = {
@@ -2314,13 +2259,11 @@ ${text}` : text;
         filepath: fileSaveInfo.filepath,
         message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
       };
-      applyHeaderFields(output, responseHeaders, headerInfo, stderr);
+      applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
       return JSON.stringify(output, null, 2);
     }
     const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-    return withNotice(responseHeaders ? `${responseHeaders}
-
-${message}` : message);
+    return message;
   }
   if (includeMetadata) {
     const output = {
@@ -2328,12 +2271,10 @@ ${message}` : message);
       exit_code: exitCode,
       response: stdout
     };
-    applyHeaderFields(output, responseHeaders, headerInfo, stderr);
+    applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
     return JSON.stringify(output, null, 2);
   }
-  return withNotice(responseHeaders ? `${responseHeaders}
-
-${stdout}` : stdout);
+  return stdout;
 }
 
 // src/lib/response/post-processor.ts
@@ -2649,6 +2590,24 @@ var CURL_EXECUTE_TOOL_META = {
 This tool provides a safe, structured way to make HTTP requests with common cURL options.
 It handles URL encoding, header formatting, and response processing automatically.
 
+Response contract: a body that parses as JSON is returned to you as the origin wrote it,
+whatever Content-Type it declared \u2014 duplicate names, number lexemes and key order all
+survive. There are two exceptions, and both are reported when they happen. Attack
+codepoints (invisible characters, bidi overrides, long padding runs) are removed first,
+so a body carrying one is returned without it. And a body that is not valid UTF-8 is
+decoded with each undecodable sequence replaced by U+FFFD, reported as
+body_decode_lossy; its JSON structure survives but those character values do not.
+Outside those two it is byte for byte.
+
+A body that does NOT parse as JSON is not returned inline at all \u2014 it is written to a
+file and you get the reason, the byte count and the path, to open with your own file
+tooling. That file holds the origin's exact bytes unless the same codepoint removal
+changed something, and the message says which you have. An empty body is the exception:
+nothing is saved and you get an empty response, because there is nothing to recover.
+
+A JSON body larger than max_result_size is also written to a file; use jq_query on that
+path. Above 10MB the request fails and you should narrow it with query parameters.
+
 Args:
   - url (string, required): The URL to request
   - method (string): HTTP method - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS
@@ -2664,14 +2623,16 @@ Args:
   - bearer_token (string): Bearer token for Authorization header
   - verbose (boolean): Include verbose request/response details
   - include_headers (boolean): Report response headers. With include_metadata they
-    arrive under a separate "headers" key; without it they are prefixed to the returned
-    text followed by a blank line, so that result is NOT JSON-parseable. cURL writes
-    the headers to their own descriptor, so they are never part of the body: they
-    cannot reach the saved file or jq_filter, and combining this with save_to_file or
-    jq_filter is safe unconditionally. Header text is capped at
+    arrive under a separate "headers" key; without it they arrive as a SECOND content
+    entry after the body, so the body entry stays parseable on its own. Either way the
+    header text is never mixed into the body text. cURL writes the headers to their own
+    descriptor, so they are never part of the body: they cannot reach the saved file or
+    jq_filter, and combining this with save_to_file or jq_filter is safe
+    unconditionally. Header text is capped at
     min(64KB, max_result_size); truncation is reported as headers_truncated under
-    include_metadata, and as a leading [mcp-curl] notice otherwise. If headers were
-    asked for and none arrived, that is reported as headers_undetermined (or a leading
+    include_metadata, and as an [mcp-curl] notice otherwise \u2014 in a THIRD content entry
+    after the body and the header entry, never prefixed to either. If headers were
+    asked for and none arrived, that is reported as headers_undetermined (or the same
     [mcp-curl] notice) rather than guessed at. Requires macOS; elsewhere no headers are
     captured and that is reported as headers_unsupported, which is a fact about the host
     and NOT a statement that the origin sent none. Note that response headers routinely
@@ -2797,7 +2758,7 @@ async function executeCurlRequest(params, extra = {}) {
       hostname: safeHostname(params.url),
       decodeEntities: false
     }) : result.stderr;
-    const inlineBody = processed.savedToFile ? "" : params.include_metadata ? processed.content : defendForInline(processed.content, safeHostname(params.url));
+    const inlineBody = processed.savedToFile ? "" : processed.content;
     const output = formatResponse(
       inlineBody,
       defendedStderr,
@@ -2820,14 +2781,36 @@ async function executeCurlRequest(params, extra = {}) {
         // captured any.
         undetermined: headersUndetermined,
         unsupported: headersUnsupported
-      }
+      },
+      // A fidelity fact about the body, reported on both branches: as
+      // `body_decode_lossy` under metadata, and as an appended notice
+      // without it. Silence on either branch would leave a re-encoded
+      // body indistinguishable from an exact one.
+      { decodeWasLossy: processed.decodeWasLossy }
     );
+    const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : void 0;
+    const noticePart = !params.include_metadata ? plainBranchNotices(
+      result.exitCode,
+      {
+        truncated: headerTruncated,
+        bytesReceived: headerBytesReceived,
+        bytesReturned: headerBytesReturned,
+        undetermined: headersUndetermined,
+        unsupported: headersUnsupported
+      },
+      {
+        decodeWasLossy: processed.decodeWasLossy,
+        savedToFile: processed.savedToFile
+      }
+    ) || void 0 : void 0;
     return {
       content: [
         {
           type: "text",
           text: output
-        }
+        },
+        ...headerPart === void 0 ? [] : [{ type: "text", text: headerPart }],
+        ...noticePart === void 0 ? [] : [{ type: "text", text: noticePart }]
       ]
     };
   } catch (error) {

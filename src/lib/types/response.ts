@@ -89,6 +89,17 @@ export type ProcessedResponse =
           savedToFile: false;
           /** Optional informational message */
           message?: string;
+          /**
+           * True when the UTF-8 decode of the wire octets was lossy — the
+           * origin sent bytes that are not valid UTF-8, and each bad sequence
+           * became U+FFFD before anything else ran.
+           *
+           * **Reported rather than corrected, because it cannot be corrected
+           * here.** The body still parses as JSON and its structure is intact;
+           * one or more character values are not what the origin sent. Absent
+           * means the decode round-tripped exactly.
+           */
+          decodeWasLossy?: true;
       }
     | {
           /** Response was saved to file (exceeded size limit or forced) */
@@ -97,4 +108,6 @@ export type ProcessedResponse =
           filepath: string;
           /** Optional informational message */
           message?: string;
+          /** @see the inline arm's `decodeWasLossy` */
+          decodeWasLossy?: true;
       };

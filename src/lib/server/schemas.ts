@@ -67,8 +67,13 @@ export const CurlExecuteSchema = z.object({
             "Report response headers. They never enter the saved file or the jq_filter " +
             "input, which is what makes this safe to combine with save_to_file and " +
             "jq_filter. With include_metadata they arrive under a separate 'headers' key; " +
-            "without it they are prefixed to the returned text followed by a blank line, " +
-            "so that result is not JSON-parseable. Capped at 64KB. Three out-of-band " +
+            "without it they arrive as their OWN content entry after the body, so the body " +
+            "entry stays parseable on its own — never split content[0]. That entry is " +
+            "present only when headers were actually captured: where none were (see " +
+            "headers_undetermined and headers_unsupported below) it is omitted entirely, " +
+            "and a server notice may then occupy content[1]. Match on the entry's content " +
+            "rather than trusting its index. " +
+            "Capped at 64KB. Three out-of-band " +
             "states are reported beside the text, never inside it: headers_truncated " +
             "(the text was cut), headers_undetermined (requested, but the origin sent no " +
             "header block), and headers_unsupported (this host cannot capture headers at " +

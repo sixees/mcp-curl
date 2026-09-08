@@ -13,6 +13,26 @@ export interface FileSaveInfo {
     message?: string;
 }
 
+/**
+ * Out-of-band facts about the BODY, reported beside it for the same reason the
+ * header facts are: a notice written into remote-authored text is
+ * indistinguishable from the same words sent by the origin.
+ */
+export interface BodyInfo {
+    /** The wire octets were not valid UTF-8; see `ProcessedResponse.decodeWasLossy`. */
+    decodeWasLossy?: boolean;
+    /**
+     * The body went to a file instead of being returned inline; see
+     * `ProcessedResponse.savedToFile`.
+     *
+     * The lossy-decode notice needs it because that notice points at a body. On
+     * a saved branch there is no inline body to point at, and the artefact can
+     * hold the origin's octets exactly — so the same words would both name text
+     * that is not there and contradict `savedMessage`'s own exactness clause.
+     */
+    savedToFile?: boolean;
+}
+
 /** Out-of-band facts about the header text, reported beside it rather than in it. */
 export interface HeaderInfo {
     truncated?: boolean;
@@ -24,7 +44,7 @@ export interface HeaderInfo {
 }
 
 /**
- * Attach the header and stderr fields to a metadata object.
+ * Attach the header, body and stderr fields to a metadata object.
  *
  * One implementation, because the two metadata branches — saved-to-file and
  * inline — emit the same fields. Written as near-copies they drift the moment a
@@ -32,11 +52,12 @@ export interface HeaderInfo {
  * reporting different facts depending on whether it happened to be saved. The
  * branches differ in the body they carry, never in these fields.
  */
-function applyHeaderFields(
+function applyOutOfBandFields(
     output: Record<string, unknown>,
     responseHeaders: string | undefined,
     headerInfo: HeaderInfo | undefined,
-    stderr: string
+    stderr: string,
+    bodyInfo: BodyInfo | undefined
 ): void {
     if (responseHeaders) output.headers = responseHeaders;
     if (responseHeaders && headerInfo?.truncated) {
@@ -46,7 +67,95 @@ function applyHeaderFields(
     }
     if (headerInfo?.undetermined) output.headers_undetermined = true;
     if (headerInfo?.unsupported) output.headers_unsupported = true;
+    // A body fact rather than a header one, and it rides here because the two
+    // metadata branches must emit the same field set — the reason this
+    // function exists at all. Written as a separate call on each branch it
+    // would be added to one and forgotten on the other, and the symptom is a
+    // response reporting different fidelity depending on whether it was saved.
+    if (bodyInfo?.decodeWasLossy) output.body_decode_lossy = true;
     if (stderr) output.stderr = stderr;
+}
+
+/**
+ * The server-authored `[mcp-curl] …` lines for the plain branch, or `""`.
+ *
+ * **Exported because they must travel as their own MCP content entry, not as a
+ * prefix on remote bytes.** A prefix is not a REGION boundary:
+ * `defendForInline` keys its verbatim-JSON arm on the whole text part parsing,
+ * so notices carried as a prefix would demote a JSON body to the undivided
+ * scan, where `<!--` in one field and `-->` in a later one pair across the join
+ * and delete what lies between. Measured:
+ * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returns
+ * `{"a":"open ","d":"kept"}` on any non-darwin host with `include_headers`.
+ *
+ * A separate content entry is a STRONGER boundary than an unoccupiable
+ * position, so the original argument survives the move intact. ARCHITECTURE.md
+ * invariants 13 and 16; `LESSONS.md` RC-37.
+ */
+export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bodyInfo?: BodyInfo): string {
+    return [
+        // A non-zero exit has no field to land in on this branch, so without
+        // this line a FAILED request is byte-identical to an empty successful
+        // one — the shape the reassurance below would otherwise make worse by
+        // naming the body sound.
+        //
+        // **"above", because these notices are APPENDED.** `curl-execute.ts`
+        // emits them as a content entry after the body so `content[0]` stays
+        // the body on every branch, which points every positional word in this
+        // function backwards. "below" points at nothing — worst on a truncated
+        // body that still parses as JSON, the one case where the warning is all
+        // that tells a reader not to trust it.
+        exitCode !== 0
+            ? `[mcp-curl] cURL exited ${exitCode}; the response above may be empty or incomplete`
+            : null,
+        // Two arms, because the pair is only sometimes statable. Where the
+        // defence grew the text past the ceiling, how many origin octets
+        // survived is genuinely unknown — so the fact of the cut is reported
+        // and the ratio is not invented.
+        headerInfo?.truncated
+            ? headerInfo.bytesReturned !== undefined
+                ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used`
+                : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received`
+            : null,
+        // A fact about this host, so it is stated whatever the exit code was:
+        // the flag is never added here, which is a decision taken before the
+        // request and independent of how the request went.
+        headerInfo?.unsupported
+            ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent"
+            : null,
+        // The reassurance is claimed only on a CLEAN exit. Keyed on
+        // `undetermined` alone it asserts the body is sound on every cURL
+        // failure after connect — exit 23, 35, 56, 63 — where the body is empty
+        // precisely BECAUSE the request failed. This flag's domain cannot answer
+        // a question about the body; `exitCode` can.
+        // A fidelity fact about the body, so it is stated whatever the exit
+        // code was and whatever the headers did. A caller comparing what it got
+        // against the origin needs to know a re-encode happened, because U+FFFD
+        // from a lossy decode is indistinguishable from U+FFFD an origin
+        // actually sent.
+        //
+        // **Two wordings, because the decode and the artefact are different
+        // subjects.** Inline, the body IS returned — its JSON structure intact
+        // and only character values moved — so the notice speaks about the text
+        // beside it. On a saved branch there is no inline body, and
+        // `sanitiseWasNoOp` may have sent the origin's own octets to disk, so
+        // claiming "the text above is not byte-identical" would name text that
+        // is absent and contradict `savedMessage`, which reports the file's form
+        // itself. The decode is still worth stating: it is what the byte count
+        // and any inline preview were derived from.
+        bodyInfo?.decodeWasLossy
+            ? bodyInfo.savedToFile
+                ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD when it was decoded. The saved file's own message states which bytes it holds"
+                : "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent"
+            : null,
+        headerInfo?.undetermined
+            ? exitCode === 0
+                ? "[mcp-curl] response headers were requested but none were received; the body is unaffected"
+                : "[mcp-curl] response headers were requested but none were received"
+            : null,
+    ]
+        .filter(Boolean)
+        .join("\n");
 }
 
 /**
@@ -75,21 +184,38 @@ function applyHeaderFields(
  *   no header block, so none is reported. The header channel cannot have
  *   contaminated the body — it arrives on its own stream — but whether the body
  *   is COMPLETE is `exit_code`'s to answer, not this field's)
+ * - body_decode_lossy: boolean (only when the wire octets were not valid UTF-8,
+ *   so the body was re-encoded and is not byte-identical to what the origin
+ *   sent. Its JSON structure is intact; one or more character values are not.
+ *   A saved artefact still holds the origin's octets where Step 2 was a no-op)
  * - headers_unsupported: boolean (this host cannot capture headers at all; a
  *   fact about the host, deliberately distinct from headers_undetermined, which
  *   is a fact about the origin)
  *
  * When includeMetadata is false:
  * - If file was saved: returns the message or filepath
- * - Otherwise: returns header text (if any), a blank line, then stdout
+ * - Otherwise: returns the server-authored notices, then stdout
  *
- * **The two branches differ in more than shape.** Under `include_metadata` the
- * header text is a discrete `headers` key and the body in `response` is the body
- * alone. On the plain branch there is only one string, so header text is
- * prefixed to the body with a blank line — the caller gets a blob that is not
- * JSON-parseable. What holds on BOTH branches, and is the guarantee worth
- * relying on, is that header text never reaches the saved file and never reaches
- * `jq_filter`.
+ * **This function never composes header text with body text, on either branch,
+ * and that is a defence rather than a formatting choice.** Under
+ * `include_metadata` the header text is a discrete `headers` key and the body in
+ * `response` is the body alone. On the plain branch the header text is not
+ * returned here at all — `tools/curl-execute.ts` emits it as its own MCP content
+ * part, because two remote-controlled regions may not share a channel
+ * (ARCHITECTURE.md invariant 13) and the post-processor wrap defends each part
+ * independently.
+ *
+ * **Header text and body text must never share a string, because a defence
+ * pass cannot see the JSON structure between them.** `stripHtmlComments` pairs
+ * an opening token with a closing one across any join in the same string: a body
+ * holding `<!--` and header text holding `-->` would have the pair deleted along
+ * with everything between — measured,
+ * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returning
+ * `{"a":"open ","d":"kept"}`, still valid JSON, with nothing downstream able to
+ * tell. ARCHITECTURE.md invariants 7, 13 and 16; `LESSONS.md` RC-16, RC-37.
+ *
+ * What holds on BOTH branches, and is the guarantee worth relying on, is that
+ * header text never reaches the saved file and never reaches `jq_filter`.
  *
  * @param stdout - Standard output from the command
  * @param stderr - Standard error from the command
@@ -113,7 +239,8 @@ export function formatResponse(
     includeMetadata: boolean,
     fileSaveInfo?: FileSaveInfo,
     responseHeaders?: string,
-    headerInfo?: HeaderInfo
+    headerInfo?: HeaderInfo,
+    bodyInfo?: BodyInfo
 ): string {
     // The plain branch has one string and so cannot carry JSON fields — but
     // "no field available" must not become "no signal". A truncated header
@@ -122,43 +249,14 @@ export function formatResponse(
     // Written by us and placed BEFORE the remote text, which is a position an
     // origin cannot occupy — so this is a server-authored prefix rather than
     // the forgeable in-band marker the out-of-band fields exist to avoid.
-    const plainNotice = !includeMetadata
-        ? [
-              // A non-zero exit has no field to land in on this branch, so
-              // without this line a FAILED request is byte-identical to an
-              // empty successful one — the shape the reassurance below would
-              // otherwise make worse by naming the body sound.
-              exitCode !== 0
-                  ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete`
-                  : null,
-              // Two arms, because the pair is only sometimes statable. Where
-              // the defence grew the text past the ceiling, how many origin
-              // octets survived is genuinely unknown — so the fact of the cut
-              // is reported and the ratio is not invented.
-              headerInfo?.truncated
-                  ? headerInfo.bytesReturned !== undefined
-                      ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used`
-                      : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received`
-                  : null,
-              // A fact about this host, so it is stated whatever the exit code
-              // was: the flag is never added here, which is a decision taken
-              // before the request and independent of how the request went.
-              headerInfo?.unsupported
-                  ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent"
-                  : null,
-              // The reassurance is claimed only on a CLEAN exit. Keyed on
-              // `undetermined` alone it asserts the body is sound on every cURL
-              // failure after connect — exit 23, 35, 56, 63 — where the body is
-              // empty precisely BECAUSE the request failed. This flag's domain
-              // cannot answer a question about the body; `exitCode` can.
-              headerInfo?.undetermined
-                  ? exitCode === 0
-                      ? "[mcp-curl] response headers were requested but none were received; the body below is unaffected"
-                      : "[mcp-curl] response headers were requested but none were received"
-                  : null,
-          ].filter(Boolean).join("\n")
-        : "";
-    const withNotice = (text: string) => (plainNotice ? `${plainNotice}\n\n${text}` : text);
+    // **This function never emits the notices at all.** They are
+    // `tools/curl-execute.ts`'s to append as their own MCP content entry — see
+    // {@link plainBranchNotices}.
+    //
+    // Notices travel as their own MCP content entry on every branch, including
+    // the saved-to-file arm where both sides are server-authored:
+    // `tools/curl-execute.ts` appends that entry unconditionally, so a join here
+    // would double it. `LESSONS.md` RC-46.
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
         if (includeMetadata) {
@@ -170,12 +268,12 @@ export function formatResponse(
                 filepath: fileSaveInfo.filepath,
                 message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents.",
             };
-            applyHeaderFields(output, responseHeaders, headerInfo, stderr);
+            applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
             return JSON.stringify(output, null, 2);
         }
         // Plain text - just return the message or fallback to filepath
         const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-        return withNotice(responseHeaders ? `${responseHeaders}\n\n${message}` : message);
+        return message;
     }
 
     // Normal response
@@ -185,8 +283,10 @@ export function formatResponse(
             exit_code: exitCode,
             response: stdout,
         };
-        applyHeaderFields(output, responseHeaders, headerInfo, stderr);
+        applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
         return JSON.stringify(output, null, 2);
     }
-    return withNotice(responseHeaders ? `${responseHeaders}\n\n${stdout}` : stdout);
+    // No `withNotice` — see above. `stdout` is remote bytes and nothing
+    // server-authored may share this string with them.
+    return stdout;
 }

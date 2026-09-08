@@ -1,5 +1,5 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-ClXa7H2C.js';
-export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-D8UcXYG6.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-CbaEdl3I.js';
+export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-D1cJjQb0.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
@@ -376,17 +376,16 @@ declare function logInjectionDetected(hostname: string): void;
  * Detect injection patterns in raw text, then sanitize for output.
  *
  * Order is load-bearing: detection runs against the **original** text, before
- * any sanitisation. This is forward-readiness for future stripping passes
- * (PR-7 plans to strip `<script>`/`<style>` blocks and external markdown
- * beacons) — if those passes erase a malicious phrase before detection sees
- * it, the per-host log signal is silenced. Detecting on the original keeps
- * the signal alive for any class of injection that the sanitiser would
- * otherwise wholesale-remove.
+ * any sanitisation. `defendText`'s later stages strip markup comments,
+ * `<script>`/`<style>` blocks and markdown beacons, and a stage that erased a
+ * malicious phrase before detection saw it would silence the per-host log
+ * signal. Detecting on the original keeps that signal alive for any class of
+ * injection a stripping stage would wholesale-remove.
  *
  * **Acknowledged trade-off.** The reverse case (a phrase whose detection
  * needs sanitisation to *succeed* — e.g. invisible-char-split phrases like
- * `Ig​nore previous instructions` where the zero-width breaks the regex
- * match) is no longer logged. The returned text is still sanitised so
+ * `Ig\u200bnore previous instructions` where the zero-width breaks the regex
+ * match) is not logged. The returned text is still sanitised so
  * nothing leaks downstream; only the observability log is lost for that
  * specific class. UTS #39 skeleton folding (deferred) would close it.
  *

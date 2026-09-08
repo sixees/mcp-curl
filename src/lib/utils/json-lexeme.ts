@@ -33,10 +33,11 @@ const { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON as typeof JSON &
  * `response/processor.ts` module scope it would reach `jq_query` only because
  * `tools/jq-query.ts` imports `defendText` from the same barrel that re-exports
  * `processor.ts`, so any import path not needing `defendText` would downgrade a
- * loud startup error to an opaque `TypeError` from inside `JSON.parse`. Declaring the two functions optional is what makes this
- * unskippable rather than conventional — delete the guard and the narrowing
- * below stops compiling, so `tsc` now carries the obligation the cast used to
- * merely assert. RC-29.
+ * loud startup error to an opaque `TypeError` from inside `JSON.parse`.
+ * Declaring the two functions optional is what makes this guard unskippable
+ * rather than conventional: delete it and the narrowing below stops
+ * compiling, so `tsc` carries the obligation instead of a cast merely
+ * asserting it. RC-29.
  *
  * A throw here is loud, immediate, and names the reason. Silence would be a
  * security bypass wearing a compatibility fallback's clothing.
@@ -53,11 +54,13 @@ if (typeof rawJsonImpl !== "function" || typeof isRawJsonImpl !== "function") {
  * Deliberately NOT exported.
  *
  * **`isRawNumber` is `JSON.isRawJSON`, which is true for a marker built from any
- * JSON text — not only a number.** Four structural guards read it as "this is a
- * scalar, do not descend", so a marker wrapping an object would make all four
- * treat a composite as a scalar and `defendJsonLeaves` would return an
- * undefended remote object graph — the RC-16 failure arriving through the guard
- * added to prevent it. Keeping this private leaves `keepNumberLexeme` as the
+ * JSON text — not only a number.** The structural guards that read it treat it
+ * as "this is a scalar, do not descend", so a marker wrapping an object would
+ * make them treat a composite as a scalar. `docs/todos/018` deleted the per-leaf
+ * defence walk that made that an undefended-object-graph bug outright, but the
+ * misclassification itself is unchanged and still reaches
+ * `processor.ts::isCompositeValue`, which is the body gate — so a marker
+ * wrapping an object would be classified non-JSON and take the wrong arm. Keeping this private leaves `keepNumberLexeme` as the
  * only producer in the tree, so the name is true by construction rather than by
  * a convention nothing enforces. RC-29.
  */
@@ -139,19 +142,19 @@ export const isRawNumber: (value: unknown) => boolean = isRawJsonImpl;
  * large bodies `jq_query` is the advertised route to; a hard refusal instead
  * makes that route unusable for the bodies it exists for. **If that trade ever
  * needs revisiting, the lever is `JQ.MAX_QUERY_FILE_SIZE` (10 MB today), and
- * that gate covers only `jq_query` — the other two call sites are bounded by
- * `LIMITS.MAX_RESPONSE_SIZE` and `STRIP_PATH_MAX_BYTES` respectively, so
- * turning one lever alone leaves two sites at full cost.**
+ * that gate covers only `jq_query` — the `jq_filter` branch is bounded by
+ * `LIMITS.MAX_RESPONSE_SIZE` instead, so turning one lever alone leaves the
+ * other site at full cost.**
  *
- * A previous revision recorded ~308 MB RSS here. **That was uncollected
- * garbage, not footprint** — sampled live heap with a forced-GC baseline gives
- * the per-call figures above. `LESSONS.md` RC-30.
+ * **Uncollected garbage is not footprint**, so the figures above are live heap
+ * against a forced-GC baseline. An unforced sample overstates them by two
+ * orders of magnitude. `LESSONS.md` RC-30.
  *
- * **This lives here, and not beside one of its callers, because the rule has
- * three of them** — the response defence's region-wise walk, `curl_execute`'s
- * `jq_filter` branch and the `jq_query` tool. It had one implementation and two
- * sites without it, so the same body's numbers survived intact inline and were
- * corrupted through jq (`LESSONS.md` RC-24, RC-27).
+ * **This lives here, and not beside either caller, because the rule has two of
+ * them** — `curl_execute`'s `jq_filter` branch in `response/processor.ts`, and
+ * `jq/filter.ts::applyJqFilter` for the `jq_query` tool. One implementation and
+ * one site without it is how the same body's numbers survived intact inline and
+ * were corrupted through jq (`LESSONS.md` RC-24, RC-27).
  */
 export function keepNumberLexeme(
     _key: string,

