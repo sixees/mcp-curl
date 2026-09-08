@@ -251,3 +251,120 @@ instead of re-opening it:
 | File (removed) | Title | Summary | By | Date |
 |---|---|---|---|---|
 | `docs/todos/012-P1-saved-files-can-silently-overwrite.md` | Saved response files have no uniqueness constraint and are written with a plain overwrite | Closed by `writeUniqueFile`: `flag: "wx"` plus 32 bits of randomness, one shared sink for both save sites, sanitising moved into the sink, and a structural guard that no other module opens a file for writing. All five acceptance criteria met; criteria 2 and 5 were only *apparently* met by the first commit and are covered by the guard added in the second | Claude Code | 2026-09-08 |
+
+---
+
+## Code Review — 2026-09-08 (Surface 2, `/sixees-workflow:review` of PR #40)
+
+**Certification:** complete
+**Roster closure:** closed · unresolved: `security-sentinel` → "Anything genuinely outside your lane gets one line under `notes:` and no finding"; `pattern-recognition-specialist` → "The correctness of any single instance → whichever reviewer owns that lane"
+
+Two rounds, eight reviewers each, on the operator's instruction to repeat the loop
+twice and to fix in-scope P1–P3, file a todo for an out-of-scope P1, and decline
+out-of-scope P2/P3. Round 2's subject was round 1's fixes (K-16), not the original
+diff. Base `6effe5b`, resolved by `git merge-base --fork-point origin/HEAD HEAD`.
+
+**Roster:** the config's six plus the always-run floor of four, deduped to eight —
+`typescript-reviewer`, `code-simplicity-reviewer`, `security-sentinel`,
+`performance-oracle`, `architecture-strategist`, `pattern-recognition-specialist`,
+`data-integrity-guardian`, `learnings-researcher`. All sixteen dispatches returned;
+none failed, none was unmigrated. This is a wider roster than Surface 1 ran —
+`architecture-strategist` and `performance-oracle` were not dispatched there, and
+both produced findings or measurements this round.
+
+### Findings
+
+| Round | Class | `class-id` (aliases) | Sev | Reviewers | Disposition |
+|---|---|---|---|---|---|
+| 1 | Write-sink guard enforced an absolute with five call spellings | `fail-open-default` (`unchecked-assertion`, `missing-constraint`) | P1 (esc. from P2) | typescript, architecture, data-integrity, security | **fixed** `e5a8f41` |
+| 1 | `createSafeFilenameBase` returned `fallback` unsanitised | `missing-validation` | P1 (esc. from P2) | typescript | **fixed** `e5a8f41` |
+| 1 | Published `SavedFile` row stated the pre-fix filename | `stale-comment` | P2 | architecture, security | **fixed** `e5a8f41` |
+| 1 | Barrel export orphaned by this branch | `dead-code` | P3 | code-simplicity | **fixed** `e5a8f41` |
+| 1 | Third cwd-rooted fixture missing the `if (dir)` guard | `duplicated-logic` | P3 | pattern-recognition | **fixed** `e5a8f41` |
+| 1 | `node:crypto` specifier load-bearing for the test's `doMock` | `convention-drift` | P3 | typescript | **fixed** `e5a8f41` |
+| 1 | Lossy UTF-8 decode on read-back at `jq_query` | `missing-validation` | P2 | data-integrity | **already tracked — `docs/todos/016`**, note appended |
+| 2 | Guard enumerated import *syntax*; five more forms cleared | `fail-open-default` (`unchecked-assertion`) | P1 (esc. from P2) | typescript, architecture, data-integrity, security | **fixed** `3f00f74` |
+| 2 | The new invariant is in no numbered invariant | `convention-drift` | P2 | architecture | **fixed** `3f00f74` (invariant 17) |
+| 2 | Reserved-name re-check after truncation unreachable | `dead-code` | P3 | typescript, security | **fixed** `3f00f74` |
+| 2 | Round 1's own doc row overshot; RC-52 annotation non-canonical | `stale-comment` / `convention-drift` | P3 | security, architecture | **fixed** `3f00f74` |
+| 2 | `realpath` block labelled defence-in-depth under a docblock denying it | `misplaced-decision` | P3 | architecture | **fixed** `3f00f74` (label) |
+| 2 | Deletions' reachability proof pinned by no case | `lost-code-path` | P3 | typescript | **fixed** `3f00f74` |
+| 2 | Fixture vars declared `string` while guarded for undefined | `unchecked-assertion` | P3 | typescript | **declined — remedy measured** |
+| 2 | `jq-query.ts:105` over-indent | `convention-drift` | P3 | typescript | **declined — out of scope** |
+
+**Rejected: 0.** Every class had a confirmed instance and a concrete `failure:`.
+
+**Escalations, and the join that produced them.** `learnings-researcher` supplied the
+`Class:` lines and confirmed the read on the second round: RC-34 carries
+`fail-open-default`, RC-28 and RC-29 carry `unchecked-assertion`. The guard class
+escalated on that match in **both** rounds — it survived a correct fix, which is a
+verdict on the layer and the reason round 2 moved to the parser rather than to a
+fourth regex. `security-sentinel` graded round 2's instance P2 with auditable
+reasoning (no attacker-reachable source; hardening not vulnerability); the merge
+kept the highest of four P2s and the ledger match then escalated it. The
+disposition was identical either way.
+
+### Declines, with the evidence
+
+- **`string | undefined` on the four fixture variables.** Correct diagnosis — the
+  declared type does contradict the `if (dir)` guard. **The remedy was applied and
+  reverted:** it produces 33 `TS2345` errors at body call sites across three test
+  files, so protecting one teardown line costs 33 `dir!` assertions, which is worse
+  code than the documented guard. K-15 — the remedy was run, not read.
+- **`jq-query.ts:105`'s over-indent.** Verified against `6effe5b`: the line is not
+  in the diff. Out-of-scope P3.
+- **5.9 ms of fixture cost** paid by the string-only `it.each` rows, on
+  `performance-oracle`'s own measurement — 38x the regex-hoisting saving it was
+  asked about, and neither worth touching on a 758 ms suite.
+- **`architecture-strategist` withdrew its own round-1 proposal** to add a
+  `CONVENTIONS.md` → *Documentation* sentence, on the ground that it would be a
+  third spelling of a rule two documents already carry.
+
+### Two reviewer claims rejected on evidence
+
+- **"Dropping the barrel export removed a published export on a v4.0.0 package"**
+  (`security-sentinel`, out-of-lane note). Refuted: `createSafeFilenameBase` appears
+  in **zero** of the four `.d.ts` files *and* zero of the four runtime entry points
+  the `exports` map reaches, at the base commit. It was never published.
+- **"`ARCHITECTURE.md` invariant 20 understates the filepath"** (same). There is no
+  invariant 20 — they run 1–16. The substance was real and is folded into invariant
+  14's correction.
+
+### Handoff assessment
+
+The original handoff was accurate on every claim I could check, and its *Key
+decisions* table did the job it exists for — three settled positions (`Date.now()`'s
+second job, the structural guard over per-site tests, `targetDir`'s prose
+precondition) were re-raised by reviewers and closed by citation rather than
+re-litigated.
+
+**Verified:** 1308/1301/0/7 test counts exactly; 9 new cases (7 + 2); the 12 `tsc`
+errors and their files; "no lint script"; the published-API claim in all four
+`.d.ts` files and all four runtime entry points; the prior `/security-review`
+artefacts (`reviewer_status: "ok"`, `findings_count: 0`, empty `findings.jsonl`
+reconciling); the ledger's machine-read format for all 51 entries.
+
+**Two gaps it had.** Its *Commit history* lists three commits where the branch
+carries five: **`458c321` — an unrelated `/sixees-workflow:reconcile-lessons` run
+filing RC-51 and correcting the ledger preamble — rides on this PR and the handoff
+never mentions it.** Merging #40 merges that work too. And "the nine other exported
+functions in `src/lib/response/`" is wrong as a count: there are 20, one of which
+(`plainBranchNotices`) does not follow payload-first. The convention holds; the
+figure does not.
+
+### Outstanding
+
+| File | Priority | State |
+|---|---|---|
+| `docs/todos/016-P2-wire-octets-are-decoded-lossily-before-persistence.md` | P2 | open, pre-existing; a fourth independent confirmation and one new fact appended this round |
+| `docs/todos/020-P3-save-failure-after-the-request-reports-as-a-request-failure.md` | P3 | open, filed by this branch, trigger recorded |
+
+**No todo was created by this review.** No out-of-scope P1 arose, so the deferral
+cap was not approached.
+
+**Blockers: none.** Both escalated P1s are fixed and probed.
+
+**Operator-side, unchanged by this review:** the version is still `4.0.0` and this
+repo bumps before the merge; `2402cc5`'s message under-describes its contents;
+`458c321`'s presence on this PR is a scope decision; and **Surface 3 has not run** —
+no bot reviewer was dispatched and none auto-reviews.
