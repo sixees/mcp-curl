@@ -548,3 +548,19 @@ met — reported for the operator to call, not applied here.
 
 **One thread remains open by design**: `PRRT_kwDOQnZcNs6gJ1tW`, the markdown-beacon
 escalation, which is RC-48's design question and the only thing blocking merge.
+
+## Round 3 tail read — after the final push
+
+A 15-minute wait was taken after `378787e` was pushed, then one read. **Nothing new
+arrived**: the newest thread activity on the PR is 10:08:33Z and the wait ended 10:22:56Z.
+Of 21 review threads, **20 are resolved and one is open by design** —
+`PRRT_kwDOQnZcNs6gJ1tW`, the RC-48 escalation. `coderabbitai` replied there at 10:01:40Z
+agreeing the finding should stay open and endorsing RC-48's three options as the only
+JSON-safe shapes; that is an agreement on an open escalation, not a new finding.
+
+**One coverage gap the read exposed, and it is not a finding.** Codex's completed review is
+against **`cd348f9`** — four commits behind head. It has never seen `650422c`, `9baf458` or
+`378787e`, which is to say it has never reviewed **any** of the round-1 or round-2 fixes.
+That is `01-known-shapes.md` → **K-16** as a coverage fact rather than as a defect: the
+newest text on the branch has been reviewed by one bot only. Re-requesting is a new round
+and belongs to a further invocation of the command, not to this one.
