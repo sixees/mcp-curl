@@ -282,12 +282,11 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         expect(onDisk).toBe(page.replace("\u200b", ""));
     });
 
-    // A Latin-1 body decodes to U+FFFD, still parses as JSON, and used to be
-    // returned inline under a byte-for-byte contract with nothing said. The
-    // body is still returned — its structure is intact and only a character
-    // value moved — but the re-encode is now reported, because U+FFFD from a
-    // lossy decode is indistinguishable from U+FFFD an origin actually sent.
-    // Reported by chatgpt-codex-connector on PR #39; RC-48's sibling.
+    // A Latin-1 body decodes to U+FFFD and still parses as JSON, so it is
+    // returned: the structure is intact and only a character value moved. The
+    // re-encode is REPORTED because U+FFFD from a lossy decode is
+    // indistinguishable from U+FFFD the origin actually sent, and a byte-for-
+    // byte claim over it would be false.
     it("reports a lossy UTF-8 decode and still returns the body", async () => {
         // `José` in Latin-1: the 0xE9 byte is not valid UTF-8 on its own.
         const wire = Buffer.concat([

@@ -376,17 +376,16 @@ declare function logInjectionDetected(hostname: string): void;
  * Detect injection patterns in raw text, then sanitize for output.
  *
  * Order is load-bearing: detection runs against the **original** text, before
- * any sanitisation. This is forward-readiness for future stripping passes
- * (PR-7 plans to strip `<script>`/`<style>` blocks and external markdown
- * beacons) — if those passes erase a malicious phrase before detection sees
- * it, the per-host log signal is silenced. Detecting on the original keeps
- * the signal alive for any class of injection that the sanitiser would
- * otherwise wholesale-remove.
+ * any sanitisation. `defendText`'s later stages strip markup comments,
+ * `<script>`/`<style>` blocks and markdown beacons, and a stage that erased a
+ * malicious phrase before detection saw it would silence the per-host log
+ * signal. Detecting on the original keeps that signal alive for any class of
+ * injection a stripping stage would wholesale-remove.
  *
  * **Acknowledged trade-off.** The reverse case (a phrase whose detection
  * needs sanitisation to *succeed* — e.g. invisible-char-split phrases like
- * `Ig​nore previous instructions` where the zero-width breaks the regex
- * match) is no longer logged. The returned text is still sanitised so
+ * `Ig\u200bnore previous instructions` where the zero-width breaks the regex
+ * match) is not logged. The returned text is still sanitised so
  * nothing leaks downstream; only the observability log is lost for that
  * specific class. UTS #39 skeleton folding (deferred) would close it.
  *

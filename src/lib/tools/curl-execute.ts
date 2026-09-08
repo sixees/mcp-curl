@@ -356,7 +356,7 @@ export async function executeCurlRequest(
         // the body they would demote a JSON body to `defendForInline`'s
         // undivided arm, where a marker in the notice can pair with one in the
         // body across the join. Its own entry is a stronger boundary than a
-        // prefix ever was. `LESSONS.md` RC-46.
+        // prefix. `LESSONS.md` RC-46.
         const noticePart = !params.include_metadata
             ? plainBranchNotices(result.exitCode, {
                   truncated: headerTruncated,

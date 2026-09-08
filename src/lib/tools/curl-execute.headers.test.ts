@@ -82,11 +82,12 @@ afterAll(async () => {
 /**
  * The defended body, read from the artefact.
  *
- * **`docs/todos/018` moved where a non-JSON body's defended bytes live**: they
- * are no longer returned inline, they are the file. The strip stages still run
- * over them — a non-JSON artefact's only reader is the host's own file tooling,
- * so it has to be safe to read — so the cases below assert the same property in
- * the place it now holds.
+ * **A non-JSON body is not returned inline; it is the file.** No strip stage
+ * runs over it either: the artefact's only reader is the host's own file
+ * tooling, and an HTML error page has to stay readable to whoever opens it, so
+ * the bytes on disk are the body as it arrived. The cases below assert exactly
+ * that. Header text is the channel that DOES take every strip stage
+ * (invariant 1a) — the two must not be conflated. `LESSONS.md` RC-47.
  */
 const savedArtefacts: string[] = [];
 /**

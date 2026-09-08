@@ -423,12 +423,12 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
     // bytes were really 642, the result was already over the cap on its own
     // size, and it saved to file with the fix reverted just as it did with the
     // fix in. It passed for the wrong reason and proved nothing.
-    // **A bare STRING result, not an array of them.** `docs/todos/018` returns a
-    // composite JSON document verbatim, so the defence can no longer grow one —
-    // an array of beacons is at-cap in and at-cap out, and the growth this whole
-    // block is about became unreachable through it. A filter yielding a scalar
-    // still takes the undivided arm, where the beacon substitution applies, so
-    // that is the shape that exercises the gate now.
+    // **A bare STRING result, not an array of them.** A composite JSON document
+    // is returned verbatim, so the defence cannot grow one: an array of beacons
+    // is at-cap in and at-cap out, and the growth this block is about is
+    // unreachable through it. A filter yielding a scalar takes the undivided
+    // arm, where the beacon substitution applies, so that is the shape that
+    // exercises the gate.
     //
     // The property under test is unchanged: `exceedsInlineCap` must weigh the
     // DEFENDED form, because a body compliant before the pass can exceed the cap
@@ -441,7 +441,7 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
         return Buffer.byteLength((r.content[0] as { text: string }).text, "utf8");
     };
 
-    it("keeps an at-cap result inline, because the defence no longer grows JSON", async () => {
+    it("keeps an at-cap result inline, because the defence does not grow JSON", async () => {
         const file = join(allowedDir, "beacons.json");
         await writeFile(file, beaconDoc);
         // Exactly at the cap. `defendForInline` takes the verbatim arm for jq

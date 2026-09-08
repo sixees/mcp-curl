@@ -20,8 +20,8 @@ import type {
  * plain-branch only, because one entry spanning more than one region is what
  * ARCHITECTURE.md invariant 16 names as a violation — a defence pass whose input
  * spans more than one region — and the wrap defends each entry independently.
- * `content[0]` is still the body on every branch, so a reader indexing it is
- * unaffected.
+ * `content[0]` is the body on every branch, so a reader indexing it reads the
+ * body.
  *
  * The `[key: string]: unknown` index signature relaxes structural enforcement
  * regardless — a value reaching consumers via cast or spread from a

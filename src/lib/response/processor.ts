@@ -351,25 +351,22 @@ export function defendText(text: string, options: DefendTextOptions): string {
         // served as `text/html` became `{"q":"a "b"}`, which no longer parses,
         // and `save_to_file` persisted it for `jq_query` to fail on.
         //
-        // The sniffed arm already excluded JSON bodies; the DECLARED-markup arm
-        // did not, so a single mislabelled Content-Type was enough. Gating the
-        // decode here rather than at each caller is what makes the two arms
-        // agree. `LESSONS.md` RC-12.
+        // Gating the decode here rather than at each caller is what makes the
+        // sniffed and DECLARED-markup arms agree: the sniffed arm excludes JSON
+        // bodies on its own, so without this gate one mislabelled Content-Type
+        // is enough to reach the decode. `LESSONS.md` RC-12.
         //
-        // **Two DIFFERENT questions, and collapsing them broke RC-12.**
-        // `looksLikeJsonBody` answers *"is this JSON and could the exemption
-        // apply"* — and `jsonExemptionCouldApply` is false for a DECLARED markup
-        // type, because `isSniffableContentType("text/html")` is false. So on a
-        // JSON body mislabelled `text/html` the first term is false while the
-        // body is plainly JSON, and the entity decode has to ask the second
-        // question directly or it corrupts the document. Removing this arm as
-        // "redundant after the reorder" turned three RC-12 cases red
-        // immediately; the claim of redundancy was itself the unchecked
-        // assertion. RC-12, RC-32.
+        // **The two terms answer DIFFERENT questions, and neither is
+        // sufficient alone.** `looksLikeJsonBody` answers *"is this JSON and
+        // could the exemption apply"*, and `jsonExemptionCouldApply` is false
+        // for a DECLARED markup type because `isSniffableContentType`
+        // ("text/html") is false. So on a JSON body mislabelled `text/html` the
+        // first term is false while the body is plainly JSON, which is why the
+        // second asks directly. **Neither term is redundant** — dropping this
+        // arm fails three RC-12 cases. RC-12, RC-32.
         //
-        // The reorder still bought something here: both terms now read the same
-        // post-sanitise string, so the two can no longer answer for different
-        // bytes the way `strictestGrammar` and this gate once did.
+        // Both terms read the same post-sanitise string, so they cannot answer
+        // for different bytes.
         const decodeEntities =
             (options.decodeEntities ?? true) && !(looksLikeJsonBody || isDefinitelyJson(content));
 
@@ -412,9 +409,11 @@ export function defendText(text: string, options: DefendTextOptions): string {
  *
  * - `contentTypeUndetermined: true` — at these boundaries the grammar
  *   genuinely is unknown, so the STRICTEST arm runs and every stage fires.
- * - `excludeJsonDocuments: false` — the JSON exemption is about a persisted
- *   artefact, and nothing inline is persisted. Persisted keeps the exemption;
- *   returned does not (`LESSONS.md` RC-10).
+ * - `excludeJsonDocuments: false` — `defendForInline` has already decided the
+ *   JSON question with `classifyBody`, so this stops `defendText` re-asking it
+ *   with `isDefinitelyJson` and answering differently. The exemption itself is
+ *   about a persisted artefact, and nothing inline is persisted: persisted
+ *   keeps it, returned does not (`LESSONS.md` RC-10).
  * - `decodeEntities: false` — the decode's output is what gets returned, so on
  *   a channel whose consumer does not itself decode it would manufacture live
  *   markup from inert bytes (`LESSONS.md` RC-3). Its cost is stated on
@@ -737,33 +736,19 @@ export async function processResponse(
     // forks on this and nothing re-derives it — `docs/todos/018` requires the
     // two decisions be the same rule spelled once, because they are the same
     // question: may these bytes be handed over unmodified?
-    // **Sanitise first, then classify — the order is the fix for a measured
-    // defect.** `classifyBody` used to run on the raw decode, while every
-    // defence pass below runs on the sanitised form, so the two disagreed on
-    // any body Step 2 alters. Measured: `\uFEFF{"a":"see <!-- x -->","b":"y"}`
-    // — an ordinary BOM-prefixed JSON body, which .NET and Java services emit
-    // routinely — was classified `invalid-syntax`, forced to disk, and then
-    // handed to `defendText`, which sanitised the BOM away and ran the full
-    // strip over what was now valid JSON: the artefact came back
-    // `{"a":"see ","b":"y"}`, a field deleted, on the only copy.
     //
-    // This is the same reorder RC-32 already applied INSIDE `defendText`, which
-    // is exactly why the outer gate looked safe and was not.
+    // **Sanitise before classifying, because both must answer for the same
+    // bytes.** A BOM-prefixed body does not parse and Step 2 removes the BOM, so
+    // classifying the raw decode sends valid JSON from a .NET or Java origin —
+    // which both emit routinely — down the non-JSON arm, where the artefact is
+    // the only copy: `\uFEFF{"a":"see <!-- x -->","b":"y"}` reaches disk as
+    // `{"a":"see ","b":"y"}`, a field short.
     //
-    // The call also carries Step 2's detection side effect, which the JSON arm
-    // would otherwise lose entirely: byte-exactness withholds the sanitise and
-    // says nothing about the log, but handing the body straight through
-    // withheld both — so a saved body carrying `Ig\u200bnore previous
-    // instructions` produced no `[injection-defense]` line at all.
-    // `LESSONS.md` RC-44.
-    // **Sanitise BEFORE classifying, because both must see the same bytes.** A
-    // BOM-prefixed body does not parse and sanitise removes the BOM, so
-    // classifying the raw decode routed valid JSON from a .NET or Java origin to
-    // the non-JSON arm and ran the full strip over the only copy. Step 2 also
-    // LOGS, which is why it sits above the fork rather than inside an arm:
-    // handing a JSON body straight through withheld both jobs, so a saved body
-    // carrying an injection phrase produced no `[injection-defense]` line at
-    // all. `LESSONS.md` RC-44.
+    // Step 2 also LOGS, and that is the second reason it sits above the fork
+    // rather than inside an arm. Byte-exactness withholds the sanitise and says
+    // nothing about the log, so a JSON body handed straight through would carry
+    // `Ig\u200bnore previous instructions` to disk with no `[injection-defense]`
+    // line anywhere. `LESSONS.md` RC-32, RC-44.
     const sanitised = sanitizeAndDetect(response, hostname);
     const classified = classifyBody(sanitised);
     // Where Step 2 changed nothing, the sanitised text IS the origin's decode,
@@ -812,7 +797,7 @@ export async function processResponse(
             // **The reason comes from the closed vocabulary, not from the
             // header.** `options.contentType` is origin-written, so echoing it
             // put remote text into server-authored error prose; and it answers
-            // a question this path no longer asks — `classifyBody` decided on
+            // a question this path does not ask — `classifyBody` decides on
             // the bytes. `JsonRejectionReason` carries no response byte by
             // construction.
             throw new Error(
@@ -846,15 +831,15 @@ export async function processResponse(
         // content" rather than "a filter was requested".
         filterApplied = true;
 
-        // Re-sanitize and re-detect after filter: JSON.parse decodes Unicode escapes in string
-        // values (e.g. {"cmd":"Ig​nore..."} → zero-width space in jq output), so attack
-        // chars that were invisible in the raw text become real characters in the filtered result.
+        // Re-sanitise and re-detect after the filter, because `JSON.parse`
+        // decodes Unicode escapes inside string values: `{"cmd":"Ig\u200bnore
+        // ..."}` yields a real zero-width space in jq's output, so attack chars
+        // the raw text only described become actual characters here.
         //
-        // Runs UNCONDITIONALLY — the previous `if (isText)` gate let an
-        // attacker bypass post-jq sanitisation by labelling JSON as
-        // `application/octet-stream` (binary). If we got this far jq
-        // produced a textual filter result; binary-labelled-but-actually-
-        // JSON bodies must be sanitised on output.
+        // **Runs UNCONDITIONALLY, because any content-type gate here is
+        // origin-controlled.** Labelling JSON `application/octet-stream` would
+        // be enough to skip this pass. Reaching this line means jq produced a
+        // textual result, whatever the origin called it.
         content = sanitizeAndDetect(content, hostname);
     }
 
@@ -888,7 +873,7 @@ export async function processResponse(
     // Only a JSON body has an inline representation, so it is the only body
     // weighed against the inline cap: a non-JSON body is saved for what it IS,
     // and claiming it "also exceeds the inline limit once the inline defence
-    // pass is applied" would cite a pass that no longer runs here.
+    // pass is applied" would cite a pass that does not run here.
     const overCap = classified.json && exceedsInlineCap(content, hostname, maxSize);
 
     // **A non-JSON body is always saved and never returned inline.** An agent

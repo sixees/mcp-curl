@@ -775,7 +775,7 @@ describe("createWrapper — full defence on untagged (custom-tool / hook / YAML)
 // Every case here fails if `defendForInline` goes back to scanning the
 // serialised form: probed by reverting it to a single `defendText` call.
 // ---------------------------------------------------------------------------
-describe("createWrapper — JSON documents are defended value by value", () => {
+describe("createWrapper — JSON documents are returned verbatim", () => {
     const wrapOf = (text: string): string => {
         const out = createWrapper({})({ content: [{ type: "text", text }] }, "example.test");
         return (out.content as { type: string; text: string }[])[0].text;
@@ -839,19 +839,18 @@ describe("createWrapper — JSON documents are defended value by value", () => {
         expect(parsed.rows[1]!.v).toContain("d");
     });
 
-    // The other direction, restated for the reversal: a nested value is returned
-    // verbatim exactly as a top-level one is, so the two levels cannot disagree.
-    // The property that matters at depth is now invariant 16's — no marker in one
-    // value may pair with one in a later value — and that is asserted in the
-    // invariant-16 block below and end-to-end in
+    // The other direction: a nested value is returned verbatim exactly as a
+    // top-level one is, so the two depths cannot disagree. What matters at depth
+    // is invariant 16 — no marker in one value may pair with one in a later
+    // value — asserted in the invariant-16 block below and end-to-end in
     // `tools/curl-execute.json-passthrough.test.ts`.
-    it("returns a nested string value verbatim too (RC-10 reversed, consistently)", () => {
+    it("returns a nested string value verbatim too, at every depth", () => {
         const doc = JSON.stringify({ outer: { note: "![x](https://evil.test/p.gif)" } });
         expect(wrapOf(doc)).toBe(doc);
     });
 
-    // Not JSON — the undivided path still runs, so the fix is a branch and not
-    // a replacement.
+    // Not JSON — the undivided path runs in full, so the verbatim arm is a
+    // branch rather than a replacement.
     it("leaves the non-JSON path scanning the whole string", () => {
         const out = wrapOf("prose with ![x](https://evil.test/p.gif) in it");
         expect(out).not.toContain("evil.test");

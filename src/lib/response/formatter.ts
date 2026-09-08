@@ -92,9 +92,9 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
         // **"above", because these notices are APPENDED.** `curl-execute.ts`
         // emits them as a content entry after the body so `content[0]` stays
         // the body on every branch, which points every positional word in this
-        // function backwards. A notice saying "below" pointed at nothing, and
-        // did it hardest on a truncated body that still parses as JSON — the
-        // one case where the warning is what tells a reader not to trust it.
+        // function backwards. "below" points at nothing — worst on a truncated
+        // body that still parses as JSON, the one case where the warning is all
+        // that tells a reader not to trust it.
         exitCode !== 0
             ? `[mcp-curl] cURL exited ${exitCode}; the response above may be empty or incomplete`
             : null,

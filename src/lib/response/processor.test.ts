@@ -199,13 +199,10 @@ describe("processResponse — injection detection", () => {
             url: "http://evil.com",
             contentType: "application/json",
         });
-        // **The sanitisation assertion moved to the boundary that now performs
-        // it.** `processResponse` hands a JSON document through untouched, so
-        // Step 2 reaches this text at the model-facing pass instead — which is
-        // where "does not reach the LLM" was always the claim. Asserting it here
-        // would assert a pass this function no longer runs.
-        // Step 2 runs at the gate now, so the returned body is the sanitised
-        // form — which is where "does not reach the LLM" was always the claim.
+        // Step 2 runs at the gate, above the JSON/non-JSON fork, so the
+        // returned body is the sanitised form — which is where "does not reach
+        // the LLM" is the claim. The second assertion pins the model-facing
+        // pass independently, because that is the boundary the claim is about.
         expect(await bodyFromEitherArm(result)).toBe(content.replace("\u200B", ""));
         expect(defendForInline(content, "evil.com")).not.toContain("\u200B");
         // Log signal is intentionally lost for this case (detect-on-original).
@@ -654,16 +651,13 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
     });
 
     it("runs no defence pass over a JSON body it will not return", async () => {
-        // `docs/todos/008`'s property, restated structurally because
-        // `docs/todos/018` removed the branch the old form could measure.
+        // `docs/todos/008`'s property, asserted structurally rather than as a
+        // CPU-time ratio between the inline and over-cap arms.
         //
-        // **This case used to be a CPU-time ratio between the inline and
-        // over-cap arms on one `text/plain` body.** After 018 that body class has
-        // no inline arm — a non-JSON body is always saved — so the ratio compared
-        // a path with itself, and the case's own premise assertion caught it
-        // rather than passing quietly. Good design in the original; recorded
-        // because the replacement is a different KIND of guard, not a widened
-        // threshold.
+        // **A ratio has no two arms to compare here.** A non-JSON body is always
+        // saved, so `text/plain` has no inline arm and the measurement would
+        // compare a path with itself. The structural form below cannot be
+        // satisfied that way.
         //
         // Structural now, and strictly stronger: on the JSON arm no defence pass
         // runs over the body at all — `processResponse` hands the decoded bytes

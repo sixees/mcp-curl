@@ -564,3 +564,65 @@ against **`cd348f9`** — four commits behind head. It has never seen `650422c`,
 That is `01-known-shapes.md` → **K-16** as a coverage fact rather than as a defect: the
 newest text on the branch has been reviewed by one bot only. Re-requesting is a new round
 and belongs to a further invocation of the command, not to this one.
+
+## Round 3 — comment audit across the branch's surface
+
+Requested by the director: check the comments at every site this branch touched,
+make them describe the current code rather than its history, document the why
+rather than the logic, then walk up and down the call chain and confirm parents
+and children carry the same disposition. `CONVENTIONS.md` → lines 161-165 already
+required exactly this, so the audit is against a standing rule, not a new one.
+
+**Four substantive defects, not just prose tidying:**
+
+| | Site | What was wrong |
+|---|---|---|
+| 1 | `response/processor.ts` | **Two live spellings of the sanitise-then-classify rule, back to back** — K-8. Both written by this branch's own fix rounds, and one described a design (`classifyBody` on the raw decode) that no longer exists. Merged into one present-tense block |
+| 2 | `response/post-processor.ts` | The wrap's header and design-note 2 described `defendForInline` as running **per JSON value / per string leaf**. It runs whole-document. `processTextPart`'s docblock went further and claimed a beacon inside a JSON string value "fires exactly as it would outside one" — the **opposite** of RC-47's disposition, on the parent of the model-facing pass |
+| 3 | `tools/curl-execute.headers.test.ts` | Claimed "the strip stages still run over" the non-JSON artefact. No strip stage runs on the body path at all — and all **three** of that helper's callers assert `toBe(body)`, the unmodified bytes |
+| 4 | `tools/register-all-tools.test.ts` | A comment block asserting `text/markdown` **contradicted the next paragraph** and the fixture, which is `application/json`. Another K-8 pair from successive rounds |
+
+Also corrected: `post-processor.test.ts`'s describe block was still named *"JSON
+documents are defended value by value"* while every test inside it asserted
+verbatim return; `security/detection-logger.ts` described the strip passes as
+future work ("PR-7 plans to strip …") when they exist and are called; a
+contradictory duplicate pair in `processor.test.ts`; and history narration in
+`extensible/hook-executor.ts`, `extensible/types.ts`, `response/formatter.ts`,
+`utils/json-lexeme.ts`, `tools/jq-query.test.ts` and
+`tools/curl-execute.json-passthrough.test.ts`.
+
+**Two literal invisible codepoints** (U+FEFF, U+200B) were sitting in comment
+text — one pre-existing on `main` — where the surrounding convention is the
+escape spelling. Replaced with `\uFEFF` / `\u200b`.
+
+A scan for U+FEFF / U+200B / U+202E over every changed file then reports exactly
+three categories, and only the first was a defect:
+
+- **Comments: clean.** No literal invisible codepoint remains in any comment or
+  docblock on the branch's surface.
+- **Fifteen hits in test FIXTURES, deliberately kept** — `post-processor.test.ts`
+  and `processor.test.ts` feed real RLO and ZWSP bytes as attack data, which is
+  the whole point of those cases. Escaping them would delete what they assert.
+- **One pre-existing hit left alone:** `utils/sanitize.ts`'s docblock carries a
+  literal U+200B in its `Ig\u200bnore` example and ships that way into
+  `dist/lib.d.ts`. Untouched file, cosmetic, and out of this branch's scope —
+  named here so it is a decision rather than an oversight.
+
+**Declined, deliberately:** the ~20 `PR-6a`/`PR-6b`/`PR-7`/`PR-8` citations across
+`src/` are a house labelling convention, not falsehoods, and rewriting them would
+sprawl a comment-only diff across twelve more files for no reader benefit. The one
+that was *false* — `detection-logger.ts` calling shipped passes "planned" — is
+fixed above.
+
+**Verification.** Comment-only: the full emitted `dist` JS, normalised for
+content-hash chunk names, differs from `HEAD` by exactly the `formatter.ts`
+comment text and nothing else. `dist/lib.d.ts` changes as expected, because
+`.d.ts` retains docblocks. Suite unchanged at **1282 passed, 7 skipped**, with
+only `strip-blocks.test.ts`'s ReDoS wall-clock budgets failing (`docs/todos/013`,
+pre-existing, a different subset each run).
+
+**Pre-existing and NOT caused by this branch:** `npx tsc --noEmit` exits 2 with 12
+errors in `src/lib.test.ts`, `src/lib/response/post-processor.test.ts` and
+`src/lib/schema/schema.test.ts`. In `post-processor.test.ts` they sit at lines
+267-409 while this branch's edits start at 723, so none is ours. `npm run build`
+passes — tsup does not typecheck the test tree, which is why nothing caught them.

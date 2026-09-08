@@ -17,13 +17,12 @@ import type { WrappableResult } from "../response/post-processor.js";
  * pipeline exit (after `afterResponse` hooks run, or when a hook
  * short-circuits) so that:
  *
- *   1. The S2 bypass is closed — a `beforeRequest` hook that returns a
- *      `CallToolResult` no longer skips wrap.
- *   2. The hostname passed to wrap is derived from the **final** `ctx.params`
- *      after every `beforeRequest` hook has had its turn. A hook that
- *      rewrites `params.url` (e.g. routing through a proxy) was previously
- *      ignored — the wrap saw the original URL and the per-host throttle
- *      mis-attributed the event.
+ *   1. No `beforeRequest` hook can bypass the wrap, including one that
+ *      short-circuits by returning a `CallToolResult`.
+ *   2. The hostname passed to wrap is derived from the **final** `ctx.params`,
+ *      after every `beforeRequest` hook has had its turn. A hook that rewrites
+ *      `params.url` — routing through a proxy, say — decides the host the
+ *      per-host throttle must attribute the event to.
  *
  * The wrap is idempotent (Symbol-tag short-circuit), so the caller may still
  * pass results through additional wrap layers without double-processing.
@@ -119,7 +118,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         // Run afterResponse hooks sequentially.
         //
         // **`content[0]` is the BODY on every branch, and that is the whole
-        // guarantee — it is no longer the only entry.** `ToolResult.content`
+        // guarantee, and it is not the only entry.** `ToolResult.content`
         // is an array rather than a 1-tuple, and `curl_execute` appends header
         // text and server-authored notices as further entries, so a hook sees
         // the body alone. That is a known gap rather than a property: a

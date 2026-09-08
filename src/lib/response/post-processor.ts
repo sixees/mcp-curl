@@ -2,9 +2,10 @@
 // Defence-in-depth wrap for tool results (PR-6b).
 //
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
-// the full response-side defence — `defendForInline` (Steps 2-5, per JSON
-// value where the text is a JSON document), then optional
-// spotlighting — over each text content part of a `CallToolResult`.
+// the full response-side defence — `defendForInline`, then optional
+// spotlighting — over each text content part of a `CallToolResult`. A part that
+// parses as JSON takes that function's verbatim arm (Step 2 alone); every other
+// part gets Steps 2-5.
 // Server-scope config (the spotlighting flag) is bound once at server
 // creation; request-scope hostname is passed per call so the per-host
 // injection-detection throttle keys correctly.
@@ -18,14 +19,15 @@
 //    short-circuit return path in `extensible/hook-executor.ts`. Symbol-tag
 //    idempotence (see point 3) lets these compose freely.
 //
-// 2. **Detect-on-original ordering.** The wrap runs `defendForInline()`
-//    from `processor.ts`, which delegates each text value (the whole body, or
-//    each JSON string leaf) to `defendText()`, whose Step 2 detects on the
-//    **original** text before sanitisation. That ordering is load-bearing
-//    here precisely because Steps 3-5 strip the byte sequences the detector
-//    looks for; running detection first preserves the log signal.
-//    `processTextPart` below states which options this boundary passes,
-//    and what each one costs.
+// 2. **Detect-on-original ordering.** The wrap runs `defendForInline()` from
+//    `processor.ts` over each text part as one undivided string. A non-JSON
+//    part reaches `defendText()`, whose Step 2 detects on the **original**
+//    text before sanitisation; that ordering is load-bearing because Steps
+//    3-5 strip the byte sequences the detector looks for, so detecting first
+//    preserves the log signal. A JSON part gets Step 2 alone, which detects
+//    and sanitises and rewrites nothing else. `processTextPart` below states
+//    which options this boundary passes on the non-JSON arm, and what each
+//    one costs.
 //
 // 3. **Idempotence via a module-private `Symbol("mcp-curl.wrapped")`.** A
 //    `CallToolResult` that has already passed through wrap carries a
@@ -171,10 +173,9 @@ export function isWrappedResult(result: unknown): boolean {
  * trade-off: a downstream wrap on the same frozen result will re-run the
  * pipeline. That is semantically harmless: `defendForInline` is idempotent on
  * this boundary's options — the entity decode is off, every remaining stage
- * rewrites to a form it no longer matches, and the JSON arm's serialisation is
- * a fixed point because a second pass measures the first pass's own output and
- * makes the same indent choice — and `applySpotlighting` short-circuits on
- * already-wrapped envelopes. The worst case is one extra linear pass over the
+ * rewrites to a form it no longer matches, and the JSON arm sanitises and
+ * detects without rewriting, which is a fixed point — and `applySpotlighting`
+ * short-circuits on already-wrapped envelopes. The worst case is one extra linear pass over the
  * body, never a correctness issue.
  *
  * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
@@ -209,12 +210,20 @@ function tag<T extends object>(result: T): T {
  * arrive as bare text with no declared grammar. `defendText` reads that as the
  * strictest grammar, so every strip stage runs.
  *
- * `excludeJsonDocuments: false` because the exemption's whole justification is
- * about a persisted artefact — `processResponse` writes post-strip content to
- * disk and `jq_query` reads it back — and nothing on this boundary writes to
- * disk. A custom tool's return goes straight to the model, which renders the
- * text, so a beacon inside a JSON string value fires exactly as it would
- * outside one. `LESSONS.md` RC-10.
+ * `excludeJsonDocuments: false`, and **it governs only a part that is not
+ * itself a JSON document.** `defendForInline` has already answered the JSON
+ * question with `classifyBody` before these options exist, so the flag's job
+ * here is to stop `defendText` re-asking it with a different predicate
+ * (`isDefinitelyJson`) and reaching a different answer — one rule, one
+ * decision site. Its secondary reason still holds: the exemption is about a
+ * persisted artefact, `processResponse` writes to disk and `jq_query` reads it
+ * back, and nothing on this boundary writes to disk. `LESSONS.md` RC-10.
+ *
+ * **A beacon inside a JSON string value therefore reaches the model, and that
+ * is settled rather than overlooked.** A whole-document strip pairs `<!--` in
+ * one field with `-->` in a later one and deletes what lies between; the
+ * payload belongs to the agent that chose the API. `LESSONS.md` RC-47, RC-48,
+ * RC-49; ARCHITECTURE.md invariant 1a.
  *
  * `decodeEntities: false` for the same reason the header channel passes it
  * (`LESSONS.md` RC-3): the decode's output is what gets RETURNED, so on a

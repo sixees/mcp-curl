@@ -2027,3 +2027,32 @@ recorded as caught.
   need separate evidence.** `01-known-shapes.md` → K-15 names the shape; the question it
   asks — *"has this remedy been run against HEAD, or only read?"* — takes about ninety
   seconds to answer here, and would have at any point in those three rounds.
+
+### RC-49 — the JSON payload is not ours to defend
+
+**Date:** 2026-09-08 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-14 — *class-id:* `oversized-payload`
+
+- **The plan said:** RC-48 re-opened the markdown-beacon question as a design decision with
+  three candidate remedies, on the finding that the operator's client renders tool output as
+  markdown and the beacon population is therefore real.
+- **Reality was:** the director settled it at the level above the remedy. **This server is
+  middleware** — a way to expose cURL to an agent with buffering and size scaffolding around
+  it. The agent calling a specific API knows what that API returns and how to handle it, so
+  the payload is not the server's to sanitise, redact or rewrite in any form. The server owes
+  the agent exactly three things: confirm the body is JSON; say so plainly when it is not;
+  and when the body is too large, tell the agent to ask the API for less data.
+- **So:** none of RC-48's three options is implemented, and the beacon question is closed
+  rather than deferred — there is no trigger that re-opens it. A later review round proposing
+  a beacon pass, a trusted-origin gate or mandatory spotlighting on the JSON arm is answered
+  by citing this RC, per `.claude/rules/03-divergence.md` → *Settled conflicts stay settled*.
+  RC-47's original call is restored, on a firmer basis than the population argument it rested
+  on: not *"this beacon harms nobody"* but *"the payload is the agent's to interpret"*.
+- **The lesson:** three review rounds priced a remedy without anyone asking what the product
+  is. Every finding was correct — CWE-74 is real, the reachability is real, the measured
+  splice in RC-48 is real — and all of it was answering a question this server had already
+  delegated to its caller. **`01-known-shapes.md` → K-14 is found only by asking something
+  the diff cannot answer**, and the answer here was one sentence from the director. The
+  escalation was the right disposition; what took three rounds was escalating the *scope*
+  question rather than the remedy.
