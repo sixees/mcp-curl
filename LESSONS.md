@@ -121,13 +121,19 @@ entry restating an existing class under a new name with its own counter.
 > Newest last. Append; **never rewrite what an entry claims.** If an RC turns out
 > to be wrong, file a new one that says so and cite it.
 >
-> **Three annotations may be added to a filed entry, and nothing else.** A
+> **Three annotations may be added to a filed entry, and no other annotation type.** A
 > `**Class:**` line; a `**Mechanism superseded:**` line naming what no longer
 > exists at HEAD and the RC that replaced it; and an `**Also filed as:**` line
 > naming the ids folded onto this entry and whatever only they said. All three are
 > **additive** — they sit above the body and change no word of it, because the body
 > records what was believed, and correcting it in place destroys the only evidence
 > anything diverged.
+>
+> **That closes the annotation set, and nothing else** — it is not a prohibition on
+> every edit. Tightening an entry's prose and correcting a still-unmerged entry are
+> both permitted, by the two clauses below; read this sentence as bounding what may
+> be *added above* a body, never as freezing a body the freeze boundary has not yet
+> reached.
 >
 > **The body is frozen; an annotation is maintained.** It points at HEAD, so when
 > HEAD moves again the pointer names the newer RC — an annotation that has itself
