@@ -54,11 +54,19 @@ export const CURL_EXECUTE_TOOL_META = {
 This tool provides a safe, structured way to make HTTP requests with common cURL options.
 It handles URL encoding, header formatting, and response processing automatically.
 
-Response contract: a body that parses as JSON is returned to you byte for byte, whatever
-Content-Type the origin declared. A body that does NOT parse as JSON is not returned
-inline at all — it is written to a file and you get the reason, the byte count and the
-path, to open with your own file tooling. The file holds the origin's exact bytes. A
-JSON body larger than max_result_size is also written to a file; use jq_query on that
+Response contract: a body that parses as JSON is returned to you as the origin wrote it,
+whatever Content-Type it declared — duplicate names, number lexemes and key order all
+survive. The one exception is that attack codepoints (invisible characters, bidi
+overrides, long padding runs) are removed first, so a body carrying one is returned
+without it; everything else is byte for byte.
+
+A body that does NOT parse as JSON is not returned inline at all — it is written to a
+file and you get the reason, the byte count and the path, to open with your own file
+tooling. That file holds the origin's exact bytes unless the same codepoint removal
+changed something, and the message says which you have. An empty body is the exception:
+nothing is saved and you get an empty response, because there is nothing to recover.
+
+A JSON body larger than max_result_size is also written to a file; use jq_query on that
 path. Above 10MB the request fails and you should narrow it with query parameters.
 
 Args:

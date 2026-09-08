@@ -543,7 +543,7 @@ var CurlExecuteSchema = z2.object({
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
   include_headers: z2.boolean().default(false).describe(
-    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they are prefixed to the returned text followed by a blank line, so that result is not JSON-parseable. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
+    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as a SECOND content entry after the body, so the body entry stays parseable on its own \u2014 read content[1], do not split content[0]; so that result is not JSON-parseable. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
@@ -2027,11 +2027,11 @@ function exceedsInlineCap(text, hostname, maxBytes) {
   return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
 }
 function savedMessage(facts) {
-  const { diskBytes, filepath, maxSize, overCap, filtered, rejection } = facts;
+  const { diskBytes, filepath, maxSize, overCap, filtered, rejection, originBytesExact } = facts;
   const subject = filtered ? "Result of jq_filter" : "Response";
   const capClause = overCap ? ` It also exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied.` : "";
   const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not JSON (${rejection.reason}), so no body is returned here.${capClause}` : overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling. The file holds the origin's exact bytes." : " Use the jq_query tool on that path to extract fields.";
+  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling." + (originBytesExact ? " The file holds the origin's exact bytes." : " The file holds the body with attack codepoints removed, so it is not byte-identical to what the origin sent.") : " Use the jq_query tool on that path to extract fields.";
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
   return cause + route + scope;
 }
@@ -2062,7 +2062,7 @@ async function processResponse(responseBytes, options) {
     const trimmed = content.trim();
     if (!classified.json) {
       throw new Error(
-        `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
+        `Cannot apply jq_filter: Response is not JSON (${classified.reason})`
       );
     }
     let parsedData;
@@ -2099,6 +2099,10 @@ async function processResponse(responseBytes, options) {
         maxSize,
         overCap,
         filtered: filterApplied,
+        // The filter arm writes the filter's output, and the
+        // non-no-op arm writes sanitised text; only the third arm
+        // is the origin's octets.
+        originBytesExact: !filterApplied && sanitiseWasNoOp,
         // Only where the body itself was the reason. An over-cap JSON
         // document is saved too, and there is nothing wrong with it.
         ...classified.json ? {} : { rejection: classified }
@@ -2203,7 +2207,14 @@ function plainBranchNotices(exitCode, headerInfo) {
     // this line a FAILED request is byte-identical to an empty successful
     // one — the shape the reassurance below would otherwise make worse by
     // naming the body sound.
-    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete` : null,
+    //
+    // **"above", because these notices are APPENDED.** `curl-execute.ts`
+    // emits them as a content entry after the body so `content[0]` stays
+    // the body on every branch, which points every positional word in this
+    // function backwards. A notice saying "below" pointed at nothing, and
+    // did it hardest on a truncated body that still parses as JSON — the
+    // one case where the warning is what tells a reader not to trust it.
+    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}; the response above may be empty or incomplete` : null,
     // Two arms, because the pair is only sometimes statable. Where the
     // defence grew the text past the ceiling, how many origin octets
     // survived is genuinely unknown — so the fact of the cut is reported
@@ -2562,11 +2573,19 @@ var CURL_EXECUTE_TOOL_META = {
 This tool provides a safe, structured way to make HTTP requests with common cURL options.
 It handles URL encoding, header formatting, and response processing automatically.
 
-Response contract: a body that parses as JSON is returned to you byte for byte, whatever
-Content-Type the origin declared. A body that does NOT parse as JSON is not returned
-inline at all \u2014 it is written to a file and you get the reason, the byte count and the
-path, to open with your own file tooling. The file holds the origin's exact bytes. A
-JSON body larger than max_result_size is also written to a file; use jq_query on that
+Response contract: a body that parses as JSON is returned to you as the origin wrote it,
+whatever Content-Type it declared \u2014 duplicate names, number lexemes and key order all
+survive. The one exception is that attack codepoints (invisible characters, bidi
+overrides, long padding runs) are removed first, so a body carrying one is returned
+without it; everything else is byte for byte.
+
+A body that does NOT parse as JSON is not returned inline at all \u2014 it is written to a
+file and you get the reason, the byte count and the path, to open with your own file
+tooling. That file holds the origin's exact bytes unless the same codepoint removal
+changed something, and the message says which you have. An empty body is the exception:
+nothing is saved and you get an empty response, because there is nothing to recover.
+
+A JSON body larger than max_result_size is also written to a file; use jq_query on that
 path. Above 10MB the request fails and you should narrow it with query parameters.
 
 Args:

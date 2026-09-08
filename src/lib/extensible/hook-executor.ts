@@ -116,8 +116,18 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         // Execute the tool with potentially modified params
         const response = await executor(ctx.params, { sessionId, allowLocalhost: config.allowLocalhost });
 
-        // Run afterResponse hooks sequentially
-        // content[0] is guaranteed by ToolResult tuple type
+        // Run afterResponse hooks sequentially.
+        //
+        // **`content[0]` is the BODY on every branch, and that is the whole
+        // guarantee — it is no longer the only entry.** `ToolResult.content`
+        // is an array rather than a 1-tuple, and `curl_execute` appends header
+        // text and server-authored notices as further entries, so a hook sees
+        // the body alone. That is a known gap rather than a property: a
+        // logging or caching hook does not observe the headers, and on a
+        // non-zero cURL exit it can see an empty body with `isError: false`
+        // while the failure notice sits in an entry it was never handed.
+        // Widening it changes what every existing hook receives, so it is the
+        // operator's call and is recorded as follow-up rather than taken here.
         const responseText = response.content[0].text;
         for (const hook of hooks.afterResponse) {
             await hook({

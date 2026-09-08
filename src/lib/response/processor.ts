@@ -569,6 +569,15 @@ interface SavedMessageFacts {
      * rather than its size. Absent on a JSON artefact.
      */
     rejection?: { reason: JsonRejectionReason };
+    /**
+     * True when the bytes on disk ARE the origin's octets. False when Step 2
+     * changed something, in which case the artefact is the sanitised text.
+     *
+     * The claim is gated rather than stated because the two arms of
+     * `diskContent` write different bytes, and a reader diffing the file
+     * against the origin needs to know which one they have.
+     */
+    originBytesExact: boolean;
 }
 
 /**
@@ -581,7 +590,7 @@ interface SavedMessageFacts {
  * The shape is the fix; there is no runtime check to add. `LESSONS.md` RC-31.
  */
 function savedMessage(facts: SavedMessageFacts): string {
-    const { diskBytes, filepath, maxSize, overCap, filtered, rejection } = facts;
+    const { diskBytes, filepath, maxSize, overCap, filtered, rejection, originBytesExact } = facts;
     const subject = filtered ? "Result of jq_filter" : "Response";
 
     // The declared content type is not echoed: this string is server-authored
@@ -614,7 +623,11 @@ function savedMessage(facts: SavedMessageFacts): string {
     const route =
         rejection !== undefined
             ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
-              " your own tooling. The file holds the origin's exact bytes."
+              " your own tooling." +
+              (originBytesExact
+                  ? " The file holds the origin's exact bytes."
+                  : " The file holds the body with attack codepoints removed, so it is not" +
+                    " byte-identical to what the origin sent.")
             : " Use the jq_query tool on that path to extract fields.";
 
     const scope = filtered
@@ -784,8 +797,14 @@ export async function processResponse(
         // So this gate is the parse alone. `empty-body` and `looks-like-markup`
         // still cannot be filtered; a scalar can.
         if (!classified.json) {
+            // **The reason comes from the closed vocabulary, not from the
+            // header.** `options.contentType` is origin-written, so echoing it
+            // put remote text into server-authored error prose; and it answers
+            // a question this path no longer asks — `classifyBody` decided on
+            // the bytes. `JsonRejectionReason` carries no response byte by
+            // construction.
             throw new Error(
-                `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
+                `Cannot apply jq_filter: Response is not JSON (${classified.reason})`
             );
         }
 
@@ -947,6 +966,10 @@ export async function processResponse(
                 maxSize,
                 overCap,
                 filtered: filterApplied,
+                // The filter arm writes the filter's output, and the
+                // non-no-op arm writes sanitised text; only the third arm
+                // is the origin's octets.
+                originBytesExact: !filterApplied && sanitiseWasNoOp,
                 // Only where the body itself was the reason. An over-cap JSON
                 // document is saved too, and there is nothing wrong with it.
                 ...(classified.json ? {} : { rejection: classified }),

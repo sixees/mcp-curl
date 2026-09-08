@@ -110,7 +110,13 @@ describe("018 AC1 — a JSON body survives byte for byte", () => {
         // RC-24, RC-27, RC-29: needed `keepNumberLexeme` to survive at all.
         ["integer past MAX_SAFE_INTEGER", '{"id":9223372036854775807}'],
         ["overflowing exponent", '{"n":1e400}'],
-        ["trailing-zero decimal", '{"price":"1.50"}'],
+        // **A NUMBER, not a string.** `"1.50"` in quotes is ordinary string
+        // content that any round trip preserves, so the case could not fail
+        // however the body was re-serialised — it discriminated nothing. The
+        // lexeme is only at risk unquoted, where `JSON.parse` yields 1.5 and a
+        // re-serialising defence emits `1.5`. `keepNumberLexeme` is what keeps
+        // the trailing zero, and this is the case that measures it.
+        ["trailing-zero decimal", '{"price":1.50}'],
         // Key order was declined as harmless while it still happened; now it
         // cannot happen, so it is pinned.
         ["key order", '{"z":1,"m":2,"a":3}'],
@@ -258,6 +264,33 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         expect(text).toContain("the origin's exact bytes");
         const onDisk = await readFile(savedPathFrom(text), "utf-8");
         expect(onDisk).toBe(page);
+    });
+
+    // The other side of the sentence above. `diskContent` writes the origin's
+    // octets only where Step 2 was a no-op; where it removed a codepoint the
+    // file is the sanitised text, and claiming exactness there told a reader
+    // diffing the file against the origin that a difference was the origin's.
+    // Reported by chatgpt-codex-connector and coderabbitai on PR #39.
+    it("says the file is NOT byte-identical when Step 2 changed the body", async () => {
+        const page = `<html><h1>Application\u200bError</h1></html>`.replace("\\u200b", "\u200b");
+        const text = await fetchBody(page, "text/html");
+        expect(text).toContain("attack codepoints removed");
+        expect(text).not.toContain("the origin's exact bytes");
+        // And the file really is the sanitised form, so the sentence is true.
+        const onDisk = await readFile(savedPathFrom(text), "utf-8");
+        expect(onDisk).not.toBe(page);
+        expect(onDisk).toBe(page.replace("\u200b", ""));
+    });
+
+    // `options.contentType` is origin-written, and this string is prose a model
+    // reads as the server's. The reason comes from the closed vocabulary.
+    // Reported by coderabbitai on PR #39.
+    it("names the rejection reason in the jq_filter error, never the origin's content type", async () => {
+        const text = await fetchBody("<html>nope</html>", "text/html", {
+            jq_filter: ".a",
+        }).catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+        expect(text).toContain("looks-like-markup");
+        expect(text).not.toContain("text/html");
     });
 });
 

@@ -1,6 +1,8 @@
 # Work Handoff: 018 slice 1 — the JSON body path returns verbatim
 
-**Date:** 2026-09-07 | **Branch:** `fix/018-parse-to-validate-return-original-bytes` | **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md` | **Status:** **partial — one P1 escalation is open and unanswered; see *Open escalation*. Do not merge on the suite being green.**
+**Date:** 2026-09-07 | **Branch:** `fix/018-parse-to-validate-return-original-bytes` | **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md` | **PR:** #39 | **Status:** **partial — the markdown-beacon escalation is RE-OPENED as a design question; see *Round 3* at the foot of this document, which is the current status. Do not merge on the suite being green.**
+
+> **One status, and it is the last section.** *Open escalation* below records the state on 2026-09-07 and *Round 2* records it closed on 2026-09-08; both are dated history and neither is current. Round 3 re-opened it on new information — the director's agent does render tool output as markdown — and measured the recommended remedy unsound (`LESSONS.md` RC-48). Reported by coderabbitai on PR #39, which was right that the header gave conflicting merge guidance.
 
 ## Summary
 
@@ -440,3 +442,76 @@ because the file did not compile. **Mechanical comment edits over non-contiguous
 need the build run between each one**, not at the end of a batch.
 
 Nothing pushed. No PR. Push and merge remain the operator's.
+
+
+---
+
+# Round 3 — PR #39, Surface 3 (bot review), 2026-09-08
+
+**This section is the current status.** Everything above it is dated history.
+
+Three bots reviewed: `chatgpt-codex-connector` (triggered), `coderabbitai` (reviewed
+unprompted) and `copilot-pull-request-reviewer`. **18 comments, 11 distinct classes.**
+
+## The director's scope call, restated and widened
+
+> *"Do not over engineer the solution. I am the only user of this MCP via a locally
+> orchestrated Agent. We do not need to over stress security and size of payloads."*
+
+Binding per `.claude/rules/03-divergence.md`, and consistent with the 2026-09-07 call
+recorded under *Declined findings*. **One answer widened it rather than narrowing it:**
+that agent **does** render tool output as markdown, so the markdown-beacon population is
+not empty and RC-47's judgement on that one finding is reversed on new information. The
+rest of RC-47 stands.
+
+## Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Byte-exactness asserted unconditionally (×4 sites) | codex, coderabbitai ×2, copilot | Fix needed | `savedMessage` gained `originBytesExact` and states which of the two arms wrote the file; the `curl_execute` description now says codepoint removal is the one exception and names the empty-body case; `ARCHITECTURE.md` and `docs/custom-tools.md` still to do — see *Outstanding* |
+| `savedMessage` claims exact bytes for a sanitised artefact | codex P2 | Fix needed | Gated on `!filterApplied && sanitiseWasNoOp`. **New test**, teeth-probed |
+| `schemas.ts` says headers are prefixed to the text | codex P2 | Fix needed | Rewritten to name `content[1]`. The tool description and the input schema no longer contradict each other |
+| `public.ts` promises steps 1-4 always run | codex P2 | Fix needed | Docblock now carries the JSON arm and says the trade is not free. npm-published surface |
+| Exit notice says "below", is appended after | codex P2 | Fix needed | "above". The comment records that appending is what points every positional word backwards |
+| jq error echoes the origin's content type | coderabbitai | Fix needed | Uses `classified.reason` from the closed vocabulary. **New test**, teeth-probed |
+| `"1.50"` fixture is a string | coderabbitai | Fix needed | Now `1.50`, unquoted. A string round-trip could not detect lexeme rewriting — the case discriminated nothing |
+| Handoff header contradicts Round 2 | coderabbitai | Fix needed | Header now points at this section as the single current status |
+| `afterResponse` sees only `content[0]` | codex P2, coderabbitai | Documentation | Comment corrected — it cited a `ToolResult` tuple type this branch removed. Behaviour unchanged on the director's call; recorded as follow-up |
+
+## Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Drop Step 2 from the JSON arm so JSON is truly byte-exact | codex **P1**, coderabbitai Major | P2 (re-derived from consequence: the data was already altered before this branch; the *claim* is what this branch added) | In scope | Already decided — *Key decisions*: "Keep Step 2 on the JSON arm", measured a byte-for-byte no-op on every fidelity case 018 names. Dropping it costs the invisible-character and bidi defence and the `[injection-defense]` log for a saved body (RC-44). The in-scope half was the claim, and it is narrowed above |
+| Todo acceptance criteria 5 and 6 still marked `[x]` | copilot | P3 | In scope | `.claude/rules/03-divergence.md` forbids retro-editing plan text; the POST-AUDIT annotation added in `cd348f9` is the house mechanism for exactly this, and it sits directly above the criteria |
+| Restrict the JSON path to trusted origins, or make spotlighting mandatory | coderabbitai Major (CWE-74) | P2 | In scope | Same subject as the beacon escalation, which is re-opened as a design question below rather than declined. Not actioned this round |
+
+## Decisions Revised
+
+| Original decision | New approach | Reason | Reviewer |
+|---|---|---|---|
+| RC-47: the markdown-beacon population is empty, so `stripMarkdownBeacons` comes off the JSON arm | Population confirmed non-empty; the finding is live again and the remedy is a design question | The director's agent renders tool output as markdown | coderabbitai raised it; the director answered |
+| Handoff: *"keep `stripMarkdownBeacons` and withdraw only the paired-token stages"* | **Not implemented — measured unsound** | `stripMarkdownBeacons` pairs `(`…`)` and deletes intervening JSON fields. `LESSONS.md` RC-48 | measured against HEAD |
+
+## Re-opened escalation — the one thing blocking merge
+
+**The beacon defence and whole-document byte-exactness cannot both be had by a
+whole-document pass.** RC-48 holds the measurement and the three sound options, each with
+its cost. This is a design decision and it is the director's.
+
+## Files Modified
+
+`src/lib/response/processor.ts`, `src/lib/response/formatter.ts`,
+`src/lib/server/schemas.ts`, `src/lib/types/public.ts`,
+`src/lib/extensible/hook-executor.ts`, `src/lib/tools/curl-execute.ts`,
+`src/lib/tools/curl-execute.json-passthrough.test.ts`, `LESSONS.md`, this handoff.
+
+## Outstanding
+
+- `ARCHITECTURE.md:101-110` and `docs/custom-tools.md:305-325` still state the byte and
+  double-defence contracts unconditionally (coderabbitai). Same class as the fixes above.
+- The re-opened escalation.
+- Suite: 1281 passing, 7 skipped. `strip-blocks.test.ts`'s two ReDoS wall-clock budgets
+  fail on most runs — pre-existing, `docs/todos/013`, and not touched by this branch.
+
+**No todo was filed this round, and none was closed.** 4 open against this PR, unchanged.

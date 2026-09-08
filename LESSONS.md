@@ -1985,3 +1985,45 @@ recorded as caught.
   **RC-40 through RC-43 were assigned in the PR handoff and never written to this ledger**,
   so seventeen source comments cited entries that did not exist; two independent comment
   auditors found it. An RC number is durable only once it is *here*.
+
+### RC-48 — the remedy was recommended for three rounds and never run
+
+**Date:** 2026-09-08 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-15 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** RC-47 settled that `stripMarkdownBeacons` comes off the JSON arm,
+  because the population that a markdown beacon harms — a client rendering tool text as
+  markdown and fetching the URL — was judged empty. The handoff's *Open escalation*
+  recorded the alternative remedy beside it: *"keep `stripMarkdownBeacons` on the JSON arm
+  and withdraw only the paired-token stages … `stripMarkdownBeacons` does not pair and is
+  byte-preserving on any document containing no beacon."*
+- **Reality was:** the population is **not** empty — the director's own agent renders tool
+  output as markdown, which reverses RC-47's call on new information rather than
+  re-litigating it. And the remedy that had been sitting on the table for three rounds is
+  **unsound**. `stripMarkdownBeacons` pairs `(` with `)` exactly as `stripHtmlComments`
+  pairs `<!--` with `-->`, and a JSON string value cannot stop it. Measured against HEAD:
+
+  ```
+  in :  {"a":"![x](https://evil.test/","b":"secret","c":"x)","d":"kept"}
+  out:  {"a":"[image removed]","d":"kept"}
+  ```
+
+  Two fields deleted, the result still valid JSON, nothing downstream able to tell — RC-16's
+  defect, which is the P1 this whole branch exists to remove. The second half of the claim
+  holds: a document containing no beacon is returned byte-identical. The first half —
+  *"does not pair"* — was false, and it is the half the remedy rested on.
+- **So:** the remedy is not implemented. The beacon defence and byte-exactness cannot both
+  be had by running a whole-document pass, and the escalation is re-opened as a design
+  question rather than closed with a patch. Three sound options exist and each costs
+  something: bound the beacon patterns so they cannot cross a `"` (touches a shared,
+  ReDoS-measured regex); route a beacon-carrying JSON body to a file instead of inline
+  (byte-exact for every clean payload, and a CMS API returning markdown stops arriving
+  inline); or lex the JSON and rewrite only inside string tokens (slice-2 sized).
+- **The lesson:** a recommendation written beside a finding acquires the finding's
+  authority. This one was reviewed by two surfaces and quoted in three documents without
+  anyone running it, because it reads as the conclusion of the analysis that produced it
+  and the analysis *was* sound. **The diagnosis and the remedy are separate claims and
+  need separate evidence.** `01-known-shapes.md` → K-15 names the shape; the question it
+  asks — *"has this remedy been run against HEAD, or only read?"* — takes about ninety
+  seconds to answer here, and would have at any point in those three rounds.

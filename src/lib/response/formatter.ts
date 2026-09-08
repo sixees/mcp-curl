@@ -71,8 +71,15 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo): s
         // this line a FAILED request is byte-identical to an empty successful
         // one — the shape the reassurance below would otherwise make worse by
         // naming the body sound.
+        //
+        // **"above", because these notices are APPENDED.** `curl-execute.ts`
+        // emits them as a content entry after the body so `content[0]` stays
+        // the body on every branch, which points every positional word in this
+        // function backwards. A notice saying "below" pointed at nothing, and
+        // did it hardest on a truncated body that still parses as JSON — the
+        // one case where the warning is what tells a reader not to trust it.
         exitCode !== 0
-            ? `[mcp-curl] cURL exited ${exitCode}; the response below may be empty or incomplete`
+            ? `[mcp-curl] cURL exited ${exitCode}; the response above may be empty or incomplete`
             : null,
         // Two arms, because the pair is only sometimes statable. Where the
         // defence grew the text past the ceiling, how many origin octets
