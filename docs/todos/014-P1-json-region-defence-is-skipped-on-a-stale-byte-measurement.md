@@ -78,8 +78,10 @@ divergence per `.claude/rules/03-divergence.md` rather than silently edited;
 post-sanitise bytes, so `parseJsonDocument`'s gate and `exceedsStripCap` now
 measure the same string and cannot disagree. **What remains open here** is
 whether any other caller of `parseJsonDocument` still decides a *defence* on a
-pre-transform byte count — `defendForInline` and `defendJsonLeaves`'s nested-leaf
-arm are the two to check — which is what this todo is now for.
+pre-transform byte count. **`defendForInline` is the only one left to check:**
+`defendJsonLeaves` and its nested-leaf arm were deleted by PR #39, as the note at
+the head of this file records, so the second half of this question no longer has a
+subject.
 
 
 `processor.ts:153` is byte-identical at `5adb7d3`; the diff's nearest hunk begins
@@ -121,8 +123,11 @@ than folded into that branch.
       with **every top-level key intact**, driven end to end through
       `executeCurlRequest`, and asserted on the persisted file as well as the
       inline return.
-- [ ] The nested-string arm in `defendJsonLeaves` is covered by its own case — a
-      string leaf that is itself a >256 KB JSON document.
+- [ ] ~~The nested-string arm in `defendJsonLeaves` is covered by its own case — a
+      string leaf that is itself a >256 KB JSON document.~~ **Void:**
+      `defendJsonLeaves` was deleted by PR #39 along with the per-leaf walk, so
+      there is no arm to cover. Left struck rather than removed, because the
+      criterion records what was once required.
 - [ ] Removing the fix makes the end-to-end case fail (teeth probed, not assumed).
 
 ## Work log

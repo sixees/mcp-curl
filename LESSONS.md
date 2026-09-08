@@ -2099,7 +2099,13 @@ recorded as caught.
 - **Reality was:** the director settled it at the level above the remedy. **This server is
   middleware** — a way to expose cURL to an agent with buffering and size scaffolding around
   it. The agent calling a specific API knows what that API returns and how to handle it, so
-  the payload is not the server's to sanitise, redact or rewrite in any form. The server owes
+  the payload is not the server's to interpret, redact or rewrite. **What that settles is the
+  markup, comment and markdown-beacon stripping, which is withdrawn from the JSON arm and
+  stays withdrawn.** It does not describe the shipped byte contract on its own:
+  `sanitizeAndDetect` still runs above the fork, so a document carrying an attack codepoint
+  or a threshold-length padding run comes back without it, and `src/lib/types/public.ts`
+  documents that. Closing the remaining gap between this settlement and that pass is
+  `docs/todos/019`'s subject, not this entry's. The server owes
   the agent exactly three things: confirm the body is JSON; say so plainly when it is not;
   and when the body is too large, tell the agent to ask the API for less data.
 - **So:** none of RC-48's three options is implemented, and the beacon question is closed

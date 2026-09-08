@@ -38,7 +38,7 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir
-} from "./chunk-TBUERB6W.js";
+} from "./chunk-XPSSK35W.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -734,7 +734,7 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
   }
   try {
     const response = await executor(ctx.params, { sessionId, allowLocalhost: config.allowLocalhost });
-    const responseText = response.content[0].text;
+    const responseText = response.content[0]?.text ?? "";
     for (const hook of hooks.afterResponse) {
       await hook({
         ...ctx,

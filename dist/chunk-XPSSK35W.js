@@ -1752,7 +1752,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "3.7.0" : "0.0.0"
+  VERSION: true ? "4.0.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -1976,7 +1976,7 @@ function classifyBody(text) {
   if (trimmed.length === 0) return { json: false, reason: "empty-body" };
   if (trimmed.startsWith("<")) return { json: false, reason: "looks-like-markup" };
   try {
-    JSON.parse(text);
+    JSON.parse(trimmed);
   } catch {
     return { json: false, reason: "invalid-syntax" };
   }

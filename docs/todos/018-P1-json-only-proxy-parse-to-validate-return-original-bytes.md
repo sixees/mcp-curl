@@ -370,7 +370,7 @@ todo closed as a side effect of another is a todo nobody dispositioned.
       (remove a stage; their tests must fail)
 - [ ] `utils/json-lexeme.ts` still covers the jq path — `jq/filter.ts`. **One
       path, not two**; see *What survives* item 3 for the correction
-- [ ] `ARCHITECTURE.md` invariants **1a, 14 and 16** rewritten — all three
+- [x] `ARCHITECTURE.md` invariants **1a, 14 and 16** rewritten — all three
       currently assume the content type is a decision. Invariant 16's region-wise
       premise no longer applies to the body
 - [x] RC filed per `.claude/rules/03-divergence.md`, recording this as a settled
@@ -397,7 +397,8 @@ for a regression this change introduced.
   **Landed — AC 1-6, 9, 10:**
   - `processor.ts::classifyBody` is the gate, once, for the body AND the artefact:
     full parse plus `isCompositeValue`, inheriting no strip cap. `JsonRejectionReason`
-    is a closed four-member vocabulary; V8's message is never interpolated and only
+    is a closed three-member vocabulary — `bare-scalar` was removed with the
+    object-or-array requirement (RC-45/RC-47); V8's message is never interpolated and only
     `/ at position (\d+)/` is read from it.
   - A JSON body is handed through untouched and Step 2 reaches it at the wrap. A
     non-JSON body returns no inline bytes: reason, byte count, path.

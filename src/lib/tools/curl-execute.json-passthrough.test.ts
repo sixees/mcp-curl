@@ -272,7 +272,10 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
     // diffing the file against the origin that a difference was the origin's.
     // Reported by chatgpt-codex-connector and coderabbitai on PR #39.
     it("says the file is NOT byte-identical when Step 2 changed the body", async () => {
-        const page = `<html><h1>Application\u200bError</h1></html>`.replace("\\u200b", "\u200b");
+        // The template literal interprets `\u200b`, so `page` already holds a
+        // real U+200B. A `.replace` for the six-character text `\u200b` found
+        // nothing and only suggested to a reader that the escape had survived.
+        const page = `<html><h1>Application\u200bError</h1></html>`;
         const text = await fetchBody(page, "text/html");
         expect(text).toContain("attack codepoints removed");
         expect(text).not.toContain("the origin's exact bytes");

@@ -1,7 +1,7 @@
 // src/lib/response/processor.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import { readFile, rm } from "fs/promises";
-import { defendForInline, exceedsInlineCap, processResponse } from "./processor.js";
+import { classifyBody, defendForInline, exceedsInlineCap, processResponse } from "./processor.js";
 import { formatResponse } from "./formatter.js";
 import {
     IMAGE_REMOVED_PLACEHOLDER,
@@ -930,4 +930,56 @@ describe("scalar JSON documents keep the exemption (round 4, coderabbitai)", () 
 
 afterAll(async () => {
     await Promise.all(savedArtefacts.map((f) => rm(f, { force: true })));
+});
+
+describe("classifyBody — a BOM-prefixed JSON document is still JSON", () => {
+    // `trim()` removes U+FEFF but `JSON.parse` rejects it, so the two cheap
+    // checks and the parse have to be handed the SAME string. Given different
+    // ones, a BOM-prefixed document read as JSON by every other layer was
+    // classified `invalid-syntax` here and fell to the strip arm — where
+    // `stripHtmlComments` pairs `<!--` in one field with `-->` in a later one
+    // and deletes the fields between. That is the corruption `docs/todos/018`
+    // exists to prevent, and the body path's own comment cites the BOM case as
+    // the reason it sanitises before classifying.
+    //
+    // `processResponse` was never exposed: Step 2 removes the BOM above the
+    // fork. The reachable path is the post-processor wrap, which `public.ts`
+    // documents as covering custom tools, YAML endpoints and `beforeRequest`
+    // short-circuits — none of which pass through Step 2. .NET and Java origins
+    // emit a BOM routinely.
+    const BOM = "﻿";
+    const SPLICEABLE = '{"note":"see <!-- ignore","trace":"abc-123","tail":"--> end"}';
+
+    it("returns a BOM-prefixed document without splicing its fields", () => {
+        const out = defendForInline(BOM + SPLICEABLE, "bom.test");
+        // The field between the two markers must survive.
+        expect(out).toContain("abc-123");
+        // And the document must still parse once the BOM is off.
+        expect(() => JSON.parse(out.replace(BOM, ""))).not.toThrow();
+    });
+
+    it("treats it the same as the identical document without the BOM", () => {
+        // The teeth: without this the case above passes on any implementation
+        // that merely happens not to strip, including one that rejects both.
+        const withBom = defendForInline(BOM + SPLICEABLE, "bom.test");
+        const without = defendForInline(SPLICEABLE, "bom.test");
+        expect(withBom.replace(BOM, "")).toBe(without);
+    });
+
+    it("still classifies a BOM-prefixed non-JSON body as non-JSON", () => {
+        // The third value, asserted on the classifier rather than on the strip
+        // arm's output: that arm removes comments, blocks and beacons, not
+        // arbitrary markup, so an HTML page comes back unchanged either way and
+        // an assertion on it cannot discriminate. What must hold is that the
+        // fix corrected the classification without widening the JSON grammar.
+        expect(classifyBody(BOM + "<html><body>502</body></html>")).toEqual({
+            json: false,
+            reason: "looks-like-markup",
+        });
+        expect(classifyBody(BOM + "not json at all")).toEqual({
+            json: false,
+            reason: "invalid-syntax",
+        });
+        expect(classifyBody(BOM + "   ")).toEqual({ json: false, reason: "empty-body" });
+    });
 });

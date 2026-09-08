@@ -1,8 +1,8 @@
 # Work Handoff: 018 slice 1 — the JSON body path returns verbatim
 
-**Date:** 2026-09-07 | **Branch:** `fix/018-parse-to-validate-return-original-bytes` | **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md` | **PR:** #39 | **Status:** **partial — the markdown-beacon escalation is RE-OPENED as a design question; see *Round 3* at the foot of this document, which is the current status. Do not merge on the suite being green.**
+**Date:** 2026-09-07 | **Branch:** `fix/018-parse-to-validate-return-original-bytes` | **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md` | **PR:** #39 | **Status:** **ready — no escalation is open.** The markdown-beacon question was closed by `LESSONS.md` RC-49 on 2026-09-08 with **no trigger**; the director settled it above the remedy, on this server being middleware whose payload is the agent's to interpret. Every section below dated before that is history. **Still do not merge on the suite being green** — that rule is independent of the escalation, and `docs/todos/013`'s ReDoS budgets fail on most runs.
 
-> **One status, and it is the last section.** *Open escalation* below records the state on 2026-09-07 and *Round 2* records it closed on 2026-09-08; both are dated history and neither is current. Round 3 re-opened it on new information — the director's agent does render tool output as markdown — and measured the recommended remedy unsound (`LESSONS.md` RC-48). Reported by coderabbitai on PR #39, which was right that the header gave conflicting merge guidance.
+> **One status, and it is the header above.** This document is append-only, so it carries four dated records of the same escalation and only the newest is current: *Open escalation* (2026-09-07, opened), *Round 2* (closed), *Round 3* (re-opened on RC-48's measurement, the director's agent rendering tool output as markdown), and **RC-49 (2026-09-08, closed with no trigger — the current state)**. Read any earlier section as history. coderabbitai reported the header/body disagreement twice, on 2026-09-08 both times, and was right on both.
 
 ## Summary
 
@@ -37,7 +37,9 @@ the artefact question exists is the arm where it always says "not JSON" — and 
 returns `true` for `"<script>x</script>"`, which this gate classifies non-JSON and
 routes to the host's own file tooling.
 
-Rejection reasons are a closed four-member vocabulary this repo owns
+Rejection reasons are a closed three-member vocabulary this repo owns —
+`empty-body`, `looks-like-markup`, `invalid-syntax`; `bare-scalar` went with the
+object-or-array requirement (RC-45/RC-47)
 (`JsonRejectionReason`), so no response byte can reach the report. V8's
 `SyntaxError.message` embeds up to ten bytes of the body and the *whole* body when
 short, so it is never interpolated; only an anchored `/ at position (\d+) \(line \d+
@@ -493,11 +495,17 @@ rest of RC-47 stands.
 | RC-47: the markdown-beacon population is empty, so `stripMarkdownBeacons` comes off the JSON arm | Population confirmed non-empty; the finding is live again and the remedy is a design question | The director's agent renders tool output as markdown | coderabbitai raised it; the director answered |
 | Handoff: *"keep `stripMarkdownBeacons` and withdraw only the paired-token stages"* | **Not implemented — measured unsound** | `stripMarkdownBeacons` pairs `(`…`)` and deletes intervening JSON fields. `LESSONS.md` RC-48 | measured against HEAD |
 
-## Re-opened escalation — the one thing blocking merge
+## Re-opened escalation — SUPERSEDED by RC-49
+
+_History, recorded 2026-09-08 and closed the same day. Not current — see the header._
 
 **The beacon defence and whole-document byte-exactness cannot both be had by a
 whole-document pass.** RC-48 holds the measurement and the three sound options, each with
 its cost. This is a design decision and it is the director's.
+
+**Closed by `LESSONS.md` RC-49**, which answered the scope question rather than picking one
+of the three: the payload is the agent's to interpret, so none of the remedies is
+implemented and there is no trigger that re-opens this.
 
 ## Files Modified
 
@@ -546,8 +554,9 @@ The operator's rule: **at most three rounds, stop when a round returns five or f
 comments with no P1s.** This pass returned **4 comments and no P1s**, so the condition is
 met — reported for the operator to call, not applied here.
 
-**One thread remains open by design**: `PRRT_kwDOQnZcNs6gJ1tW`, the markdown-beacon
-escalation, which is RC-48's design question and the only thing blocking merge.
+**One thread remained open at the time of that pass**: `PRRT_kwDOQnZcNs6gJ1tW`, the
+markdown-beacon escalation. It was closed later the same day by RC-49 and resolved on the
+PR; nothing is blocking merge on its account.
 
 ## Round 3 tail read — after the final push
 
@@ -698,3 +707,52 @@ nothing was staged while the mutation was live.
 `src/lib.test.ts`, `src/lib/response/post-processor.test.ts` and
 `src/lib/schema/schema.test.ts` — unchanged in count and location, none in a file this
 round touched. `npm run build` exits 0.
+
+---
+
+# Review Comments Addressed — 2026-09-08 (round 5, pre-merge)
+
+`coderabbitai`'s full review landed nine findings **after** round 4's read, so they were
+undispositioned when that round reported. All nine are dispositioned here: **8 fixed, 1
+declined.** One was a genuine data-corruption defect that four earlier rounds missed.
+
+## Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `classifyBody` is not BOM-aware before `JSON.parse` | coderabbit Major → **my P1** | Fix needed | **Real, and measured.** `trim()` removes U+FEFF but `JSON.parse` rejects it, and the two cheap checks were given `trimmed` while the parse got `text`. A BOM-prefixed JSON document was classified `invalid-syntax`, fell to `defendForInline`'s strip arm, and `stripHtmlComments` spliced across fields: `{"note":"see <!-- ignore","trace":"abc-123","tail":"--> end"}` became `{"note":"see  end"}` — two fields deleted, and **the result still parses**, so nothing downstream could notice. Now `JSON.parse(trimmed)`. Three regression cases, including the teeth pair and the non-JSON third value |
+| `ToolResult.content` permits `[]`, so `content[0].text` throws | coderabbit Major → P2 | Fix needed | `hook-executor.ts` read it unguarded while `ToolResult`'s own docblock requires consumers to runtime-check. Now `content[0]?.text ?? ""` — the same value an empty body already yields, and `afterResponse` is observational. Swept: it was the only unguarded index in production; `createWrapper` already guards with `Array.isArray` and a `typeof` check |
+| `JsonRejectionReason` docblock documents a `bare-scalar` member | coderabbit Minor | Fix needed | The union has three members; the prose listed four and claimed `null`/`42` land there, which RC-45 reversed. Swept the class rather than the instance — **five sites, three stale**: `processor.ts:173`, `docs/todos/018:400`, and this handoff's own line 40 |
+| `LESSONS.md` RC-49 says the payload is not sanitised "in any form" | coderabbit Minor | Fix needed | Overstated inside a **binding** entry, which is the expensive place for it — a cited RC is read instead of re-checked. Narrowed to what shipped: the markup/comment/beacon stripping is withdrawn and stays withdrawn; `sanitizeAndDetect` still runs, and closing that gap is `docs/todos/019`'s subject |
+| `LESSONS.md` and the handoff disagree on the beacon escalation | coderabbit Minor | Fix needed | **The important one before a merge:** this document still said an escalation was "the only thing blocking merge". Header now reads *ready*, the superseded section is labelled and dated, and the navigation note lists all four records with RC-49 as current |
+| `docs/todos/018`'s `ARCHITECTURE.md` criterion unchecked while recorded landed | coderabbit Minor | Fix needed | Marked `[x]`; commit `175d028` landed it. The bare-scalar criterion two lines above was **left alone** — it already carries a POST-AUDIT citing RC-47, deliberately per `.claude/rules/03-divergence.md` |
+| `docs/todos/014` requires an arm its own header says is deleted | coderabbit Minor | Fix needed | `defendJsonLeaves` is gone from `src/`. The caller question now names `defendForInline` alone, and the criterion is struck as void rather than removed |
+| A no-op `.replace` in `curl-execute.json-passthrough.test.ts` | coderabbit Trivial | Fix needed | The template literal already interprets `\u200b`, so replacing the six-character text found nothing. Dropped — and it is the same escape-versus-literal confusion this branch has now hit three times |
+
+## Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| `afterResponse` hooks receive only `content[0].text`, so they miss headers and can see an empty body with `isError: false` | coderabbit Minor | P3 | In scope | **Already decided, and the code says so at the site.** `hook-executor.ts` documents this in the ten lines directly above the read — including the empty-body-with-`isError:false` case, in those words — and records that widening it changes what every existing hook receives, so it is the operator's call. The finding re-reports the comment. Listed in *Known issues* as recorded-not-fixed. **Not to be confused with the empty-`content` crash above**, which was a separate defect and is fixed |
+
+## Decisions Revised
+
+_None._
+
+## Resolved Todos
+
+_None._ **0 todos filed this round; 4 open against this PR**, unchanged.
+
+## Testing summary — round 5
+
+**1292 passed, 7 skipped, 0 failed**, 39 files. Three cases added for the BOM defect.
+The failing-test-first order is on the record: the three cases were written against
+unfixed code and failed with `{"note":"see  end"}`, which is how the corruption was
+measured rather than argued. `npx tsc --noEmit` still exits 2 on the same **12
+pre-existing** errors in three untouched files.
+
+**One of my own assertions was wrong and is corrected in place:** the third BOM case first
+asserted that the strip arm removes `<html>` tags. It does not — it removes comments,
+blocks and beacons — so an HTML page returns unchanged and the assertion could not
+discriminate. It now asserts on `classifyBody` directly, which is the property that
+matters: the fix corrected the classification without widening the JSON grammar.

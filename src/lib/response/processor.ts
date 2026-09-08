@@ -168,9 +168,12 @@ function isDefinitelyJson(text: string): boolean {
  *   does not admit `<`, so such a body can never parse. This is the member that
  *   answers *"HTML error page, or truncated body?"* — the question
  *   `docs/todos/018` requires the report to answer — without echoing a byte.
- * - `bare-scalar` — parses, but the value is not an object or an array. `null`,
- *   `42` and `"<script>x</script>"` all land here.
  * - `invalid-syntax` — the parse threw and none of the above applies.
+ *
+ * **A bare scalar is not a member, and its absence is the rule.** `null`, `42`
+ * and `"ok"` parse, so {@link classifyBody} returns `{ json: true }` for them
+ * and no reason is issued — a filter runs on a scalar perfectly well, and
+ * routing them through a rejection is what `LESSONS.md` RC-45 removed.
  *
  * Why a body was not handed back as JSON.
  *
@@ -213,7 +216,19 @@ export function classifyBody(text: string): BodyClassification {
     try {
         // No reviver: the value is discarded, so preserving number lexemes would
         // buy nothing. This gate's question is about syntax alone.
-        JSON.parse(text);
+        //
+        // **`trimmed`, the same string the two checks above were given.** They
+        // agree with the parse only if all three see one value: `trim()` removes
+        // U+FEFF and `JSON.parse` rejects it, so parsing the untrimmed text
+        // classified a BOM-prefixed document `invalid-syntax` while every other
+        // layer read it as JSON. `defendForInline` then sent it to the strip
+        // arm, where `stripHtmlComments` paired `<!--` in one field with `-->`
+        // in a later one and deleted the fields between — and the result still
+        // parsed, so nothing downstream could notice. .NET and Java origins
+        // emit a BOM routinely, and the wrap's own callers (custom tools, YAML
+        // endpoints, `beforeRequest` short-circuits) do not pass through the
+        // body path's Step 2, which is what hid this on `processResponse`.
+        JSON.parse(trimmed);
     } catch {
         return { json: false, reason: "invalid-syntax" };
     }

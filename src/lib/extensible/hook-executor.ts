@@ -127,7 +127,18 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         // while the failure notice sits in an entry it was never handed.
         // Widening it changes what every existing hook receives, so it is the
         // operator's call and is recorded as follow-up rather than taken here.
-        const responseText = response.content[0].text;
+        // **Guarded, because the declaration cannot be trusted here.**
+        // `ToolResult.content` is `Array<…>`, so `[]` type-checks, and
+        // `CurlRegisterToolOptions.executor` is published API — a custom tool
+        // returning no entries for "no data" turned this read into a
+        // `TypeError` and failed the whole call. `ToolResult`'s own docblock
+        // requires a consumer to runtime-check the entry it reads rather than
+        // trusting the type; this is that check.
+        //
+        // Empty string rather than a throw: `afterResponse` is observational,
+        // and "" is already what an empty body (a 204, a HEAD) hands a hook, so
+        // this adds no state a hook was not written to see.
+        const responseText = response.content[0]?.text ?? "";
         for (const hook of hooks.afterResponse) {
             await hook({
                 ...ctx,
