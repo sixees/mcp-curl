@@ -264,10 +264,16 @@ describe("executeJqQuery — file save behavior", () => {
     });
 
     it("routes its write through the shared helper", async () => {
-        // Asserted, not assumed. The trailing `_<ms>_<8 hex>` is
-        // `writeUniqueFile`'s signature, and this site has no other way to
-        // produce it — so this is what says the two save paths cannot drift
-        // apart on `flag: "wx"`.
+        // Acceptance criterion 2, asserted rather than assumed: the trailing
+        // `_<ms>_<8 hex>` is `writeUniqueFile`'s naming signature, and this site
+        // builds no name of its own.
+        //
+        // **It says nothing about `flag: "wx"`, and must not be read as though
+        // it did.** A name is not a flag: an inline re-implementation here that
+        // kept this shape and dropped the flag would pass this case. What covers
+        // that is the write-sink guard in
+        // `src/lib/response/file-saver.test.ts`, which fails if any module but
+        // the helper opens a file for writing.
         const file = join(allowedDir, "shape.json");
         await writeFile(file, JSON.stringify({ k: "v" }));
 

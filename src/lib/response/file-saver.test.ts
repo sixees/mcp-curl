@@ -1,6 +1,7 @@
 // src/lib/response/file-saver.test.ts
 // Guards on a saved artefact's identity: two saves never resolve to one path,
-// and a residual collision is an error rather than a silent overwrite.
+// a residual collision is an error rather than a silent overwrite, and nothing
+// outside this module opens a file for writing at all.
 //
 // **`Date.now` is pinned in every case here, and that is the measurement rather
 // than a convenience.** The clock was the only discriminator the pre-fix naming
@@ -9,8 +10,9 @@
 // not. `docs/todos/012`.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, rm } from "fs/promises";
-import { join, basename } from "path";
+import { mkdtemp, readFile, readdir, rm, stat } from "fs/promises";
+import { join, basename, dirname, relative, resolve } from "path";
+import { fileURLToPath } from "url";
 import { LIMITS } from "../config/limits.js";
 import { createSafeFilenameBase, saveResponseToFile, writeUniqueFile } from "./file-saver.js";
 
@@ -56,6 +58,11 @@ describe("saveResponseToFile — two saves never resolve to one path", () => {
         expect(a).not.toBe(b);
         expect((await readFile(a)).toString()).toBe("page one");
         expect((await readFile(b)).toString()).toBe("page two");
+
+        // Owner-only at rest, and asserted at a public save site rather than
+        // nowhere: `mode` applies on creation, and `wx` is what makes every
+        // write a creation.
+        expect((await stat(a)).mode & 0o777).toBe(0o600);
     });
 
     it("separates two endpoints whose bases are cut to one string by the length cap", async () => {
@@ -83,8 +90,8 @@ describe("saveResponseToFile — two saves never resolve to one path", () => {
     });
 });
 
-describe("writeUniqueFile — a residual collision is an error, not an overwrite", () => {
-    it("refuses the write and leaves the existing file whole", async () => {
+describe("writeUniqueFile — the sink owns the guarantees", () => {
+    it("refuses a residual collision and leaves the existing file whole", async () => {
         // Both discriminators pinned — the clock above and the randomness here —
         // so the generated name is deterministic and the second call must
         // collide. This is the only way to reach the branch `flag: "wx"` exists
@@ -97,10 +104,10 @@ describe("writeUniqueFile — a residual collision is an error, not an overwrite
         });
         const { writeUniqueFile: pinned } = await import("./file-saver.js");
 
-        const first = await pinned(dir, "collide", Buffer.from("original"));
+        const first = await pinned(Buffer.from("original"), dir, "collide");
         expect(basename(first)).toBe(`collide_${FROZEN_MS}_deadbeef.txt`);
 
-        await expect(pinned(dir, "collide", Buffer.from("replacement"))).rejects.toMatchObject({
+        await expect(pinned(Buffer.from("replacement"), dir, "collide")).rejects.toMatchObject({
             code: "EEXIST",
         });
 
@@ -110,11 +117,80 @@ describe("writeUniqueFile — a residual collision is an error, not an overwrite
         expect((await readFile(first)).toString()).toBe("original");
     });
 
-    it("writes a string as utf-8 without a named encoding", async () => {
-        // The helper takes `string | Buffer` because the two save sites hold
-        // different things, and it names no `encoding` — inert for a Buffer,
-        // already the default for a string. `LESSONS.md` RC-33.
-        const path = await writeUniqueFile(dir, "text", "héllo — ok");
-        expect((await readFile(path)).toString("utf-8")).toBe("héllo — ok");
+    it("sanitises the name base itself, so a traversal cannot escape the directory", async () => {
+        // The suffix does not neutralise a leading `../`: without sanitising at
+        // the sink, this call writes `/tmp/authorized_keys_<ms>_<hex>.txt`,
+        // outside the validated root, at 0o600, with caller-chosen bytes. The
+        // guarantee belongs here rather than in a precondition every future save
+        // site has to remember.
+        const written = await writeUniqueFile(Buffer.from("x"), dir, "../../../../tmp/authorized_keys");
+
+        expect(dirname(written)).toBe(dir);
+        expect(basename(written)).not.toContain("..");
+        expect(basename(written)).not.toContain("/");
+    });
+
+    it("falls back to the caller's name when the base sanitises to nothing", async () => {
+        const written = await writeUniqueFile(Buffer.from("x"), dir, "///", "query_result");
+        expect(basename(written)).toBe(`query_result_${FROZEN_MS}_${basename(written).slice(-12, -4)}.txt`);
+        expect(basename(written)).toMatch(/^query_result_\d+_[0-9a-f]{8}\.txt$/);
+    });
+});
+
+describe("writeUniqueFile is the only file-write sink in production code", () => {
+    // **This is what protects every present and future save site**, and it is
+    // here because the alternative does not work. The exclusivity guarantee is
+    // `flag: "wx"`, which lives in exactly one function — so a test that a save
+    // *site* produces two distinct paths cannot see it: an inline
+    // re-implementation that keeps the same name shape passes such a test with
+    // the whole suite green, which is how `docs/todos/012`'s P1 would come back
+    // at a site that had been fixed. Measured, not argued: dropping only
+    // `flag: "wx"` from the helper fails exactly one case in this file and
+    // neither public save site.
+    //
+    // So the invariant enforced is the stronger, checkable one — nothing else
+    // opens a file for writing. `src/lib/release-guards.test.ts` is the same
+    // shape for the release invariants, and states the same reason: a rule
+    // written in prose is read by nothing.
+    const WRITE_SINK = /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\s*\(/;
+    const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const OWNER = join("lib", "response", "file-saver.ts");
+
+    /** Every production `.ts` under `src/` — no tests, no fixtures. */
+    const productionFiles = async (d: string): Promise<string[]> => {
+        const out: string[] = [];
+        for (const entry of await readdir(d, { withFileTypes: true })) {
+            const p = join(d, entry.name);
+            if (entry.isDirectory()) {
+                out.push(...(await productionFiles(p)));
+            } else if (
+                entry.name.endsWith(".ts") &&
+                !entry.name.endsWith(".test.ts") &&
+                !entry.name.includes(".test-fixture.")
+            ) {
+                out.push(p);
+            }
+        }
+        return out;
+    };
+
+    it("sees the owner, so an empty offender list means something", async () => {
+        // The positive control. A sweep that cannot find the one site it knows
+        // about has not witnessed the absence of any others.
+        const owner = await readFile(join(srcRoot, OWNER), "utf-8");
+        expect(WRITE_SINK.test(owner)).toBe(true);
+    });
+
+    it("finds no other production module opening a file for writing", async () => {
+        const files = await productionFiles(srcRoot);
+        expect(files.length).toBeGreaterThan(20);
+
+        const offenders: string[] = [];
+        for (const file of files) {
+            const rel = relative(srcRoot, file);
+            if (rel === OWNER) continue;
+            if (WRITE_SINK.test(await readFile(file, "utf-8"))) offenders.push(rel);
+        }
+        expect(offenders).toEqual([]);
     });
 });

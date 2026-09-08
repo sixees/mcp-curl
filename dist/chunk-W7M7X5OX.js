@@ -16,7 +16,6 @@ import {
   cleanupTempDir,
   createConfigError,
   createHttpOnlyUrlSchema,
-  createSafeFilenameBase,
   createWrapper,
   defendText,
   exceedsInlineCap,
@@ -39,7 +38,7 @@ import {
   validateFilePath,
   validateOutputDir,
   writeUniqueFile
-} from "./chunk-2U322MEU.js";
+} from "./chunk-QFDQIN73.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -179,11 +178,15 @@ async function executeJqQuery(params, _extra) {
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
     if (shouldSave) {
-      const sourceBasename = basename(validatedFilePath) || "query_result";
-      const safeName = createSafeFilenameBase(sourceBasename, "query_result");
       const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
-      const filepath = await writeUniqueFile(targetDir, safeName, persisted);
-      const persistedBytes = Buffer.byteLength(persisted, "utf8");
+      const bytes = Buffer.from(persisted, "utf8");
+      const filepath = await writeUniqueFile(
+        bytes,
+        targetDir,
+        basename(validatedFilePath),
+        "query_result"
+      );
+      const persistedBytes = bytes.length;
       return successResult(`Result (${persistedBytes} bytes) saved to: ${filepath}`);
     }
     return successResult(persisted);

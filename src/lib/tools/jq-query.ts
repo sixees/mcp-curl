@@ -9,7 +9,7 @@ import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../file
 import { validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
 import { getErrorMessage, sanitizeDescription, JSON_MIME } from "../utils/index.js";
-import { createSafeFilenameBase, defendText, exceedsInlineCap, writeUniqueFile } from "../response/index.js";
+import { defendText, exceedsInlineCap, writeUniqueFile } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
@@ -148,20 +148,26 @@ export async function executeJqQuery(
         const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
 
         if (shouldSave) {
-            // Generate a filename based on the source file (use validated path)
-            const sourceBasename = basename(validatedFilePath) || "query_result";
-            const safeName = createSafeFilenameBase(sourceBasename, "query_result");
             const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
 
-            // Shared with `curl_execute`'s save path so neither site can drift
-            // from `flag: "wx"`. Two filters over one source file produce the
-            // same `safeName`, and nothing else here would separate them.
-            const filepath = await writeUniqueFile(targetDir, safeName, persisted);
+            // Encoded here rather than handed over as text: `writeUniqueFile`
+            // takes `Buffer` only, so the decode stays visible at the site that
+            // decides it (`LESSONS.md` RC-33). Shared with `curl_execute`'s save
+            // path so neither site can drift from `flag: "wx"` or from the
+            // filename sanitiser — two filters over one source file reach the
+            // namer identical, and nothing else here would separate them.
+            const bytes = Buffer.from(persisted, "utf8");
+            const filepath = await writeUniqueFile(
+                bytes,
+                targetDir,
+                basename(validatedFilePath),
+                "query_result"
+            );
 
             // Server-authored: a byte count and a path this process built from
             // a validated directory and a sanitised basename. No remote text.
             // The count describes the artefact on disk, which is this copy.
-            const persistedBytes = Buffer.byteLength(persisted, "utf8");
+            const persistedBytes = bytes.length;
             return successResult(`Result (${persistedBytes} bytes) saved to: ${filepath}`);
         }
 

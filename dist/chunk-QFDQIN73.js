@@ -1409,7 +1409,8 @@ function createSafeFilenameBase(input, fallback = "response") {
   }
   return base;
 }
-async function writeUniqueFile(targetDir, safeName, content) {
+async function writeUniqueFile(content, targetDir, nameBase, fallback) {
+  const safeName = createSafeFilenameBase(nameBase, fallback);
   const filename = `${safeName}_${Date.now()}_${randomUUID().slice(0, 8)}.txt`;
   const filepath = join2(targetDir, filename);
   await writeFile(filepath, content, { mode: 384, flag: "wx" });
@@ -1435,8 +1436,7 @@ async function saveResponseToFile(content, url, outputDir) {
       throw error;
     }
   }
-  const safeName = createSafeFilenameBase(baseName);
-  return writeUniqueFile(targetDir, safeName, content);
+  return writeUniqueFile(content, targetDir, baseName);
 }
 
 // src/lib/response/strip-blocks.ts
@@ -2875,7 +2875,6 @@ export {
   CurlExecuteSchema,
   JqQuerySchema,
   applyJqFilter,
-  createSafeFilenameBase,
   writeUniqueFile,
   defendText,
   exceedsInlineCap,
