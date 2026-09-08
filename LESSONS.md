@@ -2206,6 +2206,14 @@ recorded as caught.
 
 **Class:** K-7, K-9 — *class-id:* `stale-observation`
 
+**Mechanism superseded:** RC-55 (2026-09-08). The `string | Buffer` union on the internal
+helper, which this entry's *What changed* bullet originally reported as the shipped state, no
+longer exists at HEAD — `99c8af6` narrowed it to `Buffer` and deleted the round-trip case that
+covered it. **Read neither this entry nor RC-33 as licence to re-add `encoding` or a string
+union to the write path**; that is the re-armament both were filed to prevent. The bullet was
+corrected in place rather than annotated alone, because the ledger's freeze boundary is merge
+and this branch had not merged when the correction was made.
+
 - **The plan said:** `docs/todos/012` → *Fix* prescribed the write verbatim —
   `writeFile(path, content, { encoding: "utf-8", mode: 0o600, flag: "wx" })` — and its
   *Evidence* cited `src/lib/response/file-saver.ts:95` as
@@ -2224,18 +2232,10 @@ recorded as caught.
   default for a `string`, so the option buys nothing at the one site that passes text
   (`src/lib/tools/jq-query.ts`, which passes `persisted`) and would have re-armed RC-33's
   hazard at the site that passes octets. `saveResponseToFile`'s public signature stays
-  `Buffer`-only, so RC-33's contract is untouched; only the internal helper takes
-  `string | Buffer`. A case in `file-saver.test.ts` asserts the utf-8 round-trip so the
-  absence is a tested property rather than an omission.
-
-  **[Superseded on this same branch — see RC-55.** The two sentences above describe
-  `3b90ed7` and not HEAD: `99c8af6` narrowed the helper to `content: Buffer` and deleted
-  the round-trip case with the union it tested. **This bullet is not licence to re-add
-  `encoding` or a `string | Buffer` union to the write path** — that is the exact
-  re-armament this entry was filed to prevent, and read as current it grants it. The
-  pointer is recorded here because RC-55 back-references RC-52 and RC-52 did not point
-  forward, so a reader arriving at the lower number met the reversed state as fact.
-  K-16: the newest text on a branch is its least-reviewed.**]**
+  `Buffer`-only, so RC-33's contract is untouched — and after review, so is the
+  internal helper's: `writeUniqueFile` takes `content: Buffer`, with the one caller
+  holding text encoding at its own call site. The `string | Buffer` union this bullet
+  originally described lived only between `3b90ed7` and `99c8af6`; see RC-55.
 - **What this costs next time:** **a todo's code snippet ages against the file it
   targets, and it ages silently — it is prose, so nothing compiles it and no test covers
   it.** A P1 that sits for two days across a merge to the same file is the ordinary case

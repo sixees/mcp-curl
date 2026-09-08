@@ -10,6 +10,10 @@
 // not. `docs/todos/012`.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// The write-sink guard below parses production source rather than matching it.
+// `typescript` is already a devDependency and this is a test-only import, so
+// nothing reaches `dist`.
+import ts from "typescript";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat } from "fs/promises";
 import { join, basename, dirname, relative, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -151,6 +155,24 @@ describe("writeUniqueFile — the sink owns the guarantees", () => {
         expect(basename(written)).not.toContain("/");
     });
 
+    it.each([".", "..", "///", "\u0000"])(
+        "squeezes %j to nothing, which is what makes the deleted . and .. checks safe",
+        (input) => {
+            // These pass today, and that is the point. Two guards were deleted on
+            // the argument that `squeeze` makes "." and ".." unconstructible, and
+            // the terminal `|| "response"` rests on the same alphabet. Both claims
+            // were checkable in under two minutes and were asserted by nothing, so
+            // widening the character class — `/[^a-zA-Z0-9._-]/` is a plausible
+            // one-line edit for readable hostnames — would silently un-delete them.
+            expect(createSafeFilenameBase(input)).toBe("response");
+        }
+    );
+
+    it("resolves to the terminal literal when the fallback also sanitises to nothing", async () => {
+        const written = await writeUniqueFile(Buffer.from("x"), dir, "///", "///");
+        expect(basename(written)).toMatch(/^response_\d+_[0-9a-f]{8}\.txt$/);
+    });
+
     it("falls back to the caller's name when the base sanitises to nothing", async () => {
         const written = await writeUniqueFile(Buffer.from("x"), dir, "///", "query_result");
         expect(basename(written)).toBe(`query_result_${FROZEN_MS}_${basename(written).slice(-12, -4)}.txt`);
@@ -167,64 +189,108 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
     // the whole suite green, which is how `docs/todos/012`'s P1 would come back
     // at a site that had been fixed. Measured, not argued: dropping only
     // `flag: "wx"` from the helper fails exactly one case in this file and
-    // neither public save site.
+    // neither public save site. `ARCHITECTURE.md` invariant 17 is the citable
+    // statement of the rule; this block is its enforcement.
     //
-    // So the invariant enforced is the stronger, checkable one — nothing else
-    // opens a file for writing. `src/lib/release-guards.test.ts` is the same
-    // shape for the release invariants, and states the same reason: a rule
-    // written in prose is read by nothing.
+    // **The check is parsed, not matched, and it fails CLOSED.** Two earlier
+    // forms of this guard both enumerated the *dangerous* side and so inherited
+    // every omission. Matching five call spellings missed `open`, `rename`,
+    // `copyFile` and every aliased import. Matching three import shapes then
+    // missed a bare default import, `import fs, { readFile }` (whose named
+    // clause matched and cleared the file), `{ promises }` — one binding
+    // carrying the whole write API — a dynamic `import()`, and a re-export.
+    // Each returned an empty offender list, which is byte-identical to
+    // compliance. A third enumeration of syntax would have the same shape one
+    // round later, so the enumeration is inverted instead: `PERMITTED_FS` lists
+    // what is allowed, TypeScript's own parser reads the bindings, and anything
+    // it cannot enumerate is reported rather than cleared. `release-guards.test.ts`
+    // takes the same direction for the same reason — "a parse miss must not read
+    // as 'nothing to enforce'".
     //
-    // **The check reads the IMPORT, not the call**, and that is the whole
-    // difference between a guard and a list of the bugs already found. A
-    // call-spelling match answers "does this file contain one of five
-    // identifiers I thought of", which is a question the property does not
-    // ask: `open(p, "w")` + `handle.write()`, `copyFile`, `rename` and
-    // `truncate` all create or replace a file and match none of them, and
-    // `import { writeFile as saveBytes }` escapes even the identifier it
-    // aliases. Every one of those returns an empty offender list, which is
-    // byte-identical to compliance. The import specifier is the one form none
-    // of them can hide behind, because the binding must be named there before
-    // it can be renamed.
-    //
-    // `WRITE_CAPABLE` is derived from Node's own `fs` API — the property's
-    // definition — rather than from the spellings this codebase happens to
-    // use today. `OWNER` is the only exemption; a module that legitimately
-    // needs one of these joins it deliberately, which is a decision someone
-    // makes and a reviewer can see.
-    const WRITE_CAPABLE = new Set([
-        "writeFile", "writeFileSync", "appendFile", "appendFileSync",
-        "createWriteStream", "open", "openSync", "copyFile", "copyFileSync",
-        "cp", "cpSync", "rename", "renameSync", "truncate", "truncateSync",
-        "ftruncate", "ftruncateSync", "write", "writeSync", "writev",
-        "writevSync", "link", "linkSync", "symlink", "symlinkSync",
+    // **Two residuals, stated rather than chased.** A computed specifier
+    // (`require(spec)`, `createRequire(...)("fs")`) and a third-party `fs`
+    // wrapper both evade this, because neither names an `fs` module literally.
+    // No in-repo check closes them; a lint rule or a resolution-level split
+    // would, and this repository has no lint layer.
+
+    /**
+     * Bindings a production module may hold from `fs`.
+     *
+     * **Permitted, not "read-only" — the distinction is deliberate.** `rm`,
+     * `unlink`, `chmod` and `mkdir` mutate the filesystem and are on this list
+     * because `files/temp-manager.ts` legitimately owns directory lifecycle.
+     * This guard governs **file-content writes** — the surface `flag: "wx"`,
+     * the `nameBase` sanitiser and `mode: 0o600` protect. Destruction and mode
+     * changes are a separate invariant that nothing here enforces; a previous
+     * version of this file called the same set "read and metadata bindings",
+     * which was false of three of its members.
+     */
+    const PERMITTED_FS = new Set([
+        "readFile", "readFileSync", "createReadStream", "readdir", "readdirSync",
+        "stat", "statSync", "lstat", "lstatSync", "access", "accessSync",
+        "realpath", "realpathSync", "existsSync", "constants", "watch",
+        "mkdtemp", "mkdtempSync", "mkdir", "mkdirSync",
+        "rm", "rmSync", "rmdir", "unlink", "chmod",
     ]);
 
     const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const OWNER = join("lib", "response", "file-saver.ts");
+    const isFsModule = (spec: string): boolean => /^(node:)?fs(\/promises)?$/.test(spec);
 
     /**
-     * Write-capable `fs` bindings a module imports, by their ORIGINAL names.
+     * Every `fs` binding a module pulls in that is not on `PERMITTED_FS`.
      *
-     * A namespace or `require` import yields `["*"]` — the bindings are not
-     * enumerable at the import site, so nothing here can tell a read from a
-     * write and the safe answer is to report it. Returns `[]` for a module
-     * that touches `fs` only through read or metadata bindings.
+     * A form whose bindings cannot be enumerated at the import site — a default
+     * import, a namespace import, a bare `import "fs"`, a dynamic `import()` or
+     * a `require()` — yields a `"* (…)"` entry naming the form. Those are
+     * reported because nothing here can tell a read from a write through them,
+     * and the safe answer to "I cannot see" is not "nothing is there".
      */
-    const writeCapableImports = (source: string): string[] => {
-        const FS = String.raw`["'](?:node:)?fs(?:/promises)?["']`;
-        if (new RegExp(String.raw`require\(\s*${FS}\s*\)`).test(source)) return ["*"];
-        if (new RegExp(String.raw`import\s+\*\s+as\s+\w+\s+from\s+${FS}`).test(source)) return ["*"];
-
-        const named = new RegExp(String.raw`import\s*\{([^}]*)\}\s*from\s+${FS}`, "g");
-        const found: string[] = [];
-        for (const [, clause] of source.matchAll(named)) {
-            for (const spec of clause.split(",")) {
-                // `writeFile as saveBytes` — the original name is what binds.
-                const original = spec.trim().split(/\s+as\s+/)[0].trim();
-                if (WRITE_CAPABLE.has(original)) found.push(original);
+    const forbiddenFsBindings = (source: string, name = "probe.ts"): string[] => {
+        const sf = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true);
+        const found = new Set<string>();
+        const takeNamed = (els: readonly ts.ImportSpecifier[] | readonly ts.ExportSpecifier[]): void => {
+            for (const el of els) {
+                // `writeFile as saveBytes` — `propertyName` is the original.
+                const original = (el.propertyName ?? el.name).text;
+                if (!PERMITTED_FS.has(original)) found.add(original);
             }
-        }
-        return found;
+        };
+        const visit = (node: ts.Node): void => {
+            if (
+                (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+                node.moduleSpecifier &&
+                ts.isStringLiteral(node.moduleSpecifier) &&
+                isFsModule(node.moduleSpecifier.text)
+            ) {
+                const clause = ts.isImportDeclaration(node) ? node.importClause : node.exportClause;
+                if (!clause) {
+                    found.add("* (side-effect import)");
+                } else if (ts.isImportClause(clause)) {
+                    if (clause.name) found.add("* (default import)");
+                    const bindings = clause.namedBindings;
+                    if (bindings && ts.isNamespaceImport(bindings)) found.add("* (namespace import)");
+                    if (bindings && ts.isNamedImports(bindings)) takeNamed(bindings.elements);
+                } else if (ts.isNamedExports(clause)) {
+                    takeNamed(clause.elements);
+                } else {
+                    found.add("* (namespace re-export)");
+                }
+            }
+            if (ts.isCallExpression(node)) {
+                const target = node.expression;
+                const arg = node.arguments[0];
+                const isDynamic =
+                    target.kind === ts.SyntaxKind.ImportKeyword ||
+                    (ts.isIdentifier(target) && target.text === "require");
+                if (isDynamic && arg && ts.isStringLiteral(arg) && isFsModule(arg.text)) {
+                    found.add("* (dynamic import)");
+                }
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(sf);
+        return [...found];
     };
 
     /** Every production `.ts` under `src/` — no tests, no fixtures. */
@@ -249,39 +315,46 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         // The positive control. A sweep that cannot find the one site it knows
         // about has not witnessed the absence of any others.
         const owner = await readFile(join(srcRoot, OWNER), "utf-8");
-        expect(writeCapableImports(owner)).toContain("writeFile");
+        expect(forbiddenFsBindings(owner, OWNER)).toContain("writeFile");
     });
 
     it.each([
-        ['import { writeFile } from "fs/promises";', "writeFile"],
-        ['import { writeFile as saveBytes } from "fs/promises";', "writeFile"],
-        ['import { open } from "node:fs/promises";', "open"],
+        // Each row is a way to reach a file-content write. Every one of these
+        // was cleared by at least one earlier form of this guard; they are
+        // fixtures now rather than history.
+        ['import { writeFile } from "fs/promises";', "plain named"],
+        ['import { writeFile as saveBytes } from "fs/promises";', "aliased"],
+        ['import fs from "node:fs/promises";', "bare default"],
+        ['import fs, { readFile } from "fs/promises";', "default beside a permitted name"],
+        ['import { promises } from "node:fs";', "the whole promises API as one binding"],
+        ['import { default as fs } from "node:fs";', "default via a named clause"],
+        ['import * as fsp from "node:fs/promises";', "namespace"],
+        ['const f = require("node:fs");', "require"],
+        ['const { writeFile } = await import("fs/promises");', "dynamic import"],
+        ['export { writeFile } from "fs/promises";', "re-export"],
+        ['import "fs";', "side-effect import"],
+        ['import { open } from "fs/promises";', "open"],
         ['import { rename } from "fs";', "rename"],
-        ['import { copyFile, stat } from "fs/promises";', "copyFile"],
-        ['import * as fs from "fs/promises";', "*"],
-        ['const fs = require("fs");', "*"],
-    ])("catches %s", (source, expected) => {
-        // The second positive control, and the one the previous call-spelling
-        // form could not have passed. Each row is a way to reach the same
-        // capability; the alias row is the cheap escape a maintainer reaches
-        // for by accident, and `*` is the case where the bindings cannot be
-        // read at all so the guard must not guess.
-        expect(writeCapableImports(source)).toContain(expected);
+        ['import { copyFile, stat } from "fs/promises";', "copyFile beside a permitted name"],
+        ['import {\n  readFile,\n  writeFile,\n} from "fs/promises";', "multi-line clause"],
+    ])("reports %s (%s)", (source) => {
+        expect(forbiddenFsBindings(source).length).toBeGreaterThan(0);
     });
 
     it.each([
-        'import { readFile } from "fs/promises";',
-        'import { stat, access, realpath, constants as fsConstants } from "fs/promises";',
-        'import { mkdtemp, chmod, rm, readdir, stat } from "fs/promises";',
-    ])("does not fire on the read and metadata bindings: %s", (source) => {
-        // The negative control. A guard that flags every `fs` importer would
-        // be cleared by exempting five modules, and then it guards nothing.
-        // These three are the real import lines of the non-owner production
-        // modules that touch `fs`.
-        expect(writeCapableImports(source)).toEqual([]);
+        // The negative control. A guard that flagged every `fs` importer would
+        // be cleared by exempting five modules and would then guard nothing.
+        // These are the real import lines of every non-owner production module
+        // that touches `fs`.
+        ['import { readFile } from "fs/promises";', "jq-query.ts, schema/loader.ts"],
+        ['import { stat, access, realpath, constants as fsConstants } from "fs/promises";', "output-dir.ts, file-validation.ts"],
+        ['import { mkdtemp, chmod, rm, readdir, stat } from "fs/promises";', "temp-manager.ts"],
+        ['import { writeFile } from "./my-utils.js";', "a write name from a non-fs module"],
+    ])("does not fire on %s (%s)", (source) => {
+        expect(forbiddenFsBindings(source)).toEqual([]);
     });
 
-    it("finds no other production module importing a write-capable fs binding", async () => {
+    it("finds no other production module holding a forbidden fs binding", async () => {
         const files = await productionFiles(srcRoot);
         expect(files.length).toBeGreaterThan(20);
 
@@ -289,7 +362,7 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         for (const file of files) {
             const rel = relative(srcRoot, file);
             if (rel === OWNER) continue;
-            const bindings = writeCapableImports(await readFile(file, "utf-8"));
+            const bindings = forbiddenFsBindings(await readFile(file, "utf-8"), rel);
             if (bindings.length > 0) offenders.push(`${rel} (${bindings.join(", ")})`);
         }
         expect(offenders).toEqual([]);

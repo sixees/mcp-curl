@@ -1401,8 +1401,7 @@ function createSafeFilenameBase(input, fallback = "response") {
   const safeFallback = squeeze(fallback) || "response";
   let base = squeeze(input) || safeFallback;
   if (isWindowsReservedBasename(base)) {
-    const prefixed = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-    base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH) : prefixed;
+    base = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
   }
   return base;
 }

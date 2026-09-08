@@ -46,7 +46,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 | `DnsResolution` | `security/ssrf.ts` | `{ hostname, port, resolvedIp }`; pinned via `--resolve` |
 | `CurlInvocation` | `execution/command-executor.ts` | Spawned process with allowlist + AbortController timeout |
 | `Response` | `response/parser.ts`, `processor.ts` | Body extracted via per-request UUID metadata separator |
-| `SavedFile` | `response/file-saver.ts` | `mode 0o600`, `flag "wx"` (never overwrites an existing path), filename `safeBase_<ts>_<8 hex>.txt` — the 8 hex characters of a `randomUUID` are the uniqueness guarantee; the timestamp only makes the directory sort chronologically |
+| `SavedFile` | `response/file-saver.ts` | `mode 0o600`, filename `safeBase_<ts>_<8 hex>.txt`. **`flag "wx"` is the guarantee** — no naming scheme guarantees uniqueness, and `wx` is what makes a residual collision an `EEXIST` rather than a silent overwrite. The 8 hex characters of a `randomUUID` make that collision improbable; the timestamp only sorts the directory |
 | `JqFilter` | `jq/parser.ts`, `jq/filter.ts` | Bounded subset — ≤20 paths, 100 ms parse timeout |
 | `Session` | `session/session-manager.ts` | HTTP only; UUID-keyed; 1 h idle timeout |
 | `RateLimitEntry` | `security/rate-limiter.ts` | Two `Map`s — per-host + per-client |

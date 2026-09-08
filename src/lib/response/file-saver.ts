@@ -52,11 +52,14 @@ export function createSafeFilenameBase(input: string, fallback = "response"): st
     // "." and ".." — every non-alphanumeric becomes "_" and is then trimmed —
     // so those two need no separate check here.
     if (isWindowsReservedBasename(base)) {
-        const prefixed = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-        // Re-check after slicing in case truncation produced a reserved name
-        base = isWindowsReservedBasename(prefixed)
-            ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH)
-            : prefixed;
+        // No re-check after slicing. `safeFallback` is non-empty, so `prefixed`
+        // always contains the `_` at index 1..50: below 50 the separator
+        // survives the slice and no reserved basename contains `_`, and at
+        // exactly 50 the slice is `safeFallback` itself, which is longer than
+        // every reserved name (all are 3-4 chars). There is no third case, so
+        // the truncation cannot produce a reserved name and the arm that
+        // handled it was unreachable — including before this transform existed.
+        base = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
     }
     return base;
 }
@@ -153,7 +156,11 @@ export async function saveResponseToFile(
     // Use custom output dir if provided, otherwise use temp dir
     const targetDir = outputDir ?? await getOrCreateTempDir();
 
-    // Validate outputDir is a safe absolute path (defense-in-depth)
+    // NOT a scope check and not defence in depth — `targetDir` IS `outputDir`
+    // on this branch, so this resolves one path against itself. What it can
+    // still detect is a swap between the two resolutions, and its incidental
+    // effect is an ENOENT if the directory has gone. The `@param` above owns
+    // where the real validation happens.
     if (outputDir) {
         const realDir = await realpath(resolve(outputDir));
         const normalizedTarget = await realpath(resolve(targetDir));
