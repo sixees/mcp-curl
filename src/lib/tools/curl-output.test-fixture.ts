@@ -10,7 +10,7 @@
 // handler, so the name is the only thing distinguishing them.
 // `CONVENTIONS.md` → *Naming* owns the rule.
 //
-// **Shared by two of the three suites that stub the executor**, because the
+// **Shared by three of the four suites that stub the executor**, because the
 // shape is what those suites assert against: the header block on its own field,
 // the `-w` metadata suffix on stdout, and a separator of the real length. A
 // per-suite copy drifts toward a fixture that passes against a handler inferring

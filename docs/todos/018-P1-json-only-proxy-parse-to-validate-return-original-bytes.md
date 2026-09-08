@@ -464,3 +464,77 @@ here so a later round cannot mistake it for a MINOR.
 **Still open and NOT settled:** whether withdrawing the strip stages from a JSON body
 is sound given that `enableSpotlighting` is off by default on both entry points. See
 the handoff's *Open escalation*.
+
+---
+
+## Round 2 — the director's scope call, and what it reversed
+
+**2026-09-08.** The operator named the population and re-specified the objective:
+*"either the payload has json, good - return it, or the payload claims to be something
+else (via a header), but it is json, return it, or the payload claims to be json (or not)
+but it is not JSON, do not return it"*; the decode/encode trip is **a validity check
+only**, and what goes back is the original payload. Plus: *"Do not over engineer security,
+prompt injection, etc. The consumers of this MCP is mainly me and half a dozen internal
+developers."*
+
+Recorded as `LESSONS.md` **RC-47**. Two of this branch's own decisions were reversed on it.
+
+### What changed
+
+- **`classifyBody` accepts any value that parses.** `isCompositeValue` is deleted and
+  `bare-scalar` is gone from `JsonRejectionReason`. `null` from a "no record" endpoint
+  comes back as `null` instead of becoming a file `jq_query` cannot open — a top-level
+  scalar has no path to address, verified against `jq/filter.ts`.
+- **The artefact is the origin's octets on both arms**, substituted only where Step 2
+  had to alter the bytes for `jq_query` to parse them, or where a filter ran. One rule,
+  no `classified.json` in it. Measured motivation: `stripHtmlComments` was deleting the
+  `<!-- trace-id: … -->` from a saved 500 page.
+- **`processResponse` calls no defence pass.** `content` is the sanitised text; the
+  `defendText` call on the non-JSON arm is gone.
+- **`defendForInline` is two arms.** `compositeStringPayload` and the recursion are
+  deleted — a pass that does not run cannot span a region, so RC-16's splice is
+  structurally absent rather than divided away.
+- **The V8 parse-position plumbing is deleted** — `JSON_PARSE_POSITION` and `position`
+  through three types. It read an unversioned message format for a marginal gain.
+- **`overCap` is gated on the JSON arm**, because a non-JSON body is saved for what it
+  is; the cap clause was citing a defence pass that no longer runs.
+- **The model-facing tool description now states the response contract**, which it did
+  not before.
+
+### Tests
+
+`processResponse`'s 55 strip-stage assertions were removed: the content-type routing they
+described is unreachable by design, and it was **already vacuous** before this round —
+`processResponse` passes `contentTypeUndetermined: true`, which forces `strictestGrammar`
+and blocks `sniffedAsMarkup`, so the declared type in each fixture selected nothing. Two
+comment auditors found that independently. `defend-text.test.ts` (17) and
+`strip-blocks.test.ts` (72) hold the pipeline's real coverage, and none of
+`image/svg+xml`, `image/png`, `text/csv`, `text/javascript` or `application/yaml` has a
+live caller — only `MARKDOWN_MIME`, `JSON_MIME` and undetermined reach `defendText`.
+
+Sixteen more inverted rather than being deleted, to byte-equality assertions that have
+teeth in both directions. Three teeth probes confirm it: reinstating the artefact defence
+fails **10** cases across 4 files, stripping the JSON body fails **43**, and requiring a
+composite value again fails **11**. A fourth probe — reinstating the non-JSON `defendText`
+call — failed **nothing**, which found a real defect rather than a weak probe: `content`
+was computed and never read on that arm.
+
+Suite: 1279 passed, 7 skipped, 2 failed — `strip-blocks.test.ts`'s ReDoS wall-clock
+budgets, a different pair each run, in a file this branch does not touch
+(`docs/todos/013`).
+
+### Still open
+
+- **`MAX_INLINE_GROWTH_RATIO` is dead at every live call site.** Only JSON reaches
+  `exceedsInlineCap`, and the verbatim arm cannot grow text. Kept because `defendText`'s
+  growing arm is reachable by a direct caller of the published API; recorded in RC-47 as
+  dead machinery rather than deleted, because removing it changes a published surface.
+- **RC-40 through RC-43 were never written to `LESSONS.md`.** Seventeen source comments
+  cited them; all are now re-pointed to RC-44 and RC-46, which hold the same facts. This
+  document and the handoff still reference the missing numbers as history.
+- **Comment volume.** `processor.ts` is 962 lines at 76% comments, down from 1331 at 79%.
+  The ~30% target is not reachable while keeping the measured evidence the same
+  instruction asked to keep; getting there means moving that evidence into `LESSONS.md`
+  and leaving citations, which is a larger and separable change.
+- Slice 2 (the selection machinery, the four published exports, `declared_content_type`)
+  is untouched and still MAJOR.

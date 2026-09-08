@@ -14,13 +14,14 @@ import type {
  * Result returned by tool executor functions.
  * Includes index signature for MCP SDK compatibility.
  *
- * **`content` carries one entry per remote-controlled region, and it stopped
- * being a single-element tuple in `docs/todos/018`.** `curl_execute` returns a
- * second entry for response header text on the plain branch, because one entry
- * spanning both the header and the body regions is what ARCHITECTURE.md
- * invariant 16 names as a violation — a defence pass whose input spans more than
- * one region — and the wrap defends each entry independently. `content[0]` is
- * still the body on every branch, so a reader indexing it is unaffected.
+ * **`content` carries one entry per remote-controlled region, and it is an
+ * array rather than a single-element tuple.** `curl_execute` returns a second
+ * entry for response header text and a third for server-authored notices, both
+ * plain-branch only, because one entry spanning more than one region is what
+ * ARCHITECTURE.md invariant 16 names as a violation — a defence pass whose input
+ * spans more than one region — and the wrap defends each entry independently.
+ * `content[0]` is still the body on every branch, so a reader indexing it is
+ * unaffected.
  *
  * The `[key: string]: unknown` index signature relaxes structural enforcement
  * regardless — a value reaching consumers via cast or spread from a

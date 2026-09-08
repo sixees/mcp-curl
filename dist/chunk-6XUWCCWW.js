@@ -1971,20 +1971,16 @@ function isDefinitelyJson(text) {
     return false;
   }
 }
-var JSON_PARSE_POSITION = / at position (\d+) \(line \d+ column \d+\)$/;
 function classifyBody(text) {
   const trimmed = text.trim();
   if (trimmed.length === 0) return { json: false, reason: "empty-body" };
   if (trimmed.startsWith("<")) return { json: false, reason: "looks-like-markup" };
-  let value;
   try {
-    value = JSON.parse(text);
-  } catch (error) {
-    const matched = error instanceof SyntaxError ? JSON_PARSE_POSITION.exec(error.message) : null;
-    const position = matched ? Number(matched[1]) : void 0;
-    return position === void 0 ? { json: false, reason: "invalid-syntax" } : { json: false, reason: "invalid-syntax", position };
+    JSON.parse(text);
+  } catch {
+    return { json: false, reason: "invalid-syntax" };
   }
-  return isCompositeValue(value) ? { json: true } : { json: false, reason: "bare-scalar" };
+  return { json: true };
 }
 function defendText(text, options) {
   let content = text;
@@ -2012,23 +2008,7 @@ function defendText(text, options) {
 }
 function defendForInline(text, hostname) {
   if (classifyBody(text).json) return sanitizeAndDetect(text, hostname);
-  const nested = compositeStringPayload(text);
-  if (nested !== void 0) return JSON.stringify(defendForInline(nested, hostname));
   return defendInlineString(text, hostname);
-}
-function compositeStringPayload(text) {
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return void 0;
-  }
-  if (typeof value !== "string") return void 0;
-  return classifyBody(value).json ? value : void 0;
-}
-function isCompositeValue(value) {
-  if (isRawNumber(value)) return false;
-  return Array.isArray(value) || value !== null && typeof value === "object";
 }
 function defendInlineString(text, hostname) {
   return defendText(text, {
@@ -2047,11 +2027,11 @@ function exceedsInlineCap(text, hostname, maxBytes) {
   return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
 }
 function savedMessage(facts) {
-  const { diskBytes, filepath, maxSize, overCap, contentType, filtered, rejection } = facts;
+  const { diskBytes, filepath, maxSize, overCap, filtered, rejection } = facts;
   const subject = filtered ? "Result of jq_filter" : "Response";
   const capClause = overCap ? ` It also exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied.` : "";
-  const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not a JSON object or array (${rejection.reason}${rejection.position === void 0 ? "" : ` at byte ${rejection.position}`}), so no body is returned here.${capClause}` : overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling. The bytes on disk have been through the full defence pipeline, so they are not the origin's exact bytes." : " Use the jq_query tool on that path to extract fields.";
+  const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not JSON (${rejection.reason}), so no body is returned here.${capClause}` : overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
+  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling. The file holds the origin's exact bytes." : " Use the jq_query tool on that path to extract fields.";
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
   return cause + route + scope;
 }
@@ -2076,16 +2056,11 @@ async function processResponse(responseBytes, options) {
   const sanitised = sanitizeAndDetect(response, hostname);
   const classified = classifyBody(sanitised);
   const sanitiseWasNoOp = sanitised === response;
-  let content = classified.json ? sanitised : defendText(sanitised, {
-    contentTypeUndetermined: true,
-    excludeJsonDocuments: false,
-    hostname
-  });
+  let content = sanitised;
   let filterApplied = false;
   if (options.jqFilter) {
     const trimmed = content.trim();
-    const filterable = classified.json || classified.reason !== "empty-body" && classified.reason !== "looks-like-markup";
-    if (!filterable) {
+    if (!classified.json) {
       throw new Error(
         `Cannot apply jq_filter: Response is not JSON (Content-Type: ${options.contentType || "unknown"})`
       );
@@ -2106,11 +2081,12 @@ async function processResponse(responseBytes, options) {
     content = sanitizeAndDetect(content, hostname);
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-  const overCap = exceedsInlineCap(content, hostname, maxSize);
+  const overCap = classified.json && exceedsInlineCap(content, hostname, maxSize);
   const emptyBody = !classified.json && classified.reason === "empty-body";
-  const shouldSave = options.saveToFile || overCap || !classified.json && !emptyBody && !filterApplied;
+  if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false };
+  const shouldSave = options.saveToFile || overCap || !classified.json && !filterApplied;
   if (shouldSave) {
-    const diskContent = classified.json && !filterApplied && sanitiseWasNoOp ? responseBytes : Buffer.from(content, "utf8");
+    const diskContent = filterApplied ? Buffer.from(content, "utf8") : sanitiseWasNoOp ? responseBytes : Buffer.from(sanitised, "utf8");
     const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
     return {
       savedToFile: true,
@@ -2122,7 +2098,6 @@ async function processResponse(responseBytes, options) {
         filepath,
         maxSize,
         overCap,
-        contentType: options.contentType,
         filtered: filterApplied,
         // Only where the body itself was the reason. An over-cap JSON
         // document is saved too, and there is nothing wrong with it.
@@ -2586,6 +2561,13 @@ var CURL_EXECUTE_TOOL_META = {
 
 This tool provides a safe, structured way to make HTTP requests with common cURL options.
 It handles URL encoding, header formatting, and response processing automatically.
+
+Response contract: a body that parses as JSON is returned to you byte for byte, whatever
+Content-Type the origin declared. A body that does NOT parse as JSON is not returned
+inline at all \u2014 it is written to a file and you get the reason, the byte count and the
+path, to open with your own file tooling. The file holds the origin's exact bytes. A
+JSON body larger than max_result_size is also written to a file; use jq_query on that
+path. Above 10MB the request fails and you should narrow it with query parameters.
 
 Args:
   - url (string, required): The URL to request

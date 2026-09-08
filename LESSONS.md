@@ -1941,3 +1941,47 @@ recorded as caught.
   property that holds locally and not across a layer. And the smaller lesson, paid for
   twice on this branch now: **probe every fix, including the ones that look like tidying**,
   because a fix with no failing test is a fix nothing will keep.
+
+### RC-47 — the population was measured, and two settled decisions were reversed on it
+
+**Date:** 2026-09-08 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-14 — *class-id:* `empty-population`
+
+- **The plan said:** a JSON body is returned verbatim, and everything else is defended.
+  RC-10's split held — *persisted keeps the JSON exemption; returned does not* — and a bare
+  scalar was classified non-JSON so that its artefact took the strictest grammar. RC-39
+  reversed the scalar exemption on exactly that reasoning, one round earlier.
+- **Reality was:** the director named the population and it does not contain an attacker.
+  This proxy is used by internal staff querying their own APIs; the defences being priced
+  were for a remote that does not get to choose who reads the file. Measured against that,
+  two of the branch's own decisions were costing more than they bought:
+  - **The non-JSON artefact was defended before persistence**, so `stripHtmlComments`
+    deleted the `<!-- trace-id: … -->` a framework puts its diagnostic in — measured on a
+    500 page. The most useful line on the page, removed from a file whose only reader is
+    the developer who asked for it.
+  - **A bare scalar was reported as non-JSON and written to a file `jq_query` cannot
+    open**, because a top-level scalar has no path to address (`jq/filter.ts` refuses a
+    pathless filter). An endpoint answering `null` for "no record" wrote an unreadable
+    artefact instead of returning `null`.
+- **What changed:** `classifyBody` accepts any value that parses — the round trip is a
+  validity check and the payload comes back as sent. The artefact is the origin's octets on
+  both arms, substituted only where Step 2 had to alter the bytes for `jq_query` to parse
+  them, or where a filter ran. `processResponse` calls no defence pass at all: 55 tests
+  asserting a strip stage through that function were removed, because the routing they
+  described is unreachable by design rather than merely unused. `defendText` keeps every
+  stage for the channels that still need them — header text, stderr, jq output, custom
+  tools — and `defend-text.test.ts` plus `strip-blocks.test.ts` hold that coverage.
+- **What this costs next time:** **RC-10 is now reversed on both halves, and the reversal
+  reached a surface the scope call did not name.** `classifyBody` is shared with
+  `defendForInline`, so accepting scalars also stopped the wrap stripping a JSON string
+  leaf — which is `jq_query`'s return value. That was flagged before the change and
+  authorised, but the general lesson is the one to keep: **a predicate shared between a
+  gate and a defence carries any widening from one into the other**, and the blast radius
+  of a scope call has to be traced through the shared symbol, not through the diff.
+  Two smaller ones, both paid for here: **`MAX_INLINE_GROWTH_RATIO` is now dead at every
+  live call site**, because no pass grows a JSON body and only JSON reaches
+  `exceedsInlineCap` — dead machinery that ships green is the defect nothing reports. And
+  **RC-40 through RC-43 were assigned in the PR handoff and never written to this ledger**,
+  so seventeen source comments cited entries that did not exist; two independent comment
+  auditors found it. An RC number is durable only once it is *here*.

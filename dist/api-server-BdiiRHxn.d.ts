@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, d as ApiSchema } from './generator-C88KiYtV.js';
+import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, d as ApiSchema } from './generator-D1cJjQb0.js';
 
 /**
  * Configuration options for McpCurlServer.

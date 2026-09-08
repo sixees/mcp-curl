@@ -390,3 +390,53 @@ next finding — the strictest-grammar fix produced the NDJSON regression, the
 `excludeJsonDocuments` fix produced a contradiction in an invariant I had just
 written, and deleting the depth bound produced the amplifier. That is a signal about
 the change's intricacy, not only about its defects.
+
+---
+
+# Round 2 — the scope call, and the escalation it closed
+
+**2026-09-08.** Status of the previous section's open escalation: **closed by the
+director.** It asked whether `stripMarkdownBeacons` should stay on the JSON arm given
+that `enableSpotlighting` is off by default. The answer — *"Do not over engineer
+security, prompt injection, etc. The consumers of this MCP is mainly me and half a dozen
+internal developers"* — settles it as no. Recorded in `LESSONS.md` RC-47 and binding per
+`.claude/rules/03-divergence.md`; a later round proposing the reversal cites RC-47.
+
+`docs/todos/018` → *Round 2* carries what changed and what is still open. Not repeated
+here.
+
+## Two corrections to the section above
+
+**RC-40 through RC-43 do not exist in `LESSONS.md`.** They were assigned in this handoff
+and never promoted to the ledger, and seventeen source comments cited them as durable
+facts. Two comment auditors found it independently, from separate batches. The citations
+are re-pointed to RC-44 and RC-46, which hold the same facts. **The references to
+RC-40–43 in the section above are left as written** — retro-editing a handoff would hide
+the divergence this note exists to record — so read them as history, not as ledger
+pointers. RC-47's closing paragraph carries the general lesson: an RC number is durable
+only once it is in `LESSONS.md`.
+
+**The previous section's test claims were narrower than the change.** It reported that
+the branch's own suite covered the design; round 2's re-specification made 85 cases fail,
+55 of them one class. That is not a defect in the earlier work — the design changed under
+them — but the number I gave the operator when proposing the change ("~9 tests lose their
+premise") was wrong by an order of magnitude, and the reason is worth keeping: I priced
+the blast radius from the diff I intended rather than from the shared symbol
+`classifyBody`, which is read by both the body gate and `defendForInline`. RC-47 records
+it as the lesson.
+
+## Certification
+
+**Withheld, and for one reason only.** Everything in round 2 is teeth-probed, the build
+is clean, and the suite is green apart from `strip-blocks.test.ts`'s pre-existing ReDoS
+wall-clock flakes. But **round 2's changes are unreviewed** — no reviewer has read them,
+and round 1's five P1s came from exactly this position. Surface 3 (bot reviewers) has
+never run on this branch at all.
+
+One near-miss worth naming, because it was caught by a compiler rather than by me: a span
+anchor in a comment-cutting edit was not contiguous, and the replacement silently deleted
+`strictestGrammar` and `exceedsStripCap`. `npm run build` caught it; no test would have,
+because the file did not compile. **Mechanical comment edits over non-contiguous blocks
+need the build run between each one**, not at the end of a batch.
+
+Nothing pushed. No PR. Push and merge remain the operator's.

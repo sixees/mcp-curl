@@ -302,17 +302,27 @@ part the wrap runs:
 received it. Pre-defending is harmless but redundant; `applySpotlighting` is
 idempotent and the sanitiser is idempotent on already-sanitised text.
 
-`curl_execute` and `jq_query` results pass through the wrap too, so their text
-is defended twice: once inside the tool under the Content-Type the origin
-actually declared, and again at the wrap under the strictest grammar. That is
-deliberate defence-in-depth, not an oversight — the second pass is the
-less-informed one, and it is additive because every strip stage is idempotent.
+`curl_execute` and `jq_query` results pass through the wrap too. Where a result
+is not JSON, it is defended twice — once inside the tool under the Content-Type
+the origin declared, and again at the wrap under the strictest grammar. That is
+deliberate defence-in-depth: the second pass is the less-informed one, and it is
+additive because every strip stage is idempotent.
 
-One visible consequence: a JSON body is exempt from the strip stages on the
-*persisted* copy (`save_to_file` writes what the origin sent, so `jq_query` can
-read it back) but not on the copy returned inline to the model, which the wrap
-strips like any other text. Persisted keeps the exemption; returned does not.
-See `ARCHITECTURE.md` invariant 1a.
+**Where a result parses as JSON, no strip stage runs at any layer.** `curl_execute`
+returns a JSON body as the origin sent it, and the wrap's `defendForInline` takes
+its verbatim arm for any text that parses — a JSON string leaf from `jq_query`
+included. The parse is a validity check, not a transform: what comes back is the
+payload, not a re-serialisation of it. The round trip that made strip stages
+possible on a JSON body was not information-preserving — it collapsed duplicate
+names, rewrote number lexemes and reordered keys, so `{"total":5,"total":9}` came
+back as `{"total": 9}` — while the stages themselves only ever matched markup, and
+so caught the marked-up subset of a class the spotlighting boundary covers in
+full.
+
+Sanitise-and-detect (invisible characters, bidirectional overrides, padding
+collapse) still runs on every layer including JSON, and a non-JSON body is not
+returned inline at all — it is saved, and its path reported. See
+`ARCHITECTURE.md` invariants 1a and 14, and `LESSONS.md` RC-47.
 
 Idempotence for the wrap as a whole is enforced via a module-private symbol tag,
 so a result passing through two wraps is not processed twice. The wrap is

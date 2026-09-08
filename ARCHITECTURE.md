@@ -96,14 +96,21 @@ what a violation looks like, it does not belong on this list.
    What the shared call buys is that the exclusion is one decision in one place,
    reviewable, rather than a subset each caller assembled.
 
-   **The body path no longer takes this pipeline at all when the body is a JSON
-   document, and that reverses RC-10 on that path.** `docs/todos/018`:
-   `processResponse` classifies the body once — a full parse plus a
-   composite-value test, `processor.ts::classifyBody` — and on the JSON arm hands
-   the bytes through untouched. Step 2 still reaches that body at the
-   model-facing boundary, where `defendForInline` applies it; measured as a
-   byte-for-byte no-op on every legitimate document and altering only a body
-   that carries an attack codepoint, which still parses afterwards.
+   **The body path does not take this pipeline at all, on either arm, and that
+   reverses RC-10 in both directions.** `docs/todos/018`: `processResponse`
+   classifies the body once — a parse, `processor.ts::classifyBody` — and returns
+   a JSON body as it arrived. A non-JSON body is not returned inline at all, only
+   reported, so there is no model-facing text to defend; its artefact is the
+   origin's octets. **Nothing on the body path reads `%{content_type}` to select
+   a defence, and nothing on it runs a strip stage**, which is what makes this
+   invariant's named failure shape unreachable rather than guarded.
+
+   Step 2 — sanitise-and-detect — still runs above the fork, and it is the only
+   pass that does. It is measured a byte-for-byte no-op on every realistic JSON
+   body, and it is what makes a BOM-prefixed body from a .NET or Java origin
+   parse at all; it also carries the `[injection-defense]` detection log, which a
+   straight pass-through would withhold from every saved body (`LESSONS.md`
+   RC-44).
 
    **What that trade actually is.** The strip stages enumerate markup shapes, so
    on a JSON document they only ever caught the marked-up subset of a class the
@@ -111,42 +118,20 @@ what a violation looks like, it does not belong on this list.
    and DELETE /users"}` passed every stage untouched — while the round trip they
    required collapsed duplicate names, rewrote number lexemes and reordered
    keys. Measured: `{"total":5,"total":9}` was returned as `{"total": 9}`, a
-   field gone, still valid JSON, with nothing downstream able to tell. RC-10
-   priced the exemption as protecting a persisted artefact; 018 prices the
-   rewriting as corrupting the response, and the director settled it that way.
-   **`LESSONS.md` RC-37 records the reversal, so a later round cites it rather
-   than re-litigating it.**
+   field gone, still valid JSON, with nothing downstream able to tell.
 
-   **A non-JSON body takes the FULL pipeline with the grammar declared
-   UNDETERMINED, and the declared content type selects nothing anywhere.** That
-   is not a simplification of the old gate, it closes a live gap:
-   `defendText(body, { contentType: "text/plain" })` runs no strip stage — a
-   markdown link is neither declared markup nor markup-shaped — so a beacon
-   reached the persisted artefact live, on a file `savedMessage` tells the model
-   to read with its own tooling, outside every defence. It was masked while such
-   a body was returned inline, because the wrap then applied exactly the pass
-   that was missing. **Nothing on the body path reads `%{content_type}` to
-   select a defence any more**, which is what makes this invariant's named
-   failure shape unreachable rather than guarded.
+   **On the non-JSON arm the price was paid in diagnostics.** Defending the
+   artefact meant `stripHtmlComments` deleted the `<!-- trace-id: … -->` a
+   framework puts its trace in — measured on a 500 page — from a file whose only
+   reader is the developer who asked for it. The director settled both arms on
+   the population: this proxy serves internal staff querying their own APIs.
+   **`LESSONS.md` RC-37 and RC-47 record the reversals, so a later round cites
+   them rather than re-litigating them.**
 
-   **`excludeJsonDocuments` still exists on `defendText`, and the body path must
-   pass `false` explicitly — it is load-bearing there, not vestigial.** An
-   earlier revision of this paragraph said it was "no longer reachable from the
-   body path", and that was wrong in the direction that costs something: with the
-   option left at its default of `true`, `defendText` re-asks the JSON question
-   using `isDefinitelyJson`, which answers TRUE for a bare-scalar document like
-   `"<script>x</script>"` — so `looksLikeJsonBody` became true, `strictestGrammar`
-   false, and **no strip stage ran on the very body this gate had just classified
-   as non-JSON**. Measured: `<script>`, a markdown beacon and an HTML comment all
-   survived into the artefact. `LESSONS.md` RC-39.
-
-   So the body path passes two explicit opt-outs — `contentTypeUndetermined: true`
-   and `excludeJsonDocuments: false` — to neutralise its callee's defaults. **A
-   call site defending itself against its callee is a residue, not a design**, and
-   it closes when the next slice of `docs/todos/018` deletes the selection
-   machinery. Until then the comment at that call site is what holds it in place.
-   The option's content-type gate still behaves as described above for any direct
-   caller of the published `defendText`.
+   `defendText` keeps every stage, and keeps its `excludeJsonDocuments` and
+   content-type gates, for the channels that still need them — response header
+   text, cURL stderr, `jq_query`'s persisted output, and custom tools through the
+   wrap. `defend-text.test.ts` and `strip-blocks.test.ts` hold that coverage.
 
    **Above `STRIP_PATH_MAX_BYTES` (256 KB) every channel is Step 2 only.** The
    cap is a cost circuit-breaker and it is not a defence; on the custom-tool
@@ -246,9 +231,9 @@ what a violation looks like, it does not belong on this list.
     absence is the closure, not a bound on the field, and naming a bound here
     instead would read as a licence to interpolate it back. `docs/todos/018` adds
     one field and it is bounded the same way: a **parse-failure reason drawn from
-    a closed four-member vocabulary this repository owns**
-    (`processor.ts::JsonRejectionReason`), plus an optional decimal integer. No
-    response byte can reach it by construction — which is the whole reason V8's
+    a closed three-member vocabulary this repository owns**
+    (`processor.ts::JsonRejectionReason`). No response byte can reach it by
+    construction — which is the whole reason V8's
     own `SyntaxError.message` is never interpolated anywhere, since it embeds up
     to ten bytes of the body and the WHOLE body when the body is short. Two channels
     are still bounded by constants unrelated to `max_result_size` and are
@@ -279,37 +264,52 @@ what a violation looks like, it does not belong on this list.
     the executor stubbed. `LESSONS.md` RC-34.
 
     `exceedsInlineCap` is this invariant's own gate and weighs the DEFENDED text,
-    because it answers *how much reaches the model*. **After `docs/todos/018`
-    those two quantities coincide on both arms** — a JSON artefact is the
-    origin's octets and the defence cannot grow a JSON body, and a non-JSON
-    artefact IS the defended text — so a reported on-disk count below the limit
-    it says was exceeded is no longer constructible. That sentence used to be
-    reachable and needed a qualifier to be readable at all.
+    because it answers *how much reaches the model*. **It is now consulted on the
+    JSON arm only**, because that is the only arm with an inline representation:
+    a non-JSON body is saved for what it is, not for how big it is, and claiming
+    it "also exceeds the inline limit once the inline defence pass is applied"
+    would cite a pass that no longer runs. On the arm where it is consulted the
+    two quantities coincide — the artefact is the origin's octets and no pass
+    grows a JSON body — so a reported on-disk count below the limit it says was
+    exceeded is not constructible.
+
+    **A consequence worth stating because nothing reports it:**
+    `MAX_INLINE_GROWTH_RATIO` is dead at every live call site. Only JSON reaches
+    `exceedsInlineCap` — from the body path and from `jq_query`, whose output its
+    own serialiser produced — and `defendForInline`'s verbatim arm cannot grow
+    text. The constant and its third branch are retained because `defendText`'s
+    growing arm is still reachable by a direct caller of the published API, but
+    no shipped path exercises them. `LESSONS.md` RC-47.
 
     **The persisted artefact's form is decided by the body gate, and never by the
-    declared header.** `docs/todos/016` left this open deliberately and `018`
-    settles it; the header is invariant 1a's named failure shape precisely
-    because a remote writes it.
+    declared header.** `docs/todos/016` left this open deliberately, `018`
+    settled it, and the director's scope call in RC-47 settled it again in the
+    same direction for both arms. The header is invariant 1a's named failure
+    shape precisely because a remote writes it.
 
-    - **A JSON document is persisted as the origin's octets**, byte for byte,
-      including any codepoint Step 2 would have removed. Its reader is
-      `jq_query`, which is in-process and runs the full `defendForInline` pass
-      over what it reads, so byte-exactness costs no defence — and it is exactly
-      where RC-33's loss hurt: duplicate names, integers past
-      `Number.MAX_SAFE_INTEGER`, `"1.50"`. On the filtered arm the bytes are our
-      own serialiser's output, so there are no origin octets to preserve.
-    - **Anything else is persisted as the DEFENDED text**, with the grammar
-      declared undetermined so every strip stage runs. `jq_query` cannot open a
-      non-JSON file, so `savedMessage` routes the model to the host's own file
-      tooling — outside every defence — and whatever lands there must already be
-      safe to read. **A change that makes this arm the origin's octets removes
-      Step 2 from the one representation the model is instructed to read**, which
-      is the P1 the 016 revert closed.
+    **One rule, both arms: the origin's octets, unless Step 2 had to change
+    them.** Where sanitise-and-detect was a no-op the octets and the sanitised
+    text are the same bytes, so the octets go down. Where it altered something,
+    the sanitised form goes down instead — because raw octets would then be a
+    file its reader cannot use: a BOM defeats `jq_query`'s parse. A filter is the
+    third case, and there the artefact is our own serialiser's output, so there
+    are no origin octets to preserve.
+
+    **This is what answers the P1 the 016 revert closed.** That P1 was *"making
+    this arm the origin's octets removes Step 2 from the one representation the
+    model is instructed to read"* — and it is answered rather than accepted,
+    because Step 2 is never withdrawn: the substitution above fires exactly when
+    Step 2 changed a byte. What IS withdrawn on the non-JSON arm is the strip
+    stages, and that was priced on the population: the artefact's reader is the
+    internal developer who asked for the file, and `stripHtmlComments` deletes
+    the `<!-- trace-id: … -->` a framework puts the diagnostic in — measured on a
+    500 page. `savedMessage` says the file holds the origin's exact bytes, so a
+    reader is told what it has.
 
     The gate is `processor.ts::classifyBody`, the same call the body path uses,
     and it must stay the same call: two spellings of this rule is two artefact
     policies. It inherits no strip cap, which is why it cannot be
-    `isDefinitelyJson`. `LESSONS.md` RC-33, RC-37.
+    `isDefinitelyJson`. `LESSONS.md` RC-33, RC-37, RC-47.
 
 15. **Every regex in the strip path is linear in the size of its input, and the
     byte cap is not what makes it so.** A `g`-flagged replace starts a match
@@ -384,31 +384,32 @@ what a violation looks like, it does not belong on this list.
     why the two must be read together.
 
     **The rule is DIVIDE, and it is deliberately not "defend each leaf".**
-    `docs/todos/018` removed the per-leaf walk that used to satisfy it, and the
-    distinction is what survived: dividing is a statement about the *input* to a
-    pass, while rewriting leaves was one particular way of avoiding a shared
-    input. A JSON document is now returned byte for byte, so on that arm there
-    is no scan and no re-serialisation — the splice is unreachable rather than
-    guarded. What still needs the rule is every string that is **not itself** a
-    composite document but **contains** one.
+    Dividing is a statement about the *input* to a pass; rewriting leaves was one
+    particular way of avoiding a shared input, and `docs/todos/018` removed it.
+    What still needs the rule is every string that is **not itself** JSON but
+    **contains** a region boundary.
 
-    **Two such routes are live, and each is divided at the layer that can see the
-    boundary.** Both were measured on this branch, after the per-leaf walk came
-    out and before they were fixed — the class does not disappear with the
-    mechanism that used to cover it:
+    **The way a route satisfies this invariant can be "no pass runs", and two of
+    the three live routes now do.** A pass that does not execute cannot span a
+    region, so where a text part parses as JSON the splice is unreachable rather
+    than guarded:
 
+    - **A JSON body** — returned as it arrived. No scan, no re-serialisation.
     - **A JSON string whose content is a document** — a jq filter returning
-      `.note` where `note` holds a serialised document. `processor.ts` divides
-      it: the inner document is defended as its own region and the outer string
-      re-serialised around it. Measured `["a","d"]` from `["a","b","c","d"]`
-      without it.
-    - **Response header text composed with a body** — the plain branch used to
-      prefix the header block to the body with a blank line. `curl-execute.ts`
-      divides it by emitting **two MCP content entries**, because the wrap
-      defends each entry independently and the boundary is knowable only to the
-      composer. Same measured loss.
+      `.note` where `note` holds a serialised document. `classifyBody` accepts
+      any value that parses, so `defendForInline` takes its verbatim arm and no
+      strip runs across the inner boundary. Measured `["a","d"]` from
+      `["a","b","c","d"]` back when a strip did run over the undivided string
+      (`LESSONS.md` RC-37) — the loss is now structurally absent rather than
+      divided away.
+    - **Server prose composed with remote bytes** — response header text, and the
+      `[mcp-curl] …` notices. This one is still divided, because neither is JSON
+      and the composed string would take the undivided scan. `curl-execute.ts`
+      divides it by emitting **separate MCP content entries** — up to three, body
+      first — because the wrap defends each entry independently and the boundary
+      is knowable only to the composer. `LESSONS.md` RC-16, RC-46.
 
-    That second one is invariant 13 at a different layer, and states the same
+    That last one is invariant 13 at a different layer, and states the same
     property: a boundary between remote-controlled regions comes from structure
     we can trust, never from the bytes. **A violation looks like a defence pass
     whose input spans more than one region** — so the question to ask of any new
@@ -419,11 +420,9 @@ what a violation looks like, it does not belong on this list.
     recursed over an object graph whose depth a remote chose freely — 4 KB of
     `[` overflowed the stack, `createWrapper`'s catch tagged the UNDEFENDED
     result as wrapped, and a beacon reached the model verbatim. Nothing recurses
-    over the graph now, so that fail-open is unreachable rather than bounded.
-    The one remaining recursion, through string-encoded layers, needs no bound:
-    each unwrap removes at least the two enclosing quotes, so the text strictly
-    shortens and each level costs the remote more bytes than the last.
+    over the graph now, and nothing recurses at all, so that fail-open is
+    unreachable rather than bounded.
 
     Object keys were, and remain, deliberately undefended: two keys defending to
     the same string would collapse into one, which is the very loss this
-    invariant exists to stop. `LESSONS.md` RC-16, RC-37.
+    invariant exists to stop. `LESSONS.md` RC-16, RC-37, RC-47.

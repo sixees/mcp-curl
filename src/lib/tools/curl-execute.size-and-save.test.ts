@@ -152,17 +152,16 @@ describe("curl_execute size ceiling — both representations are checked", () =>
 });
 
 describe("curl_execute saved artefact — defended, and honestly measured", () => {
-    it("applies the strip stages to what lands on disk", async () => {
-        // **The artefact must be safe on every route the server advertises.**
-        // `savedMessage` sends a non-JSON file to the model's own tooling,
-        // outside every defence pass, because `jq_query` cannot open one — so
-        // there is no defended reader to fall back on and the bytes on disk have
-        // to be safe as they are.
+    it("writes the origin's own bytes to disk, strip stages and all", async () => {
+        // **No strip stage runs on the body path, and this is where that is
+        // asserted rather than inferred.** The artefact is a file an internal
+        // developer opens deliberately, and rewriting it costs them the
+        // diagnostics they opened it for — `stripHtmlComments` deletes the
+        // `<!-- trace-id -->` a framework puts its trace in.
         //
-        // `text/markdown` because it selects both stage sets: HTML runs the
-        // markup strip but not the markdown beacon stages, so a beacon would
-        // survive and this case would fail for a reason unrelated to its
-        // subject.
+        // `text/markdown` because it is the declaration that used to select BOTH
+        // stage sets, so it is the strongest available test that no declared type
+        // reaches a stage from here.
         const body = Buffer.from(
             "# ok\n\n<script>alert(1)</script> and ![x](https://evil.test/?d=1)",
             "utf8"
@@ -176,13 +175,10 @@ describe("curl_execute saved artefact — defended, and honestly measured", () =
             save_to_file: true,
         }));
 
-        const onDisk = await readFile(savedPathFrom(result.content[0].text), "utf-8");
-        expect(onDisk).not.toContain("<script>");
-        expect(onDisk).not.toContain("evil.test");
-        // And the fixture really does carry something the stages remove, so the
-        // assertions above are about the defence rather than about the input.
-        expect(body.toString("utf8")).toContain("<script>");
-        expect(body.toString("utf8")).toContain("evil.test");
+        // Byte equality, not an absence check: it has teeth in both directions,
+        // failing if a stage is reintroduced AND if the save stops happening.
+        const onDisk = await readFile(savedPathFrom(result.content[0].text));
+        expect(onDisk.equals(body)).toBe(true);
     });
 
     it("reports a byte count equal to the file's real size", async () => {

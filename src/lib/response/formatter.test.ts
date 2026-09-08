@@ -10,13 +10,9 @@ describe("formatResponse — response headers", () => {
     });
 
     it("does NOT prefix the body with headers — they are their own content entry", () => {
-        // **Reversed by `docs/todos/018`, deliberately.** Prefixing merged two
-        // remote-controlled regions into one string, and the wrap's undivided
-        // scan then paired a marker in the body with one in a later field and
-        // deleted what lay between (`LESSONS.md` RC-16). That was survivable
-        // only while the wrap re-serialised each JSON leaf and so neutralised
-        // the markers first; 018 removes that round trip to make a JSON body
-        // byte-exact, which takes the mitigation with it.
+        // The header text is never prefixed onto the body: two remote-controlled
+        // regions sharing one string let a marker in the body pair with one in a
+        // later field and delete what lies between (`LESSONS.md` RC-16).
         //
         // `tools/curl-execute.ts` emits the header text as a second MCP content
         // entry instead — ARCHITECTURE.md invariant 13's strong form, applied at
@@ -27,10 +23,8 @@ describe("formatResponse — response headers", () => {
     });
 
     it("returns the save message alone on the plain branch, headers separated out", () => {
-        // Header text still never reaches the file — that guarantee is unchanged
-        // and is what this case was originally written for. What changed is where
-        // the headers are REPORTED: a second content entry rather than a prefix
-        // on this string. See the case above.
+        // Header text never reaches the file: the save message is returned
+        // alone, with headers reported as a second content entry (see above).
         const out = formatResponse("", "", 0, false, {
             savedToFile: true,
             filepath: "/tmp/x.txt",
@@ -107,12 +101,11 @@ describe("formatResponse — header metadata", () => {
     });
 
     it("does NOT carry the notice itself — that is a separate content entry", () => {
-        // **The notice moved out of this function entirely** (`LESSONS.md`
-        // RC-41). Prefixing it to the body demoted a JSON body to
-        // `defendForInline`'s undivided arm, which then spliced across two
-        // fields. `plainBranchNotices` builds it and `tools/curl-execute.ts`
-        // emits it as its own MCP entry, which is a stronger boundary than the
-        // unoccupiable position the prefix relied on.
+        // The notice text is never carried in this string: prefixing it to the
+        // body would demote a JSON body to `defendForInline`'s undivided arm,
+        // which splices markers across fields. `plainBranchNotices` builds it and
+        // `tools/curl-execute.ts` emits it as its own MCP entry — a stronger
+        // boundary than an in-band prefix. `LESSONS.md` RC-46.
         const out = formatResponse("body", "", 0, false, undefined, HDRS, {
             truncated: true,
             bytesReceived: 90_000,

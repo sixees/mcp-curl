@@ -141,19 +141,19 @@ export const isRawNumber: (value: unknown) => boolean = isRawJsonImpl;
  * large bodies `jq_query` is the advertised route to; a hard refusal instead
  * makes that route unusable for the bodies it exists for. **If that trade ever
  * needs revisiting, the lever is `JQ.MAX_QUERY_FILE_SIZE` (10 MB today), and
- * that gate covers only `jq_query` — the other two call sites are bounded by
- * `LIMITS.MAX_RESPONSE_SIZE` and `STRIP_PATH_MAX_BYTES` respectively, so
- * turning one lever alone leaves two sites at full cost.**
+ * that gate covers only `jq_query` — the `jq_filter` branch is bounded by
+ * `LIMITS.MAX_RESPONSE_SIZE` instead, so turning one lever alone leaves the
+ * other site at full cost.**
  *
- * A previous revision recorded ~308 MB RSS here. **That was uncollected
- * garbage, not footprint** — sampled live heap with a forced-GC baseline gives
- * the per-call figures above. `LESSONS.md` RC-30.
+ * **Uncollected garbage is not footprint**, so the figures above are live heap
+ * against a forced-GC baseline. An unforced sample overstates them by two
+ * orders of magnitude. `LESSONS.md` RC-30.
  *
- * **This lives here, and not beside one of its callers, because the rule has
- * three of them** — the response defence's region-wise walk, `curl_execute`'s
- * `jq_filter` branch and the `jq_query` tool. It had one implementation and two
- * sites without it, so the same body's numbers survived intact inline and were
- * corrupted through jq (`LESSONS.md` RC-24, RC-27).
+ * **This lives here, and not beside either caller, because the rule has two of
+ * them** — `curl_execute`'s `jq_filter` branch in `response/processor.ts`, and
+ * `jq/filter.ts::applyJqFilter` for the `jq_query` tool. One implementation and
+ * one site without it is how the same body's numbers survived intact inline and
+ * were corrupted through jq (`LESSONS.md` RC-24, RC-27).
  */
 export function keepNumberLexeme(
     _key: string,

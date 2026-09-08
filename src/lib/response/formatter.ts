@@ -53,18 +53,17 @@ function applyHeaderFields(
  * The server-authored `[mcp-curl] …` lines for the plain branch, or `""`.
  *
  * **Exported because they must travel as their own MCP content entry, not as a
- * prefix on remote bytes.** Prefixing them was a defence argument — a position
- * an origin cannot occupy — and it was sound for that. What it was not is a
- * REGION boundary: `defendForInline` keys its verbatim-JSON arm on the whole
- * text part being a composite document, so a prefix demoted a JSON body to the
- * undivided scan, which then paired `<!--` in one field with `-->` in a later
- * one and deleted what lay between. Measured:
- * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returned
+ * prefix on remote bytes.** A prefix is not a REGION boundary:
+ * `defendForInline` keys its verbatim-JSON arm on the whole text part parsing,
+ * so notices carried as a prefix would demote a JSON body to the undivided
+ * scan, where `<!--` in one field and `-->` in a later one pair across the join
+ * and delete what lies between. Measured:
+ * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returns
  * `{"a":"open ","d":"kept"}` on any non-darwin host with `include_headers`.
  *
  * A separate content entry is a STRONGER boundary than an unoccupiable
  * position, so the original argument survives the move intact. ARCHITECTURE.md
- * invariants 13 and 16; `LESSONS.md` RC-37, RC-41.
+ * invariants 13 and 16; `LESSONS.md` RC-37.
  */
 export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo): string {
     return [
@@ -148,16 +147,14 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo): s
  * (ARCHITECTURE.md invariant 13) and the post-processor wrap defends each part
  * independently.
  *
- * **It used to prefix the header block to the body with a blank line, and that
- * merged two regions into one string the wrap could not divide.** The cost was
- * measured: a body holding `<!--` and a later field holding `-->` had
- * `stripHtmlComments` pair them ACROSS the join and delete the field between —
- * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returned as
+ * **Header text and body text must never share a string, because a defence
+ * pass cannot see the JSON structure between them.** `stripHtmlComments` pairs
+ * an opening token with a closing one across any join in the same string: a body
+ * holding `<!--` and header text holding `-->` would have the pair deleted along
+ * with everything between — measured,
+ * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returning
  * `{"a":"open ","d":"kept"}`, still valid JSON, with nothing downstream able to
- * tell. That was survivable only while the wrap re-serialised each JSON leaf and
- * so neutralised the tokens before composition; `docs/todos/018` removes that
- * round trip to make a JSON body byte-exact, which takes the mitigation with it.
- * ARCHITECTURE.md invariants 7, 13 and 16, and `LESSONS.md` RC-16.
+ * tell. ARCHITECTURE.md invariants 7, 13 and 16; `LESSONS.md` RC-16, RC-37.
  *
  * What holds on BOTH branches, and is the guarantee worth relying on, is that
  * header text never reaches the saved file and never reaches `jq_filter`.
@@ -197,13 +194,10 @@ export function formatResponse(
     // `tools/curl-execute.ts`'s to append as their own MCP content entry — see
     // {@link plainBranchNotices}.
     //
-    // An earlier revision kept the join for the saved-to-file arm, on the
-    // reasoning that both sides are server-authored there so no region is
-    // spliced. That reasoning is sound and the result was still wrong: the
-    // caller appends the notice entry unconditionally, so the model received it
-    // TWICE on that branch — measured on a non-zero exit. Two spellings of one
-    // rule, which is what the exception bought. One rule now: notices travel as
-    // their own entry, always.
+    // Notices travel as their own MCP content entry on every branch, including
+    // the saved-to-file arm where both sides are server-authored:
+    // `tools/curl-execute.ts` appends that entry unconditionally, so a join here
+    // would double it. `LESSONS.md` RC-46.
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
         if (includeMetadata) {

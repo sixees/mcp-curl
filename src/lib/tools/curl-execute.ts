@@ -24,12 +24,13 @@ export interface CurlExecuteResult {
     /**
      * One entry per remote-controlled region, never one entry spanning two.
      *
-     * `content[0]` is the body (or the server-authored saved-to-file message),
-     * on every branch. A SECOND entry carries the response header text, and
-     * only on the plain branch with `include_headers` — under
-     * `include_metadata` the headers travel in the envelope's own `headers`
-     * key. ARCHITECTURE.md invariant 13; the wrap defends each entry
-     * independently, which is why the split is what keeps invariant 16 true.
+     * `content[0]` is the body (or the server-authored saved-to-file message) on
+     * every branch. A SECOND entry carries the response header text and a THIRD
+     * carries server-authored notices — truncation, undetermined or unsupported
+     * headers, a non-zero exit code. Both are plain-branch only: under
+     * `include_metadata` the headers travel in the envelope's `headers` key and
+     * the notices in its own fields. ARCHITECTURE.md invariant 13; the wrap
+     * defends each entry independently, which is what keeps invariant 16 true.
      */
     content: Array<{ type: "text"; text: string }>;
     isError?: boolean;
@@ -52,6 +53,13 @@ export const CURL_EXECUTE_TOOL_META = {
 
 This tool provides a safe, structured way to make HTTP requests with common cURL options.
 It handles URL encoding, header formatting, and response processing automatically.
+
+Response contract: a body that parses as JSON is returned to you byte for byte, whatever
+Content-Type the origin declared. A body that does NOT parse as JSON is not returned
+inline at all — it is written to a file and you get the reason, the byte count and the
+path, to open with your own file tooling. The file holds the origin's exact bytes. A
+JSON body larger than max_result_size is also written to a file; use jq_query on that
+path. Above 10MB the request fails and you should narrow it with query parameters.
 
 Args:
   - url (string, required): The URL to request
@@ -159,7 +167,6 @@ export async function executeCurlRequest(
     extra: CurlExecuteExtra = {}
 ): Promise<CurlExecuteResult> {
     try {
-        // Validate basic_auth format if provided
         if (params.basic_auth && !params.basic_auth.includes(":")) {
             throw new Error("basic_auth must be in 'username:password' format");
         }
@@ -191,8 +198,6 @@ export async function executeCurlRequest(
             dnsResolve: dnsResult,
             metadataSeparator,
         });
-
-        // Use timeout from params, or fall back to system default
         const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
         // `executeCommand` reads the header descriptor's presence off `args`,
         // so nothing here has to agree with `buildCurlArgs` about it — one
@@ -271,29 +276,21 @@ export async function executeCurlRequest(
             : result.stderr;
 
         // **The body is passed on undefended, because the wrap is what defends
-        // it and there is no longer a composition to get ahead of.**
+        // it and there is no composition to get ahead of.** The header block is
+        // its own MCP content part (see the return below), so each part reaches
+        // the wrap as the single region it is.
         //
-        // This used to call `defendForInline` on the plain branch, to defend the
-        // body as its own region BEFORE `formatResponse` prefixed the header
-        // block to it — the wrap saw one string, could not recover where the
-        // headers stopped, and its undivided scan paired a marker in one body
-        // field with one in a later field. The header block is now its own MCP
-        // content part (see the return below), so the join that made the
-        // pre-defence necessary does not exist, and each part reaches the wrap
-        // as the single region it is.
-        //
-        // Keeping the call would now be actively wrong rather than merely
-        // redundant: `docs/todos/018` makes a JSON body byte-exact, and a
-        // defence pass here would rewrite the bytes the wrap is about to pass
-        // through untouched — the size gate in `processResponse` weighed the
-        // former and the model would receive the latter.
+        // Defending it here would be actively wrong rather than merely
+        // redundant: a JSON body is returned as it arrived, and a pass here
+        // would rewrite the bytes the wrap is about to pass through untouched —
+        // the size gate in `processResponse` weighed one set and the model would
+        // receive another.
         //
         // Absent where the body was saved: `ProcessedResponse`'s saved arm
-        // carries no `content` at all (invariant 14 stated in the type), because
+        // carries no `content` at all (invariant 14, stated in the type), because
         // `formatResponse`'s file branch returns the server-authored `message`
-        // and never reads a body. There is nothing to pass, so the empty string
-        // below is not a body that was dropped — it is the argument
-        // `formatResponse` ignores on that branch.
+        // and never reads a body. The empty string below is not a dropped body —
+        // it is the argument `formatResponse` ignores on that branch.
         const inlineBody = processed.savedToFile ? "" : processed.content;
 
         const output = formatResponse(
@@ -324,15 +321,11 @@ export async function executeCurlRequest(
         // **Two remote-controlled regions, two content parts — invariant 13's
         // strong form, applied at the OUTPUT rather than only at the capture.**
         //
-        // cURL already keeps the header block and the body on separate
-        // descriptors, so the boundary is structural on the way in. Merging them
-        // into one string on the way out threw that away: the wrap defends each
-        // text part independently, so one part spanning both regions is exactly
-        // the shape invariant 16 names as a violation — a defence pass whose
-        // input spans more than one region. Measured cost of the merge, on the
-        // shipped registration with `include_headers: true`: a body's `<!--` in
-        // one field paired with `-->` in a later one and the field between them
-        // was deleted, leaving valid JSON (`LESSONS.md` RC-16).
+        // cURL keeps the header block and the body on separate descriptors, so
+        // the boundary is structural on the way in. One string spanning both is
+        // exactly what invariant 16 forbids — a defence pass whose input spans
+        // more than one region — because the wrap defends each text part
+        // independently. `LESSONS.md` RC-16 holds the measured cost.
         //
         // Only on the plain branch, and only when there is header text: under
         // `include_metadata` the envelope already gives the headers their own
@@ -344,18 +337,12 @@ export async function executeCurlRequest(
         // hand an existing reader the wrong region. Appending only ever ADDS an
         // element.
         const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : undefined;
-        // **The server-authored notices are a THIRD region, and they were the
-        // second join in the same function.** Fixing the header prefix and
-        // leaving this one is `.claude/rules/01-known-shapes.md` K-4 — a sweep
-        // narrower than its own class. `formatResponse`'s plain branch prefixed
-        // `[mcp-curl] …` lines to the body, which demoted a JSON body to
-        // `defendForInline`'s undivided arm and let the strip pair `<!--` in one
-        // field with `-->` in a later one. Measured `["a","d"]` from
-        // `["a","b","c","d"]` on any non-darwin host with `include_headers`,
-        // which is the DEFAULT `include_metadata: false` path.
-        //
-        // Its own entry is a stronger boundary than the unoccupiable position
-        // the prefix relied on, so nothing is given up. `LESSONS.md` RC-41.
+        // **The server-authored notices are a THIRD region**, and they get their
+        // own entry for the same reason the header text does: concatenated onto
+        // the body they would demote a JSON body to `defendForInline`'s
+        // undivided arm, where a marker in the notice can pair with one in the
+        // body across the join. Its own entry is a stronger boundary than a
+        // prefix ever was. `LESSONS.md` RC-46.
         const noticePart = !params.include_metadata
             ? plainBranchNotices(result.exitCode, {
                   truncated: headerTruncated,

