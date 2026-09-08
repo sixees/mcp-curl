@@ -27,10 +27,11 @@ unrelated bugs to the todo system.
 feature or per theme — is declared in this project's Compound Engineering profile.
 Claim it at the time; it is durable once assigned.
 
-**Where.** Both of: inline in the PR handoff beside the work it corrected, and
-appended to the ledger below. Add a one-line `POST-AUDIT` annotation in the plan
-pointing at the RC, and **never retro-edit plan text** — the plan records what was
-believed, and correcting it in place destroys the evidence that anything diverged.
+**Where.** Appended to the ledger below, and **nowhere else.** A handoff may point
+at the ids a run filed; it does not restate the entries. Add a one-line `POST-AUDIT`
+annotation in the plan pointing at the RC, and **never retro-edit plan text** — the
+plan records what was believed, and correcting it in place destroys the evidence
+that anything diverged.
 
 ### Entry format
 
@@ -117,13 +118,16 @@ entry restating an existing class under a new name with its own counter.
 
 ## RC ledger
 
-> Newest last. Append; never edit an entry once filed. If an RC turns out to be
-> wrong, file a new one that says so and cite it.
+> Newest last. Append; **never rewrite what an entry claims.** If an RC turns out
+> to be wrong, file a new one that says so and cite it.
 >
-> **Two annotations may be added to a filed entry, and nothing else:** a
-> `**Class:**` line, and a `**Mechanism superseded:**` line naming what no longer
-> exists at HEAD and the RC that replaced it. Both are additive — they sit above
-> the body and change no word of it, because the body records what was believed.
+> **Three annotations may be added to a filed entry, and nothing else.** A
+> `**Class:**` line; a `**Mechanism superseded:**` line naming what no longer
+> exists at HEAD and the RC that replaced it; and an `**Also filed as:**` line
+> naming the ids folded onto this entry and whatever only they said. All three are
+> **additive** — they sit above the body and change no word of it, because the body
+> records what was believed, and correcting it in place destroys the only evidence
+> anything diverged.
 >
 > **The body is frozen; an annotation is maintained.** It points at HEAD, so when
 > HEAD moves again the pointer names the newer RC — an annotation that has itself
@@ -133,6 +137,61 @@ entry restating an existing class under a new name with its own counter.
 > lesson outlives its fix and this format states both in one breath. A binding
 > entry is cited rather than re-checked, so stale mechanism prose inside one is
 > the most expensive a repository can hold: the next round is told not to look.
+>
+> **Condensing is not correcting.** An entry's prose may be tightened so long as
+> every claim, file, symbol, measurement and decision survives intact. What is
+> forbidden is changing what an entry *says* — the body is the record of what was
+> believed, and correcting it in place destroys the only evidence anything
+> diverged. Read the prohibition beside its own rationale: *"never edit"* is wider
+> than the property it defends, and saying the same thing in fewer words touches
+> that property not at all.
+>
+> **The freeze boundary is merge.** An entry whose branch has not merged may be
+> corrected in place — the belief and its correction sit inside one round, so there
+> is no divergence for the body to be evidence of. **Once merged the body is
+> frozen**, and a wrong claim is answered by a new RC that cites it.
+>
+> **Entries come in two lengths, and the short ones are not unfinished.** An entry
+> that something outside this file cites is kept whole, because a citation makes its
+> detail load-bearing somewhere else. An entry nothing cites keeps its heading, its
+> `Class:`, every annotation, any binding declaration and its *What this costs next
+> time* — and its plan/reality/what-changed narrative is retired. That split is this
+> preamble's own doctrine applied to itself: **an entry's lesson outlives its fix.**
+> The heading carries the narrative in one line, which is why headings here state
+> what reality turned out to be. `git grep RC-N` outside this file is the test, so
+> **a short entry becomes a candidate for restoring in full the moment something
+> cites it.**
+>
+> **This is the pass `/sixees-workflow:reconcile-lessons` performs**, once this file
+> has grown past what its readers can hold. It proposes; you authorise.
+>
+> **This preamble is shipped prose and this copy is yours** — nothing refreshes it,
+> so a repository onboarded against an older bundle keeps an older law indefinitely,
+> and the pass above then declines dispositions in exactly the ledgers that most
+> need them. `/sixees-workflow:refresh-compound` → *Step 5: Offer the ledger preamble
+> forward* reports which clauses the current scaffold carries that this copy lacks,
+> and inserts the ones you authorise — above the first entry heading and nowhere
+> else. **It never reads or writes an entry.**
+>
+> **Nothing in this law lets an entry be deleted.** A mechanism that no longer exists
+> is marked dead by the `**Mechanism superseded:**` annotation and the lesson stays;
+> an entry nothing cites is shortened to that lesson.
+> `/sixees-workflow:reconcile-lessons` carries no disposition that deletes one, so a
+> request to *"remove the RCs that no longer apply"* is answered by shortening.
+>
+> **So every id this file has ever issued still names an entry, and two properties
+> hold without anything having to check them.** The next number is allocated by
+> reading the highest `RC-[0-9]+` here, so no number can be issued twice; and a
+> citation of `RC-N` written anywhere in the repository still resolves. Both are
+> properties of entries *staying*, which is why deletion is the one operation this
+> law does not grant.
+>
+> **A project may override that on its director's authority**, recorded as an RC in
+> its own trail. The override is then the project's and nothing refreshes it away —
+> but it comes with no tooling: the deletion is performed by hand, and the two
+> properties above become a human's to hold, meaning nothing may cite the id outside
+> its own entry and the id must stay somewhere in this file so the allocation query
+> still counts it as issued.
 
 ### RC-1 — An invariant can be satisfied by the bug it was written to prevent
 
@@ -2056,3 +2115,30 @@ recorded as caught.
   the diff cannot answer**, and the answer here was one sentence from the director. The
   escalation was the right disposition; what took three rounds was escalating the *scope*
   question rather than the remedy.
+
+### RC-50 — the gate narrowed on one side, and the other side still discarded the body
+
+**Date:** 2026-09-08 · **PR:** #39 · **Plan:** `docs/todos/018-P1-json-only-proxy-parse-to-validate-return-original-bytes.md`
+
+**Class:** K-11 — *class-id:* `lost-code-path`
+
+- **The plan said:** *Bad JSON: report, save, do not inline* — a body that does not parse
+  yields the parse failure, the declared content type, the byte length and the file path.
+  Unconditional; the plan states no `jq_filter` exception, and `curl_execute`'s own
+  description promises the same save in the same terms.
+- **Reality was:** the filter gate threw ~100 lines above `shouldSave`, so a `jq_filter`
+  against a non-JSON origin discarded the body outright — no path, no byte count, nothing to
+  open. An HTML proxy error page is the ordinary case, and it is exactly the body an agent
+  most needs to read. The same page fetched *without* a filter was persisted and reported.
+- **So:** the filter is skipped rather than fatal — `if (options.jqFilter && classified.json)`
+  — leaving `filterApplied` false so `shouldSave`'s `(!classified.json && !filterApplied)` arm
+  takes it and `savedMessage` names the reason, the byte count and the path.
+- **The lesson:** **RC-45 fixed this defect's mirror and stopped there.** It found one gate
+  answering two questions and narrowed it, which rescued the bare-scalar body — `null`, `42`,
+  `"ok"` — and left the genuinely-non-JSON body discarded by the same throw, on the same line,
+  for the same reason. The RC even names the mechanism: *"the throw sits above `shouldSave`,
+  so the body was not saved either."* That sentence was written about the case that got fixed.
+  **`01-known-shapes.md` → K-11 asks which boundary the defect sat on and to check both
+  sides**, and the two sides here were *parses* and *does not parse* — one arm rescued, one
+  arm left. No test covered the unfixed side, so the suite was green either way: removing the
+  new guard fails exactly one case, and that case did not exist until this round.
