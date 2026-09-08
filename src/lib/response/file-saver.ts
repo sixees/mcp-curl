@@ -1,6 +1,7 @@
 // src/lib/response/file-saver.ts
 // Safe file saving with filename sanitization
 
+import { randomUUID } from "node:crypto";
 import { join, resolve } from "path";
 import { writeFile, realpath } from "fs/promises";
 import { LIMITS } from "../config/limits.js";
@@ -47,11 +48,52 @@ export function createSafeFilenameBase(input: string, fallback = "response"): st
 }
 
 /**
+ * Write content to a uniquely-named file inside an already-validated directory.
+ *
+ * **`flag: "wx"` is the load-bearing half.** The name carries a clock reading
+ * and 32 bits of randomness, but no naming scheme *guarantees* uniqueness —
+ * `wx` is what turns the residual collision into an `EEXIST` instead of a
+ * silent overwrite, and it is the reason a second writer can never truncate a
+ * file the first one is still holding a path to. Every save site routes through
+ * here so a third one cannot forget it.
+ *
+ * **The random component is not belt-and-braces.** `Date.now()` discriminates
+ * nothing between two writes in the same millisecond, and the base it is
+ * appended to collides far more often than its length suggests: an unbounded
+ * `hostname + pathname` is cut to `FILENAME_MAX_LENGTH`, so every URL sharing a
+ * 50-character prefix arrives here with an identical `safeName`. Five unrelated
+ * endpoints under one long `/organizations/{id}/workspaces/` path is one base,
+ * not five.
+ *
+ * **No `encoding`.** It is inert for a `Buffer`, and utf-8 is already the
+ * default for a `string`, so naming one would buy nothing now and would become
+ * a live lossy conversion the day a caller hands over bytes it decoded itself.
+ * `LESSONS.md` RC-33.
+ *
+ * @param targetDir - Destination directory. **Must arrive already resolved and
+ *   validated against the allowed roots**; nothing here re-establishes that
+ * @param safeName - A filename base from `createSafeFilenameBase`
+ * @param content - The exact bytes to write, or text to write as utf-8
+ * @returns Absolute path to the file written
+ * @throws If a file already exists at the generated path (`EEXIST`)
+ */
+export async function writeUniqueFile(
+    targetDir: string,
+    safeName: string,
+    content: string | Buffer
+): Promise<string> {
+    const filename = `${safeName}_${Date.now()}_${randomUUID().slice(0, 8)}.txt`;
+    const filepath = join(targetDir, filename);
+    await writeFile(filepath, content, { mode: 0o600, flag: "wx" }); // Owner-only, never overwrite
+    return filepath;
+}
+
+/**
  * Save response content to a file.
  *
  * Uses custom output directory if provided, otherwise uses temp directory.
- * Creates a safe filename from the URL and adds a timestamp for uniqueness.
- * File is written with mode 0o600 (owner-only access).
+ * Builds a safe filename base from the URL, then hands the write to
+ * `writeUniqueFile`, which owns uniqueness and the owner-only mode.
  *
  * **`Buffer` only — no `string | Buffer` union.** The caller decides what bytes
  * land on disk, and it is the only party that can: a union would take a
@@ -104,12 +146,5 @@ export async function saveResponseToFile(
         }
     }
     const safeName = createSafeFilenameBase(baseName);
-    const filename = `${safeName}_${Date.now()}.txt`;
-    const filepath = join(targetDir, filename);
-
-    // No `encoding`: the argument is octets. An encoding is inert for a Buffer,
-    // so setting one would only be reassurance — and it would become a live
-    // lossy conversion the day this parameter accepts a string.
-    await writeFile(filepath, content, { mode: 0o600 }); // Owner-only access
-    return filepath;
+    return writeUniqueFile(targetDir, safeName, content);
 }

@@ -21,6 +21,7 @@ export {
 export {
     createSafeFilenameBase,
     saveResponseToFile,
+    writeUniqueFile,
 } from "./file-saver.js";
 
 export {

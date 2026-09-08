@@ -980,6 +980,7 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 }
 
 // src/lib/response/file-saver.ts
+import { randomUUID } from "crypto";
 import { join as join2, resolve as resolve2 } from "path";
 import { writeFile, realpath as realpath2 } from "fs/promises";
 
@@ -1408,6 +1409,12 @@ function createSafeFilenameBase(input, fallback = "response") {
   }
   return base;
 }
+async function writeUniqueFile(targetDir, safeName, content) {
+  const filename = `${safeName}_${Date.now()}_${randomUUID().slice(0, 8)}.txt`;
+  const filepath = join2(targetDir, filename);
+  await writeFile(filepath, content, { mode: 384, flag: "wx" });
+  return filepath;
+}
 async function saveResponseToFile(content, url, outputDir) {
   const targetDir = outputDir ?? await getOrCreateTempDir();
   if (outputDir) {
@@ -1429,10 +1436,7 @@ async function saveResponseToFile(content, url, outputDir) {
     }
   }
   const safeName = createSafeFilenameBase(baseName);
-  const filename = `${safeName}_${Date.now()}.txt`;
-  const filepath = join2(targetDir, filename);
-  await writeFile(filepath, content, { mode: 384 });
-  return filepath;
+  return writeUniqueFile(targetDir, safeName, content);
 }
 
 // src/lib/response/strip-blocks.ts
@@ -2278,7 +2282,7 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo,
 }
 
 // src/lib/response/post-processor.ts
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
 function hasOwnWrappedTag(result) {
   try {
@@ -2330,7 +2334,7 @@ function createWrapper(config) {
     if (isWrappedResult(result)) return result;
     try {
       if (!Array.isArray(result.content)) return tag(result);
-      const requestId = config.enableSpotlighting && !result.isError ? randomUUID() : void 0;
+      const requestId = config.enableSpotlighting && !result.isError ? randomUUID2() : void 0;
       const newContent = result.content.map(
         (part) => processTextPart(part, hostname, requestId)
       );
@@ -2343,10 +2347,10 @@ function createWrapper(config) {
 }
 
 // src/lib/types/common.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 function generateMetadataSeparator() {
   return `
----MCP-CURL-${randomUUID2()}---
+---MCP-CURL-${randomUUID3()}---
 `;
 }
 
@@ -2872,6 +2876,7 @@ export {
   JqQuerySchema,
   applyJqFilter,
   createSafeFilenameBase,
+  writeUniqueFile,
   defendText,
   exceedsInlineCap,
   createWrapper,

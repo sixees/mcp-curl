@@ -1,15 +1,15 @@
 // src/lib/tools/jq-query.ts
 // Registers the jq_query tool for querying JSON files
 
-import { readFile, writeFile } from "fs/promises";
-import { join, basename } from "path";
+import { readFile } from "fs/promises";
+import { basename } from "path";
 import { JqQuerySchema, type JqQueryInput } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
 import { getErrorMessage, sanitizeDescription, JSON_MIME } from "../utils/index.js";
-import { createSafeFilenameBase, defendText, exceedsInlineCap } from "../response/index.js";
+import { createSafeFilenameBase, defendText, exceedsInlineCap, writeUniqueFile } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
@@ -151,11 +151,12 @@ export async function executeJqQuery(
             // Generate a filename based on the source file (use validated path)
             const sourceBasename = basename(validatedFilePath) || "query_result";
             const safeName = createSafeFilenameBase(sourceBasename, "query_result");
-            const filename = `${safeName}_${Date.now()}.txt`;
             const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
-            const filepath = join(targetDir, filename);
 
-            await writeFile(filepath, persisted, { encoding: "utf-8", mode: 0o600 });
+            // Shared with `curl_execute`'s save path so neither site can drift
+            // from `flag: "wx"`. Two filters over one source file produce the
+            // same `safeName`, and nothing else here would separate them.
+            const filepath = await writeUniqueFile(targetDir, safeName, persisted);
 
             // Server-authored: a byte count and a path this process built from
             // a validated directory and a sanitised basename. No remote text.
