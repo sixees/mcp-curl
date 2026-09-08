@@ -150,9 +150,23 @@ set aside beforehand — never `git restore`, `checkout --`, or `stash`.
 ## Commit history
 
 ```
+2402cc5 test(response): use a synthetic org id in the truncation fixture
 99c8af6 fix(response): move the write helper's guarantees into the code from its prose
 3b90ed7 fix(response): route both save sites through an exclusive write
 ```
+
+**`2402cc5`'s message under-describes its contents, and that is a staging error
+rather than a deliberate grouping.** It carries the two-line fixture change its
+subject names *and* all of `LESSONS.md` RC-52..RC-55, this handoff, the addition
+of `docs/todos/020`, and the deletion of `docs/todos/012` — those had been staged
+earlier in the run and were swept in when the test file was added and committed.
+The intended separate docs commit then found nothing to commit.
+
+Not corrected in place: `git commit --amend` is on
+`skill: pr-resolver-safety`'s forbidden list, and `git reset --soft` is the same
+ban in a different spelling. Nothing is lost and the tree is correct; the branch
+is unpushed, so regrouping is the operator's to do if wanted. A squash merge
+makes it moot.
 
 ## Review context
 
