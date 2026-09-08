@@ -132,14 +132,18 @@ export async function executeJqQuery(
 
         // Handle result size and file saving.
         //
-        // **The gate weighs the bytes the model receives, not the bytes on
-        // disk.** Downstream of here the post-processor wrap applies
-        // `defendForInline`, which does not exempt JSON and so replaces a beacon
-        // inside a JSON string value with a longer placeholder. Weighing
-        // `persisted` would report a size that never reaches the caller and let
-        // an over-cap result stay inline — invariant 14, `LESSONS.md` RC-15. The
-        // measurement is discarded; this function's return keeps the JSON
-        // grammar it documents, and the wrap does the stripping.
+        // **The gate weighs the bytes the model receives, and here they are the
+        // same bytes as the ones on disk.** `persisted` is a JSON document, so
+        // the post-processor wrap's `defendForInline` takes its verbatim arm —
+        // sanitise and detect, no markup stripping and no re-serialisation —
+        // which cannot lengthen the text.
+        //
+        // `exceedsInlineCap` is still the call to make rather than a bare byte
+        // comparison. It owns the rule that a size gate answers about the
+        // POST-defence form (invariant 14, `LESSONS.md` RC-15), and that rule
+        // binds a caller whose text is not JSON and therefore can grow. Reading
+        // the coincidence here as licence to compare bytes directly would move
+        // the rule to the call site, where the next caller has to remember it.
         const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
         const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
 
