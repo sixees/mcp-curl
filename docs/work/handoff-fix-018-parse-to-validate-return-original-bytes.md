@@ -508,10 +508,43 @@ its cost. This is a design decision and it is the director's.
 
 ## Outstanding
 
-- `ARCHITECTURE.md:101-110` and `docs/custom-tools.md:305-325` still state the byte and
-  double-defence contracts unconditionally (coderabbitai). Same class as the fixes above.
 - The re-opened escalation.
 - Suite: 1281 passing, 7 skipped. `strip-blocks.test.ts`'s two ReDoS wall-clock budgets
   fail on most runs — pre-existing, `docs/todos/013`, and not touched by this branch.
 
 **No todo was filed this round, and none was closed.** 4 open against this PR, unchanged.
+
+
+---
+
+# Round 3, second pass — 2026-09-08
+
+`coderabbitai` reviewed the round-1 fixes and returned **4 comments, 4 classes**. All four
+are about text the previous pass wrote, which is `01-known-shapes.md` → **K-16** working as
+described: *the newest fix is the least-reviewed text on the branch.* No other bot returned
+this pass — `chatgpt-codex-connector` answered each thread with *"To use Codex here, create
+an environment for this repo"*, a configuration notice rather than a finding.
+
+## Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `schemas.ts` still ends *"so that result is not JSON-parseable"* | coderabbitai Trivial | Fix needed | Deleted. The previous pass rewrote the sentence in front of it and left the old trailing clause, so the field contradicted itself in consecutive sentences |
+| `curl_execute` describes the notices as "leading" | coderabbitai Trivial | Fix needed | They are a THIRD content entry after the body and the header entry. Corrected in both places |
+| `public.ts` does not say byte identity is conditional | coderabbitai Minor | Fix needed | The docblock now states that `sanitizeAndDetect` is **not** skipped on the JSON arm, so a document carrying U+200B or a threshold-length padding run comes back without it, and names the two exceptions the tool reports |
+| The *Outstanding* item naming `ARCHITECTURE.md` and `docs/custom-tools.md` is stale | coderabbitai Minor | Fix needed | Removed — both were fixed in `9baf458`, in the same pass that wrote the item |
+
+## Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Run the full `defendText` pipeline over the non-JSON artefact before saving, and compute `originBytesExact` from the final bytes | coderabbitai Major (CWE-74) | P2 | In scope | **Reverses a binding RC.** `LESSONS.md` RC-47 removed exactly this after measuring the cost: `stripHtmlComments` deletes the `<!-- trace-id: … -->` a framework puts its diagnostic in, on the one copy of a 500 page the operator has. `.claude/rules/03-divergence.md` → *Settled conflicts stay settled* requires a later round proposing the same reversal to be answered by citing the RC rather than re-litigating it, and that is what the reply does. The artefact's reader is the operator's own file tooling, not the model; `savedMessage` does not offer it to `jq_query`, and it names what the file holds |
+
+## Stop condition
+
+The operator's rule: **at most three rounds, stop when a round returns five or fewer
+comments with no P1s.** This pass returned **4 comments and no P1s**, so the condition is
+met — reported for the operator to call, not applied here.
+
+**One thread remains open by design**: `PRRT_kwDOQnZcNs6gJ1tW`, the markdown-beacon
+escalation, which is RC-48's design question and the only thing blocking merge.

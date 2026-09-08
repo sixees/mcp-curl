@@ -543,7 +543,7 @@ var CurlExecuteSchema = z2.object({
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
   include_headers: z2.boolean().default(false).describe(
-    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as a SECOND content entry after the body, so the body entry stays parseable on its own \u2014 read content[1], do not split content[0]; so that result is not JSON-parseable. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
+    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as a SECOND content entry after the body, so the body entry stays parseable on its own \u2014 read content[1], do not split content[0]. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
@@ -2622,8 +2622,9 @@ Args:
     jq_filter, and combining this with save_to_file or jq_filter is safe
     unconditionally. Header text is capped at
     min(64KB, max_result_size); truncation is reported as headers_truncated under
-    include_metadata, and as a leading [mcp-curl] notice otherwise. If headers were
-    asked for and none arrived, that is reported as headers_undetermined (or a leading
+    include_metadata, and as an [mcp-curl] notice otherwise \u2014 in a THIRD content entry
+    after the body and the header entry, never prefixed to either. If headers were
+    asked for and none arrived, that is reported as headers_undetermined (or the same
     [mcp-curl] notice) rather than guessed at. Requires macOS; elsewhere no headers are
     captured and that is reported as headers_unsupported, which is a fact about the host
     and NOT a statement that the origin sent none. Note that response headers routinely

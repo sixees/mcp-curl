@@ -66,7 +66,17 @@ interface McpCurlConfig {
      * one field with `-->` in a later one and deletes what lies between. The
      * trade is deliberate and it is not free — a beacon or a `javascript:`
      * link inside a JSON string value reaches the model. Weigh that before
-     * leaving spotlighting off. The wrap is idempotent via a
+     * leaving spotlighting off.
+     *
+     * **"As the origin wrote it" is bounded by the sanitise, which is not
+     * skipped.** `sanitizeAndDetect` still removes Unicode attack codepoints
+     * and collapses padding runs, so a JSON document carrying a literal
+     * U+200B or a threshold-length whitespace run comes back without it.
+     * Byte identity holds when that pass was a no-op — which is the case for
+     * every realistic payload, and is measured rather than assumed — and
+     * `curl_execute` reports the exceptions it can see: `body_decode_lossy`
+     * for a non-UTF-8 origin, and `savedMessage` naming which form an
+     * artefact holds. The wrap is idempotent via a
      * module-private, non-enumerable `Symbol` tag with an own-property check
      * (so the tag cannot be forged from outside the wrap module and an
      * inherited tag on a wrapped prototype cannot bypass processing of
