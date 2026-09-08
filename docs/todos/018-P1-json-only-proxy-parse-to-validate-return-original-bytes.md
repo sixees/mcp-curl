@@ -346,6 +346,11 @@ todo closed as a side effect of another is a todo nobody dispositioned.
 
 ## Acceptance criteria
 
+> **POST-AUDIT** — criteria 5 and 6 were reversed by the director's scope call:
+> a bare scalar is valid JSON and is returned as the origin's bytes, so a
+> 600 KB bare string takes the JSON arm. `LESSONS.md` RC-47; see *Round 2*
+> below. The criteria are left as written per `.claude/rules/03-divergence.md`.
+
 - [x] A JSON body is returned **byte-identical** to what the origin sent. Test with
       a duplicate key, an integer past `Number.MAX_SAFE_INTEGER`, `1e400`, `"1.50"`,
       a lone surrogate, and non-ASCII keys — all must survive unchanged
