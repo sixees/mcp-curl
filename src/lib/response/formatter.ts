@@ -21,6 +21,16 @@ export interface FileSaveInfo {
 export interface BodyInfo {
     /** The wire octets were not valid UTF-8; see `ProcessedResponse.decodeWasLossy`. */
     decodeWasLossy?: boolean;
+    /**
+     * The body went to a file instead of being returned inline; see
+     * `ProcessedResponse.savedToFile`.
+     *
+     * The lossy-decode notice needs it because that notice points at a body. On
+     * a saved branch there is no inline body to point at, and the artefact can
+     * hold the origin's octets exactly — so the same words would both name text
+     * that is not there and contradict `savedMessage`'s own exactness clause.
+     */
+    savedToFile?: boolean;
 }
 
 /** Out-of-band facts about the header text, reported beside it rather than in it. */
@@ -119,13 +129,24 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
         // precisely BECAUSE the request failed. This flag's domain cannot answer
         // a question about the body; `exitCode` can.
         // A fidelity fact about the body, so it is stated whatever the exit
-        // code was and whatever the headers did. The body is still returned —
-        // its JSON structure is intact and only character values moved — but a
-        // caller comparing it against the origin needs to know a re-encode
-        // happened, because U+FFFD from a lossy decode is indistinguishable
-        // from U+FFFD an origin actually sent.
+        // code was and whatever the headers did. A caller comparing what it got
+        // against the origin needs to know a re-encode happened, because U+FFFD
+        // from a lossy decode is indistinguishable from U+FFFD an origin
+        // actually sent.
+        //
+        // **Two wordings, because the decode and the artefact are different
+        // subjects.** Inline, the body IS returned — its JSON structure intact
+        // and only character values moved — so the notice speaks about the text
+        // beside it. On a saved branch there is no inline body, and
+        // `sanitiseWasNoOp` may have sent the origin's own octets to disk, so
+        // claiming "the text above is not byte-identical" would name text that
+        // is absent and contradict `savedMessage`, which reports the file's form
+        // itself. The decode is still worth stating: it is what the byte count
+        // and any inline preview were derived from.
         bodyInfo?.decodeWasLossy
-            ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent"
+            ? bodyInfo.savedToFile
+                ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD when it was decoded. The saved file's own message states which bytes it holds"
+                : "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent"
             : null,
         headerInfo?.undetermined
             ? exitCode === 0

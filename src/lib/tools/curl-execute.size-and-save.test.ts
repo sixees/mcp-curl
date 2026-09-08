@@ -244,3 +244,86 @@ describe("curl_execute saved artefact — 'did a filter run' has one answer", ()
         expect(body).toContain("drop");
     });
 });
+
+describe("curl_execute — a jq_filter never discards an unparseable body", () => {
+    it("saves and reports an HTML error page fetched with a jq_filter", async () => {
+        // **At `executeCurlRequest` because the defect is the composition, not
+        // either link.** The filter gate refused correctly and the saver saved
+        // correctly; the fault was only that the refusal threw about a hundred
+        // lines ABOVE `shouldSave`, so the diagnostic body was discarded
+        // outright — no path, no byte count, nothing to open — while the same
+        // page fetched without a filter was persisted and reported.
+        // `docs/todos/018` → *Bad JSON: report, save, do not inline* and
+        // `curl_execute`'s own description both promise that save with no
+        // filter exception. A unit test beside the gate cannot see this: the
+        // gate's own behaviour is unchanged.
+        const body = Buffer.from(
+            "<html><body><h1>502 Bad Gateway</h1><!-- trace-id: abc123 --></body></html>",
+            "utf8"
+        );
+        mockedExecuteCommand.mockResolvedValue(
+            curlOutputFor({ body, contentType: "text/html" })
+        );
+
+        const text = (
+            await executeCurlRequest(
+                params({ url: "https://example.test/broken", jq_filter: ".data" })
+            )
+        ).content[0].text;
+
+        // The three facts the contract owes the caller.
+        expect(text).toContain("is not JSON");
+        expect(text).toContain(`${body.length} bytes on disk`);
+        const onDisk = await readFile(savedPathFrom(text), "utf-8");
+
+        // Byte-for-byte, comment included. No strip stage runs on this arm, so
+        // the `<!-- trace-id -->` a framework puts its diagnostic in survives —
+        // which is the whole reason RC-47 keeps the artefact undefended.
+        expect(onDisk).toBe(body.toString("utf8"));
+        expect(text).toContain("The file holds the origin's exact bytes.");
+
+        // Not an error, and never advertised as filter output: no filter ran.
+        expect(text).not.toContain("Cannot apply jq_filter");
+        expect(text).not.toContain("FILTER OUTPUT");
+    });
+});
+
+describe("curl_execute — a saved JSON body says which bytes reached disk", () => {
+    it("reports a sanitised over-cap JSON document as NOT byte-identical", async () => {
+        // `originBytesExact` was computed for every saved artefact and then read
+        // only inside the non-JSON arm, so a valid JSON document saved from the
+        // sanitised text — over the cap, with a codepoint removed — was reported
+        // as a plain `jq_query` path with nothing saying the file differs from
+        // what the origin sent. The non-JSON arm said so; this arm did not.
+        //
+        // The escape, never a literal invisible character: a bare U+200B in this
+        // source is invisible in review and survives an editor round-trip badly.
+        const zwsp = "\u200b";
+        const body = Buffer.from(
+            `{"note":"${zwsp}${"padding-".repeat(200)}"}`,
+            "utf8"
+        );
+        // Fixture guards: the premise is a body that PARSES, is over the cap,
+        // and is changed by the sanitise. If any fails the case proves nothing.
+        expect(() => JSON.parse(body.toString("utf8"))).not.toThrow();
+        expect(body.length).toBeGreaterThan(1000);
+        expect(body.toString("utf8")).toContain(zwsp);
+
+        mockedExecuteCommand.mockResolvedValue(
+            curlOutputFor({ body, contentType: "application/json" })
+        );
+
+        const text = (
+            await executeCurlRequest(
+                params({ url: "https://example.test/big", max_result_size: 1000 })
+            )
+        ).content[0].text;
+
+        savedPathFrom(text);
+        // Still routed to jq_query — the body IS JSON and the tool can read it.
+        expect(text).toContain("jq_query");
+        // And now says what the file actually holds.
+        expect(text).toContain("attack codepoints removed");
+        expect(text).not.toContain("The file holds the origin's exact bytes.");
+    });
+});

@@ -626,3 +626,75 @@ errors in `src/lib.test.ts`, `src/lib/response/post-processor.test.ts` and
 `src/lib/schema/schema.test.ts`. In `post-processor.test.ts` they sit at lines
 267-409 while this branch's edits start at 723, so none is ours. `npm run build`
 passes — tsup does not typecheck the test tree, which is why nothing caught them.
+
+---
+
+# Review Comments Addressed — 2026-09-08 (round 4)
+
+Both bots were requested and both delivered. **Codex reviewed head (`9c080c4`) for the
+first time** — its previous completed review was against `cd348f9`, so the coverage gap
+recorded in *Round 3 tail read* is now closed, and five of this round's six findings are
+text it had never seen. `coderabbitai` returned one open finding and **self-resolved two
+others** as *"Addressed in commits d48c72b to 9c080c4"*; both were filed at 12:53:28Z,
+after `9c080c4` was already pushed, so that closure claim is incoherent. Verified both
+independently — **one of the two was genuinely unfixed** and is repaired below.
+
+RC filed this round: **RC-50 — the gate narrowed on one side, and the other side still
+discarded the body.** In `LESSONS.md`, which is where it lives.
+
+## Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `jq_filter` against a non-JSON origin throws above `shouldSave`, discarding the body | codex **P1** | Fix needed | The filter is now skipped rather than fatal — `if (options.jqFilter && classified.json)`. `shouldSave`'s existing `(!classified.json && !filterApplied)` arm persists the body and `savedMessage` names the reason, byte count and path. Regression test at `executeCurlRequest`, probed |
+| The lossy-decode notice says "the text above" on a saved branch | codex P2 | Fix needed | Two wordings. `BodyInfo` gains `savedToFile`; the saved wording drops the byte-identity claim, which was **contradicting `savedMessage`'s own exactness clause in the same response** |
+| The tool description calls attack codepoints "the one exception" | codex P2 | Fix needed | Now states two exceptions and names `body_decode_lossy`. **This is the sibling site the round-3 sweep missed** after fixing the same class in `public.ts` — `01-known-shapes.md` → K-12 |
+| `originBytesExact` is consulted only inside the rejection branch | codex P2 | Fix needed | Extracted as `exactness` and stated on both arms, so an over-cap JSON body saved from `sanitised` no longer reports as a bare `jq_query` path. Withheld for filter output alone, where `scope` says more |
+| `content[1]` is described as headers unconditionally | coderabbit Minor (self-resolved, **wrongly**) | Fix needed | `headerPart` is `undefined` whenever no headers were captured, so a notice can occupy `content[1]`. The description now says to match on content, not index |
+| `docs/todos/019`'s acceptance criteria name `defendForInline` | coderabbit Minor (self-resolved) | Fix needed | `defendForInline` is the post-processor wrap's arm and never sees the `curl_execute` body path; the sanitise there is `sanitizeAndDetect` above the `classifyBody` fork. Corrected, plus the artefact-bytes claim qualified as conditional on `sanitiseWasNoOp` |
+
+## Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Resolve the JSON markdown-beacon bypass before merge; add a JSON-safe control, do not rely on `enableSpotlighting`, add a beacon regression test | coderabbit Major (CWE-74, reachability External) | Reported as merge-blocking; **declined without re-grading** | In scope | **RC-49 closed this with no trigger.** The proposal is exactly the beacon pass RC-48 measured and RC-49 declined on the director's middleware framing — the payload is the agent's to interpret. It brings no information that decision did not weigh, so `.claude/rules/03-divergence.md` → *Settled conflicts stay settled* requires it be answered by citing the RC. `docs/todos/019`'s *Out of scope* section pre-recorded this citation |
+| `metadataFound: false` leaves cURL's metadata in `bodyBytes`, so a contaminated buffer is classified and a valid JSON body is demoted | codex P2 | **Graded down to P3** | In scope | Mechanism real and the codebase predicts it — `ParsedResponse.bodyBytes` says *"a fidelity path built on this field has to read the flag"*, and `processResponse` does not. But the separator is only evicted by a `Content-Type` exceeding `MAX_METADATA_TAIL_LENGTH: 8_192`, and no real origin sends an 8 KB Content-Type. Empty population, declined on the same basis as the uncapped-parse P1 already on this record. **Trigger to re-open: any origin outside the known internal set becomes reachable.** The fix is one condition — `&& !options.contentTypeUndetermined` on `originBytesExact` — and the flag is already threaded in |
+
+## Decisions Revised
+
+_None._ The P1 fix keeps the *Filter gate is parseability, not the artefact gate* decision
+intact and adds the fall-through RC-45's own reasoning implied; it reverses nothing in the
+Key decisions table.
+
+## Resolved Todos
+
+_None._ No todo file was deleted or closed this round.
+
+## Outstanding Todos
+
+Unchanged at **4** against this PR — `018`, `016`, `014`, `013`. **None filed this round**,
+and `019` is unchanged in status (its content was corrected, not its state).
+
+## Files Modified
+
+`src/lib/response/processor.ts`, `src/lib/response/formatter.ts`,
+`src/lib/server/schemas.ts`, `src/lib/tools/curl-execute.ts`,
+`src/lib/response/formatter.test.ts`, `src/lib/tools/curl-execute.size-and-save.test.ts`,
+`docs/todos/019-P2-…md`, `LESSONS.md` (RC-50), this handoff, and the tracked `dist/` build.
+
+## Testing summary — round 4
+
+**1289 passed, 7 skipped, 0 failed**, 39 files. Five tests added: the `jq_filter`
+non-JSON e2e case, three on the lossy notice's two subjects, and one on the saved-JSON
+exactness clause.
+
+**The P1's first pass was a false green and is recorded as one.** Changing the throw to a
+fall-through moved **no** existing test, because nothing covered `jq_filter` against a
+non-JSON body at all. The probe: reverting `if (options.jqFilter && classified.json)` fails
+exactly the new case and nothing else. Backed up with `cp` and restored in the same turn;
+nothing was staged while the mutation was live.
+
+`npx tsc --noEmit` still exits 2 with the same **12 pre-existing** errors in
+`src/lib.test.ts`, `src/lib/response/post-processor.test.ts` and
+`src/lib/schema/schema.test.ts` — unchanged in count and location, none in a file this
+round touched. `npm run build` exits 0.

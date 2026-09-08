@@ -614,6 +614,22 @@ function savedMessage(facts: SavedMessageFacts): string {
           `returned here.`
         : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
 
+    // **Which form reached disk is stated on BOTH arms.** `originBytesExact` is
+    // computed for every saved artefact, and a JSON document saved from
+    // `sanitised` differs from the origin exactly as a non-JSON one does — so
+    // reading it only under `rejection` left an over-cap JSON body with a
+    // removed codepoint reported as a plain `jq_query` path, with nothing saying
+    // the file is not what the origin sent.
+    //
+    // Withheld for a filter's output alone: there `scope` below already says the
+    // file is not the response body, which is the stronger statement.
+    const exactness = filtered
+        ? ""
+        : originBytesExact
+        ? " The file holds the origin's exact bytes."
+        : " The file holds the body with attack codepoints removed, so it is not" +
+          " byte-identical to what the origin sent.";
+
     // Two arms, and neither reads the declared content type. `rejection` is
     // present exactly when `classifyBody` said the body is not JSON, so the
     // other arm's body IS — and `jq_query` can always read it. Re-deriving that
@@ -622,12 +638,8 @@ function savedMessage(facts: SavedMessageFacts): string {
     const route =
         rejection !== undefined
             ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
-              " your own tooling." +
-              (originBytesExact
-                  ? " The file holds the origin's exact bytes."
-                  : " The file holds the body with attack codepoints removed, so it is not" +
-                    " byte-identical to what the origin sent.")
-            : " Use the jq_query tool on that path to extract fields.";
+              " your own tooling." + exactness
+            : " Use the jq_query tool on that path to extract fields." + exactness;
 
     const scope = filtered
         ? " That file holds the FILTER OUTPUT, not the full response body."
@@ -775,35 +787,32 @@ export async function processResponse(
     // Its one reader is `savedMessage`'s `filtered`. The disk decision does not
     // consult it; the save arm below says why.
     let filterApplied = false;
-    if (options.jqFilter) {
+    // **A filter is skipped on an unparseable body, never fatal to it.** The
+    // gate is the parse alone, not the artefact gate: `classified.json` answers
+    // *may these bytes be handed over unmodified* — composite only, because a
+    // bare scalar's artefact has no in-process reader — where a filter asks the
+    // weaker *does this parse at all*, and runs perfectly well on a top-level
+    // scalar. Collapsing the two lost data: `curl_execute({ url, jq_filter })`
+    // threw on an endpoint returning `null` for "no record", `42` for a count or
+    // `"ok"` for a health check. `LESSONS.md` RC-45.
+    //
+    // **Skipping rather than throwing is what keeps the non-JSON contract
+    // whole.** `shouldSave` and `saveResponseToFile` sit ~100 lines below, so a
+    // throw here discarded the body outright — an HTML proxy error page fetched
+    // with a filter yielded no path and no byte count, where the same page
+    // without a filter is persisted and reported. `docs/todos/018` → *Bad JSON:
+    // report, save, do not inline* and `curl_execute`'s own description both
+    // promise that save unconditionally. Falling through leaves `filterApplied`
+    // false, so `shouldSave`'s `(!classified.json && !filterApplied)` arm takes
+    // it and `savedMessage` names the reason, the byte count and the path.
+    //
+    // The requested filter is not separately reported as refused, because
+    // `savedMessage` is told *a filter produced this content* and not *a filter
+    // was asked for* — see `filterApplied`'s reader below. "It is not JSON
+    // (`reason`), so no body is returned here" already says why nothing was
+    // filtered.
+    if (options.jqFilter && classified.json) {
         const trimmed = content.trim();
-
-        // **Two different questions, and collapsing them onto one gate lost
-        // data.** `classified.json` answers *may these bytes be handed over
-        // unmodified* — composite only, because a bare scalar's artefact has no
-        // in-process reader. A filter asks something weaker: *does this parse at
-        // all*. A filter runs perfectly well on a top-level scalar.
-        //
-        // Routing the filter through the artefact gate made
-        // `curl_execute({ url, jq_filter })` THROW on an endpoint returning
-        // `null` for "no record", `42` for a count or `"ok"` for a health check
-        // — and the throw sits above `shouldSave`, so the body was not saved
-        // either. It was discarded outright, where the same body without a
-        // filter is persisted and reported. `LESSONS.md` RC-45.
-        //
-        // So this gate is the parse alone. `empty-body` and `looks-like-markup`
-        // still cannot be filtered; a scalar can.
-        if (!classified.json) {
-            // **The reason comes from the closed vocabulary, not from the
-            // header.** `options.contentType` is origin-written, so echoing it
-            // put remote text into server-authored error prose; and it answers
-            // a question this path does not ask — `classifyBody` decides on
-            // the bytes. `JsonRejectionReason` carries no response byte by
-            // construction.
-            throw new Error(
-                `Cannot apply jq_filter: Response is not JSON (${classified.reason})`
-            );
-        }
 
         // Parse JSON once and reuse for both validation and filtering
         let parsedData: unknown;

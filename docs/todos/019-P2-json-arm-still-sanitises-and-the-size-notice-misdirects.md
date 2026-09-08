@@ -63,8 +63,14 @@ behaviour that is already wrong and gets wronger once item 1 lands.
 
 ## Acceptance criteria
 
-- [ ] `defendForInline`'s JSON arm detects without sanitising; the returned bytes
-      are the origin's decode.
+- [ ] **The `processResponse` body path** detects without rewriting what it
+      returns, so the returned bytes are the origin's decode. The sanitise there
+      is `sanitizeAndDetect` at the top of the body path, **above** the
+      `classifyBody` fork and assigned straight to `content` — not
+      `defendForInline`, which is the post-processor wrap's arm and never sees
+      this path. Any normalised value stays internal, for `classifyBody` alone:
+      the BOM case in that function's comment is why classification cannot read
+      the raw decode.
 - [ ] `[injection-defense]` still fires on a JSON body carrying an injection
       phrase — invariant 7 is not weakened by item 1. A regression test pins it.
 - [ ] `originBytesExact` and its two-armed route sentence collapse to a single
@@ -83,7 +89,10 @@ behaviour that is already wrong and gets wronger once item 1 lands.
 
 - `defendText`'s non-JSON pipeline. Other consumers of the published API keep it.
 - The header channel. It takes every strip stage and that is invariant 1a.
-- The non-JSON artefact. RC-47 settled that it keeps the origin's bytes.
+- The non-JSON artefact. RC-47 settled that it takes no strip stage. Note the
+  bytes it holds are conditional, not absolute: the save path writes
+  `responseBytes` only where `sanitiseWasNoOp`, and the sanitised text otherwise
+  — which is exactly what item 1 changes, so the two interact.
 - Markdown beacons on the JSON arm. **RC-49 closed that with no trigger** — a
   finding proposing a beacon pass, a trusted-origin gate or mandatory
   spotlighting is answered by citing RC-49, per `.claude/rules/03-divergence.md`.

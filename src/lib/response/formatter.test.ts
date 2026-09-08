@@ -123,3 +123,37 @@ describe("formatResponse — header metadata", () => {
         expect(notice.startsWith("[mcp-curl]")).toBe(true);
     });
 });
+
+describe("plainBranchNotices — the lossy-decode notice names the right subject", () => {
+    it("points at the returned text when the body was inlined", () => {
+        const notice = plainBranchNotices(0, undefined, { decodeWasLossy: true });
+        expect(notice).toContain("not valid UTF-8");
+        expect(notice).toContain("the text above is not byte-identical");
+    });
+
+    it("does NOT claim 'the text above' when the body went to a file", () => {
+        // Two server-authored statements were contradicting each other in one
+        // response. On a saved branch `content[0]` is the save message and there
+        // is no inline body for "the text above" to name — and where the
+        // sanitise was a no-op the artefact holds the origin's own octets, so
+        // `savedMessage` says "the file holds the origin's exact bytes" while
+        // this notice said the opposite about the same response.
+        //
+        // The decode is still reported: it is what the byte count was taken on.
+        const notice = plainBranchNotices(0, undefined, {
+            decodeWasLossy: true,
+            savedToFile: true,
+        });
+        expect(notice).toContain("not valid UTF-8");
+        expect(notice).not.toContain("the text above");
+        expect(notice).not.toContain("not byte-identical");
+        expect(notice).toContain("saved file's own message states which bytes it holds");
+    });
+
+    it("says nothing at all when the decode was clean", () => {
+        // The third value: without this, a notice that fired unconditionally
+        // would satisfy both cases above.
+        expect(plainBranchNotices(0, undefined, { decodeWasLossy: false })).toBe("");
+        expect(plainBranchNotices(0, undefined, undefined)).toBe("");
+    });
+});

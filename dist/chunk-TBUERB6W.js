@@ -543,7 +543,7 @@ var CurlExecuteSchema = z2.object({
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
   include_headers: z2.boolean().default(false).describe(
-    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as a SECOND content entry after the body, so the body entry stays parseable on its own \u2014 read content[1], do not split content[0]. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
+    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as their OWN content entry after the body, so the body entry stays parseable on its own \u2014 never split content[0]. That entry is present only when headers were actually captured: where none were (see headers_undetermined and headers_unsupported below) it is omitted entirely, and a server notice may then occupy content[1]. Match on the entry's content rather than trusting its index. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
@@ -2031,7 +2031,8 @@ function savedMessage(facts) {
   const subject = filtered ? "Result of jq_filter" : "Response";
   const capClause = overCap ? ` It also exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied.` : "";
   const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not JSON (${rejection.reason}), so no body is returned here.${capClause}` : overCap ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling." + (originBytesExact ? " The file holds the origin's exact bytes." : " The file holds the body with attack codepoints removed, so it is not byte-identical to what the origin sent.") : " Use the jq_query tool on that path to extract fields.";
+  const exactness = filtered ? "" : originBytesExact ? " The file holds the origin's exact bytes." : " The file holds the body with attack codepoints removed, so it is not byte-identical to what the origin sent.";
+  const route = rejection !== void 0 ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with your own tooling." + exactness : " Use the jq_query tool on that path to extract fields." + exactness;
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
   return cause + route + scope;
 }
@@ -2060,13 +2061,8 @@ async function processResponse(responseBytes, options) {
   const sanitiseWasNoOp = sanitised === response;
   let content = sanitised;
   let filterApplied = false;
-  if (options.jqFilter) {
+  if (options.jqFilter && classified.json) {
     const trimmed = content.trim();
-    if (!classified.json) {
-      throw new Error(
-        `Cannot apply jq_filter: Response is not JSON (${classified.reason})`
-      );
-    }
     let parsedData;
     try {
       parsedData = JSON.parse(trimmed, keepNumberLexeme);
@@ -2235,12 +2231,21 @@ function plainBranchNotices(exitCode, headerInfo, bodyInfo) {
     // precisely BECAUSE the request failed. This flag's domain cannot answer
     // a question about the body; `exitCode` can.
     // A fidelity fact about the body, so it is stated whatever the exit
-    // code was and whatever the headers did. The body is still returned —
-    // its JSON structure is intact and only character values moved — but a
-    // caller comparing it against the origin needs to know a re-encode
-    // happened, because U+FFFD from a lossy decode is indistinguishable
-    // from U+FFFD an origin actually sent.
-    bodyInfo?.decodeWasLossy ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent" : null,
+    // code was and whatever the headers did. A caller comparing what it got
+    // against the origin needs to know a re-encode happened, because U+FFFD
+    // from a lossy decode is indistinguishable from U+FFFD an origin
+    // actually sent.
+    //
+    // **Two wordings, because the decode and the artefact are different
+    // subjects.** Inline, the body IS returned — its JSON structure intact
+    // and only character values moved — so the notice speaks about the text
+    // beside it. On a saved branch there is no inline body, and
+    // `sanitiseWasNoOp` may have sent the origin's own octets to disk, so
+    // claiming "the text above is not byte-identical" would name text that
+    // is absent and contradict `savedMessage`, which reports the file's form
+    // itself. The decode is still worth stating: it is what the byte count
+    // and any inline preview were derived from.
+    bodyInfo?.decodeWasLossy ? bodyInfo.savedToFile ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD when it was decoded. The saved file's own message states which bytes it holds" : "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent" : null,
     headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
   ].filter(Boolean).join("\n");
 }
@@ -2587,9 +2592,12 @@ It handles URL encoding, header formatting, and response processing automaticall
 
 Response contract: a body that parses as JSON is returned to you as the origin wrote it,
 whatever Content-Type it declared \u2014 duplicate names, number lexemes and key order all
-survive. The one exception is that attack codepoints (invisible characters, bidi
-overrides, long padding runs) are removed first, so a body carrying one is returned
-without it; everything else is byte for byte.
+survive. There are two exceptions, and both are reported when they happen. Attack
+codepoints (invisible characters, bidi overrides, long padding runs) are removed first,
+so a body carrying one is returned without it. And a body that is not valid UTF-8 is
+decoded with each undecodable sequence replaced by U+FFFD, reported as
+body_decode_lossy; its JSON structure survives but those character values do not.
+Outside those two it is byte for byte.
 
 A body that does NOT parse as JSON is not returned inline at all \u2014 it is written to a
 file and you get the reason, the byte count and the path, to open with your own file
@@ -2790,7 +2798,10 @@ async function executeCurlRequest(params, extra = {}) {
         undetermined: headersUndetermined,
         unsupported: headersUnsupported
       },
-      { decodeWasLossy: processed.decodeWasLossy }
+      {
+        decodeWasLossy: processed.decodeWasLossy,
+        savedToFile: processed.savedToFile
+      }
     ) || void 0 : void 0;
     return {
       content: [
