@@ -70,7 +70,7 @@ describe("saveResponseToFile — two saves never resolve to one path", () => {
         // every save for a consumer with a long path prefix: the cap lands
         // inside `/organizations/{id}/workspaces/`, so the resource name never
         // reaches the filename at all.
-        const prefix = "https://focus.example.test/api/organizations/21141236/workspaces/999";
+        const prefix = "https://focus.example.test/api/organizations/00000000/workspaces/999";
         const urlA = `${prefix}/time-entries/batch`;
         const urlB = `${prefix}/projects`;
 
