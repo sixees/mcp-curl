@@ -323,7 +323,12 @@ export async function executeCurlRequest(
                 // captured any.
                 undetermined: headersUndetermined,
                 unsupported: headersUnsupported,
-            }
+            },
+            // A fidelity fact about the body, reported on both branches: as
+            // `body_decode_lossy` under metadata, and as an appended notice
+            // without it. Silence on either branch would leave a re-encoded
+            // body indistinguishable from an exact one.
+            { decodeWasLossy: processed.decodeWasLossy }
         );
 
         // **Two remote-controlled regions, two content parts — invariant 13's
@@ -358,7 +363,8 @@ export async function executeCurlRequest(
                   bytesReturned: headerBytesReturned,
                   undetermined: headersUndetermined,
                   unsupported: headersUnsupported,
-              }) || undefined
+              },
+              { decodeWasLossy: processed.decodeWasLossy }) || undefined
             : undefined;
         return {
             content: [

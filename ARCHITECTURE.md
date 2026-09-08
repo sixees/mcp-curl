@@ -100,10 +100,20 @@ what a violation looks like, it does not belong on this list.
    reverses RC-10 in both directions.** `docs/todos/018`: `processResponse`
    classifies the body once — a parse, `processor.ts::classifyBody` — and returns
    a JSON body as it arrived. A non-JSON body is not returned inline at all, only
-   reported, so there is no model-facing text to defend; its artefact is the
-   origin's octets. **Nothing on the body path reads `%{content_type}` to select
-   a defence, and nothing on it runs a strip stage**, which is what makes this
-   invariant's named failure shape unreachable rather than guarded.
+   reported, so there is no model-facing text to defend. **Nothing on the body
+   path reads `%{content_type}` to select a defence, and nothing on it runs a
+   strip stage**, which is what makes this invariant's named failure shape
+   unreachable rather than guarded.
+
+   **"As it arrived" is bounded by Step 2 and by the decode, and both bounds are
+   reported rather than assumed.** The artefact is the origin's octets only where
+   Step 2 changed nothing — `processor.ts` keys that on `sanitiseWasNoOp`, and
+   `savedMessage` states which of the two arms wrote the file. And the UTF-8
+   decode of the wire octets is lossy for any origin that did not send UTF-8, so
+   `processResponse` re-encodes and compares: where the decode did not
+   round-trip, `decodeWasLossy` is set and surfaces as `body_decode_lossy` under
+   metadata or as an appended notice without it. Byte identity holds when every
+   applicable pass was a no-op, and the response says when one was not.
 
    Step 2 — sanitise-and-detect — still runs above the fork, and it is the only
    pass that does. It is measured a byte-for-byte no-op on every realistic JSON

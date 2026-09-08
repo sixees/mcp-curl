@@ -701,6 +701,18 @@ export async function processResponse(
     // Lossy for any non-UTF-8 origin, which is why the message above quotes the
     // wire count rather than this string's length.
     const response = responseBytes.toString("utf8");
+    // **Measured here because this is the only place both forms exist.** A
+    // re-encode that does not reproduce the wire octets means the decode
+    // replaced something, and downstream nothing can tell U+FFFD the origin
+    // sent from U+FFFD this line produced. The body may still parse as JSON —
+    // Latin-1 `Jos\xE9` becomes `Jos\uFFFD`, valid JSON with a wrong value —
+    // so classification cannot catch it and the byte-exactness contract would
+    // otherwise be asserted over a body that was re-encoded. Reported, not
+    // corrected: the origin's octets are unrecoverable from the decode, and
+    // they are on disk untouched wherever this body is saved.
+    // Reported by chatgpt-codex-connector on PR #39; `LESSONS.md` RC-15.
+    const decodeWasLossy = !Buffer.from(response, "utf8").equals(responseBytes);
+    const lossy = decodeWasLossy ? ({ decodeWasLossy: true } as const) : {};
 
     // **The binding gate.** This is the arm that bounds every stage below, and
     // it is reachable only for a body whose decode inflated past the ceiling
@@ -900,7 +912,7 @@ export async function processResponse(
     // is returned as the empty string rather than reported as a failed parse.
     // Still saved where the caller explicitly asked for a file.
     const emptyBody = !classified.json && classified.reason === "empty-body";
-    if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false };
+    if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false, ...lossy };
 
     const shouldSave = options.saveToFile || overCap || (!classified.json && !filterApplied);
 
@@ -958,6 +970,7 @@ export async function processResponse(
         return {
             savedToFile: true,
             filepath,
+            ...lossy,
             message: savedMessage({
                 // Measured on the buffer that was written, so the number
                 // describes the file whatever `diskContent` is built from.
@@ -980,5 +993,6 @@ export async function processResponse(
     return {
         content,
         savedToFile: false,
+        ...lossy,
     };
 }

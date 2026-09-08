@@ -282,6 +282,33 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         expect(onDisk).toBe(page.replace("\u200b", ""));
     });
 
+    // A Latin-1 body decodes to U+FFFD, still parses as JSON, and used to be
+    // returned inline under a byte-for-byte contract with nothing said. The
+    // body is still returned — its structure is intact and only a character
+    // value moved — but the re-encode is now reported, because U+FFFD from a
+    // lossy decode is indistinguishable from U+FFFD an origin actually sent.
+    // Reported by chatgpt-codex-connector on PR #39; RC-48's sibling.
+    it("reports a lossy UTF-8 decode and still returns the body", async () => {
+        // `José` in Latin-1: the 0xE9 byte is not valid UTF-8 on its own.
+        const wire = Buffer.concat([
+            Buffer.from('{"name":"Jos', "utf8"),
+            Buffer.from([0xe9]),
+            Buffer.from('","kept":1}', "utf8"),
+        ]);
+        mockedExecuteCommand.mockResolvedValue(
+            curlOutputFor({ body: wire, contentType: "application/json" })
+        );
+        const result = await executeCurlRequest(params({ url: "https://example.test/x" }));
+        // The body came back, structure intact.
+        expect(bodyOf(result)).toContain('"kept":1');
+        expect(JSON.parse(bodyOf(result)).kept).toBe(1);
+        // And the re-encode is stated rather than left silent, in its own
+        // content entry — never mixed into the body's.
+        const all = result.content.map((c) => c.text).join("\n");
+        expect(all).toContain("not valid UTF-8");
+        expect(bodyOf(result)).not.toContain("not valid UTF-8");
+    });
+
     // `options.contentType` is origin-written, and this string is prose a model
     // reads as the server's. The reason comes from the closed vocabulary.
     // Reported by coderabbitai on PR #39.

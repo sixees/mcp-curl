@@ -13,6 +13,16 @@ export interface FileSaveInfo {
     message?: string;
 }
 
+/**
+ * Out-of-band facts about the BODY, reported beside it for the same reason the
+ * header facts are: a notice written into remote-authored text is
+ * indistinguishable from the same words sent by the origin.
+ */
+export interface BodyInfo {
+    /** The wire octets were not valid UTF-8; see `ProcessedResponse.decodeWasLossy`. */
+    decodeWasLossy?: boolean;
+}
+
 /** Out-of-band facts about the header text, reported beside it rather than in it. */
 export interface HeaderInfo {
     truncated?: boolean;
@@ -24,7 +34,7 @@ export interface HeaderInfo {
 }
 
 /**
- * Attach the header and stderr fields to a metadata object.
+ * Attach the header, body and stderr fields to a metadata object.
  *
  * One implementation, because the two metadata branches — saved-to-file and
  * inline — emit the same fields. Written as near-copies they drift the moment a
@@ -32,11 +42,12 @@ export interface HeaderInfo {
  * reporting different facts depending on whether it happened to be saved. The
  * branches differ in the body they carry, never in these fields.
  */
-function applyHeaderFields(
+function applyOutOfBandFields(
     output: Record<string, unknown>,
     responseHeaders: string | undefined,
     headerInfo: HeaderInfo | undefined,
-    stderr: string
+    stderr: string,
+    bodyInfo: BodyInfo | undefined
 ): void {
     if (responseHeaders) output.headers = responseHeaders;
     if (responseHeaders && headerInfo?.truncated) {
@@ -46,6 +57,12 @@ function applyHeaderFields(
     }
     if (headerInfo?.undetermined) output.headers_undetermined = true;
     if (headerInfo?.unsupported) output.headers_unsupported = true;
+    // A body fact rather than a header one, and it rides here because the two
+    // metadata branches must emit the same field set — the reason this
+    // function exists at all. Written as a separate call on each branch it
+    // would be added to one and forgotten on the other, and the symptom is a
+    // response reporting different fidelity depending on whether it was saved.
+    if (bodyInfo?.decodeWasLossy) output.body_decode_lossy = true;
     if (stderr) output.stderr = stderr;
 }
 
@@ -65,7 +82,7 @@ function applyHeaderFields(
  * position, so the original argument survives the move intact. ARCHITECTURE.md
  * invariants 13 and 16; `LESSONS.md` RC-37.
  */
-export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo): string {
+export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bodyInfo?: BodyInfo): string {
     return [
         // A non-zero exit has no field to land in on this branch, so without
         // this line a FAILED request is byte-identical to an empty successful
@@ -101,6 +118,15 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo): s
         // failure after connect — exit 23, 35, 56, 63 — where the body is empty
         // precisely BECAUSE the request failed. This flag's domain cannot answer
         // a question about the body; `exitCode` can.
+        // A fidelity fact about the body, so it is stated whatever the exit
+        // code was and whatever the headers did. The body is still returned —
+        // its JSON structure is intact and only character values moved — but a
+        // caller comparing it against the origin needs to know a re-encode
+        // happened, because U+FFFD from a lossy decode is indistinguishable
+        // from U+FFFD an origin actually sent.
+        bodyInfo?.decodeWasLossy
+            ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent"
+            : null,
         headerInfo?.undetermined
             ? exitCode === 0
                 ? "[mcp-curl] response headers were requested but none were received; the body is unaffected"
@@ -137,6 +163,10 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo): s
  *   no header block, so none is reported. The header channel cannot have
  *   contaminated the body — it arrives on its own stream — but whether the body
  *   is COMPLETE is `exit_code`'s to answer, not this field's)
+ * - body_decode_lossy: boolean (only when the wire octets were not valid UTF-8,
+ *   so the body was re-encoded and is not byte-identical to what the origin
+ *   sent. Its JSON structure is intact; one or more character values are not.
+ *   A saved artefact still holds the origin's octets where Step 2 was a no-op)
  * - headers_unsupported: boolean (this host cannot capture headers at all; a
  *   fact about the host, deliberately distinct from headers_undetermined, which
  *   is a fact about the origin)
@@ -188,7 +218,8 @@ export function formatResponse(
     includeMetadata: boolean,
     fileSaveInfo?: FileSaveInfo,
     responseHeaders?: string,
-    headerInfo?: HeaderInfo
+    headerInfo?: HeaderInfo,
+    bodyInfo?: BodyInfo
 ): string {
     // The plain branch has one string and so cannot carry JSON fields — but
     // "no field available" must not become "no signal". A truncated header
@@ -216,7 +247,7 @@ export function formatResponse(
                 filepath: fileSaveInfo.filepath,
                 message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents.",
             };
-            applyHeaderFields(output, responseHeaders, headerInfo, stderr);
+            applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
             return JSON.stringify(output, null, 2);
         }
         // Plain text - just return the message or fallback to filepath
@@ -231,7 +262,7 @@ export function formatResponse(
             exit_code: exitCode,
             response: stdout,
         };
-        applyHeaderFields(output, responseHeaders, headerInfo, stderr);
+        applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
         return JSON.stringify(output, null, 2);
     }
     // No `withNotice` — see above. `stdout` is remote bytes and nothing

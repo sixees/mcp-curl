@@ -2046,6 +2046,8 @@ async function processResponse(responseBytes, options) {
     );
   }
   const response = responseBytes.toString("utf8");
+  const decodeWasLossy = !Buffer.from(response, "utf8").equals(responseBytes);
+  const lossy = decodeWasLossy ? { decodeWasLossy: true } : {};
   const decodedBytes = Buffer.byteLength(response, "utf8");
   if (decodedBytes > LIMITS.MAX_RESPONSE_SIZE) {
     throw new Error(
@@ -2083,7 +2085,7 @@ async function processResponse(responseBytes, options) {
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
   const overCap = classified.json && exceedsInlineCap(content, hostname, maxSize);
   const emptyBody = !classified.json && classified.reason === "empty-body";
-  if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false };
+  if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false, ...lossy };
   const shouldSave = options.saveToFile || overCap || !classified.json && !filterApplied;
   if (shouldSave) {
     const diskContent = filterApplied ? Buffer.from(content, "utf8") : sanitiseWasNoOp ? responseBytes : Buffer.from(sanitised, "utf8");
@@ -2091,6 +2093,7 @@ async function processResponse(responseBytes, options) {
     return {
       savedToFile: true,
       filepath,
+      ...lossy,
       message: savedMessage({
         // Measured on the buffer that was written, so the number
         // describes the file whatever `diskContent` is built from.
@@ -2111,7 +2114,8 @@ async function processResponse(responseBytes, options) {
   }
   return {
     content,
-    savedToFile: false
+    savedToFile: false,
+    ...lossy
   };
 }
 
@@ -2190,7 +2194,7 @@ function extractHeaderChannel(headerBytes, bytesReceived, url, maxResultSize) {
 }
 
 // src/lib/response/formatter.ts
-function applyHeaderFields(output, responseHeaders, headerInfo, stderr) {
+function applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo) {
   if (responseHeaders) output.headers = responseHeaders;
   if (responseHeaders && headerInfo?.truncated) {
     output.headers_truncated = true;
@@ -2199,9 +2203,10 @@ function applyHeaderFields(output, responseHeaders, headerInfo, stderr) {
   }
   if (headerInfo?.undetermined) output.headers_undetermined = true;
   if (headerInfo?.unsupported) output.headers_unsupported = true;
+  if (bodyInfo?.decodeWasLossy) output.body_decode_lossy = true;
   if (stderr) output.stderr = stderr;
 }
-function plainBranchNotices(exitCode, headerInfo) {
+function plainBranchNotices(exitCode, headerInfo, bodyInfo) {
   return [
     // A non-zero exit has no field to land in on this branch, so without
     // this line a FAILED request is byte-identical to an empty successful
@@ -2229,10 +2234,17 @@ function plainBranchNotices(exitCode, headerInfo) {
     // failure after connect — exit 23, 35, 56, 63 — where the body is empty
     // precisely BECAUSE the request failed. This flag's domain cannot answer
     // a question about the body; `exitCode` can.
+    // A fidelity fact about the body, so it is stated whatever the exit
+    // code was and whatever the headers did. The body is still returned —
+    // its JSON structure is intact and only character values moved — but a
+    // caller comparing it against the origin needs to know a re-encode
+    // happened, because U+FFFD from a lossy decode is indistinguishable
+    // from U+FFFD an origin actually sent.
+    bodyInfo?.decodeWasLossy ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent" : null,
     headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
   ].filter(Boolean).join("\n");
 }
-function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo) {
+function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo, bodyInfo) {
   if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
     if (includeMetadata) {
       const output = {
@@ -2242,7 +2254,7 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo,
         filepath: fileSaveInfo.filepath,
         message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
       };
-      applyHeaderFields(output, responseHeaders, headerInfo, stderr);
+      applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
       return JSON.stringify(output, null, 2);
     }
     const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
@@ -2254,7 +2266,7 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo,
       exit_code: exitCode,
       response: stdout
     };
-    applyHeaderFields(output, responseHeaders, headerInfo, stderr);
+    applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
     return JSON.stringify(output, null, 2);
   }
   return stdout;
@@ -2760,16 +2772,25 @@ async function executeCurlRequest(params, extra = {}) {
         // captured any.
         undetermined: headersUndetermined,
         unsupported: headersUnsupported
-      }
+      },
+      // A fidelity fact about the body, reported on both branches: as
+      // `body_decode_lossy` under metadata, and as an appended notice
+      // without it. Silence on either branch would leave a re-encoded
+      // body indistinguishable from an exact one.
+      { decodeWasLossy: processed.decodeWasLossy }
     );
     const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : void 0;
-    const noticePart = !params.include_metadata ? plainBranchNotices(result.exitCode, {
-      truncated: headerTruncated,
-      bytesReceived: headerBytesReceived,
-      bytesReturned: headerBytesReturned,
-      undetermined: headersUndetermined,
-      unsupported: headersUnsupported
-    }) || void 0 : void 0;
+    const noticePart = !params.include_metadata ? plainBranchNotices(
+      result.exitCode,
+      {
+        truncated: headerTruncated,
+        bytesReceived: headerBytesReceived,
+        bytesReturned: headerBytesReturned,
+        undetermined: headersUndetermined,
+        unsupported: headersUnsupported
+      },
+      { decodeWasLossy: processed.decodeWasLossy }
+    ) || void 0 : void 0;
     return {
       content: [
         {
