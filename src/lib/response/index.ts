@@ -19,7 +19,6 @@ export {
 } from "./formatter.js";
 
 export {
-    createSafeFilenameBase,
     saveResponseToFile,
     writeUniqueFile,
 } from "./file-saver.js";

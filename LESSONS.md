@@ -2227,6 +2227,15 @@ recorded as caught.
   `Buffer`-only, so RC-33's contract is untouched; only the internal helper takes
   `string | Buffer`. A case in `file-saver.test.ts` asserts the utf-8 round-trip so the
   absence is a tested property rather than an omission.
+
+  **[Superseded on this same branch — see RC-55.** The two sentences above describe
+  `3b90ed7` and not HEAD: `99c8af6` narrowed the helper to `content: Buffer` and deleted
+  the round-trip case with the union it tested. **This bullet is not licence to re-add
+  `encoding` or a `string | Buffer` union to the write path** — that is the exact
+  re-armament this entry was filed to prevent, and read as current it grants it. The
+  pointer is recorded here because RC-55 back-references RC-52 and RC-52 did not point
+  forward, so a reader arriving at the lower number met the reversed state as fact.
+  K-16: the newest text on a branch is its least-reviewed.**]**
 - **What this costs next time:** **a todo's code snippet ages against the file it
   targets, and it ages silently — it is prose, so nothing compiles it and no test covers
   it.** A P1 that sits for two days across a merge to the same file is the ordinary case

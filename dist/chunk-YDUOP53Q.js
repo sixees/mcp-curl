@@ -1397,14 +1397,11 @@ async function validateOutputDir(dir) {
 
 // src/lib/response/file-saver.ts
 function createSafeFilenameBase(input, fallback = "response") {
-  let base = input.replace(/[^a-zA-Z0-9]/g, "_");
-  base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-  base = base.replace(/^_+|_+$/g, "");
-  if (!base) {
-    base = fallback;
-  }
-  if (isWindowsReservedBasename(base) || base === "." || base === "..") {
-    const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+  const squeeze = (s) => s.replace(/[^a-zA-Z0-9]/g, "_").slice(0, LIMITS.FILENAME_MAX_LENGTH).replace(/^_+|_+$/g, "");
+  const safeFallback = squeeze(fallback) || "response";
+  let base = squeeze(input) || safeFallback;
+  if (isWindowsReservedBasename(base)) {
+    const prefixed = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
     base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH) : prefixed;
   }
   return base;

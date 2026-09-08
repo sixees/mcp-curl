@@ -1,6 +1,10 @@
 // src/lib/response/file-saver.ts
 // Safe file saving with filename sanitization
 
+// The `node:` prefix is load-bearing, not style: `file-saver.test.ts` pins
+// `randomUUID` with `vi.doMock("node:crypto")`, which keys on this exact
+// specifier. Normalising it to bare `crypto` to match the two imports below
+// silently stops that mock applying.
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "path";
 import { writeFile, realpath } from "fs/promises";
@@ -22,23 +26,33 @@ import { getOrCreateTempDir } from "../files/index.js";
  * @returns A safe filename base (without extension)
  */
 export function createSafeFilenameBase(input: string, fallback = "response"): string {
-    // Replace non-alphanumeric characters with underscores
-    let base = input.replace(/[^a-zA-Z0-9]/g, "_");
-    // Enforce maximum length before trimming underscores so an unbounded
-    // hostname+pathname cannot force the trim regex to run over more bytes
-    // than a filename could ever use
-    // on strings with many consecutive underscores (e.g., "____...____")
-    base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-    // Trim leading and trailing underscores to avoid names like "___"
-    base = base.replace(/^_+|_+$/g, "");
-    // Ensure we have a non-empty base
-    if (!base) {
-        base = fallback;
-    }
-    // Avoid reserved or problematic base names across platforms
-    // (isWindowsReservedBasename handles case-insensitivity internally)
-    if (isWindowsReservedBasename(base) || base === "." || base === "..") {
-        const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+    // One transform, and **both string parameters go through it.** `fallback`
+    // reached the filename verbatim otherwise — it is assigned when `input`
+    // sanitises to nothing, and `join` then resolves any `../` inside it, so
+    // `createSafeFilenameBase("///", "../../../../tmp/authorized_keys")` put
+    // caller-chosen bytes outside the directory the caller had validated, at
+    // `0o600`. That is the same escape `writeUniqueFile`'s traversal case
+    // covers on `nameBase`, reached through the other argument.
+    const squeeze = (s: string): string =>
+        s.replace(/[^a-zA-Z0-9]/g, "_")
+            // Cap before trimming underscores, so an unbounded
+            // hostname+pathname cannot force the trim regex to run over more
+            // bytes than a filename could ever use.
+            .slice(0, LIMITS.FILENAME_MAX_LENGTH)
+            // Trim leading and trailing underscores to avoid names like "___"
+            .replace(/^_+|_+$/g, "");
+
+    // A caller may pass a fallback that itself sanitises to nothing, so the
+    // chain needs a terminal literal rather than resolving to "".
+    const safeFallback = squeeze(fallback) || "response";
+    let base = squeeze(input) || safeFallback;
+
+    // Avoid reserved base names across platforms (isWindowsReservedBasename
+    // handles case-insensitivity internally). `squeeze` has already ruled out
+    // "." and ".." — every non-alphanumeric becomes "_" and is then trimmed —
+    // so those two need no separate check here.
+    if (isWindowsReservedBasename(base)) {
+        const prefixed = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
         // Re-check after slicing in case truncation produced a reserved name
         base = isWindowsReservedBasename(prefixed)
             ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH)
@@ -64,11 +78,16 @@ export function createSafeFilenameBase(input: string, fallback = "response"): st
  * reason: it keeps saved artefacts sorting chronologically for anyone listing
  * the directory. It is not part of the uniqueness guarantee.
  *
- * **`nameBase` is sanitised here rather than by the caller.** The suffix would
- * not neutralise a leading `../`, and this is the only write sink in the
- * codebase — so a caller cannot route around the sanitiser without adding a
- * second sink, which `file-saver.test.ts` fails on. `createSafeFilenameBase` is
- * idempotent, so a caller that has already run it loses nothing.
+ * **`nameBase` and `fallback` are both sanitised here rather than by the
+ * caller.** The suffix would not neutralise a leading `../`, and this is the
+ * only write sink in the codebase — so a caller cannot route around the
+ * sanitiser without adding a second sink, which `file-saver.test.ts` fails on
+ * by checking the `fs` import surface rather than a list of call spellings.
+ * **Both string parameters, not just the first:** `fallback` is what
+ * `createSafeFilenameBase` returns when `nameBase` sanitises to nothing, so a
+ * caller needed only a fourth argument, never a second sink, to reach the same
+ * escape. `createSafeFilenameBase` is idempotent, so a caller that has already
+ * run it loses nothing.
  *
  * **`Buffer` only — no `string | Buffer` union**, the same rule
  * `saveResponseToFile` and `parser.ts::parseResponseWithMetadata` both state. A
