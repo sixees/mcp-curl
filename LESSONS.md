@@ -4,10 +4,10 @@
 > overwrites it, and nothing refreshes it. Append to it; do not rewrite it.
 
 **This file is the Reality Correction ledger.** Every RC lands here permanently,
-as well as in the PR handoff it was filed in — because a handoff is read once, by
-the run that wrote it, and then archived. An RC recorded only there expires at
-merge, and the next session rediscovers the lesson and files it again under a new
-number. This is the one place a lesson outlives the run that learned it.
+and here only — because a handoff is read once, by the run that wrote it, and
+then archived. An RC recorded only in the handoff expires at merge, and the next
+session rediscovers the lesson and files it again under a new number. This is the
+one place a lesson outlives the run that learned it.
 
 It is not a changelog. A changelog says what shipped; this says what reality
 turned out to be, and what it cost to find out. Read it when a rule looks
@@ -2154,3 +2154,48 @@ recorded as caught.
   sides**, and the two sides here were *parses* and *does not parse* — one arm rescued, one
   arm left. No test covered the unfixed side, so the suite was green either way: removing the
   new guard fails exactly one case, and that case did not exist until this round.
+
+### RC-51 — the ledger's longest entries carry the most record, not the most prose
+
+**Date:** 2026-09-08 · **PR:** — · **Plan:** — (`/sixees-workflow:reconcile-lessons`, whole-file scope)
+
+**Class:** K-3, K-14 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** the ledger had reached 46 entries and 22,142 words, so a
+  reconciliation pass was due. The census ruled **C** and **D** out at zero, leaving
+  **B**; the eleven entries over 540 words held 7,038 of them — 32% of the ledger in
+  24% of the entries — so condensing that tail was estimated at roughly 19% off the
+  word count, and the operator authorised it on that figure.
+- **Reality was:** the estimate came from word *counts*, and word count is not evidence
+  of removable prose. Condensing RC-33 in full — 804 words, the largest entry in the
+  file — produced **807**, and the diff against the original was line reflow plus the
+  deletion of two words. RC-14 gave 548 against 562, a 2.5% cut. Under **B**'s own gate
+  every claim, file, symbol, measurement and decision must survive, and in these entries
+  each sentence carries one; the only text that would actually go is the worked example,
+  the second failing case and the third lesson, all of which the gate protects. The
+  cause was then found in the history: **`3d4900b` (2026-09-03) already ran this pass** —
+  *"conform every RC to the entry format and cut duplicated prose"*, 122 lines removed —
+  and its own body records the decision this one re-derived, *"no entry prose was
+  reworded; the bodies are the record."* The structural fat was taken three weeks ago.
+- **What changed:** the **B** pass was abandoned after two entries rather than applied to
+  eleven, and nothing was written to any entry body. What did land: the preamble's line 7
+  claimed an RC lands here *"as well as in the PR handoff it was filed in"*, contradicting
+  the *Where* clause twenty lines below it — *"appended to the ledger below, and nowhere
+  else"* — which is the current law and matches `.claude/rules/03-divergence.md`. Two live
+  spellings of one fact, K-8, and the survivor of `refresh-compound` → *Step 5*'s pass the
+  day before, which replaced three superseded sentences and missed this one. Corrected to
+  *"and here only"*.
+- **What this costs next time:** two rules.
+  1. **Before pricing a condense, condense one entry and measure it.** The cheap proxy —
+     words per entry — ranks entries by how much they *record*, and in a ledger written to
+     this format the longest entries are the ones that measured the most. The test is two
+     minutes of the actual work, and it is the difference between a 19% estimate and a 0%
+     result. K-3: it was checkable, and it was assumed.
+  2. **This repository's C and D gates cannot open, and the reason is structural.**
+     `docs/plans/`, `docs/work/` and `docs/todos/` are all tracked here — `docs/` is
+     published to npm per `CONVENTIONS.md` → *Where work products go* — so `git grep RC-N`,
+     which the preamble names as the test, returns the filing handoff for every id the
+     ledger holds. All 46 scored `tracked` ≥ 1, the lowest twelve bottoming out at their own
+     handoff and RC-4 and RC-5 cited from `src/lib/release-guards.test.ts`. **A future run
+     need not re-take the census to learn this**: no entry in this ledger will ever be
+     shortenable or foldable, and the pass reduces to **B** by construction.
