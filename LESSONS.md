@@ -2419,3 +2419,84 @@ and this branch had not merged when the correction was made.
      AST, and node-kind enumeration inside the AST could not see an unresolvable
      expression. `skill: pr-resolver-safety` → *the escalation ladder* rung 3 names
      this — recognise that no fix exists at that layer and move the precondition.
+
+### RC-57 — the remedy named two of three sites, and cited a precedent deleted two PRs earlier
+
+**Date:** 2026-09-09 · **PR:** — (filed pre-push) · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
+
+**Class:** K-4, K-7 — *class-id:* `stale-comment`
+
+- **The plan said:** `docs/todos/013` closed with *"Two sites: `strip-blocks.test.ts:110`
+  and `:400`"*, and prescribed *"the same remedy already applied to `processor.test.ts`'s
+  ratio guard … 0 false failures in 6 runs under 24-spinner load"*. The consumer who
+  escalated it independently repeated both claims — *"the fix is two lines"* — which is
+  what made them read as corroborated rather than copied.
+- **Reality was:** three assertion sites share `REDOS_BUDGET_MS`, not two. The third
+  guards `stripMarkdownBeacons` and carries six flood cases — invariant 15's markdown
+  half, the one that measured 82 s before the `[` exclusion. And the cited precedent was
+  not at the cited site: the CPU-time ratio guard entered `processor.test.ts` in #37
+  (`ccf6e62`) and was **deleted in #39** (`6effe5b`), because removing the over-cap arm
+  left the ratio with nothing to compare. `processor.test.ts` today holds a plain
+  `Date.now()` budget. The live precedent is
+  `parser.test.ts::"costs the same on a pathological tail as on a short one"`, and it is
+  stronger than the remedy as written — it records a **pool precondition** neither source
+  mentions: `process.cpuUsage()` is per-process, so it measures one file's work only under
+  vitest's default `forks` pool.
+- **What changed:** all three sites moved to `cpuMs` from the new
+  `src/lib/response/cpu-time.test-fixture.ts`, which is the single implementation and
+  **asserts** the pool precondition instead of documenting it — forcing `--pool=threads`
+  now fails 25 cases with an explanatory error where it previously returned a
+  contaminated number that read as a pass. `parser.test.ts`'s inline copy of the idiom,
+  and its prose copy of the warning, fold into the fixture.
+  `processor.test.ts::"ReDoS regression: 1 MB pathological body"` and
+  `sanitize.test.ts::"matches a 1 MB pathological 'ignore' chain"` keep wall clock with
+  the reason recorded in place.
+- **What this costs next time:** two rules.
+  1. **A remedy that names its sites by line number has told you the author's sample, not
+      the class.** Both sources here named the same two lines because the second read the
+      first; agreement between a todo and the consumer who escalated it is one
+      observation, not two. Re-derive the site list from the *shared symbol* —
+      `rg REDOS_BUDGET_MS` finds three in one command — before pricing the change as two
+      lines. `CONVENTIONS.md` → *Referring to code and to files* already forbids citing a
+      line number for exactly this reason, and this is what the ban buys.
+  2. **A remedy citing an in-repo precedent is a claim about HEAD, and it is checkable in
+      one `git log -S`.** This one had been true for two PRs and was two months stale by
+      the time it was acted on. The site it pointed at still existed, still held a timing
+      guard, and still looked like the thing described — which is why reading the file
+      would not have caught it either. Check that the *mechanism* is there, not that the
+      file is.
+
+  The site-count half has no exact `class-id`; `stale-comment` is the nearest noun and
+  covers the dead citation rather than the short sweep.
+
+### RC-58 — the acceptance criterion was already satisfied by the unfixed code
+
+**Date:** 2026-09-09 · **PR:** — (filed pre-push) · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
+
+**Class:** K-1, K-18 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** acceptance criterion 1 was *"four consecutive `npm test` full-suite
+  runs pass with zero failures"*. The todo's own evidence recorded 1-3 failures on every
+  one of eight runs across two branches, so four clean runs read as a decisive test of the
+  fix.
+- **Reality was:** four full-suite runs at HEAD on an idle machine were **1332 passed, 0
+  failed, 4/4 green — before any change**. The criterion certified nothing: the flake
+  needs contention to surface, and this machine had 24 idle cores. Under 28 CPU spinners
+  the failure returned immediately — 2 of 4 runs, at 124 ms and 161 ms against the 100 ms
+  budget, a different case each time. A run of the criterion as written, on the unfixed
+  tree, would have closed the todo as already-resolved.
+- **What changed:** the verification standard became the *comparison* rather than the
+  count — the same 28-spinner load run against both trees, which is the only form in
+  which the numbers mean anything. Baseline 2/4 failing, fixed 3/3 green. The load
+  harness is scratch and is not committed; what is durable is the figure recorded in
+  `REDOS_BUDGET_MS`'s docblock and in `cpuMs`, both of which now state the measured CPU
+  cost of both populations rather than a wall-clock number that depended on the host.
+- **What this costs next time:** **an acceptance criterion for a flake must name the load
+  it is measured under, or it is a criterion the unfixed code can pass.** A flake's
+  reproduction rate is a property of the machine, so "N clean runs" inherits whatever the
+  next machine happens to be doing — and it fails in the reassuring direction, which is
+  why nothing would have reported it. The general form: **when a criterion is "the bad
+  thing stops happening", establish the positive control first** — reproduce the failure
+  on the unfixed tree, in this session, on this host. `01-known-shapes.md` → K-18 is this
+  shape, and its instruction ("run it where it must return a result") is what the spinners
+  were for.

@@ -163,7 +163,16 @@ describe("parseResponseWithMetadata", () => {
             );
         };
         at(50); // warm
-        const small = Math.max(at(50), 0.0005);
+        const small = at(50);
+        // **Assert the divisor exists; never floor it.** A floor turns a reading
+        // the clock could not resolve into a real-looking number, and the
+        // arithmetic then reports `0 / floor` — a ratio of zero, which passes,
+        // from two measurements that never happened. Failing here instead says
+        // "this host cannot measure it", which is a different thing from "no
+        // regression". Measured 0.0013 – 0.0064 ms per parse on a microsecond
+        // clock, so the loop is ~66 µs and the assertion has room; a
+        // tick-accounted host is where it fires.
+        expect(small).toBeGreaterThan(0);
         const large = at(400);
 
         // 8x the input. The head match measures ~1x; the replaced grammar

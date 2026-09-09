@@ -1,4 +1,10 @@
 // src/lib/response/cpu-time.test-fixture.ts
+//
+// **`.test-fixture.ts`, not `.ts`, and the suffix is the boundary.** Nothing in
+// production may import this file. Every other module in this directory is
+// production code on the strip path, so the name is the only thing separating
+// them — and `file-saver.test.ts`'s production sweep, which enforces invariant
+// 17, exempts this suffix by name. `CONVENTIONS.md` → *Naming* owns the rule.
 import { isMainThread } from "node:worker_threads";
 
 /**
@@ -12,12 +18,40 @@ import { isMainThread } from "node:worker_threads";
  * descheduled measurement is unbounded however wide the budget is, which is why
  * the answer is a different clock rather than a larger number.
  */
-export function cpuMs(work: () => void): number {
+export function cpuMs(work: () => unknown): number {
     assertOwnProcess();
     const started = process.cpuUsage();
-    work();
+    const returned = work();
     const spent = process.cpuUsage(started);
+    assertMeasuredToCompletion(returned);
     return (spent.user + spent.system) / 1000;
+}
+
+/**
+ * The clock stops when `work` RETURNS, which for an `async` body is its first
+ * `await` — so a promise here means the reading covers a synchronous prefix and
+ * the budget is being compared against microseconds.
+ *
+ * **Checked at runtime because the type system will not do it.** A callback
+ * typed `() => void` accepts a promise-returning function by TypeScript's
+ * void-return assignability, deliberately, so `strict`, `tsc` and the lint pass
+ * all stay silent — which leaves a guard that passes for every input, including
+ * one that backtracks for thirty seconds. `() => unknown` is honest about what
+ * arrives and this is what rejects it. Measuring an async body needs a second
+ * clock that samples across the `await`; there is no caller for one yet.
+ */
+function assertMeasuredToCompletion(returned: unknown): void {
+    const thenable =
+        typeof returned === "object" &&
+        returned !== null &&
+        typeof (returned as { then?: unknown }).then === "function";
+    if (!thenable) return;
+    throw new Error(
+        "cpuMs() measures synchronous work, and this body returned a promise — the " +
+            "clock stopped at its first await, so the reading covers a fraction of the " +
+            "work and any budget would pass. Measure the synchronous call, or extend " +
+            "this fixture with a measure that samples across the await."
+    );
 }
 
 /**
@@ -30,6 +64,12 @@ export function cpuMs(work: () => void): number {
  * counter still returns a number under a shared process, so a guard reading a
  * contaminated one reports a pass — the measurement stops being about the
  * pattern and nothing says so.
+ *
+ * **It rules out the shared-pool case and nothing more.** CPU raised on the
+ * libuv threadpool, or by anything else this process is doing, still lands in
+ * the counter, and `isMainThread` cannot see that. Both inflate a reading, so
+ * they fail a guard rather than pass one — which is why one boolean is the whole
+ * check.
  */
 function assertOwnProcess(): void {
     if (isMainThread) return;

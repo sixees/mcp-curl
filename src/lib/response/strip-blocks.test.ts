@@ -22,14 +22,22 @@ import {
  *
  * **Calibrated against a probe, not chosen for comfort.** Removing the bound in
  * `withinClosableRegion` puts the block and beacon floods at 254 ms – 2.8 s;
- * removing the no-closer latch in `stripHtmlComments` puts its floods at 31 s
- * and 37 s. With both in place every case here costs 0.15 – 10 ms. 100 ms sits
- * 10× above the slowest passing case and 2.5× below the weakest regression, so
- * it separates the two populations on every input here.
+ * removing the no-closer latch in `stripHtmlComments` puts its three floods at
+ * 31 s, 36 s and 40 s. With both in place every case here costs 0.15 – 10 ms.
+ * 100 ms sits 10× above the slowest passing case and 2.5× below the weakest
+ * regression.
+ *
+ * **Every input has a member on both sides of it, which is a separate claim from
+ * the gap and has to be measured per case.** One input here did not: a comment
+ * flood whose closer sat at the end cost the same with the bound removed as
+ * with it, so no budget could have failed on it. Each case now records the
+ * mutation it fails under, beside the input.
  *
  * **That gap bounds the budget in both directions.** Widening it past the
- * weakest regression goes toothless on the defect it was added for, and the
- * inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES` (256 KB)
+ * weakest regression goes toothless on the defect it was added for: a 2 s
+ * budget could not fail on the 1.1 s regression that prompted it, so that
+ * generation of guard passed while the defect was live (`LESSONS.md` RC-11).
+ * And the inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES` (256 KB)
  * `stripBlocksFixedPoint` returns its input untouched, so an oversized flood
  * would pass by doing nothing at all.
  */
@@ -104,9 +112,20 @@ describe("stripHtmlComments", () => {
     // and destructive, which is why it went (RC-11). Removing it addressed the
     // destruction and left the cost unbounded, and no guard here covered the
     // comment strip at all. Found by codex and CodeQL on PR #33.
+    //
+    // **Each input names the mutation it fails under, because one here did not
+    // and was decorative for two releases.** `"<!--".repeat(65535) + "-->"` put
+    // the closer at the END, so the first opener's `indexOf` found it and jumped
+    // to end-of-input: the latch was never consulted, no quadratic existed to
+    // bound, and the case measured 1.1 ms with the latch and 1.2 ms without it.
+    // Moving the closer inside the flood is what puts the remaining openers past
+    // the last closer, which is the state the latch exists for.
     it.each([
+        // latch removed: 40465 ms
         ["opener flood, no closer", "<!--".repeat(65536)],
-        ["opener flood, one trailing closer", "<!--".repeat(65535) + "-->"],
+        // latch removed: 35812 ms
+        ["opener flood, one interior closer", "<!--".repeat(4) + "-->" + "<!--".repeat(65531)],
+        // latch removed: 31114 ms
         ["deep splice flood", "<!".repeat(60000) + "--".repeat(60000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         expect(cpuMs(() => stripHtmlComments(body))).toBeLessThan(REDOS_BUDGET_MS);
@@ -358,9 +377,8 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
     // Both were found by review, not here. A flood is only a guard if its
     // closing token is the one the pattern actually needs.
     //
-    // Budget is deliberately loose. The measured post-fix figures are all under
-    // 2 ms; a regression restores seconds, so anything between is unambiguous
-    // and CI jitter cannot reach it.
+    // `REDOS_BUDGET_MS` owns the threshold and its calibration. The two figures
+    // above are about which inputs are load-bearing, not about the budget.
     it.each([
         ["<script opener flood, no `>` anywhere", "<script".repeat((256 * 1024) / 7)],
         ["<style opener flood, no `>` anywhere", "<style".repeat((256 * 1024) / 6)],

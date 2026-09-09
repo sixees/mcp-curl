@@ -34,6 +34,7 @@ when a rule here looks arbitrary.
 | Files | kebab-case, one concern per file, named for what it owns | `post-processor.ts`, `strip-blocks.ts`, `unicode-attack-ranges.ts` |
 | Directories | singular concern noun under `src/lib/` | `security/`, `response/`, `execution/` |
 | Tests | co-located, `*.test.ts` beside the source | `ssrf.test.ts` beside `ssrf.ts` |
+| Test-only modules in the production tree | `*.test-fixture.ts`, and **never imported from production** — the suffix is the boundary, and `file-saver.test.ts`'s invariant-17 sweep exempts it by name | `curl-output.test-fixture.ts`, `cpu-time.test-fixture.ts` |
 | Branches | `type/short-slug`, matching the commit type vocabulary | `fix/separate-response-headers-from-body` |
 | Env vars | `MCP_CURL_*` prefix, except protocol-level ones (`TRANSPORT`, `PORT`, `MCP_AUTH_TOKEN`) | `MCP_CURL_ALLOW_LOCALHOST`, `MCP_CURL_OUTPUT_DIR` |
 

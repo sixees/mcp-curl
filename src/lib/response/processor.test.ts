@@ -332,9 +332,12 @@ describe("processResponse — HTML <script>/<style> stripping (PR-7 / B8)", () =
         // this process did not spend — so this is a judgement about the margin
         // and not a claim of immunity: 2 s against ~100 ms is 20x, and no run
         // measured while that class was open ever failed this case. Should it
-        // start failing, convert it to `cpuMs` from `./cpu-time.test-fixture.js`
-        // rather than widening the budget — a 2 s budget is exactly what let four
-        // of the strip floods pass their own probe.
+        // start failing, the remedy is CPU time rather than a wider budget — a 2 s
+        // budget is exactly what let four of the strip floods pass their own
+        // probe. **`cpuMs` will not do it as it stands:** the subject here is
+        // awaited, and `cpuMs` measures synchronous work and refuses a promise
+        // outright. Taking the remedy means giving that fixture a measure which
+        // samples across the await.
         const opener = "<script>";
         const filler = "<".repeat(1024 * 1024 - opener.length);
         const body = opener + filler;
