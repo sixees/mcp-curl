@@ -431,3 +431,95 @@ residuals comment was corrected rather than left as a second spelling of one fac
 **Still open by design, and stated in the file:** `createRequire(...)("fs")`, whose
 callee is a call expression rather than the `require` identifier this parse keys on,
 and a third-party `fs` wrapper.
+
+### Round 2 — no findings
+
+Trigger: `@codex review` scoped to `6a911bc`, plus a Copilot re-request via GraphQL
+`requestReviews`. Codex reviewed `6a911bc` and reported none. **Copilot did not
+re-review.** That was first written up here as evidence that round 1's review came from
+one of the REST calls rather than the GraphQL mutation. **Round 3 refutes that
+inference** — it fired the REST route alone, on an unchanged head, and also produced no
+review. What is actually supportable: Copilot reviewed exactly once, in round 1, after
+all three routes had been fired within a few minutes of each other, and neither
+single-route attempt afterwards produced anything. Which route works is not
+determinable from these three observations.
+
+**A gap in the fetch, recorded because it fails silently.** `pr-comments` returned
+three entries, all `chatgpt-codex-connector` top-level. It did **not** return the four
+review comments `coderabbitai` posted on `6a911bc` at 06:28:14–06:28:52, because those
+are replies into threads CodeRabbit had already auto-resolved when it saw the fix
+commit land — and a resolved thread does not appear in the fetch. So "no CodeRabbit
+findings this round" was not something the fetch could establish. Read directly via
+`reviewThreads(first:50)` including resolved ones: all four are acknowledgements, none
+is a new finding, and one ratifies the round-1 escalation —
+*"The P1 severity is appropriate because the bypass could leave a write-capable `fs`
+binding unreported and defeat invariant 17… The fail-closed handling for unreadable
+dynamic specifiers is stronger than the proposed literal-kind expansion."*
+
+**Anyone repeating this loop should read resolved threads directly.** A round that
+fixes everything gets its threads auto-resolved, and every reply landing after that is
+then invisible to the next round's fetch — including an objection, if there had been
+one.
+
+### Round 3 — no findings
+
+Trigger: `@codex review` scoped to the unchanged head `6a911bc`, plus a Copilot
+re-request via REST `requested_reviewers`. Codex reviewed `6a911bc` a second time and
+reported none. No new review thread was opened by any reviewer, and no reviewer other
+than codex posted at all.
+
+**Round 3 had no new subject, and that bounds what it establishes.** The head was the
+same commit round 2 had already reviewed clean, so this was a second pass over an
+identical tree rather than a round with fresh material. It is a fair thing to ask of a
+non-deterministic reviewer and it is not equivalent to a round on new code.
+
+**One trigger was rewritten before posting.** The first draft ended by naming
+`forbiddenFsBindings` as "the subject most worth a fresh look" and referred to codex's
+previous clean verdict. Both are steering rather than scope under
+`/sixees-workflow:review-pr-comments` → §3 — one narrows what gets examined, the other
+invites the reviewer to conclude there is nothing left — and either would have produced
+a round that reads as independent without being so. Reposted with the head sha, what
+had not changed, and the path list, and nothing else.
+
+### Surface 3 — final tally across three rounds
+
+| Disposition | Count |
+|---|---|
+| fixed | 4 |
+| declined | 1 |
+| answered | 4 |
+| deferred | 0 |
+| escalated | 0 |
+
+**Fixed : declined = 4 : 1.** Todos: **0 filed this run, 0 open against #40.**
+Threads outstanding: **0** — all five inline threads are resolved and each carries a
+reply. The four `answered` entries are codex's own status and clean-verdict comments;
+they carry no defect, they are top-level, and **they cannot be closed** — a
+`kind: "issue"` entry has no resolved state and returns on every future read.
+
+**Per reviewer.**
+
+| Reviewer | Findings | Fixed | False positives | Decline rate |
+|---|---|---|---|---|
+| `coderabbitai` | 4 | 4 | 0 | 0/4 |
+| `copilot-pull-request-reviewer` | 1 | 0 | 1 | 1/1 |
+| `chatgpt-codex-connector` | 0 over 3 reviews | — | — | — |
+
+CodeRabbit auto-reviewed on push without being triggered — it was not on the requested
+roster — and produced every finding this surface acted on. It also posted four
+acknowledgement replies confirming the fixes, one of which ratified the round-1
+escalation. Copilot's single finding was a false positive on path arithmetic. Codex was
+the only explicitly requested reviewer that ran in all three rounds and it found nothing
+in any of them.
+
+**The fix:decline ratio departs from the two-thirds-decline expectation the command
+sets, and the reason is the subject rather than the triage.** The diff contains a
+freshly written TypeScript-compiler-API walk, which is code with real holes rather than
+stylistic ones; three of the four fixes were in that one function. Rounds 2 and 3, which
+reviewed the fixes themselves, produced nothing — which is the shape a converging loop
+has.
+
+**Operator-side, unchanged by this surface:** the version is still `4.0.0` and this repo
+bumps before the merge; `2402cc5`'s message under-describes its contents; and
+`458c321` — an unrelated `reconcile-lessons` run filing RC-51 — still rides on this PR.
+Merging #40 merges that work too.
