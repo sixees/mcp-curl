@@ -922,7 +922,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
 
         afterEach(async () => {
-            await rm(dir, { recursive: true, force: true });
+            // Guarded, matching the other two cwd-rooted fixtures in the suite:
+            // if the `mkdtemp` above failed, `dir` is undefined and
+            // `rm(undefined, …)` throws a TypeError that replaces the real
+            // failure in the report with a masking one.
+            if (dir) await rm(dir, { recursive: true, force: true });
         });
 
         // The load-bearing half of the RC-27 fix. The unit cases in

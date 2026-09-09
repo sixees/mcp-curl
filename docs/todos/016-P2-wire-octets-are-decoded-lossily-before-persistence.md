@@ -190,6 +190,42 @@ genuinely have sent.
   - Instance 6, `header-channel.ts` — re-read unchanged at HEAD; the scope-out
     reasoning above still holds.
 
+### 2026-09-08 - Re-confirmed from PR #40's Surface 2, and one new fact
+
+**By:** Claude Code (`/sixees-workflow:review` of PR #40, round 1, `data-integrity-guardian`)
+
+**Actions:** No change to this todo's status or scope. `data-integrity-guardian`,
+reviewing PR #40 (`fix/012-saved-files-can-silently-overwrite`) with no knowledge of
+this file, independently re-derived **instance 5** — `tools/jq-query.ts::executeJqQuery`'s
+`readFile(…, "utf-8")` — as a P2 with the same mechanism and the same `class-id`
+(`missing-validation`). That is a fourth independent confirmation, and it arrived from a
+reviewer whose dispatch never named this todo. **Not re-filed:** this todo already owns
+the class and its header says not to close it on the write half alone.
+
+**The one fact it added that this todo did not record.** PR #40 routes `jq_query`'s
+`save_to_file` arm through `writeUniqueFile`, which takes `Buffer` only, so the tool now
+does `Buffer.from(persisted, "utf8")` at the call site. `persisted` is the **already
+U+FFFD-substituted** string. So under `save_to_file` the substituted text is re-encoded
+and written as a **second durable record which is itself valid UTF-8** — the corruption
+is no longer detectable by re-decoding the derived artefact, because the derived artefact
+is well-formed. This todo previously framed instance 5 as a read-time substitution
+returned to the model; it is now also a write-time laundering into a new persisted record.
+
+**This is not a regression introduced by PR #40** — the same laundering happened before
+via `writeFile(filepath, persisted, { encoding: "utf-8" })`, which converted the same
+string to the same bytes. PR #40 made the conversion explicit at the call site rather
+than implicit in the write. The reason to record it here is that it sharpens AC coverage:
+a fix for instance 5 must decide what the **derived** artefact says about its own
+fidelity, not only what the tool returns inline.
+
+**Learnings:** A class whose last live member sits in a file that other branches keep
+modifying will be rediscovered by every reviewer who reads that file, at full severity,
+because the instance is real and the todo is invisible to them. Four confirmations is
+signal about the reviewers' consistency, not new evidence about the defect — but the
+*fourth* one arrived carrying a fact the first three did not, which is the argument for
+reading a re-discovery rather than closing it as a duplicate.
+
+
 ## Resources
 
 - `LESSONS.md` RC-8, RC-10 (bytes pinned on the persisted path), RC-30

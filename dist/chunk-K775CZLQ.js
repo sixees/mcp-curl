@@ -16,7 +16,6 @@ import {
   cleanupTempDir,
   createConfigError,
   createHttpOnlyUrlSchema,
-  createSafeFilenameBase,
   createWrapper,
   defendText,
   exceedsInlineCap,
@@ -37,8 +36,9 @@ import {
   stopRateLimitCleanup,
   stopWrapErrorCleanup,
   validateFilePath,
-  validateOutputDir
-} from "./chunk-XPSSK35W.js";
+  validateOutputDir,
+  writeUniqueFile
+} from "./chunk-5DI5EELU.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -113,8 +113,8 @@ function createServer() {
 }
 
 // src/lib/tools/jq-query.ts
-import { readFile, writeFile } from "fs/promises";
-import { join, basename } from "path";
+import { readFile } from "fs/promises";
+import { basename } from "path";
 var JQ_QUERY_TOOL_META = {
   title: "Query JSON File",
   description: `Query an existing JSON file with a jq-like filter expression.
@@ -178,13 +178,15 @@ async function executeJqQuery(params, _extra) {
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
     if (shouldSave) {
-      const sourceBasename = basename(validatedFilePath) || "query_result";
-      const safeName = createSafeFilenameBase(sourceBasename, "query_result");
-      const filename = `${safeName}_${Date.now()}.txt`;
       const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
-      const filepath = join(targetDir, filename);
-      await writeFile(filepath, persisted, { encoding: "utf-8", mode: 384 });
-      const persistedBytes = Buffer.byteLength(persisted, "utf8");
+      const bytes = Buffer.from(persisted, "utf8");
+      const filepath = await writeUniqueFile(
+        bytes,
+        targetDir,
+        basename(validatedFilePath),
+        "query_result"
+      );
+      const persistedBytes = bytes.length;
       return successResult(`Result (${persistedBytes} bytes) saved to: ${filepath}`);
     }
     return successResult(persisted);

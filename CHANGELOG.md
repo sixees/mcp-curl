@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1] - 2026-09-09
+
+### Security
+
+- **Saved response files can no longer overwrite each other, and the write no
+  longer follows a symlink.** A saved artefact was named
+  `${safeBase}_${Date.now()}.txt` and written non-exclusively, so two saves
+  resolving to one path left the second silently replacing the first — both
+  callers holding the same path, and no error on either side. Persistence now
+  routes through a single sink, `response/file-saver.ts::writeUniqueFile`, which
+  writes with `flag: "wx"`. A residual collision surfaces as `EEXIST` rather
+  than an overwrite, the write refuses a symlink at the final component, and
+  `mode: 0o600` applies to every file created rather than only to those that did
+  not already exist.
+
+- **The filename base is sanitised on both of its inputs.** A caller-supplied
+  fallback name reached the filename unsanitised, so a `../` inside it could
+  place caller-chosen bytes outside the validated output directory.
+
+### Fixed
+
+- Two saves inside the same millisecond now produce distinct paths. Eight hex
+  characters of a `randomUUID` are what separate them; the timestamp is retained
+  only so that saved artefacts sort chronologically.
+
+### Notes
+
+- **No published API change.** `writeUniqueFile` is exported from the internal
+  `response/` barrel only, and appears in none of the four declaration files the
+  `exports` map reaches.
+
 ## [3.5.1] - 2026-09-04
 
 ### Security

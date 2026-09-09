@@ -980,6 +980,7 @@ Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : "
 }
 
 // src/lib/response/file-saver.ts
+import { randomUUID } from "crypto";
 import { join as join2, resolve as resolve2 } from "path";
 import { writeFile, realpath as realpath2 } from "fs/promises";
 
@@ -1396,17 +1397,20 @@ async function validateOutputDir(dir) {
 
 // src/lib/response/file-saver.ts
 function createSafeFilenameBase(input, fallback = "response") {
-  let base = input.replace(/[^a-zA-Z0-9]/g, "_");
-  base = base.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-  base = base.replace(/^_+|_+$/g, "");
-  if (!base) {
-    base = fallback;
-  }
-  if (isWindowsReservedBasename(base) || base === "." || base === "..") {
-    const prefixed = `${fallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-    base = isWindowsReservedBasename(prefixed) ? `safe_${Date.now()}`.slice(0, LIMITS.FILENAME_MAX_LENGTH) : prefixed;
+  const squeeze = (s) => s.replace(/[^a-zA-Z0-9]/g, "_").slice(0, LIMITS.FILENAME_MAX_LENGTH).replace(/^_+|_+$/g, "");
+  const safeFallback = squeeze(fallback) || "response";
+  let base = squeeze(input) || safeFallback;
+  if (isWindowsReservedBasename(base)) {
+    base = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
   }
   return base;
+}
+async function writeUniqueFile(content, targetDir, nameBase, fallback) {
+  const safeName = createSafeFilenameBase(nameBase, fallback);
+  const filename = `${safeName}_${Date.now()}_${randomUUID().slice(0, 8)}.txt`;
+  const filepath = join2(targetDir, filename);
+  await writeFile(filepath, content, { mode: 384, flag: "wx" });
+  return filepath;
 }
 async function saveResponseToFile(content, url, outputDir) {
   const targetDir = outputDir ?? await getOrCreateTempDir();
@@ -1428,11 +1432,7 @@ async function saveResponseToFile(content, url, outputDir) {
       throw error;
     }
   }
-  const safeName = createSafeFilenameBase(baseName);
-  const filename = `${safeName}_${Date.now()}.txt`;
-  const filepath = join2(targetDir, filename);
-  await writeFile(filepath, content, { mode: 384 });
-  return filepath;
+  return writeUniqueFile(content, targetDir, baseName);
 }
 
 // src/lib/response/strip-blocks.ts
@@ -1752,7 +1752,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "4.0.0" : "0.0.0"
+  VERSION: true ? "4.0.1" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -2278,7 +2278,7 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo,
 }
 
 // src/lib/response/post-processor.ts
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
 function hasOwnWrappedTag(result) {
   try {
@@ -2330,7 +2330,7 @@ function createWrapper(config) {
     if (isWrappedResult(result)) return result;
     try {
       if (!Array.isArray(result.content)) return tag(result);
-      const requestId = config.enableSpotlighting && !result.isError ? randomUUID() : void 0;
+      const requestId = config.enableSpotlighting && !result.isError ? randomUUID2() : void 0;
       const newContent = result.content.map(
         (part) => processTextPart(part, hostname, requestId)
       );
@@ -2343,10 +2343,10 @@ function createWrapper(config) {
 }
 
 // src/lib/types/common.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 function generateMetadataSeparator() {
   return `
----MCP-CURL-${randomUUID2()}---
+---MCP-CURL-${randomUUID3()}---
 `;
 }
 
@@ -2871,7 +2871,7 @@ export {
   CurlExecuteSchema,
   JqQuerySchema,
   applyJqFilter,
-  createSafeFilenameBase,
+  writeUniqueFile,
   defendText,
   exceedsInlineCap,
   createWrapper,

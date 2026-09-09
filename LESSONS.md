@@ -4,10 +4,10 @@
 > overwrites it, and nothing refreshes it. Append to it; do not rewrite it.
 
 **This file is the Reality Correction ledger.** Every RC lands here permanently,
-as well as in the PR handoff it was filed in — because a handoff is read once, by
-the run that wrote it, and then archived. An RC recorded only there expires at
-merge, and the next session rediscovers the lesson and files it again under a new
-number. This is the one place a lesson outlives the run that learned it.
+and here only — because a handoff is read once, by the run that wrote it, and
+then archived. An RC recorded only in the handoff expires at merge, and the next
+session rediscovers the lesson and files it again under a new number. This is the
+one place a lesson outlives the run that learned it.
 
 It is not a changelog. A changelog says what shipped; this says what reality
 turned out to be, and what it cost to find out. Read it when a rule looks
@@ -2154,3 +2154,268 @@ recorded as caught.
   sides**, and the two sides here were *parses* and *does not parse* — one arm rescued, one
   arm left. No test covered the unfixed side, so the suite was green either way: removing the
   new guard fails exactly one case, and that case did not exist until this round.
+
+### RC-51 — the ledger's longest entries carry the most record, not the most prose
+
+**Date:** 2026-09-08 · **PR:** — · **Plan:** — (`/sixees-workflow:reconcile-lessons`, whole-file scope)
+
+**Class:** K-3, K-14 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** the ledger had reached 46 entries and 22,142 words, so a
+  reconciliation pass was due. The census ruled **C** and **D** out at zero, leaving
+  **B**; the eleven entries over 540 words held 7,038 of them — 32% of the ledger in
+  24% of the entries — so condensing that tail was estimated at roughly 19% off the
+  word count, and the operator authorised it on that figure.
+- **Reality was:** the estimate came from word *counts*, and word count is not evidence
+  of removable prose. Condensing RC-33 in full — 804 words, the largest entry in the
+  file — produced **807**, and the diff against the original was line reflow plus the
+  deletion of two words. RC-14 gave 548 against 562, a 2.5% cut. Under **B**'s own gate
+  every claim, file, symbol, measurement and decision must survive, and in these entries
+  each sentence carries one; the only text that would actually go is the worked example,
+  the second failing case and the third lesson, all of which the gate protects. The
+  cause was then found in the history: **`3d4900b` (2026-09-03) already ran this pass** —
+  *"conform every RC to the entry format and cut duplicated prose"*, 122 lines removed —
+  and its own body records the decision this one re-derived, *"no entry prose was
+  reworded; the bodies are the record."* The structural fat was taken three weeks ago.
+- **What changed:** the **B** pass was abandoned after two entries rather than applied to
+  eleven, and nothing was written to any entry body. What did land: the preamble's line 7
+  claimed an RC lands here *"as well as in the PR handoff it was filed in"*, contradicting
+  the *Where* clause twenty lines below it — *"appended to the ledger below, and nowhere
+  else"* — which is the current law and matches `.claude/rules/03-divergence.md`. Two live
+  spellings of one fact, K-8, and the survivor of `refresh-compound` → *Step 5*'s pass the
+  day before, which replaced three superseded sentences and missed this one. Corrected to
+  *"and here only"*.
+- **What this costs next time:** two rules.
+  1. **Before pricing a condense, condense one entry and measure it.** The cheap proxy —
+     words per entry — ranks entries by how much they *record*, and in a ledger written to
+     this format the longest entries are the ones that measured the most. The test is two
+     minutes of the actual work, and it is the difference between a 19% estimate and a 0%
+     result. K-3: it was checkable, and it was assumed.
+  2. **This repository's C and D gates cannot open, and the reason is structural.**
+     `docs/plans/`, `docs/work/` and `docs/todos/` are all tracked here — `docs/` is
+     published to npm per `CONVENTIONS.md` → *Where work products go* — so `git grep RC-N`,
+     which the preamble names as the test, returns the filing handoff for every id the
+     ledger holds. All 46 scored `tracked` ≥ 1, the lowest twelve bottoming out at their own
+     handoff and RC-4 and RC-5 cited from `src/lib/release-guards.test.ts`. **A future run
+     need not re-take the census to learn this**: no entry in this ledger will ever be
+     shortenable or foldable, and the pass reduces to **B** by construction.
+
+### RC-52 — the todo's prescribed fix would have reinstated a defect RC-33 removed
+
+**Date:** 2026-09-08 · **PR:** — · **Plan:** `docs/todos/012-P1-saved-files-can-silently-overwrite.md`
+
+**Class:** K-7, K-9 — *class-id:* `stale-observation`
+
+**Mechanism superseded:** RC-55 (2026-09-08). The `string | Buffer` union on the internal
+helper, which this entry's *What changed* bullet originally reported as the shipped state, no
+longer exists at HEAD — `99c8af6` narrowed it to `Buffer` and deleted the round-trip case that
+covered it. **Read neither this entry nor RC-33 as licence to re-add `encoding` or a string
+union to the write path**; that is the re-armament both were filed to prevent. The bullet was
+corrected in place rather than annotated alone, because the ledger's freeze boundary is merge
+and this branch had not merged when the correction was made.
+
+- **The plan said:** `docs/todos/012` → *Fix* prescribed the write verbatim —
+  `writeFile(path, content, { encoding: "utf-8", mode: 0o600, flag: "wx" })` — and its
+  *Evidence* cited `src/lib/response/file-saver.ts:95` as
+  `writeFile(filepath, content, { encoding: "utf-8", mode: 0o600 })`, no flag. Both were
+  accurate when the todo was filed on 2026-09-06.
+- **Reality was:** PR #39 landed RC-33 in between, which narrowed
+  `saveResponseToFile`'s `content` parameter from `string | Buffer` to `Buffer` and
+  **deleted the `encoding`**, leaving a comment at what is now
+  `file-saver.ts:110` saying why: inert for a `Buffer`, and *"it would become a live
+  lossy conversion the day this parameter accepts a string."* The cited line 95 no longer
+  held the quoted code — every coordinate in the todo had shifted (`:92`→107, `:95`→113,
+  `jq-query.ts:150,154`→154,157). Found by reading the subject at HEAD during the Step 3
+  assumption audit, before the first edit.
+- **What changed:** the snippet was not implemented as written. `writeUniqueFile`
+  (`src/lib/response/file-saver.ts`) names **no** `encoding` — utf-8 is already Node's
+  default for a `string`, so the option buys nothing at the one site that passes text
+  (`src/lib/tools/jq-query.ts`, which passes `persisted`) and would have re-armed RC-33's
+  hazard at the site that passes octets. `saveResponseToFile`'s public signature stays
+  `Buffer`-only, so RC-33's contract is untouched — and after review, so is the
+  internal helper's: `writeUniqueFile` takes `content: Buffer`, with the one caller
+  holding text encoding at its own call site. The `string | Buffer` union this bullet
+  originally described lived only between `3b90ed7` and `99c8af6`; see RC-55.
+- **What this costs next time:** **a todo's code snippet ages against the file it
+  targets, and it ages silently — it is prose, so nothing compiles it and no test covers
+  it.** A P1 that sits for two days across a merge to the same file is the ordinary case
+  here, not the unlucky one. So: **re-read the subject at HEAD before implementing a
+  snippet a todo hands you, and diff it against what the todo quotes.** The dangerous
+  half is not the shifted line numbers, which fail visibly; it is the quoted code that
+  still *looks* current and prescribes re-adding something a later PR deliberately took
+  out.
+
+### RC-53 — the collision source the todo ranked second is the only one that fires for a real consumer
+
+**Date:** 2026-09-08 · **PR:** — · **Plan:** `docs/todos/012-P1-saved-files-can-silently-overwrite.md`
+
+**Class:** K-9, K-15 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** the query string is the always-true collision source, and
+  `createSafeFilenameBase`'s truncation to `LIMITS.FILENAME_MAX_LENGTH` is *"a **second,
+  independent** collision source **for long paths**"*. Its *Evidence* measured
+  `api.example.com/items` — 21 characters, annotated *"nowhere near the 50 cap"*. It then
+  offered two remedies as alternatives: `flag: "wx"` retrying on `EEXIST`, **or**
+  replacing `Date.now()` with `randomUUID()`.
+- **Reality was:** the ranking inverts for a consumer whose path prefix is long. A
+  consuming agent reported five unrelated Toggl endpoints — `batch`, `stream`, `tasks`,
+  `projects` — collapsing to one base, and re-running `createSafeFilenameBase` over their
+  URLs confirmed it: the raw `hostname + pathname` is 63–77 characters for all five, the
+  50-character cut lands **inside** the `/organizations/{id}/workspaces/` prefix, and the
+  resource name never reaches the filename at all. **1 of 5 distinct bases**, on every
+  save, with no query string involved. The two remedies are then not equivalent: the
+  todo's own acceptance criterion 1 pins `Date.now` to a constant and demands two
+  *distinct paths*, and against an already-identical base `flag: "wx"` yields one path
+  and one `EEXIST` — it cannot pass. The measurement that justified the diagnosis is the
+  one that disqualifies the remedy.
+- **What changed:** both halves ship, not either. `writeUniqueFile` names
+  `${safeName}_${Date.now()}_${randomUUID().slice(0, 8)}.txt` **and** writes with
+  `flag: "wx"`; the random component is what separates two paths, and `wx` is what makes
+  a residual collision an error. No retry loop: acceptance criterion 5 asks for a
+  collision to surface as an error, so the branch a retry would add is the branch the
+  criterion forbids. `file-saver.test.ts` carries the truncation case as its own
+  assertion, tied to `LIMITS.FILENAME_MAX_LENGTH` rather than to the literal 50, and
+  asserts the two bases are identical **before** asserting the two paths differ — without
+  that precondition the case could pass because the bases diverged and would be measuring
+  nothing.
+- **What this costs next time:** two rules. **First, a collision measurement is only
+  evidence for the URL shape it was taken on.** A 21-character example cannot rank a
+  50-character cap; the todo's own correction note of 2026-09-06 had already caught one
+  wrong mechanism in this same *Evidence* block, and the ranking survived it. Measure at
+  the cap, from both sides. **Second, where a todo offers two remedies as alternatives,
+  check each against the acceptance criteria before picking** — the criteria are the
+  tighter document, and here they silently eliminated one of the two.
+
+### RC-54 — the test asserted the filename and its comment claimed the flag
+
+**Date:** 2026-09-08 · **PR:** — · **Plan:** `docs/todos/012-P1-saved-files-can-silently-overwrite.md`
+
+**Class:** K-1 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** `docs/todos/012` acceptance criterion 2 asked that `jq_query`'s save
+  path take the shared helper **"asserted, not assumed"**. The case written for it,
+  `jq-query.test.ts::routes its write through the shared helper`, asserted
+  `basename(path)` against `/_\d+_[0-9a-f]{8}\.txt$/` under a comment claiming *"this is
+  what says the two save paths cannot drift apart on `flag: \"wx\"`"*. The suite was green
+  and the criterion was recorded as met.
+- **Reality was:** the regex is derived from the helper's *naming*, and the exclusivity
+  guarantee is `flag: "wx"` — two independent properties of the same function.
+  `data-integrity-guardian` named the gap and the measurement settled it: deleting **only**
+  `flag: "wx"` from `file-saver.ts`, leaving the name untouched, fails exactly **one** case
+  in the whole suite — the helper-level `EEXIST` case — and **neither public save site**.
+  So a future edit that inlined the write at either site while keeping the `_<ms>_<8hex>`
+  name, which is the natural thing to keep, would have restored this todo's P1 with the
+  suite green. `mode: 0o600` was in the same position: `grep '0o600|stat('` over `src/`
+  returned no assertion at any layer.
+- **What changed:** the comment was corrected to say what the regex does and does not
+  cover, and the property was moved to one that is actually checkable. A guard in
+  `file-saver.test.ts` now walks every production `.ts` under `src/` and fails if any
+  module other than `file-saver.ts` contains `writeFile`/`writeFileSync`/`appendFile`/
+  `appendFileSync`/`createWriteStream` — so the invariant tested is *nothing but the helper
+  opens a file for writing*, which covers every present and future save site rather than
+  the two that exist. It carries a **positive control** as a separate case, because a sweep
+  that cannot find the one site it knows about has not witnessed the absence of any others
+  (K-18). Verified both directions: the guard names `lib/response/formatter.ts` when a
+  `writeFile(` is planted there. `mode: 0o600` is now asserted at a public save site.
+  `src/lib/release-guards.test.ts` is the same shape for the release invariants, and states
+  the same reason — a rule written in prose is read by nothing.
+- **What this costs next time:** **when a guard is consolidated into a shared helper, the
+  regression test moves to the helper and the call sites keep only a test of something they
+  could satisfy without it.** That is the false green in its most comfortable form, because
+  the consolidation is the right refactor and the coverage looks like it followed. The test
+  is K-1's own: *name the smallest edit to the subject that keeps this passing, make it, and
+  run the suite.* Here that edit was five characters. **And when a per-site test cannot see
+  the property, do not write a weaker per-site test — find the invariant that is checkable
+  across all sites at once.** A structural guard over the whole tree was both stronger and
+  cheaper than one collision case per save site.
+
+### RC-55 — the extraction relaxed the byte contract at the one seam every caller funnels through
+
+**Date:** 2026-09-08 · **PR:** — · **Plan:** `docs/todos/012-P1-saved-files-can-silently-overwrite.md`
+
+**Class:** K-11, K-13 — *class-id:* `broken-contract`
+
+- **The plan said:** the two save sites hold different things — `saveResponseToFile` a
+  `Buffer`, `jq_query` a `string` — so the shared helper took `content: string | Buffer`.
+  The stated reasoning, recorded in RC-52, was that `saveResponseToFile`'s public signature
+  stays `Buffer`-only so RC-33's contract is untouched, and that widening only an internal
+  helper is safe because both call sites are in-repo and visible. The same reasoning was
+  applied to the path preconditions: `targetDir` *"must arrive already resolved and
+  validated"* and `nameBase` *"a filename base from `createSafeFilenameBase`"*, both stated
+  as `@param` prose.
+- **Reality was:** that is the invariant enforced at the layer callers can bypass and
+  relaxed at the layer they cannot. `typescript-reviewer` put it exactly that way, and the
+  evidence is three sibling declarations: `saveResponseToFile` and
+  `parser.ts::parseResponseWithMetadata` both refuse the union *in prose*, each citing the
+  lossy decode RC-33 measured — and after this change `writeUniqueFile` was the **only**
+  `writeFile` in production code, so it was simultaneously the one bytes boundary in
+  `response/` where the rule was a convention rather than a type. `security-sentinel`
+  found the mirror on the other precondition: the `_<ms>_<hex>` suffix does not neutralise
+  a leading `../`, so `writeUniqueFile(validatedDir, "../../../../tmp/authorized_keys", b)`
+  writes outside the validated root at `0o600` with caller-chosen bytes. Unreachable today
+  — both callers sanitise, and both were opened and confirmed — and reachable by whoever
+  adds save site number three, which is the population the helper existed to protect.
+- **What changed:** `content` is `Buffer` only, and `jq-query.ts` encodes at the call site,
+  which also removed a redundant second `Buffer.byteLength` of the same text.
+  `writeUniqueFile` calls `createSafeFilenameBase` itself and takes the fallback as a
+  parameter, so neither call site names the sanitiser and neither can omit it; being the
+  only write sink is what makes that unforgettable, and the guard in RC-54 is what keeps it
+  the only one. `targetDir`'s precondition stays prose on the reviewer's own advice —
+  re-validating inside `response/` would import the directory policy from `files/` and add
+  a `realpath` and a `stat` to every write for a precondition checked at exactly one
+  boundary; the shape it recommended instead, a branded `ValidatedOutputDir` minted only by
+  `validateOutputDir` and `getOrCreateTempDir`, is a larger change than this branch and is
+  recorded here rather than grown into it.
+- **What this costs next time:** **extracting a shared helper moves the layer at which
+  every invariant on that path is enforced, and the default direction of the move is
+  looser.** Each caller's specific type gets replaced by the union of what all callers
+  hold, and each caller's local guarantee becomes a precondition in the helper's docblock —
+  both of which read as neutral refactoring and are not. So: **when consolidating N call
+  sites, list the invariants each one was carrying and say for each whether it moved into
+  the helper or evaporated into prose.** The seam is where a rule reaches the most callers,
+  which makes it the place to state a rule in the type system rather than the place to
+  relax it. K-11: the fix landed on the defect's mirror both times — the union was
+  tightened at the public boundary while the shared one widened, and the sanitiser was
+  called by every caller while the sink trusted them to.
+
+### RC-56 — a guard that enumerates the dangerous side reports its own omissions as a pass
+
+**Date:** 2026-09-09 · **PR:** #40 · **Plan:** `docs/todos/012-P1-saved-files-can-silently-overwrite.md`
+
+**Class:** K-4, K-1, K-2 — *class-id:* `fail-open-default`
+
+- **The plan said:** `docs/todos/012` asked for one shared write helper "so no future
+  save site has to remember" the uniqueness and sanitising rules. A test that no other
+  module opens a file for writing was chosen over per-site collision cases, because the
+  guarantee lives in one function and a per-site test cannot see it. The guard was
+  written the obvious way round: enumerate the calls that write.
+- **Reality was:** the enumeration cleared a live write binding **three times**, on
+  three different branches of review, and each time the guard reported an empty offender
+  list — which is byte-identical to compliance, so nothing failed and nothing was
+  reported. (1) Matching five call spellings missed `open`, `rename`, `copyFile` and
+  every aliased import. (2) Matching three import shapes missed a bare default import,
+  `import fs, { readFile }` — whose named clause matched and then *cleared* the file —
+  `import { promises }`, one binding carrying the whole write API, a dynamic `import()`,
+  and a re-export. (3) After the move to the TypeScript parser, the dynamic-import arm
+  tested `ts.isStringLiteral` alone, so ``import(`fs/promises`)`` — a
+  `NoSubstitutionTemplateLiteral` — cleared, and so did `import(spec)`. Instance 3 was
+  found by `coderabbitai` on the open PR and filed as "🔵 Trivial".
+- **What changed:** `src/lib/response/file-saver.test.ts::forbiddenFsBindings` inverted
+  at each step, and the last step is the one that ended the class. `PERMITTED_FS` names
+  what a module may hold, the parser reads the bindings, and any form the code cannot
+  enumerate is reported. The dynamic arm keys on **the specifier, not the node kind**:
+  a literal it can read is judged on its text, and one it cannot read is reported. That
+  closed a residual the file had documented as unreachable-by-design (a computed
+  specifier) at the same time. `ARCHITECTURE.md` invariant 17 is the citable rule.
+- **What this costs next time:** two rules.
+  1. **A guard over a closed vocabulary states what is PERMITTED, never what is
+     forbidden.** The forbidden side of a language surface is open — new syntax, new
+     aliases, new spellings — so enumerating it inherits every omission, and the
+     omission's signature is a pass. Ask of any new guard: *if my list is incomplete,
+     does this report a failure or a success?*
+  2. **Three fixes to one class is a verdict on the enforcement layer, not on the
+     fixes.** Each of the three here was correct where it was applied. What was wrong
+     was the layer: text matching could not see import syntax, regex could not see the
+     AST, and node-kind enumeration inside the AST could not see an unresolvable
+     expression. `skill: pr-resolver-safety` → *the escalation ladder* rung 3 names
+     this — recognise that no fix exists at that layer and move the precondition.

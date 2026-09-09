@@ -1,6 +1,6 @@
 {
   "name": "mcp-curl",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "MCP server for executing cURL commands",
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",

@@ -235,7 +235,8 @@ what a violation looks like, it does not belong on this list.
     `content` field, so there are no body bytes to bound. `LESSONS.md` RC-28.
     This bounds the *body* and nothing else — `message` is composed after the
     gate, so what it may carry is bounded at each value's own source rather than
-    weighed here. **It carries the filepath (`FILENAME_MAX_LENGTH`, plus a
+    weighed here. **It carries the filepath (`FILENAME_MAX_LENGTH` for the base, plus the
+    `_<ms>_<8 hex>.txt` suffix, plus a
     validated output directory), two server-computed byte counts, and
     server-authored literals. It does not carry the content type at all** — that
     absence is the closure, not a bound on the field, and naming a bound here
@@ -436,3 +437,21 @@ what a violation looks like, it does not belong on this list.
     Object keys were, and remain, deliberately undefended: two keys defending to
     the same string would collapse into one, which is the very loss this
     invariant exists to stop. `LESSONS.md` RC-16, RC-37, RC-47.
+
+17. **`response/file-saver.ts::writeUniqueFile` is the only file-write sink in
+    production code.** Every persisted artefact goes through it, and that is what
+    makes three properties unforgettable rather than remembered per call site: the
+    `nameBase`/`fallback` sanitiser (a `../` in either would otherwise escape the
+    validated directory), `flag: "wx"` (which makes a residual name collision an
+    `EEXIST` instead of a silent overwrite, and refuses a symlink at the final
+    component), and `mode: 0o600` (which applies only on creation, so it holds only
+    because `wx` makes every write a creation). **The violation shape is any
+    production module other than `file-saver.ts` holding a file-content-write
+    binding from `fs`** — in any import form, including an alias, a default import,
+    a re-export or a dynamic `import()`. Enforced by
+    `src/lib/response/file-saver.test.ts`, which parses each production module and
+    fails closed on a form it cannot enumerate. **The remedy for a failing offender
+    list is to route the new site through `writeUniqueFile`, never to widen the
+    guard's owner.** `LESSONS.md` RC-56 records why the guard names what is
+    permitted rather than what is forbidden, and what the enumerating forms that
+    preceded it cost. Trust boundary 3 covers the read side of the same store.

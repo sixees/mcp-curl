@@ -3,7 +3,7 @@
 // sanitisation, and injection-detection observability.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, writeFile, rm, symlink, mkdir, stat } from "fs/promises";
+import { mkdtemp, readFile, writeFile, rm, symlink, mkdir, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join, basename } from "path";
 import { executeJqQuery } from "./jq-query.js";
@@ -235,6 +235,55 @@ describe("executeJqQuery — file save behavior", () => {
         } finally {
             await rm(customDir, { recursive: true, force: true });
         }
+    });
+
+    it("gives two filters over one source file two distinct files", async () => {
+        // At this site the name is built from `basename(sourceFile)` and **the
+        // filter never reaches it**, so two filters over one file arrive at the
+        // namer identical. No differing query string is needed — batching two
+        // filters in a turn is enough, which is why `docs/todos/012` carries
+        // this as its own criterion.
+        //
+        // `Date.now` is pinned because the clock cannot discriminate two writes
+        // inside one millisecond: let it run and this case measures the
+        // machine's speed.
+        vi.spyOn(Date, "now").mockReturnValue(1_757_000_000_000);
+
+        const file = join(allowedDir, "source.json");
+        await writeFile(file, JSON.stringify({ a: "alpha", b: "bravo" }));
+        const query = (jq_filter: string) =>
+            executeJqQuery({ filepath: file, jq_filter, save_to_file: true, output_dir: allowedDir }, {});
+
+        const first = await query(".a");
+        const second = await query(".b");
+
+        const pathA = extractSavedPath(first.content[0].text);
+        const pathB = extractSavedPath(second.content[0].text);
+        expect(pathA).not.toBe(pathB);
+        expect(JSON.parse(await readFile(pathA, "utf-8"))).toBe("alpha");
+        expect(JSON.parse(await readFile(pathB, "utf-8"))).toBe("bravo");
+    });
+
+    it("routes its write through the shared helper", async () => {
+        // Acceptance criterion 2, asserted rather than assumed: the trailing
+        // `_<ms>_<8 hex>` is `writeUniqueFile`'s naming signature, and this site
+        // builds no name of its own.
+        //
+        // **It says nothing about `flag: "wx"`, and must not be read as though
+        // it did.** A name is not a flag: an inline re-implementation here that
+        // kept this shape and dropped the flag would pass this case. What covers
+        // that is the write-sink guard in
+        // `src/lib/response/file-saver.test.ts`, which fails if any module but
+        // the helper opens a file for writing.
+        const file = join(allowedDir, "shape.json");
+        await writeFile(file, JSON.stringify({ k: "v" }));
+
+        const result = await executeJqQuery(
+            { filepath: file, jq_filter: ".k", save_to_file: true, output_dir: allowedDir },
+            {}
+        );
+
+        expect(basename(extractSavedPath(result.content[0].text))).toMatch(/_\d+_[0-9a-f]{8}\.txt$/);
     });
 });
 
