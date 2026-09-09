@@ -4,10 +4,10 @@
 // outside this module opens a file for writing at all.
 //
 // **`Date.now` is pinned in every case here, and that is the measurement rather
-// than a convenience.** The clock was the only discriminator the pre-fix naming
-// scheme had, so a case that lets it run is measuring how fast the machine is:
-// it passes on two saves a millisecond apart whether the defect is fixed or
-// not. `docs/todos/012`.
+// than a convenience.** The clock cannot discriminate two writes inside one
+// millisecond, so a case that lets it run measures how fast the machine is: it
+// passes on two saves a millisecond apart whether the naming scheme separates
+// them or not. `docs/todos/012`.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // The write-sink guard below parses production source rather than matching it.
@@ -186,35 +186,27 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
     // `flag: "wx"`, which lives in exactly one function — so a test that a save
     // *site* produces two distinct paths cannot see it: an inline
     // re-implementation that keeps the same name shape passes such a test with
-    // the whole suite green, which is how `docs/todos/012`'s P1 would come back
-    // at a site that had been fixed. Measured, not argued: dropping only
-    // `flag: "wx"` from the helper fails exactly one case in this file and
-    // neither public save site. `ARCHITECTURE.md` invariant 17 is the citable
-    // statement of the rule; this block is its enforcement.
+    // the whole suite green, at a site that reads as fixed. Measured, not
+    // argued: dropping only `flag: "wx"` from the helper fails exactly one case
+    // in this file and neither public save site. `ARCHITECTURE.md` invariant 17
+    // is the citable statement of the rule; this block is its enforcement.
     //
-    // **The check is parsed, not matched, and it fails CLOSED.** Two earlier
-    // forms of this guard both enumerated the *dangerous* side and so inherited
-    // every omission. Matching five call spellings missed `open`, `rename`,
-    // `copyFile` and every aliased import. Matching three import shapes then
-    // missed a bare default import, `import fs, { readFile }` (whose named
-    // clause matched and cleared the file), `{ promises }` — one binding
-    // carrying the whole write API — a dynamic `import()`, and a re-export.
-    // Each returned an empty offender list, which is byte-identical to
-    // compliance. A third enumeration of syntax would have the same shape one
-    // round later, so the enumeration is inverted instead: `PERMITTED_FS` lists
-    // what is allowed, TypeScript's own parser reads the bindings, and anything
-    // it cannot enumerate is reported rather than cleared. `release-guards.test.ts`
-    // takes the same direction for the same reason — "a parse miss must not read
-    // as 'nothing to enforce'".
+    // **The check is parsed, not matched, and it fails CLOSED.** `PERMITTED_FS`
+    // names what a module may hold and TypeScript's own parser reads the
+    // bindings, so a form this code cannot enumerate is reported rather than
+    // cleared. The direction is the whole design: an empty offender list is
+    // byte-identical to compliance, so a guard enumerating the *dangerous* side
+    // inherits every omission in its own list and reports that omission as a
+    // pass. `LESSONS.md` RC-56 records what that cost here.
+    // `release-guards.test.ts` takes the same direction for the same reason —
+    // "a parse miss must not read as 'nothing to enforce'".
     //
-    // **One residual, stated rather than chased.** A third-party `fs` wrapper
-    // evades this, because it never names an `fs` module — and so does
+    // **Two residuals, stated rather than chased.** A third-party `fs` wrapper
+    // evades this because it never names an `fs` module, and so does
     // `createRequire(...)("fs")`, whose callee is a call expression rather than
-    // the `require` identifier this parse keys on. A computed specifier used to
-    // sit here too: `import(spec)` is now reported, because a specifier this
-    // parse cannot read is answered the way every other unenumerable form is.
-    // No in-repo check closes what remains; a lint rule or a resolution-level
-    // split would, and this repository has no lint layer.
+    // the `require` identifier this parse keys on. No in-repo check closes
+    // either; a lint rule or a resolution-level split would, and this
+    // repository has no lint layer.
 
     /**
      * Bindings a production module may hold from `fs`.
@@ -224,9 +216,8 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
      * because `files/temp-manager.ts` legitimately owns directory lifecycle.
      * This guard governs **file-content writes** — the surface `flag: "wx"`,
      * the `nameBase` sanitiser and `mode: 0o600` protect. Destruction and mode
-     * changes are a separate invariant that nothing here enforces; a previous
-     * version of this file called the same set "read and metadata bindings",
-     * which was false of three of its members.
+     * changes are a separate invariant that nothing here enforces, so reading
+     * this set as "safe bindings" overstates what it certifies.
      */
     const PERMITTED_FS = new Set([
         "readFile", "readFileSync", "createReadStream", "readdir", "readdirSync",
@@ -244,10 +235,15 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
      * Every `fs` binding a module pulls in that is not on `PERMITTED_FS`.
      *
      * A form whose bindings cannot be enumerated at the import site — a default
-     * import, a namespace import, a bare `import "fs"`, a dynamic `import()` or
-     * a `require()` — yields a `"* (…)"` entry naming the form. Those are
-     * reported because nothing here can tell a read from a write through them,
-     * and the safe answer to "I cannot see" is not "nothing is there".
+     * import, a namespace import, a bare `import "fs"`, or a dynamic
+     * `import()`/`require()` whose specifier this parse cannot read — yields a
+     * `"* (…)"` entry naming the form. Those are reported because nothing here
+     * can tell a read from a write through them, and the safe answer to "I
+     * cannot see" is not "nothing is there". A dynamic specifier it *can* read
+     * is judged on that specifier, so a non-`fs` module is not reported.
+     *
+     * Type-only imports and exports yield nothing: they erase before runtime,
+     * so this guard has no subject in them.
      */
     const forbiddenFsBindings = (source: string, name = "probe.ts"): string[] => {
         const sf = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true);
@@ -268,12 +264,11 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
                 node.moduleSpecifier &&
                 ts.isStringLiteral(node.moduleSpecifier) &&
                 isFsModule(node.moduleSpecifier.text) &&
-                // `import type { Stats } from "fs/promises"` erases before
-                // runtime, so this guard has no subject in it: it governs
-                // file-content writes, and a type cannot perform one. Reporting
-                // one fails on legitimate code, and the remedy a failing
-                // offender list prescribes — route the site through
-                // `writeUniqueFile` — is not available to a type.
+                // Reporting a type-only declaration would fail on legitimate
+                // code, and the remedy a failing offender list prescribes —
+                // route the site through `writeUniqueFile` — is not available
+                // to a type, which leaves weakening this guard as the only way
+                // out.
                 !(ts.isImportDeclaration(node) ? node.importClause?.isTypeOnly : node.isTypeOnly)
             ) {
                 const clause = ts.isImportDeclaration(node) ? node.importClause : node.exportClause;
@@ -297,14 +292,13 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
                     target.kind === ts.SyntaxKind.ImportKeyword ||
                     (ts.isIdentifier(target) && target.text === "require");
                 if (isDynamic) {
-                    // A specifier this parse can read decides itself; one it
-                    // cannot is reported. Enumerating node kinds is what failed
-                    // here: `import(`fs/promises`)` is a
-                    // NoSubstitutionTemplateLiteral, so a StringLiteral-only
-                    // test cleared a live write module — and adding that second
-                    // kind would still leave `import(spec)` clear on the same
-                    // argument. The arm now answers "I cannot see" the way
-                    // every other unenumerable form here does.
+                    // Keyed on the specifier, never on the node kind. A
+                    // literal this parse can read is judged on its text; one it
+                    // cannot read at all — a computed expression, an
+                    // interpolated template — is reported, because a specifier
+                    // nothing here can resolve may name `fs` as easily as not.
+                    // Keying on node kinds instead means every kind omitted
+                    // from the list reads as compliance.
                     const spec =
                         arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))
                             ? arg.text
@@ -345,9 +339,9 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
     });
 
     it.each([
-        // Each row is a way to reach a file-content write. Every one of these
-        // was cleared by at least one earlier form of this guard; they are
-        // fixtures now rather than history.
+        // Each row is a way to reach a file-content write. The set is what
+        // makes the guard's direction testable: an offender list coming back
+        // empty for any of these would be indistinguishable from compliance.
         ['import { writeFile } from "fs/promises";', "plain named"],
         ['import { writeFile as saveBytes } from "fs/promises";', "aliased"],
         ['import fs from "node:fs/promises";', "bare default"],

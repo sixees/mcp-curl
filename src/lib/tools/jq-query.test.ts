@@ -244,8 +244,9 @@ describe("executeJqQuery — file save behavior", () => {
         // filters in a turn is enough, which is why `docs/todos/012` carries
         // this as its own criterion.
         //
-        // `Date.now` is pinned because it was the only discriminator before the
-        // fix: let the clock run and this case measures the machine's speed.
+        // `Date.now` is pinned because the clock cannot discriminate two writes
+        // inside one millisecond: let it run and this case measures the
+        // machine's speed.
         vi.spyOn(Date, "now").mockReturnValue(1_757_000_000_000);
 
         const file = join(allowedDir, "source.json");

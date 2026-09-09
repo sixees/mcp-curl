@@ -452,6 +452,6 @@ what a violation looks like, it does not belong on this list.
     `src/lib/response/file-saver.test.ts`, which parses each production module and
     fails closed on a form it cannot enumerate. **The remedy for a failing offender
     list is to route the new site through `writeUniqueFile`, never to widen the
-    guard's owner.** `LESSONS.md` RC-54 and RC-55 record what the two earlier,
-    weaker forms of that guard missed. Trust boundary 3 covers the read side of the
-    same store.
+    guard's owner.** `LESSONS.md` RC-56 records why the guard names what is
+    permitted rather than what is forbidden, and what the enumerating forms that
+    preceded it cost. Trust boundary 3 covers the read side of the same store.

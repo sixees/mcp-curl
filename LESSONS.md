@@ -2377,3 +2377,45 @@ and this branch had not merged when the correction was made.
   relax it. K-11: the fix landed on the defect's mirror both times — the union was
   tightened at the public boundary while the shared one widened, and the sanitiser was
   called by every caller while the sink trusted them to.
+
+### RC-56 — a guard that enumerates the dangerous side reports its own omissions as a pass
+
+**Date:** 2026-09-09 · **PR:** #40 · **Plan:** `docs/todos/012-P1-saved-files-can-silently-overwrite.md`
+
+**Class:** K-4, K-1, K-2 — *class-id:* `fail-open-default`
+
+- **The plan said:** `docs/todos/012` asked for one shared write helper "so no future
+  save site has to remember" the uniqueness and sanitising rules. A test that no other
+  module opens a file for writing was chosen over per-site collision cases, because the
+  guarantee lives in one function and a per-site test cannot see it. The guard was
+  written the obvious way round: enumerate the calls that write.
+- **Reality was:** the enumeration cleared a live write binding **three times**, on
+  three different branches of review, and each time the guard reported an empty offender
+  list — which is byte-identical to compliance, so nothing failed and nothing was
+  reported. (1) Matching five call spellings missed `open`, `rename`, `copyFile` and
+  every aliased import. (2) Matching three import shapes missed a bare default import,
+  `import fs, { readFile }` — whose named clause matched and then *cleared* the file —
+  `import { promises }`, one binding carrying the whole write API, a dynamic `import()`,
+  and a re-export. (3) After the move to the TypeScript parser, the dynamic-import arm
+  tested `ts.isStringLiteral` alone, so ``import(`fs/promises`)`` — a
+  `NoSubstitutionTemplateLiteral` — cleared, and so did `import(spec)`. Instance 3 was
+  found by `coderabbitai` on the open PR and filed as "🔵 Trivial".
+- **What changed:** `src/lib/response/file-saver.test.ts::forbiddenFsBindings` inverted
+  at each step, and the last step is the one that ended the class. `PERMITTED_FS` names
+  what a module may hold, the parser reads the bindings, and any form the code cannot
+  enumerate is reported. The dynamic arm keys on **the specifier, not the node kind**:
+  a literal it can read is judged on its text, and one it cannot read is reported. That
+  closed a residual the file had documented as unreachable-by-design (a computed
+  specifier) at the same time. `ARCHITECTURE.md` invariant 17 is the citable rule.
+- **What this costs next time:** two rules.
+  1. **A guard over a closed vocabulary states what is PERMITTED, never what is
+     forbidden.** The forbidden side of a language surface is open — new syntax, new
+     aliases, new spellings — so enumerating it inherits every omission, and the
+     omission's signature is a pass. Ask of any new guard: *if my list is incomplete,
+     does this report a failure or a success?*
+  2. **Three fixes to one class is a verdict on the enforcement layer, not on the
+     fixes.** Each of the three here was correct where it was applied. What was wrong
+     was the layer: text matching could not see import syntax, regex could not see the
+     AST, and node-kind enumeration inside the AST could not see an unresolvable
+     expression. `skill: pr-resolver-safety` → *the escalation ladder* rung 3 names
+     this — recognise that no fix exists at that layer and move the precondition.
