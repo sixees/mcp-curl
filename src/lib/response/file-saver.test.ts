@@ -45,6 +45,39 @@ afterEach(async () => {
     if (dir) await rm(dir, { recursive: true, force: true });
 });
 
+const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/**
+ * Every production `.ts` under `src/` — no tests, no fixtures.
+ *
+ * **Two sweeps below share this list, and sharing it is the point.** Each
+ * enforces a different rule about what production code may contain, and a
+ * second copy of the walk would let the two disagree about what "production"
+ * means — at which point one of them is enforcing its rule over a smaller tree
+ * than it claims, silently.
+ *
+ * The `.test-fixture.` exclusion is what makes the suffix load-bearing: a file
+ * carrying it is not swept for `fs` bindings, so nothing may reach one from
+ * production. `CONVENTIONS.md` → *Naming* states that rule and the sweep in
+ * *nothing in production imports a test-only module* enforces it.
+ */
+const productionFiles = async (d: string): Promise<string[]> => {
+    const out: string[] = [];
+    for (const entry of await readdir(d, { withFileTypes: true })) {
+        const p = join(d, entry.name);
+        if (entry.isDirectory()) {
+            out.push(...(await productionFiles(p)));
+        } else if (
+            entry.name.endsWith(".ts") &&
+            !entry.name.endsWith(".test.ts") &&
+            !entry.name.includes(".test-fixture.")
+        ) {
+            out.push(p);
+        }
+    }
+    return out;
+};
+
 describe("saveResponseToFile — two saves never resolve to one path", () => {
     it("separates two URLs differing only in their query string", async () => {
         const urlA = "https://api.example.test/items?page=1";
@@ -227,7 +260,6 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         "rm", "rmSync", "rmdir", "unlink", "chmod",
     ]);
 
-    const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const OWNER = join("lib", "response", "file-saver.ts");
     const isFsModule = (spec: string): boolean => /^(node:)?fs(\/promises)?$/.test(spec);
 
@@ -313,24 +345,6 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         return [...found];
     };
 
-    /** Every production `.ts` under `src/` — no tests, no fixtures. */
-    const productionFiles = async (d: string): Promise<string[]> => {
-        const out: string[] = [];
-        for (const entry of await readdir(d, { withFileTypes: true })) {
-            const p = join(d, entry.name);
-            if (entry.isDirectory()) {
-                out.push(...(await productionFiles(p)));
-            } else if (
-                entry.name.endsWith(".ts") &&
-                !entry.name.endsWith(".test.ts") &&
-                !entry.name.includes(".test-fixture.")
-            ) {
-                out.push(p);
-            }
-        }
-        return out;
-    };
-
     it("sees the owner, so an empty offender list means something", async () => {
         // The positive control. A sweep that cannot find the one site it knows
         // about has not witnessed the absence of any others.
@@ -390,6 +404,119 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
             if (rel === OWNER) continue;
             const bindings = forbiddenFsBindings(await readFile(file, "utf-8"), rel);
             if (bindings.length > 0) offenders.push(`${rel} (${bindings.join(", ")})`);
+        }
+        expect(offenders).toEqual([]);
+    });
+});
+
+describe("nothing in production imports a test-only module", () => {
+    // **The `.test-fixture.ts` suffix is a boundary, and until this guard it was
+    // only a habit.** `productionFiles` above excludes the suffix, so a fixture
+    // is never swept for `fs` bindings — which means a file-content write placed
+    // in one and imported from production satisfies invariant 17's sweep and
+    // reports an empty offender list. That is byte-identical to compliance,
+    // which is the failure `LESSONS.md` RC-56 was filed for. `tsup` bundles from
+    // four entry points, so today the exposure is latent rather than live; this
+    // is what keeps it that way.
+    //
+    // **Deliberately not folded into `forbiddenFsBindings`.** That function
+    // reads import *bindings* and this one reads *specifiers* — two rules, and
+    // a single function answering both could not say which one failed. Its walk
+    // is also the most-reviewed code in this file; a refactor to share the
+    // traversal would put invariant 17's enforcement at risk to save a dozen
+    // lines.
+
+    const FIXTURE_MARK = ".test-fixture";
+
+    /**
+     * Module specifiers this file pulls in, with a marker for any the parse
+     * cannot read.
+     *
+     * **Fails closed, for the same reason `forbiddenFsBindings` does.** A
+     * specifier nothing here can resolve — a computed expression, an
+     * interpolated template — may name a fixture as easily as not, so it is
+     * reported rather than cleared.
+     *
+     * Type-only imports are **not** exempt here, where they are exempt from the
+     * `fs` sweep. The difference is the available remedy: a type cannot be
+     * routed through `writeUniqueFile`, so reporting it there would leave
+     * weakening the guard as the only way out — whereas a type imported from a
+     * fixture can simply be moved, and the boundary rule says nothing in
+     * production may reach one.
+     */
+    const moduleSpecifiers = (source: string, name = "probe.ts"): string[] => {
+        const sf = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true);
+        const found = new Set<string>();
+        const visit = (node: ts.Node): void => {
+            if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+                found.add(
+                    ts.isStringLiteral(node.moduleSpecifier)
+                        ? node.moduleSpecifier.text
+                        : "* (unreadable specifier)"
+                );
+            }
+            if (ts.isCallExpression(node)) {
+                const target = node.expression;
+                const arg = node.arguments[0];
+                const isDynamic =
+                    target.kind === ts.SyntaxKind.ImportKeyword ||
+                    (ts.isIdentifier(target) && target.text === "require");
+                if (isDynamic) {
+                    found.add(
+                        arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))
+                            ? arg.text
+                            : "* (unreadable dynamic specifier)"
+                    );
+                }
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(sf);
+        return [...found];
+    };
+
+    const fixtureImports = (source: string, name = "probe.ts"): string[] =>
+        moduleSpecifiers(source, name).filter(
+            (spec) => spec.includes(FIXTURE_MARK) || spec.startsWith("* (")
+        );
+
+    it.each([
+        // Each row is a way to reach a test-only module. As with the `fs` sweep,
+        // the set is what makes the guard's direction testable: an empty result
+        // for any of these would be indistinguishable from compliance.
+        ['import { cpuMs } from "./cpu-time.test-fixture.js";', "plain named"],
+        ['import cpuMs from "./cpu-time.test-fixture.js";', "default"],
+        ['import * as fx from "./cpu-time.test-fixture.js";', "namespace"],
+        ['import "./cpu-time.test-fixture.js";', "side-effect"],
+        ['import type { T } from "./cpu-time.test-fixture.js";', "type-only — not exempt here"],
+        ['export { cpuMs } from "./cpu-time.test-fixture.js";', "re-export"],
+        ['export * from "./cpu-time.test-fixture.js";', "namespace re-export"],
+        ['const m = await import("./cpu-time.test-fixture.js");', "dynamic"],
+        ["const m = await import(`./cpu-time.test-fixture.js`);", "dynamic, template literal"],
+        ['const m = require("./cpu-time.test-fixture.js");', "require"],
+        ["const m = await import(spec);", "unreadable dynamic specifier"],
+    ])("reports a test-only import: %s (%s)", (source) => {
+        expect(fixtureImports(source)).not.toEqual([]);
+    });
+
+    it.each([
+        ['import { readFile } from "fs/promises";', "an ordinary module"],
+        ['import { parseResponseWithMetadata } from "./parser.js";', "a sibling production module"],
+        ['import type { Stats } from "fs/promises";', "a type-only ordinary import"],
+    ])("does not report %s (%s)", (source) => {
+        expect(fixtureImports(source)).toEqual([]);
+    });
+
+    it("finds no production module importing a test-only module", async () => {
+        const files = await productionFiles(srcRoot);
+        // The positive control: a sweep that walked nothing witnesses nothing.
+        expect(files.length).toBeGreaterThan(20);
+
+        const offenders: string[] = [];
+        for (const file of files) {
+            const rel = relative(srcRoot, file);
+            const specs = fixtureImports(await readFile(file, "utf-8"), rel);
+            if (specs.length > 0) offenders.push(`${rel} (${specs.join(", ")})`);
         }
         expect(offenders).toEqual([]);
     });

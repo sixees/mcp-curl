@@ -236,3 +236,89 @@ becomes a todo is their call, not this run's.
 | File (removed) | Title | Summary | By | Date |
 |---|---|---|---|---|
 | `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md` | The ReDoS budget guards fail on every full-suite run, so the suite has no reliable green | All three guard sites measure CPU time through one shared helper; budget unchanged. Acceptance criterion 1 was unusable as written (the unfixed code passes it on an idle machine) and was replaced by a load comparison: baseline 2/4 failing under 28 spinners, this branch 3/3 green. Criterion 2 met by probe at all three sites. Criterion 3 met — an independent sweep confirms the two remaining wall-clock assertions are the complete remainder, and each is justified in place | `/sixees-workflow:work` | 2026-09-09 |
+
+---
+
+## Addendum — `performance-oracle`'s return, and the director's two scope calls
+
+`performance-oracle` returned 21 minutes after the other reviewers, having **measured
+rather than read**. Its three findings are all about figures this branch wrote, and two of
+them invalidate the calibration the first commit recorded. Everything below was
+re-measured independently before being written down.
+
+### The calibration was wrong in two independent ways (RC-59)
+
+| Recorded in the first commit | Measured |
+|---|---|
+| passing population 0.15 – 10 ms | **0.11 – 22 ms** idle; ~30 ms through the suite; **~53 ms beside 72 CPU hogs** |
+| weakest regression 254 ms (2.5x above budget) | **117 ms** — `opener flood behind a leading >`, `noGt` latch |
+| `processResponse` 1 MB case ~100 ms, margin 20x | **17 ms**, margin ~117x |
+| `detectInjectionPattern` 1 MB ~270 ms, margin 7x | **48-53 ms**, margin ~40x |
+
+Two causes, both mine. The population figures came from a probe sorted with
+`sort -t' ' -k2 -g` over `AssertionError: expected N to be less than M` — field 2 is the
+word `expected`, so the sort did nothing and the extremes were arbitrary; the 254 ms was
+the vitest *duration column* rather than the CPU figure. And only two of at least four
+cost-bearing mechanisms were probed; the two missed carry the weakest regressions.
+
+**The consequence was not cosmetic.** The docblock concluded there was 2.5x of room below
+the weakest regression, which licensed widening the budget to ~120 ms — and at that value
+the guard passes with `stripTagTokens`'s `noGt` latch deleted and the tag strip quadratic
+on any `>`-free flood. The sentence written to prevent a toothless guard authorised one.
+
+The two wall-clock margins were taken from pre-existing prose in those files and never
+re-measured. That prose was itself stale; both figures are now measured at HEAD and say so.
+
+### The full teeth matrix, 24 cases × 5 mechanisms
+
+Measured on esbuild bundles under the scratchpad — the repository source was never
+mutated for this. **18 of 24 cases have a mutation above the budget; 6 do not**, and a
+seventh (`closer flood with no >`) regresses only to 97 ms, under the threshold. Every
+case now carries its figure inline, and the seven are marked `NO TEETH`.
+
+Also recorded, because no single-mutation probe can show it: **5 of the 6 beacon inputs
+contain no `)` at all**, so `lastCloserEnd` is 0, `withinClosableRegion` returns at
+`end <= 0`, and no pattern runs. They cost 0.11-0.15 ms because they measure an early
+return, and two of them need the region bound *and* the label class broken together before
+anything regresses.
+
+### The director's two calls, both executed
+
+- **Finding 6 — invariant 17's fixture exemption: fixed in this branch.**
+  `productionFiles` and `srcRoot` are hoisted to module scope so one walk serves both
+  sweeps — a second copy would let the two disagree about what "production" means, silently
+  narrowing one of them. A new `describe("nothing in production imports a test-only
+  module")` adds `moduleSpecifiers` (fails closed on any specifier it cannot read) and 11
+  positive plus 3 negative cases. Type-only imports are **not** exempt here, unlike in the
+  `fs` sweep, because the remedy differs: a type imported from a fixture can simply be
+  moved. Probed by making `processor.ts` import the fixture — the sweep reported
+  `lib/response/processor.ts (./cpu-time.test-fixture.js)` and failed; source restored
+  identical to HEAD. `forbiddenFsBindings` was deliberately not refactored to share the
+  traversal: it reads bindings where this reads specifiers, and it is the most-reviewed
+  code in the file.
+- **Finding 7 — the 21 unexamined flood cases: probed in this branch.** Result is the
+  matrix above.
+
+### Still open, and it is a decision rather than a gap
+
+**The budget's value is now a live question.** The usable window is ~53 – 117 ms and 100 ms
+sits near the top of it. That leaves the seven marked cases unable to fail, and only ~1.9x
+between the slowest loaded pass and the threshold. The todo settled "keep the budget at
+100" on the premise that the margin was 50x above passing and 2.5x below regressing; both
+halves of that premise are refuted. Lowering toward ~75 ms would sit more centrally and
+give `closer flood with no >` teeth at 97 ms, at the cost of pass headroom. **Not changed
+here — the value was settled by the director on a premise that has since been measured
+false, so it goes back to the director rather than being quietly re-decided.**
+
+### Round-2 reviewer note
+
+`performance-oracle` read the committed diff while this session held uncommitted fixes in
+the tree, and said so explicitly (K-9). It confirmed two of its would-be findings were
+already closed there and did not file them. It also confirmed the change's premise by
+measurement: under 72 spinners the slowest flood read **177 ms wall against 53 ms CPU**, so
+a wall-clock budget of 100 ms would have failed it while CPU time did not — and it could
+not defeat CPU time on this subject, `strip-blocks.ts` being wholly synchronous with no
+`await`, `Worker`, `spawn` or timer in the measured region.
+
+**These fixes are again the least-reviewed text on the branch** (K-16). Nothing has
+reviewed the addendum's own changes; point the next pass at them.

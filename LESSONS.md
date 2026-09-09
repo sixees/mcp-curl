@@ -2500,3 +2500,59 @@ and this branch had not merged when the correction was made.
   on the unfixed tree, in this session, on this host. `01-known-shapes.md` → K-18 is this
   shape, and its instruction ("run it where it must return a result") is what the spinners
   were for.
+
+### RC-59 — the budget's calibration was measured on two mechanisms of four, and its own figures came from a mis-sorted probe
+
+**Date:** 2026-09-09 · **PR:** — (filed pre-push) · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
+
+**Class:** K-6, K-4, K-1 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** the todo asked only for the clock to change — *"Keep `REDOS_BUDGET_MS`
+  at 100 and keep every case; only the clock changes"* — so the existing calibration was
+  treated as a fact to carry across, and the re-measurement was scoped to restating the old
+  wall-clock figures in CPU terms.
+- **Reality was:** the restated figures were wrong in both directions, by two independent
+  mistakes. **(1)** They came from a probe whose output was sorted with
+  `sort -t' ' -k2 -g` over lines reading `AssertionError: expected 0.147 to be less than …`
+  — field 2 is the word `expected`, identical on every line, so the sort did nothing and the
+  reported minimum and maximum were whichever lines happened to land first. The passing
+  population was recorded as 0.15 – 10 ms and measures **0.11 – 22 ms** idle, ~30 ms through
+  the suite and **~53 ms beside 72 CPU hogs**; the weakest regression was recorded as 254 ms,
+  which was the vitest *duration column*, not the CPU figure. **(2)** Only two of at least
+  four cost-bearing mechanisms were probed — the `withinClosableRegion` region bound and
+  `stripHtmlComments`'s no-closer latch. The two missed, `stripTagTokens`'s `noGt` latch and
+  the attribute character classes, carry the **weakest** regressions there are: `noGt`
+  removal costs 117 ms against a 100 ms budget. Found by `performance-oracle`, which measured
+  rather than read, and confirmed by re-measuring the full 24-case × 5-mechanism matrix.
+- **What changed:** `strip-blocks.test.ts::REDOS_BUDGET_MS`'s docblock now states the real
+  window (~53 – 117 ms), says the budget **cannot be widened**, and records that a 2 s
+  budget fails on 10 of the 18 regressions and passes the other 8. Every one of the 24 flood
+  inputs carries the figure it reaches under the mutation it guards, and the **seven that
+  cannot fail at this budget are marked `NO TEETH`** — six have no mutation crossing 100 ms
+  and `closer flood with no >` regresses only to 97 ms. Five of the six beacon inputs contain
+  no `)`, so `withinClosableRegion` returns at `end <= 0` and no pattern runs at all; that is
+  now stated beside them. Two more figures this run had asserted from pre-existing prose
+  rather than measurement were re-taken: the `processResponse` 1 MB case is **17 ms**, not
+  ~100 ms, and `detectInjectionPattern` on 1 MB is **48-53 ms**, not ~270 ms.
+- **What this costs next time:** three rules.
+  1. **A two-sided calibration is only as strong as the mechanism list it was probed
+      against, and the mechanism list is derived from the subject, not from the guard.** Ask
+      *what could I delete from this code that would make it slow?* and enumerate that,
+      before reading any figure. Probing the mechanisms someone already documented finds the
+      bound they already knew about, and the weakest bound is the one that decides the
+      threshold.
+  2. **A recorded figure that decides a threshold states the conditions it was taken
+      under.** A bare pair of numbers cannot be re-checked, which is how "0.15 – 10 ms"
+      survived beside a case actually costing 22 ms. Host, load and run count, or the figure
+      is not evidence.
+  3. **A shell pipeline that ranks the evidence is part of the measurement and gets the same
+      scrutiny as the measurement.** The mis-sorted key here produced numbers that were
+      plausible, ordered, and wrong, and nothing downstream could tell. Verify a sort by
+      checking that its extremes actually are extreme — `sort … | head -1` and `tail -1`
+      against a hand-scan of the file.
+
+  **Open, and with the director:** the window is ~53 – 117 ms and 100 ms sits near its top,
+  which leaves the seven marked cases unable to fail and little headroom above the slowest
+  loaded pass. The todo settled "keep the budget at 100" on the premise that the margin was
+  50x and 2.5x; that premise is now refuted, so the budget's value is a live question rather
+  than a settled one.

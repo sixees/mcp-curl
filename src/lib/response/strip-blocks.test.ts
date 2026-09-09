@@ -20,26 +20,41 @@ import {
  * `cpu-time.test-fixture.ts` owns why, and owns the pool precondition it rests
  * on.
  *
- * **Calibrated against a probe, not chosen for comfort.** Removing the bound in
- * `withinClosableRegion` puts the block and beacon floods at 254 ms – 2.8 s;
- * removing the no-closer latch in `stripHtmlComments` puts its three floods at
- * 31 s, 36 s and 40 s. With both in place every case here costs 0.15 – 10 ms.
- * 100 ms sits 10× above the slowest passing case and 2.5× below the weakest
- * regression.
+ * **Calibrated by probing every mechanism against every case, and each input
+ * below records the figure it reaches under the mutation it guards.** The
+ * matrix, not this constant, is what bounds the constant:
  *
- * **Every input has a member on both sides of it, which is a separate claim from
- * the gap and has to be measured per case.** One input here did not: a comment
- * flood whose closer sat at the end cost the same with the bound removed as
- * with it, so no budget could have failed on it. Each case now records the
- * mutation it fails under, beside the input.
+ * - passing population, idle: **0.11 - 22 ms**; slowest is `closer flood with
+ *   no \`>\``
+ * - slowest passing case beside 72 CPU hogs: **~53 ms** — CPU time is not
+ *   perfectly load-invariant, and the budget has to allow for that
+ * - weakest regression above the budget: **117 ms**, `opener flood behind a
+ *   leading \`>\`` under the `noGt` latch
  *
- * **That gap bounds the budget in both directions.** Widening it past the
- * weakest regression goes toothless on the defect it was added for: a 2 s
- * budget could not fail on the 1.1 s regression that prompted it, so that
- * generation of guard passed while the defect was live (`LESSONS.md` RC-11).
- * And the inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES` (256 KB)
- * `stripBlocksFixedPoint` returns its input untouched, so an oversized flood
- * would pass by doing nothing at all.
+ * **So the usable window is about 53 - 117 ms, 100 ms sits near the top of it,
+ * and the budget cannot be widened.** An earlier form of this docblock put the
+ * weakest regression at 254 ms and concluded there was 2.5x of room below it.
+ * That figure came from probing two mechanisms of four; the two it missed —
+ * `stripTagTokens`'s `noGt` latch and the attribute character classes — carry
+ * the weakest regressions there are. Widening past ~117 ms yields a guard that
+ * passes with `noGt` deleted and the tag strip quadratic on any `>`-free flood,
+ * which would be the seventh instance of the shape this file's comments count.
+ *
+ * **A 2 s budget — this guard's first form — fails on 10 of the 18 regressions
+ * and passes the other 8**, including every `noGt` and region-bound regression
+ * in the hundreds of milliseconds. That is the measured form of `LESSONS.md`
+ * RC-11's lesson, and the reason a budget wide enough to be safe from jitter was
+ * also wide enough to be worthless.
+ *
+ * **Seven cases cannot fail at this budget, and each is marked below.** Six have
+ * no mutation crossing 100 ms at all, and `closer flood with no \`>\`` regresses
+ * only to 97 ms. They are kept because each pins an input shape the patterns
+ * must survive, but a green result from one is evidence about the input space
+ * and not about the defence. `LESSONS.md` RC-59.
+ *
+ * The inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES`
+ * (256 KB) `stripBlocksFixedPoint` returns its input untouched, so an oversized
+ * flood would pass by doing nothing at all.
  */
 const REDOS_BUDGET_MS = 100;
 
@@ -121,11 +136,11 @@ describe("stripHtmlComments", () => {
     // Moving the closer inside the flood is what puts the remaining openers past
     // the last closer, which is the state the latch exists for.
     it.each([
-        // latch removed: 40465 ms
+        // no-closer latch removed: 37.5 s
         ["opener flood, no closer", "<!--".repeat(65536)],
-        // latch removed: 35812 ms
+        // no-closer latch removed: 34.1 s
         ["opener flood, one interior closer", "<!--".repeat(4) + "-->" + "<!--".repeat(65531)],
-        // latch removed: 31114 ms
+        // no-closer latch removed: 30.3 s
         ["deep splice flood", "<!".repeat(60000) + "--".repeat(60000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         expect(cpuMs(() => stripHtmlComments(body))).toBeLessThan(REDOS_BUDGET_MS);
@@ -380,21 +395,33 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
     // `REDOS_BUDGET_MS` owns the threshold and its calibration. The two figures
     // above are about which inputs are load-bearing, not about the budget.
     it.each([
+        // `noGt` latch removed: 120 ms
         ["<script opener flood, no `>` anywhere", "<script".repeat((256 * 1024) / 7)],
+        // `noGt` latch removed: 133 ms
         ["<style opener flood, no `>` anywhere", "<style".repeat((256 * 1024) / 6)],
+        // `noGt` latch removed: 117 ms — the WEAKEST regression in the table, and what pins the budget
         ["opener flood behind a leading `>`", ">" + "<script".repeat((256 * 1024) / 7)],
+        // region bound removed: 1.1 s
         ["complete <script> openers, no closer", "<script>".repeat(32000)],
+        // region bound removed: 1.1 s
         ["complete <style> openers, no closer", "<style>".repeat(32000)],
+        // region bound removed: 1.7 s
         ["openers with a foreign closer", "<script></x>".repeat(20000)],
+        // region bound removed: 926 ms
         ["one real block, then an opener flood", "<script>x</script>" + "<script>".repeat(30000)],
+        // NO TEETH at this budget: its only regression is `noGt` removed at 97 ms, under the 100 ms threshold
         ["closer flood with no `>`", "</script".repeat(30000)],
         // Round 2. Each defeats the round-1 bound in a different way: a
         // non-boundary name accepted as a closer, and a closer whose attribute
         // run swallows the openers that follow it.
+        // region bound removed: 886 ms
         ["non-boundary closer name", "<script></scripture>".repeat(13000)],
+        // NO TEETH: no mutation exceeds 8 ms
         ["openers nested inside the bounding closer", "</script " + "<script".repeat(35000) + ">"],
         // Round 3: the scan must not trade the cap for a quadratic.
+        // NO TEETH: no mutation exceeds 18 ms
         ["deep script splice", "<scr".repeat(30000) + "<script>" + "ipt>".repeat(30000)],
+        // NO TEETH: no mutation exceeds 7 ms
         ["deep style splice", "<sty".repeat(30000) + "<style>" + "le>".repeat(30000)],
         // Round 4, and the axis every case above misses. All of them either
         // omit the closer — so the region is empty and the pass never runs —
@@ -404,8 +431,11 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // for a second closer that does not exist. Measured 2881 ms / 2460 ms
         // before the opener class excluded `<`. Reported by
         // chatgpt-codex-connector on PR #33 round 4.
+        // opener class widened to `[^>]*`: 2.9 s
         ["openers borrowing the closer's `>`", "<script".repeat(30000) + "</script>"],
+        // opener class widened to `[^>]*`: 2.5 s
         ["style openers borrowing the closer's `>`", "<style".repeat(30000) + "</style>"],
+        // opener class widened to `[^>]*`: 2.9 s
         ["openers borrowing a whitespace closer's `>`", "<script".repeat(30000) + "</ script>"],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         // **The sixth toothless-guard shape, caught before it cost anything.**
@@ -431,12 +461,27 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
     // scanning forward without limit, so `"[a](https://x".repeat(19000)` — a
     // complete beacon prefix with no `)` anywhere — still took 2.9 s. Found by
     // review. All five passes are now bounded at the last `)`.
+    //
+    // **Five of the six inputs below contain no `)` at all, so on current code
+    // they run no pattern.** `lastCloserEnd(input, ")")` is 0 for them and
+    // `withinClosableRegion` returns at `end <= 0` before any replace starts —
+    // which is why they cost 0.11-0.15 ms and why two of them need the region
+    // bound AND the label class broken together before anything regresses. That
+    // is a legitimate guard on the bound itself, but it is invisible to any
+    // single-mutation probe, so read their figures as measuring the early
+    // return, not the patterns.
     it.each([
+        // region bound removed AND label class re-admitting `[`: 82.5 s (either alone stays under 4 ms)
         ["`[` flood", "[".repeat(256 * 1024)],
+        // region bound removed AND label class re-admitting `[`: 40.9 s
         ["`![` flood", "![".repeat((256 * 1024) / 2)],
+        // NO TEETH: no mutation, single or paired, exceeds 2 ms
         ["`[](` flood", "[](".repeat((256 * 1024) / 3)],
+        // region bound removed: 2.8 s
         ["unterminated URL flood", "[a](https://x".repeat(19000)],
+        // NO TEETH: no mutation exceeds 1 ms
         ["unterminated URL flood, one trailing `)`", "[a](https://x".repeat(19000) + ")"],
+        // region bound removed: 2.7 s
         ["unterminated image URL flood", "![a](https://x".repeat(18000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         expect(cpuMs(() => stripMarkdownBeacons(body))).toBeLessThan(REDOS_BUDGET_MS);

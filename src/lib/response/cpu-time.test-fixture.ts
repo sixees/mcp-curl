@@ -13,10 +13,17 @@ import { isMainThread } from "node:worker_threads";
  *
  * **Wall clock is not a proxy for it.** `Date.now()` keeps counting while the
  * worker is descheduled, so beside the suite's own parallel workers it measures
- * the host's load rather than the pattern's cost. A budget of 100 ms against
- * 1-2 ms of work read 124-161 ms and failed. No margin closes that: a
- * descheduled measurement is unbounded however wide the budget is, which is why
- * the answer is a different clock rather than a larger number.
+ * the host's load rather than the pattern's cost: cases costing 6-22 ms of CPU
+ * read 124-161 ms of wall clock under contention and failed a 100 ms budget. No
+ * margin closes that — a descheduled measurement is unbounded however wide the
+ * budget is — which is why the answer is a different clock rather than a larger
+ * number.
+ *
+ * **CPU time is not perfectly load-invariant either, and the budget has to
+ * allow for it.** Memory-bandwidth contention shows up as real cycles: the
+ * slowest flood measures ~22 ms idle and ~53 ms beside 72 CPU hogs. That is a
+ * 2.4x spread rather than the 20x-plus a wall clock shows, which is what makes
+ * a budget possible at all — not a claim that the reading is fixed.
  */
 export function cpuMs(work: () => unknown): number {
     assertOwnProcess();

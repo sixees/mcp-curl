@@ -320,8 +320,10 @@ describe("processResponse — HTML <script>/<style> stripping (PR-7 / B8)", () =
     it("ReDoS regression: 1 MB pathological body completes within CI-tolerant 2 s", async () => {
         // Snyk's textbook ReDoS shape would make `<script\b[^>]*>[\s\S]*?</script>`
         // hang for SECONDS-to-MINUTES on adversarial input. Our pattern shape and
-        // the 256 KB skip-cap together bound wall-clock well under 100 ms in
-        // benchmarks; the 2 s assertion here is a CI-tolerant safety bound that
+        // the 256 KB skip-cap together bound this case at **17 ms** — measured at
+        // HEAD, where the figure here previously said "well under 100 ms in
+        // benchmarks" and had not been re-taken since; the 2 s assertion is a
+        // CI-tolerant safety bound that
         // still catches catastrophic backtracking (which would not complete at
         // all within the test timeout) without flaking on slow runners. Strict
         // perf targets belong in a benchmark suite, not unit tests.
@@ -330,8 +332,8 @@ describe("processResponse — HTML <script>/<style> stripping (PR-7 / B8)", () =
         // budgets moved to CPU time** (`LESSONS.md` RC-57). The mechanism that
         // broke those reaches here too — a descheduled `Date.now()` counts time
         // this process did not spend — so this is a judgement about the margin
-        // and not a claim of immunity: 2 s against ~100 ms is 20x, and no run
-        // measured while that class was open ever failed this case. Should it
+        // and not a claim of immunity: 2 s against a measured 17 ms is ~117x, and
+        // no run measured while that class was open ever failed this case. Should it
         // start failing, the remedy is CPU time rather than a wider budget — a 2 s
         // budget is exactly what let four of the strip floods pass their own
         // probe. **`cpuMs` will not do it as it stands:** the subject here is
