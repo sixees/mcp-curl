@@ -207,11 +207,14 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
     // takes the same direction for the same reason — "a parse miss must not read
     // as 'nothing to enforce'".
     //
-    // **Two residuals, stated rather than chased.** A computed specifier
-    // (`require(spec)`, `createRequire(...)("fs")`) and a third-party `fs`
-    // wrapper both evade this, because neither names an `fs` module literally.
-    // No in-repo check closes them; a lint rule or a resolution-level split
-    // would, and this repository has no lint layer.
+    // **One residual, stated rather than chased.** A third-party `fs` wrapper
+    // evades this, because it never names an `fs` module — and so does
+    // `createRequire(...)("fs")`, whose callee is a call expression rather than
+    // the `require` identifier this parse keys on. A computed specifier used to
+    // sit here too: `import(spec)` is now reported, because a specifier this
+    // parse cannot read is answered the way every other unenumerable form is.
+    // No in-repo check closes what remains; a lint rule or a resolution-level
+    // split would, and this repository has no lint layer.
 
     /**
      * Bindings a production module may hold from `fs`.
@@ -251,6 +254,9 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         const found = new Set<string>();
         const takeNamed = (els: readonly ts.ImportSpecifier[] | readonly ts.ExportSpecifier[]): void => {
             for (const el of els) {
+                // `import { type Stats, writeFile }` — the inline marker names
+                // a type, and a type cannot write a byte.
+                if (el.isTypeOnly) continue;
                 // `writeFile as saveBytes` — `propertyName` is the original.
                 const original = (el.propertyName ?? el.name).text;
                 if (!PERMITTED_FS.has(original)) found.add(original);
@@ -261,7 +267,14 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
                 (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
                 node.moduleSpecifier &&
                 ts.isStringLiteral(node.moduleSpecifier) &&
-                isFsModule(node.moduleSpecifier.text)
+                isFsModule(node.moduleSpecifier.text) &&
+                // `import type { Stats } from "fs/promises"` erases before
+                // runtime, so this guard has no subject in it: it governs
+                // file-content writes, and a type cannot perform one. Reporting
+                // one fails on legitimate code, and the remedy a failing
+                // offender list prescribes — route the site through
+                // `writeUniqueFile` — is not available to a type.
+                !(ts.isImportDeclaration(node) ? node.importClause?.isTypeOnly : node.isTypeOnly)
             ) {
                 const clause = ts.isImportDeclaration(node) ? node.importClause : node.exportClause;
                 if (!clause) {
@@ -283,8 +296,21 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
                 const isDynamic =
                     target.kind === ts.SyntaxKind.ImportKeyword ||
                     (ts.isIdentifier(target) && target.text === "require");
-                if (isDynamic && arg && ts.isStringLiteral(arg) && isFsModule(arg.text)) {
-                    found.add("* (dynamic import)");
+                if (isDynamic) {
+                    // A specifier this parse can read decides itself; one it
+                    // cannot is reported. Enumerating node kinds is what failed
+                    // here: `import(`fs/promises`)` is a
+                    // NoSubstitutionTemplateLiteral, so a StringLiteral-only
+                    // test cleared a live write module — and adding that second
+                    // kind would still leave `import(spec)` clear on the same
+                    // argument. The arm now answers "I cannot see" the way
+                    // every other unenumerable form here does.
+                    const spec =
+                        arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))
+                            ? arg.text
+                            : undefined;
+                    if (spec === undefined) found.add("* (unreadable dynamic specifier)");
+                    else if (isFsModule(spec)) found.add("* (dynamic import)");
                 }
             }
             ts.forEachChild(node, visit);
@@ -331,6 +357,8 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         ['import * as fsp from "node:fs/promises";', "namespace"],
         ['const f = require("node:fs");', "require"],
         ['const { writeFile } = await import("fs/promises");', "dynamic import"],
+        ['const { writeFile } = await import(`fs/promises`);', "dynamic import, template literal"],
+        ['const m = await import(spec);', "dynamic import, specifier this parse cannot read"],
         ['export { writeFile } from "fs/promises";', "re-export"],
         ['import "fs";', "side-effect import"],
         ['import { open } from "fs/promises";', "open"],
@@ -350,6 +378,10 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         ['import { stat, access, realpath, constants as fsConstants } from "fs/promises";', "output-dir.ts, file-validation.ts"],
         ['import { mkdtemp, chmod, rm, readdir, stat } from "fs/promises";', "temp-manager.ts"],
         ['import { writeFile } from "./my-utils.js";', "a write name from a non-fs module"],
+        ['import type { Stats } from "fs/promises";', "type-only declaration"],
+        ['import { type Stats, readFile } from "fs/promises";', "inline type marker beside a permitted name"],
+        ['export type { Stats } from "fs/promises";', "type-only re-export"],
+        ['const m = await import("./my-utils.js");', "a dynamic import of a non-fs module"],
     ])("does not fire on %s (%s)", (source) => {
         expect(forbiddenFsBindings(source)).toEqual([]);
     });

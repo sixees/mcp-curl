@@ -218,8 +218,12 @@ attributed to the document it diverged from.
 
 ## Follow-up work
 
-- [ ] Push and open a PR — awaiting authorisation. Nothing has been pushed.
-- [ ] Run `/sixees-workflow:review-pr-comments` once a PR exists; Surface 3 has not run.
+- [x] Push and open a PR. **Done** — PR #40. The three commits the Surface 2 review
+      produced were pushed on 2026-09-09, which moved the PR head from `b89ff01` to
+      `c981e18`; until then the PR carried the pre-review state and no bot had seen the
+      parsed write-sink guard.
+- [x] Run `/sixees-workflow:review-pr-comments`. **Done** — see *Review Comments
+      Addressed* below. Surface 3 has now run.
 
 ### Outstanding Todos
 
@@ -368,3 +372,62 @@ cap was not approached.
 repo bumps before the merge; `2402cc5`'s message under-describes its contents;
 `458c321`'s presence on this PR is a scope decision; and **Surface 3 has not run** —
 no bot reviewer was dispatched and none auto-reviews.
+
+---
+
+## Review Comments Addressed — 2026-09-09 (Surface 3, `/sixees-workflow:review-pr-comments` of PR #40)
+
+Operator instruction: engage codex and Copilot, three rounds, resolve all comments
+after each round. **Before round 1 the PR head was `b89ff01`** — the three commits
+the Surface 2 review produced were unpushed, so the PR carried the pre-review
+regex write-sink guard. Pushed on authorisation to `c981e18` first; every bot in
+every round below reviewed the current code.
+
+**Copilot engagement, recorded because the signal is misleading.** Three routes were
+tried: GraphQL `requestReviews(botIds:)` with the bot id discovered at runtime, and
+REST `requested_reviewers` with logins `Copilot` and `copilot-pull-request-reviewer[bot]`.
+All three returned success and left `requested_reviewers` empty, which was read as
+"Copilot is not engaged" and reported that way. **That reading was wrong** — Copilot
+reviewed in round 1. Its review request is consumed on submission rather than held as
+a pending reviewer, so an empty `requested_reviewers` is not evidence either way.
+Which of the three routes fired is not determinable from the outcome.
+
+### Round 1 — Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Invariant 17 sits between 15 and 16 (MD029) | `coderabbitai` | Fix needed | Moved the invariant 17 block after invariant 16. Pure reorder — sorted line multiset unchanged, every existing citation still resolves. The reported remedy ("restore invariants 15 and 16") misdiagnosed: both were present; the skipped prefix was a symptom of the block's position |
+| Dynamic-import arm accepts only `ts.isStringLiteral` | `coderabbitai` | Fix needed | **Graded P1, not the reported "Trivial".** Fail-open in the write-sink guard. Arm now fails closed on any specifier it cannot read, rather than enumerating a second node kind — see *Class escalation* below |
+| Guard fires on type-only `fs` imports | `coderabbitai` | Fix needed | Skipped at both levels: `ImportClause`/`ExportDeclaration.isTypeOnly`, and `ImportSpecifier.isTypeOnly` for the inline `{ type Stats, readFile }` form the comment did not name |
+| Follow-up checklist says nothing has been pushed | `coderabbitai` | Documentation | Both items were false, not merely stale. Marked done with the facts |
+
+### Round 1 — Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| `srcRoot` resolves to `src/lib`, so the positive control reads a nonexistent `src/lib/lib/response/file-saver.ts` and throws ENOENT | `copilot-pull-request-reviewer` | would be P1 if true | in scope (`gh pr diff 40`) | **False positive — path arithmetic off by one level.** The test file is at `src/lib/response/`, so two `..` reach `src`, not `src/lib`. Measured: the positive control `sees the owner…` — the exact case that would throw the described ENOENT — passes, 38/38 green. The same arithmetic is load-bearing again in `finds no other production module…`, which skips the owner via `relative(srcRoot, file) === OWNER`; a wrong `srcRoot` would make that comparison never match and report the owner as its own offender |
+
+### Round 1 — Class escalation (the write-sink guard, third instance)
+
+The guard has now missed a write-capable form three times, and `coderabbitai` graded
+the third "🔵 Trivial / nitpick". Re-derived from consequence and escalated: a
+production module doing `await import(`fs/promises`)` creates a real write binding
+and the guard reported nothing, so `ARCHITECTURE.md` invariant 17 silently stopped
+holding. `class-id: fail-open-default`, matching `LESSONS.md` RC-34.
+
+| Instance | Enforcement layer | Fixed by |
+|---|---|---|
+| Five call spellings (`writeFile(`, …) | text match on call sites | Surface 2 round 1 — match import syntax instead |
+| Five import syntax forms (default, `{ promises }`, dynamic, re-export) | regex over import lines | Surface 2 round 2 — move to the TypeScript parser |
+| Literal node kinds inside the dynamic-import arm | `ts.isStringLiteral` only | **this round** — fail closed on an unreadable specifier |
+
+Adding `isNoSubstitutionTemplateLiteral`, as the comment's patch proposed, would have
+been a third enumeration of the same class and would have left `import(spec)` clear on
+the same argument. The arm now reports any specifier it cannot resolve, which is what
+`forbiddenFsBindings`'s own docblock already claimed it did and the code did not. That
+also closes one of the file's two documented residuals (a computed specifier), so the
+residuals comment was corrected rather than left as a second spelling of one fact.
+
+**Still open by design, and stated in the file:** `createRequire(...)("fs")`, whose
+callee is a call expression rather than the `require` identifier this parse keys on,
+and a third-party `fs` wrapper.
