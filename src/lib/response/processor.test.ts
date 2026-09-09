@@ -325,6 +325,16 @@ describe("processResponse — HTML <script>/<style> stripping (PR-7 / B8)", () =
         // still catches catastrophic backtracking (which would not complete at
         // all within the test timeout) without flaking on slow runners. Strict
         // perf targets belong in a benchmark suite, not unit tests.
+        //
+        // **Left on the wall clock deliberately, where `strip-blocks.test.ts`'s
+        // budgets moved to CPU time** (`LESSONS.md` RC-57). The mechanism that
+        // broke those reaches here too — a descheduled `Date.now()` counts time
+        // this process did not spend — so this is a judgement about the margin
+        // and not a claim of immunity: 2 s against ~100 ms is 20x, and no run
+        // measured while that class was open ever failed this case. Should it
+        // start failing, convert it to `cpuMs` from `./cpu-time.test-fixture.js`
+        // rather than widening the budget — a 2 s budget is exactly what let four
+        // of the strip floods pass their own probe.
         const opener = "<script>";
         const filler = "<".repeat(1024 * 1024 - opener.length);
         const body = opener + filler;
@@ -662,8 +672,8 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         // Structural now, and strictly stronger: on the JSON arm no defence pass
         // runs over the body at all — `processResponse` hands the decoded bytes
         // straight through — so the artefact still carries the attack codepoints
-        // a pass would have removed. Nothing to time, and one less wall-clock
-        // guard in the class `docs/todos/013` tracks.
+        // a pass would have removed. Nothing to time, so no timing guard here to
+        // keep honest.
         const zwsp = "\u200b";
         const body = JSON.stringify({ note: `a${zwsp}b [x](file:)`, pad: "p".repeat(2000) });
         const result = await processText(body, {

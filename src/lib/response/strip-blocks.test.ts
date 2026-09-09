@@ -1,5 +1,6 @@
 // src/lib/response/strip-blocks.test.ts
 import { describe, it, expect } from "vitest";
+import { cpuMs } from "./cpu-time.test-fixture.js";
 import {
     IMAGE_REMOVED_PLACEHOLDER,
     LINK_REMOVED_PLACEHOLDER,
@@ -12,22 +13,25 @@ import {
 } from "./strip-blocks.js";
 
 /**
- * Wall-clock budget for the ReDoS floods below.
+ * CPU-time budget for the ReDoS floods below, in milliseconds.
  *
- * **Calibrated against a probe, not chosen for comfort.** With the bound in
- * `withinClosableRegion` removed, the floods run 243 ms – 10.3 s; with it, all
- * of them run 1–2 ms. 100 ms sits 50× above the passing case and below the
- * weakest regression, so it separates the two on every input here.
+ * **The clock is CPU time and not wall clock, which is what makes these guards
+ * reliable beside the suite's own parallel workers.** `cpuMs` in
+ * `cpu-time.test-fixture.ts` owns why, and owns the pool precondition it rests
+ * on.
  *
- * The previous budget was 2 s, and **four of these floods passed the probe at
- * that budget** — the codex-reported cases land at 0.9–1.7 s, so a guard set at
- * 2 s could not fail on the very defect it was added for. A budget wide enough
- * to be safe from jitter was also wide enough to be worthless; the answer was
- * to measure both sides and pick between them, not to widen it further.
+ * **Calibrated against a probe, not chosen for comfort.** Removing the bound in
+ * `withinClosableRegion` puts the block and beacon floods at 254 ms – 2.8 s;
+ * removing the no-closer latch in `stripHtmlComments` puts its floods at 31 s
+ * and 37 s. With both in place every case here costs 0.15 – 10 ms. 100 ms sits
+ * 10× above the slowest passing case and 2.5× below the weakest regression, so
+ * it separates the two populations on every input here.
  *
- * The inputs cannot simply be made larger to widen the gap: above
- * `STRIP_PATH_MAX_BYTES` (256 KB) `stripBlocksFixedPoint` returns its input
- * untouched, so an oversized flood would pass by doing nothing at all.
+ * **That gap bounds the budget in both directions.** Widening it past the
+ * weakest regression goes toothless on the defect it was added for, and the
+ * inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES` (256 KB)
+ * `stripBlocksFixedPoint` returns its input untouched, so an oversized flood
+ * would pass by doing nothing at all.
  */
 const REDOS_BUDGET_MS = 100;
 
@@ -105,9 +109,7 @@ describe("stripHtmlComments", () => {
         ["opener flood, one trailing closer", "<!--".repeat(65535) + "-->"],
         ["deep splice flood", "<!".repeat(60000) + "--".repeat(60000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
-        const start = Date.now();
-        stripHtmlComments(body);
-        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
+        expect(cpuMs(() => stripHtmlComments(body))).toBeLessThan(REDOS_BUDGET_MS);
     });
 });
 
@@ -395,9 +397,7 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // any literal above and the whole block is vacuous and still green.
         // Reported by coderabbitai on PR #33 round 5.
         expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(STRIP_PATH_MAX_BYTES);
-        const start = Date.now();
-        stripBlocksFixedPoint(body);
-        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
+        expect(cpuMs(() => stripBlocksFixedPoint(body))).toBeLessThan(REDOS_BUDGET_MS);
     });
 });
 
@@ -421,9 +421,7 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
         ["unterminated URL flood, one trailing `)`", "[a](https://x".repeat(19000) + ")"],
         ["unterminated image URL flood", "![a](https://x".repeat(18000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
-        const start = Date.now();
-        stripMarkdownBeacons(body);
-        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
+        expect(cpuMs(() => stripMarkdownBeacons(body))).toBeLessThan(REDOS_BUDGET_MS);
     });
 
     it("replaces external image with [image removed]", () => {

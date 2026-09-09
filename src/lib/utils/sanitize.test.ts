@@ -775,6 +775,17 @@ describe("detectInjectionPattern — wall-clock ReDoS budget (PR-8 / B7-sub-4)",
     // widened `[\s\S]{0,80}` segments don't introduce catastrophic
     // backtracking. CI-tolerant 2 s budget; representative laptop runs
     // observe ~270 ms on this shape (security review bench).
+    //
+    // **Left on the wall clock deliberately, where `strip-blocks.test.ts`'s
+    // budgets moved to CPU time** (`LESSONS.md` RC-57). The mechanism that broke
+    // those reaches here too — a descheduled `Date.now()` counts time this
+    // process did not spend — so this is a judgement about the margin and not a
+    // claim of immunity: 2 s against ~270 ms is 7x, and no run measured while
+    // that class was open ever failed this case. Should it start failing, the
+    // remedy is CPU time rather than a wider budget, and taking it means moving
+    // `cpu-time.test-fixture.ts` down into this directory — `utils/` is
+    // leaf-level, so importing it from `response/` would invert the layering
+    // arrow.
     it("matches a 1 MB pathological 'ignore' chain in well under 2 s", () => {
         const chunk = "ignore ".repeat(150_000); // ~1 MB; densely-shaped near-misses
         const t0 = Date.now();
