@@ -773,18 +773,19 @@ describe("detectInjectionPattern — wall-clock ReDoS budget (PR-8 / B7-sub-4)",
     // Mirrors PR-7's `strip-blocks.test.ts` shape: a pathological input
     // sized at the upstream MAX_RESPONSE_SIZE / 10 floor to verify the
     // widened `[\s\S]{0,80}` segments don't introduce catastrophic
-    // backtracking. CI-tolerant 2 s budget. This shape measures **48-53 ms** at
-    // HEAD, wall and CPU within a millisecond of each other; the figure here
-    // previously said ~270 ms from an old security-review bench and had not been
-    // re-taken.
+    // backtracking. CI-tolerant 2 s budget. This shape measures **48-53 ms**, wall
+    // and CPU within a millisecond of each other — which is what makes the wall
+    // clock adequate here and is the measurement to re-take before touching the
+    // budget.
     //
     // **Left on the wall clock deliberately, where `strip-blocks.test.ts`'s
-    // budgets moved to CPU time** (`LESSONS.md` RC-57). The mechanism that broke
+    // budgets are on CPU time** (`LESSONS.md` RC-57). The mechanism that broke
     // those reaches here too — a descheduled `Date.now()` counts time this
     // process did not spend — so this is a judgement about the margin and not a
     // claim of immunity: 2 s against a measured 48-53 ms is ~40x, and no run
-    // measured while that class was open ever failed this case. **The ~40x margin
-    // is the whole reason it stays; the note below is about cost, not permission.**
+    // taken under the load that failed those budgets failed this case. **The ~40x
+    // margin is the whole reason it stays; the note below is about cost, not
+    // permission.**
     // Should it start failing, the remedy is CPU time rather than a wider budget.
     //
     // **Do not cite the layering arrow as forbidding that.** The arrow places

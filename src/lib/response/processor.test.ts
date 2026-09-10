@@ -336,14 +336,16 @@ describe("processResponse — HTML <script>/<style> stripping (PR-7 / B8)", () =
         // runners. Strict perf targets belong in a benchmark suite, not here.
         //
         // **Left on the wall clock deliberately, where `strip-blocks.test.ts`'s
-        // budgets moved to CPU time** (`LESSONS.md` RC-57). The mechanism that
-        // broke those reaches here too — a descheduled `Date.now()` counts time
-        // this process did not spend — so this is a judgement about the margin
-        // and not a claim of immunity: 2 s against a measured 17 ms is ~117x, and
-        // no run measured while that class was open ever failed this case. Should it
-        // start failing, the remedy is CPU time rather than a wider budget — a 2 s
-        // budget is exactly what let four of the strip floods pass their own
-        // probe. **`cpuMs` will not do it as it stands:** the subject here is
+        // budgets are on CPU time** (`LESSONS.md` RC-57). The mechanism that broke
+        // those reaches here too — a descheduled `Date.now()` counts time this
+        // process did not spend — so this is a judgement about the margin and not
+        // a claim of immunity: 2 s against a measured 17 ms is ~117x, and no run
+        // taken under the load that failed those budgets failed this case. Should it
+        // start failing, the remedy is CPU time rather than a wider budget: a 2 s
+        // budget is what let eight of the strip regressions pass their own probe, and
+        // `strip-blocks.test.ts::REDOS_BUDGET_MS` owns that figure — read it there
+        // rather than trusting this sentence. **`cpuMs` will not do it as it stands:**
+        // the subject here is
         // awaited, and `cpuMs` measures synchronous work and refuses a promise
         // outright. Taking the remedy means giving that fixture a measure which
         // samples across the await.

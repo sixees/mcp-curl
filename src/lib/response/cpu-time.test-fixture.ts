@@ -1,8 +1,8 @@
 // src/lib/response/cpu-time.test-fixture.ts
 //
 // **`.test-fixture.ts`, not `.ts`, and the suffix is the boundary.** Nothing in
-// production may import this file. Every other module in this directory is
-// production code on the strip path, so the name is the only thing separating
+// production may import this file. Every other non-test module here is
+// production code, so the name is the only thing separating this file from
 // them. `file-saver.test.ts`'s invariant-17 `fs` sweep SKIPS this suffix, and
 // its *nothing in production imports a test-only module* sweep is what makes the
 // rule enforced rather than habitual — the two hold jointly, so removing either
@@ -23,10 +23,12 @@ import { isMainThread } from "node:worker_threads";
  * budget is — which is why the answer is a different clock rather than a larger
  * number.
  *
- * **CPU time is not perfectly load-invariant either, and the budget has to
- * allow for it.** The slowest flood measures ~22 ms idle and ~53 ms beside 72
- * CPU hogs — a 2.4x spread rather than the 20x-plus a wall clock shows, which
- * is what makes a budget possible at all, not a claim that the reading is fixed.
+ * **CPU time is not perfectly load-invariant either, and a budget over it has to
+ * allow for that.** The slowest strip flood reads ~15 ms warm and idle against
+ * ~53 ms beside 72 CPU hogs — a few-fold spread rather than the 20x-plus a wall
+ * clock shows, which is what makes a budget possible at all and not a claim that
+ * the reading is fixed. `strip-blocks.test.ts::REDOS_BUDGET_MS` owns those
+ * figures and the window they bound; this file owns only the clock.
  *
  * **The dominant contributor is V8's background threads, not memory bandwidth.**
  * Measured on the pinning case: 31.5 ms of CPU against 17.9 ms of `hrtime` wall

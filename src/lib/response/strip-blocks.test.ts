@@ -86,92 +86,67 @@ function calibrateBudgetMs(): number {
  * Both walls move together when the host changes, and neither was anchored to
  * anything in the repository; there is no CI here, so the suite runs wherever the
  * operator is and `prepublishOnly` runs it on whatever host publishes. A ratio moves
- * with them. It also removes the load excursion that was eating the tight side of the
- * window: under contention numerator and denominator inflate together, where an
- * absolute figure absorbed the whole of it — measured at 1.06x of the idle ratio
- * under light load here, and the mechanism measured at 48-72 CPU hogs by the
- * Surface-2 performance pass.
+ * with them. A ratio also absorbs most of the load excursion that eats the tight side
+ * of the window: under contention numerator and denominator inflate together, where an
+ * absolute figure takes the whole of it. The ratio measures 1.06x of its idle value
+ * under light load, where a single CPU reading under the same load spreads several-fold
+ * — `cpuMs` records that spread.
  *
  * **What it does not do:** a ratio catches an exponent change, not a constant-factor
- * one. Every regression in the matrix below is an exponent change, so that is the
- * right trade here — but a bound whose removal merely doubles a cost would need an
- * absolute figure.
+ * one. Every regression the matrix finds is an exponent change, so that is the right
+ * trade here — but a bound whose removal merely doubles a cost would need an absolute
+ * figure.
  *
  * **The clock is CPU time and not wall clock, which is what makes these guards
  * reliable beside the suite's own parallel workers.** `cpuMs` in
  * `cpu-time.test-fixture.ts` owns why, and owns the pool precondition it rests
  * on.
  *
- * **The matrix is a script, not this prose: `scripts/redos-teeth-matrix.mjs`.** It
- * derives the mechanism list from `strip-blocks.ts`, probes subsets rather than
- * singletons, computes the accounting, and **asserts** that every mechanism has a
- * detector and that the `NO TEETH` markers below match what it measures. Run it after
- * touching either file; `--check` exits non-zero. The figures in this docblock and in
- * the tables below are its output. It exists because this accounting was re-derived by
- * hand three times and was wrong three times (`LESSONS.md` RC-60).
+ * **`scripts/redos-teeth-matrix.mjs` owns the accounting, not this prose.** It derives
+ * the mechanism list from `strip-blocks.ts`, probes subsets rather than singletons,
+ * computes which cases have teeth, and **asserts** that every mechanism has a detector
+ * and that the `NO TEETH` markers below match what it measures. Run it after touching
+ * either file; `--check` exits non-zero. `LESSONS.md` RC-60 records why it is a script
+ * rather than prose: a hand-re-derived probe cannot be a positive control on itself.
  *
- * Its last run: **24 cases, 20 with teeth, 4 without**, passing population 0.1 - 15.5 ms,
- * weakest regression 120 ms via `noGt`. Every one of the eight mechanisms is witnessed —
- * `closerClass` only by the `walk+closerClass` pair, and `mdLabel` only by
- * `region+mdLabel`, which is why singletons were never enough:
+ * Its last run: **24 cases, 20 with teeth, 4 without**; warm passing population
+ * 0.1 - 14.5 ms; weakest regression 113.5 ms via `noGt`. All eight mechanisms are
+ * witnessed, and two of them ONLY in combination — `closerClass` by `walk+closerClass`
+ * and `mdLabel` by `region+mdLabel`, one detector each — which is why the matrix probes
+ * subsets rather than singletons.
  *
- * - passing population, idle: **0.11 - 22 ms**. The case that pins the ceiling
- *   is `non-boundary closer name` at **15 ms median / 22 ms cold**, measured
- *   warm over 5 reads in one process. `closer flood with no \`>\`` reads lower
- *   typically (11 ms median) but spikes highest on a cold first call, which is
- *   why a single-read probe names it instead — **state the condition with the
- *   figure, or the next reader re-measures a different one** (RC-59 rule 2)
- * - slowest passing case beside 48-72 CPU hogs: **~53 ms**, same case. CPU time
- *   is not perfectly load-invariant and the budget has to allow for that
- * - weakest regression above the budget: **112 - 126 ms**, `opener flood behind
- *   a leading \`>\`` under the `noGt` latch. **Quote the 112 ms floor, not a
- *   median** — three independent runs put the minimum at 112-118, so the real
- *   margin over the budget is 1.12x rather than the 1.17x a median suggests
+ * **The window the budget sits in needs two figures the matrix does not take, because
+ * neither is a warm single-process read. State the condition with each** (RC-59 rule 2):
  *
- * **So the usable window is about 53 - 112 ms, 100 ms sits near the top of it,
- * and the budget cannot be widened.** 112 is the floor of the weakest regression
- * and 53 the slowest loaded pass; quote those two and nothing else, because a
- * median OVERSTATES the margin — 1.17x where the floor gives 1.12x — and the
- * overstatement is what licenses a widening.
+ * - **~53 ms** — the slowest passing case, `non-boundary closer name`, beside 48-72 CPU
+ *   hogs. CPU time is not perfectly load-invariant and the budget has to allow for it
+ * - **112 ms** — the FLOOR of the weakest regression, `opener flood behind a leading
+ *   \`>\`` under `noGt`, taken as the minimum of three independent runs. Quote
+ *   the floor, never a median: the median reads 117-126 and so claims a 1.17x margin
+ *   where the real one is 1.12x, and that overstatement is what licenses a widening
  *
- * An earlier form of this docblock put the
- * weakest regression at 254 ms and concluded there was 2.5x of room below it.
- * That figure came from probing two mechanisms of SEVEN; among the five it
- * missed, `stripTagTokens`'s `noGt` latch and the attribute character classes
- * carry the weakest regressions there are. Widening past ~112 ms yields a guard
- * that passes with `noGt` deleted and the tag strip quadratic on any `>`-free
- * flood, which would be the fifth instance of the shape this file's comments
- * count.
+ * **So the usable window is about 53 - 112 ms and 100 ms sits near the top of it.**
+ * Widening past ~112 ms yields a guard that passes with `noGt` deleted and the tag
+ * strip quadratic on any \`>\`-free flood.
  *
- * **A 2 s budget — this guard's first form — fails on 12 of the 20 regressions
- * and passes the other 8**, including every `noGt` and region-bound regression
- * in the hundreds of milliseconds. That is the measured form of `LESSONS.md`
- * RC-11's lesson, and the reason a budget wide enough to be safe from jitter was
- * also wide enough to be worthless.
+ * **A 2 s budget — the obvious CI-tolerant figure, and the one `processor.test.ts` and
+ * `sanitize.test.ts` still carry — fails on 12 of the 20 regressions and passes the
+ * other 8**, including every `noGt` and region-bound regression in the hundreds of
+ * milliseconds. That is the measured form of `LESSONS.md` RC-11's lesson:
+ * a budget wide enough to be safe from jitter was also wide enough to be worthless.
  *
- * **Four cases cannot fail at this budget, and each is marked below.** They are
- * kept because each pins an input shape the patterns must survive, but a green
- * result from one is evidence about the input space and not about the defence.
+ * **Four cases cannot fail at this budget, and each is marked below.** They are kept
+ * because each pins an input shape the patterns must survive, but a green result from
+ * one is evidence about the input space and not about the defence.
  *
- * **A `NO TEETH` marker must name the mechanism SUBSET it was probed against,
- * and that is the rule this table kept breaking.** The count was seven, then
- * six, then five, and each correction had the same cause: a case is toothless
- * only against what someone probed, and the probe was re-derived by hand each
- * round and was narrower than the subject each time in a different place. Two
- * mechanisms of six the first round. Five of seven the second — the missed one,
- * `lastTagCloserEnd`'s attribute walk, is detected by exactly one case, which
- * was marked toothless throughout. And singletons where a PAIR is required the
- * third: `openers nested inside the bounding closer` costs under 6 ms under
- * either the walk or the widened opener class and **3.9 s under both**, so no
- * single-mutation matrix can see it.
+ * **A `NO TEETH` marker is a claim about a mechanism list, not about a case, so it
+ * expires when the list grows** (RC-60 rule 3). Each marker below therefore names what
+ * cleared it, and the matrix — not this file — is what holds that list current. Never
+ * re-derive the mechanisms from this docblock; derive them from `strip-blocks.ts`.
  *
- * So: 24 cases, **20 with teeth, 4 without** — and derive the mechanism list
- * from `strip-blocks.ts`, over subsets rather than singletons, never from this
- * docblock. `LESSONS.md` RC-60 owns the count; RC-59 recorded a superseded one.
- *
- * The inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES`
- * (256 KB) `stripBlocksFixedPoint` returns its input untouched, so an oversized
- * flood would pass by doing nothing at all.
+ * The inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES` (256 KB)
+ * `stripBlocksFixedPoint` returns its input untouched, so an oversized flood would
+ * pass by doing nothing at all.
  */
 const REDOS_BUDGET_MS = calibrateBudgetMs();
 
@@ -245,12 +220,12 @@ describe("stripHtmlComments", () => {
     // destruction and left the cost unbounded, and no guard here covered the
     // comment strip at all. Found by codex and CodeQL on PR #33.
     //
-    // **Each input names the mutation it fails under, because one here did not
-    // and was decorative for two releases.** `"<!--".repeat(65535) + "-->"` put
-    // the closer at the END, so the first opener's `indexOf` found it and jumped
-    // to end-of-input: the latch was never consulted, no quadratic existed to
-    // bound, and the case measured 1.1 ms with the latch and 1.2 ms without it.
-    // Moving the closer inside the flood is what puts the remaining openers past
+    // **Each input names the mutation it fails under, and where the closer sits is
+    // the whole difference between a guard and a decoration.** A closer at the END
+    // — `"<!--".repeat(65535) + "-->"` — is found by the first opener's `indexOf`,
+    // which jumps to end-of-input: the latch is never consulted and there is no
+    // quadratic to bound, so the case reads 1.1 ms with the latch and 1.2 ms
+    // without. Only a closer INSIDE the flood leaves the remaining openers past
     // the last closer, which is the state the latch exists for.
     it.each([
         // no-closer latch removed: 37.5 s
@@ -529,30 +504,33 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         ["one real block, then an opener flood", "<script>x</script>" + "<script>".repeat(30000)],
         // `lastTagCloserEnd`'s attribute walk re-admitting `<`: 5.0 - 7.2 s — and this
         // case is the ONLY one of the 24 that regresses on that mechanism. Do not
-        // delete it: `noGt` removed reaches only 97 ms here, so a probe of the five
-        // mechanisms this table's other figures cover marks it toothless, which is
-        // what it was marked for two rounds. The sixth mechanism is the one its own
-        // subject names — `strip-blocks.ts::lastTagCloserEnd`, "the attribute run,
-        // which may not contain `<`".
+        // delete it. `noGt` removed reaches 90-97 ms here — under the budget on every
+        // read — so a probe that omits the walk marks this case toothless and licenses
+        // deleting the sole guard on a 7-second regression; the bound is the one its
+        // own subject names,
+        // `strip-blocks.ts::lastTagCloserEnd`, "the attribute run, which may not
+        // contain `<`".
         ["closer flood with no `>`", "</script".repeat(30000)],
-        // Round 2. Each defeats the round-1 bound in a different way: a
-        // non-boundary name accepted as a closer, and a closer whose attribute
-        // run swallows the openers that follow it.
+        // These two defeat a `</`-only bound in different ways: a non-boundary name
+        // accepted as a closer, and a closer whose attribute run swallows the
+        // openers that follow it.
         // region bound removed: 886 ms. Also the only detector of a second mechanism:
         // `lastTagCloserEnd`'s `\b` word-char check removed, 875-899 ms — `</scripture>`
         // is then accepted as a script closer.
         ["non-boundary closer name", "<script></scripture>".repeat(13000)],
         // `lastTagCloserEnd`'s walk re-admitting `<` AND the opener class widened to
-        // `[^>]*`, TOGETHER: 3.9 s. Either alone stays under 6 ms, which is why five
-        // rounds of single-mutation probing marked this `NO TEETH`. It is the only case
-        // in the table that detects that pair — do not delete it.
+        // `[^>]*`, TOGETHER: 3.9 s. Either alone stays under 6 ms, so no single-mutation
+        // probe can witness this case and one will report it toothless. It is the only
+        // case in the table that detects that pair — do not delete it.
         ["openers nested inside the bounding closer", "</script " + "<script".repeat(35000) + ">"],
-        // Round 3: the scan must not trade the cap for a quadratic.
-        // NO TEETH: no mutation exceeds 18 ms
+        // Splices: the scan must not trade the iteration cap for a quadratic.
+        // NO TEETH: cleared against all eight mechanisms and the three probed pairs by
+        // `scripts/redos-teeth-matrix.mjs`; peak 18 ms
         ["deep script splice", "<scr".repeat(30000) + "<script>" + "ipt>".repeat(30000)],
-        // NO TEETH: no mutation exceeds 7 ms
+        // NO TEETH: cleared against all eight mechanisms and the three probed pairs by
+        // `scripts/redos-teeth-matrix.mjs`; peak 7 ms
         ["deep style splice", "<sty".repeat(30000) + "<style>" + "le>".repeat(30000)],
-        // Round 4, and the axis every case above misses. All of them either
+        // The axis every case above misses. All of them either
         // omit the closer — so the region is empty and the pass never runs —
         // or give each opener a `>` of its own. These do neither: one real
         // closer at the end puts the whole body in scope, and no opener has
@@ -604,11 +582,13 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
         ["`[` flood", "[".repeat(256 * 1024)],
         // region bound removed AND label class re-admitting `[`: 40.9 s
         ["`![` flood", "![".repeat((256 * 1024) / 2)],
-        // NO TEETH: no mutation, single or paired, exceeds 2 ms
+        // NO TEETH: cleared against all eight mechanisms and the three probed pairs by
+        // `scripts/redos-teeth-matrix.mjs`; peak 2 ms
         ["`[](` flood", "[](".repeat((256 * 1024) / 3)],
         // region bound removed: 2.8 s
         ["unterminated URL flood", "[a](https://x".repeat(19000)],
-        // NO TEETH: no mutation exceeds 1 ms
+        // NO TEETH: cleared against all eight mechanisms and the three probed pairs by
+        // `scripts/redos-teeth-matrix.mjs`; peak 1 ms
         ["unterminated URL flood, one trailing `)`", "[a](https://x".repeat(19000) + ")"],
         // region bound removed: 2.7 s
         ["unterminated image URL flood", "![a](https://x".repeat(18000)],

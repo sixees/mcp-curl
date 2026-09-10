@@ -3,10 +3,9 @@
 // **The ReDoS teeth matrix, as a runnable artefact rather than as prose.**
 //
 // `strip-blocks.test.ts`'s flood tables are guards only if some removable bound in
-// `strip-blocks.ts` makes each input expensive. That claim was re-derived by hand in three
-// consecutive review rounds and was wrong every time — seven cases without teeth, then six,
-// then five, then four — because a hand-re-derived probe cannot be a positive control on
-// itself (`LESSONS.md` RC-60, rule 4). This script is the control.
+// `strip-blocks.ts` makes each input expensive. **A hand-re-derived probe cannot be a
+// positive control on itself** — `LESSONS.md` RC-60 rule 4 records what that cost here —
+// so the claim is computed rather than asserted, and this script is the control.
 //
 // Runtime is minutes, not seconds — a few cells genuinely cost tens of seconds under the
 // mutation they detect, which is the point of them. Not part of `npm test`.
@@ -14,22 +13,21 @@
 //   node scripts/redos-teeth-matrix.mjs            # the matrix, and the accounting
 //   node scripts/redos-teeth-matrix.mjs --check    # exit 1 if an asserted property fails
 //
-// **It asserts three properties, and each has been false at some point:**
+// **It asserts three properties. Each is a way the test file can go quietly toothless:**
 //
-//   1. Every enumerated mechanism has at least one case that detects it. A mechanism with no
-//      detector is a bound nothing guards — that was true of `lastTagCloserEnd`'s attribute
-//      walk for two releases.
-//   2. Every case the test file marks `NO TEETH` really has no subset above the budget. That
-//      was false for `closer flood with no >` and for `openers nested inside the bounding
-//      closer`, the second only under a PAIR.
+//   1. Every enumerated mechanism has at least one case that detects it. A mechanism with
+//      no detector is a bound nothing guards, and nothing else in the suite says so.
+//   2. Every case the test file marks `NO TEETH` really has no subset above the budget. A
+//      marker is a claim about a mechanism list, so it expires when the list grows, and an
+//      expired one invites deleting a live guard.
 //   3. The `NO TEETH` marker count in the test file equals the count this matrix computes.
-//      The prose said seven against six markers, and nobody ran `rg -c`.
+//      A claim of the form *N of M do X* has a one-line verification and rarely gets one.
 //
-// **Mechanisms are derived from the subject, and subsets are probed — not singletons.** Case
-// 10 costs under 6 ms under either the attribute walk or the widened opener class alone and
-// 3.9 s under both, so a singleton matrix cannot witness it. When `strip-blocks.ts` gains a
-// bound, add it to MECHANISMS and re-run; the annotations in the test file are this script's
-// output, not an independent claim.
+// **Mechanisms are derived from the subject, and subsets are probed — not singletons.**
+// `openers nested inside the bounding closer` costs under 6 ms under either the attribute
+// walk or the widened opener class alone and 3.9 s under both, so a singleton matrix cannot
+// witness it. When `strip-blocks.ts` gains a bound, add it to MECHANISMS and re-run; the
+// annotations in the test file are this script's output, not an independent claim.
 //
 // It mutates a BUNDLE under the system temp directory. The repository source is never
 // written to.
@@ -42,6 +40,11 @@ import { pathToFileURL } from "node:url";
 
 const SRC = new URL("../src/lib/response/strip-blocks.ts", import.meta.url).pathname;
 const TEST = new URL("../src/lib/response/strip-blocks.test.ts", import.meta.url).pathname;
+// The settled figure `strip-blocks.test.ts`'s ratio reproduces on the calibration host,
+// held absolute here because this script classifies teeth and must not move with whatever
+// host runs it. Properties 2 and 3 compare against the test file's markers, so a host whose
+// derived budget lands far from 100 ms can disagree with them legitimately — read a failure
+// there against `REDOS_BUDGET_MS`'s window before believing a marker is wrong.
 const BUDGET_MS = 100;
 const K = 256 * 1024;
 const CHECK = process.argv.includes("--check");
@@ -50,15 +53,18 @@ const REPEAT_BELOW_MS = 400;
 
 /**
  * Each mechanism is a named source transform, with the property it removes.
- * `find` must appear exactly once in the source — a transform that matches nothing
- * silently measures the unmutated subject and reports every case as toothless.
+ *
+ * **Every `find` is asserted to match** — exactly once, or at least once where the
+ * mechanism sets `all`, because one class is shared by several patterns. An anchor
+ * matching nothing would silently measure the UNMUTATED subject and report every case
+ * as toothless, which is a green run that proves the opposite of what it claims.
  */
 const MECHANISMS = {
     region: {
         what: "withinClosableRegion's region bound, both arms",
         // Three arms, and removing only the slice leaves the bound intact: a body whose
         // `end` is 0 early-returns and the pattern never runs at all, so the case reads
-        // as toothless. The first version of this script made exactly that mistake.
+        // as toothless. Both edits are required for the mutation to mean anything.
         edits: [
             ["if (end <= 0) return text;", "if (false) return text;"],
             ["return pass(text.slice(0, end)) + text.slice(end);", "return pass(text);"],
@@ -101,7 +107,13 @@ const MECHANISMS = {
     },
 };
 
-/** Subsets probed, beyond every singleton. A pair is here because a case needed it. */
+// Subsets probed beyond every singleton. Each pair is here because it is the only subset
+// that witnesses something, and in each case the second mechanism is unreachable until
+// the first is broken: `closerClass` costs nothing while `lastTagCloserEnd`'s walk still
+// stops a closer at `<`, and `mdLabel` costs nothing while the region bound still
+// early-returns. `walk+openerClass` is the pair that makes `openers nested inside the
+// bounding closer` regress at all. Property 1 below is what turns a missing pair into a
+// failure rather than into a mechanism silently reported as unguarded.
 const PAIRS = [
     ["walk", "openerClass"],
     ["walk", "closerClass"],
@@ -143,7 +155,8 @@ const fail = [];
 // **Bundle the pristine source from its real location first, then mutate the BUNDLE.**
 // A mutated copy written to a temp directory cannot resolve `../config/limits.js`, so the
 // repository source is bundled where its imports work and every mutation is applied to the
-// self-contained output. Anchors below are therefore bundle-shaped — no `!` assertions.
+// self-contained output. The anchors in MECHANISMS are therefore bundle-shaped and carry no
+// `!` assertions: esbuild strips them, so `text[j]!` in the TypeScript is `text[j]` here.
 const PRISTINE = join(work, "pristine.mjs");
 execFileSync("npx", ["esbuild", SRC, "--bundle", "--format=esm", "--platform=node", `--outfile=${PRISTINE}`, "--log-level=error"], { cwd: new URL("..", import.meta.url).pathname });
 const source = readFileSync(PRISTINE, "utf8");

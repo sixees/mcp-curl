@@ -46,11 +46,11 @@ describe("cpuMs", () => {
         // clock.** 3,000,000 iterations cannot cost under half a millisecond of
         // CPU on any host Node runs on, and this is a LOWER bound on CPU time,
         // so contention pushes the reading up and away from failing. Bounding it
-        // below by a `Date.now()` delta instead — the first form of this line —
-        // reintroduced precisely the defect this file exists to close: the
-        // docblock in `cpu-time.test-fixture.ts` records 6-22 ms of CPU reading
-        // as 124-161 ms of wall clock under load, a 7-20x ratio, so any wall-clock
-        // ratio tolerance is a false red waiting for a loaded run.
+        // below by a `Date.now()` delta would reintroduce the defect this file
+        // exists to close: the docblock in `cpu-time.test-fixture.ts` records
+        // 6-22 ms of CPU reading as 124-161 ms of wall clock under load, a 7-20x
+        // ratio, so any wall-clock ratio tolerance is a false red waiting for a
+        // loaded run.
         //
         // **What it does not catch, stated so the claim is not read wider than it
         // is:** an under-report smaller than ~4.8x (the margin between the

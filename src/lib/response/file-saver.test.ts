@@ -52,16 +52,17 @@ const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
  *
  * **Both sweeps key on this, and that is the whole point.** What this walk
  * excludes is exactly what the import sweep must forbid production from
- * reaching; two hand-maintained spellings drift, and the drift is silent in the
- * worst direction. It already was: the walk excluded `.test.ts` **and**
- * `.test-fixture.` while the import sweep matched only the second, so a
- * production `import { w } from "./helpers.test.js"` was invisible to both — the
- * test file never opened, the specifier never flagged — and `ARCHITECTURE.md`
- * invariant 17 nonetheless declared the pair jointly sufficient.
+ * reaching, so two hand-maintained spellings would drift — and the drift is
+ * silent in the worst direction. A name one sweep skips and the other does not
+ * match is invisible to both at once: the file is never opened for `fs`
+ * bindings and the specifier importing it is never flagged, so each reports an
+ * empty list and `ARCHITECTURE.md` invariant 17 reads as jointly satisfied.
+ * That is the shape `LESSONS.md` RC-56 rule 1 names — an omission whose
+ * signature is a pass.
  *
  * Matches a filename (`helpers.test.ts`) and a specifier (`./helpers.test.js`)
- * alike. The leading dot is load-bearing: it keeps `latest-config.ts` and
- * `fs/promises` out.
+ * alike, and both suffixes: `.test.` and `.test-fixture.`. The leading dot is
+ * load-bearing: it keeps `latest-config.ts` and `fs/promises` out.
  */
 const TEST_ONLY = /\.test(-fixture)?\./;
 
@@ -439,8 +440,8 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
 });
 
 describe("nothing in production imports a test-only module", () => {
-    // **The `.test-fixture.ts` suffix is a boundary, and until this guard it was
-    // only a habit.** `productionFiles` above excludes the suffix, so a fixture
+    // **This guard is what makes the `.test-fixture.ts` suffix a boundary rather
+    // than a habit.** `productionFiles` above excludes the suffix, so a fixture
     // is never swept for `fs` bindings — which means a file-content write placed
     // in one and imported from production satisfies invariant 17's sweep and
     // reports an empty offender list. That is byte-identical to compliance,
@@ -454,7 +455,6 @@ describe("nothing in production imports a test-only module", () => {
     // is also the most-reviewed code in this file; a refactor to share the
     // traversal would put invariant 17's enforcement at risk to save a dozen
     // lines.
-
 
     /**
      * Module specifiers this file pulls in, with a marker for any the parse
@@ -498,10 +498,10 @@ describe("nothing in production imports a test-only module", () => {
             }
             // `import fx = require("./x.js")` — an ImportEqualsDeclaration, whose
             // `moduleReference` is an ExternalModuleReference and NOT a
-            // CallExpression, so the dynamic arm below never sees it. It reads as
-            // an ordinary import statement and TypeScript emits it as
-            // `createRequire(import.meta.url)(...)`, so the *accidental* import
-            // this sweep exists for is spelled in the one form it could not see.
+            // CallExpression, so neither the import arm above nor the dynamic arm
+            // below sees it. It reads in review as an ordinary import statement,
+            // which puts it squarely in the *accidental* class the docblock above
+            // says this sweep is for.
             if (
                 ts.isImportEqualsDeclaration(node) &&
                 ts.isExternalModuleReference(node.moduleReference)
@@ -510,10 +510,11 @@ describe("nothing in production imports a test-only module", () => {
                 found.add(ts.isStringLiteral(e) ? e.text : "* (unreadable import-equals specifier)");
             }
             // `type T = typeof import("./x.js")` — a distinct node kind, not an
-            // ImportDeclaration, and the idiom this repository already uses at 13
-            // sites. Erased before emit, so it ships nothing; included because the
-            // docblock says type imports are not exempt here, and one spelling of a
-            // type import was already tested while this one was cleared.
+            // ImportDeclaration, and an idiom this repository uses across its test
+            // suites. Erased before emit, so it ships nothing; swept anyway because
+            // the docblock above says type imports are not exempt here, and a rule
+            // that holds for `import type` and not for this spelling holds for
+            // neither.
             if (ts.isImportTypeNode(node)) {
                 const a = node.argument;
                 found.add(
