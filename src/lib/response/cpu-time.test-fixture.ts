@@ -6,7 +6,8 @@
 // them. `file-saver.test.ts`'s invariant-17 `fs` sweep SKIPS this suffix, and
 // its *nothing in production imports a test-only module* sweep is what makes the
 // rule enforced rather than habitual — the two hold jointly, so removing either
-// leaves the other reporting an empty offender list.
+// leaves the other reporting an empty offender list. That sweep states its own
+// residual; do not read this note as a coverage claim.
 // `CONVENTIONS.md` → *Naming* owns the rule.
 import { isMainThread } from "node:worker_threads";
 

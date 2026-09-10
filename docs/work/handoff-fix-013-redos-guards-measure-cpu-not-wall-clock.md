@@ -70,8 +70,10 @@ each with the reason and the margin recorded beside it.
   notices.
 - **The pool precondition has no unit test, deliberately.** `isMainThread` is not
   injectable, so a unit test could only assert against a stub of the fixture's own import.
-  It is verified by running the suite under `--pool=threads`, where 25 guards fail with the
-  fixture's message. Re-run that if the check is touched.
+  It is verified by running the suite under `--pool=threads`, where every case calling
+  `cpuMs` fails with the fixture's message — **29 cases** at the end of Surface 2, measured;
+  the count moves whenever a case is added, so `cpu-time.test-fixture.test.ts`'s docblock
+  owns it. Re-run that if the check is touched.
 - **`assertOwnProcess` rules out the shared-pool case and nothing more.** libuv-threadpool
   CPU still lands in the counter and `isMainThread` cannot see it. Both directions inflate
   a reading, so they redden a guard rather than green one — which is why one boolean is the
@@ -127,7 +129,8 @@ file; that is authoritative and this is the state at the first commit.
 `tsc --noEmit` holds at the pre-existing 12 (schema.test.ts 7, post-processor.test.ts 4,
 lib.test.ts 1) with **zero in any file this branch touches**.
 
-**Tests added:** `cpu-time.test-fixture.test.ts` — three cases: the CPU reading is real
+**Tests added:** `cpu-time.test-fixture.test.ts` — **four** cases after Surface 2 (three at
+first commit, plus the two-clock case the review added): the CPU reading is real
 (positive control), a body returning a value is measured (the other direction of the
 promise check, since every live caller returns a string), and a promise-returning body is
 refused.
@@ -143,7 +146,7 @@ HEAD.
 | `cpuMs` stubbed to return `0` | the fixture's positive control | fails — **and all 110 strip-blocks cases still pass** |
 | `assertMeasuredToCompletion` removed | the promise case, by name | fails |
 | ratio divisor forced unresolvable | `"costs the same on a pathological tail…"` | fails: `expected 0 to be greater than 0` |
-| `--pool=threads` | every `cpuMs` caller | 25 cases fail with the fixture's message |
+| `--pool=threads` | every `cpuMs` caller | 29 cases fail with the fixture's message |
 
 **Gap:** the 21 flood cases named under *Known issues* have no per-case teeth measurement.
 
@@ -213,6 +216,8 @@ themselves; point the next pass at them rather than back at the original diff.
 
 - **RC-57** — the remedy named two of three sites, and cited a precedent deleted two PRs earlier
 - **RC-58** — the acceptance criterion was already satisfied by the unfixed code
+- **RC-59** — the budget's calibration was measured on two mechanisms of four, and its own figures came from a mis-sorted probe
+- **RC-60** — the run that wrote "derive the mechanism list from the subject" then shipped a list derived from the guard
 
 Entries are in `LESSONS.md`. No plan file exists for this work — the input was a todo — so
 there is no POST-AUDIT annotation to add.
@@ -225,6 +230,21 @@ there is no POST-AUDIT annotation to add.
 - [x] **Probe the remaining flood cases for teeth** (finding 7) — **done in this branch**,
       director's call. The Surface-2 review found the mechanism list one short; the
       corrected accounting is in the review record.
+- [ ] **Director's call: convert the strip budgets to a RATIO, keeping 100 ms as the derived
+      value.** Surface 2 measured this and it is **`s`-to-`m`, not `l`** — the premise that
+      made it `l` was per-case conversion, which is not needed. One baseline measured once per
+      file with `REDOS_BUDGET_MS` derived from it leaves all 24 assertion lines unchanged and
+      rescales the whole matrix rather than re-measuring it. Teeth improve: HEAD ratio 0.44
+      against 11.72 with `noGt` removed is a **26x** separation, where the absolute budget has
+      a 2.1x window. The real caveat is denominator noise — a benign 256 KB baseline spread
+      1.9x against floods at 1.03x — so a stable denominator is the `m` part, and a ratio
+      catches an exponent change rather than a constant-factor one. **RC-59's settled 100 ms
+      is not reopened by this**; the value survives as the derived target.
+- [ ] **Director's call: commit the mutation matrix as a runnable artefact.** Declined once at
+      effort `m`, and the count has since been wrong in three consecutive rounds for the same
+      reason: a hand-re-derived probe cannot be a positive control on itself. `LESSONS.md`
+      RC-60 rule 4 records the argument; the counter-argument is that it is test scaffolding
+      for a single-operator tool and the annotations now carry their subsets.
 - [ ] **If this repo gains a Linux CI runner with tick-based CPU accounting**, re-check the
       ratio guard: the divisor assertion will fail loudly there rather than passing
       vacuously, which is intended, but the loop count may need raising until the reading
@@ -258,7 +278,7 @@ re-measured independently before being written down.
 | Recorded in the first commit | Measured |
 |---|---|
 | passing population 0.15 – 10 ms | **0.11 – 22 ms** idle; ~30 ms through the suite; **~53 ms beside 72 CPU hogs** |
-| weakest regression 254 ms (2.5x above budget) | **117 ms** — `opener flood behind a leading >`, `noGt` latch |
+| weakest regression 254 ms (2.5x above budget) | `opener flood behind a leading >`, `noGt` latch — **figure owned by `strip-blocks.test.ts::REDOS_BUDGET_MS`**, since it has moved three times (254 → 117 median → 112 floor) and a copy here is the one nobody re-reads |
 | `processResponse` 1 MB case ~100 ms, margin 20x | **17 ms**, margin ~117x |
 | `detectInjectionPattern` 1 MB ~270 ms, margin 7x | **48-53 ms**, margin ~40x |
 
@@ -282,9 +302,12 @@ Measured on esbuild bundles under the scratchpad — the repository source was n
 mutated for this. **Superseded by the Surface-2 review.** This said "18 of 24 have a
 mutation above the budget; 6 do not, and a seventh regresses only to 97 ms" — which totals
 25 cases of 24, and the double-count concealed a miscount. The mechanism list was also one
-short. Corrected: **19 of 24 cases have teeth, 5 do not**, and `closer flood with no >` is
-not among the five — it is the sole detector of a sixth mechanism, at 5.0-7.2 s. See the
-review record. Every case carries its figure inline.
+short. Corrected twice since: `closer flood with no >` is the sole detector of a sixth
+mechanism at 5.0-7.2 s, and `openers nested inside the bounding closer` of a PAIRED mutation
+at 3.9 s that no single-mechanism probe can see. **The count is owned by
+`strip-blocks.test.ts::REDOS_BUDGET_MS` and `LESSONS.md` RC-60 — read it there, not here**,
+per `.claude/rules/03-divergence.md`: a figure restated in a document that is read once and
+archived is the copy that rots. Every case carries its figure inline.
 
 Also recorded, because no single-mutation probe can show it: **5 of the 6 beacon inputs
 contain no `)` at all**, so `lastCloserEnd` is 0, `withinClosableRegion` returns at
@@ -311,8 +334,8 @@ anything regresses.
 
 ### Settled by the director, not open
 
-**The budget's value is now a live question.** The usable window is ~53 – 117 ms and 100 ms
-sits near the top of it. That leaves the seven marked cases unable to fail, and only ~1.9x
+**The budget's value is now a live question.** The usable window is ~53 – 112 ms and 100 ms
+sits near the top of it. That leaves the five marked cases unable to fail, and only ~1.9x
 between the slowest loaded pass and the threshold. The todo settled "keep the budget at
 100" on the premise that the margin was 50x above passing and 2.5x below regressing; both
 halves of that premise are refuted. Lowering toward ~75 ms would sit more centrally and
@@ -333,3 +356,117 @@ not defeat CPU time on this subject, `strip-blocks.ts` being wholly synchronous 
 
 **These fixes are again the least-reviewed text on the branch** (K-16). Nothing has
 reviewed the addendum's own changes; point the next pass at them.
+
+---
+
+## Review record — 2026-09-10
+
+**This is the section the pointers above name.** Where an earlier section is marked
+superseded, the authoritative figure is here or in the owner it cites — never in both.
+
+**Certification:** complete — all 16 dispatches returned; one optional reviewer
+(`pattern-recognition-specialist`) declared its own lens set rather than the two
+`class-id` lenses in `skill: review-findings` → *Lenses*, in both rounds. It is not a
+floor member, so this is a coverage note and not a withheld certification.
+
+**Roster closure:** closed — the effective roster is `sixees-workflow.local.md`'s six plus
+the four-agent floor, deduped to eight; every deferral edge found in the agent files lands
+inside it. `unresolved: pattern-recognition-specialist → "The correctness of any single
+instance → whichever reviewer owns that lane"` — a refusal naming no peer, so it can be
+neither subtracted nor confirmed.
+
+**Surfaces run:** Surface 2 only, twice. **Surface 3
+(`/sixees-workflow:review-pr-comments`) has NOT run** — no bot has reviewed #41.
+
+### Rounds and reviewers
+
+| | Round 1 (on `55030de`..`45ae2a9`) | Round 2 (on `111fe8c`) |
+|---|---|---|
+| typescript-reviewer | findings (3) | findings (2) |
+| security-sentinel | findings (4) | findings (3) |
+| performance-oracle | findings (3) | findings (2) |
+| architecture-strategist | findings (2) | findings (2) |
+| data-integrity-guardian | clean | findings (2) |
+| code-simplicity-reviewer | clean | findings (1) |
+| pattern-recognition-specialist | clean | findings (1) |
+| learnings-researcher | digest (`envelope: none`) | digest |
+
+No reviewer failed, and none returned `partial` or `not-applicable`. Round 2 was pointed at
+round 1's fix commit rather than back at the original diff (K-16), which is where it found
+five of its eleven findings.
+
+### The three false greens round 1 found, all in the branch's own centrepiece
+
+| Defect | Measured | Fixed by |
+|---|---|---|
+| `cpuMs`'s controls never anchored the reading's **scale** — divisor `1000 → 1_000_000` | **131/131 cases green**; every budget unfailable by any regression under 100 s | an absolute CPU floor, `> 0.5` |
+| Nothing distinguished CPU time from wall clock — `process.cpuUsage()` → `Date.now()` | whole suite green; the flakiness the branch removes, returning silently | an `Atomics.wait` case, 55 ms wall / 0.06 ms CPU |
+| `closer flood with no >` marked `NO TEETH` while being the sole detector of a sixth mechanism | **5,006 ms** (`lastTagCloserEnd`'s attribute walk); every other case under 32 ms | re-annotated with the mechanism and its figure |
+
+### The teeth accounting was wrong in three consecutive rounds, for one reason
+
+The count went **seven → six → five → four** without-teeth, and each correction had the same
+cause: the mechanism list was re-derived by hand and was narrower than the subject each time,
+in a different place.
+
+| Round | List used | What it missed |
+|---|---|---|
+| 1 | two mechanisms | four more, carrying the weakest regressions |
+| 2 | five mechanisms | `lastTagCloserEnd`'s attribute walk — 5.0-7.2 s, one detector, marked toothless |
+| 3 | seven, but **singletons only** | pairs. `openers nested inside the bounding closer` is under 6 ms under either the walk or the widened opener class and **3.9 s under both** |
+
+**One round "positively verified" the 19/5 count by probing singletons** — its instrument
+could not see what it reported absent (K-18), and it said so in scope. Two reviewers reached
+different counts in the same round for exactly that reason. Final, verified twice
+independently: **24 cases, 20 with teeth, 4 without.** A seventh mechanism
+(`lastTagCloserEnd`'s `\b` word-char check, 875-899 ms) is detected only by `non-boundary
+closer name` and had appeared in no list at all. `LESSONS.md` RC-60 rule 4.
+
+### Verified claims
+
+| Claim | Verdict |
+|---|---|
+| suite green | **1363 total, 1356 passed, 0 failed, 7 pre-existing skips, 288 suites** — from `numFailedTests` in a JSON artefact |
+| `tsc --noEmit` at the pre-existing 12, none in touched files | holds — schema.test.ts 7, post-processor.test.ts 4, lib.test.ts 1; **0** in all 8 touched `.ts` files, matched by exact path |
+| no lint gate | confirmed — there is no `lint` or `typecheck` script; the gate is `npm test` plus a manual `tsc` |
+| pool precondition fails closed | **29 cases** fail under `--pool=threads` with the fixture's message |
+| the fixture cannot reach npm | holds — `tsup` bundles four named entries, `files` ships `dist` plus named docs |
+| `ARCHITECTURE.md` invariant 15's citation of `REDOS_BUDGET_MS` resolves | holds at HEAD |
+| the 1 MB `processor.test.ts` guard bounds the patterns | **FALSE** — it passes with `stripBlocksFixedPoint` throwing on entry; it bounds the cap, and now says so |
+| "Tests added: three cases" | was **four**; corrected |
+| "swept all 39 test files" | 40 at the merge-base, 41 after; corrected |
+| the handoff's own suite total and commit log | both stale; corrected, and the count is now owned here |
+
+### Handoff assessment
+
+**Unusually honest about its own gaps, and materially wrong about its own state.** It
+surfaced the toothless-guard class, the load-harness gap and the unexamined flood cases
+proactively — that is the behaviour to reinforce, and two of those became this review's
+largest findings. But three sections contradicted each other about whether two pieces of work
+were done, the "largest thing this branch leaves open" described work already completed, and
+the commit log listed one of four commits. Round 1's fixes then introduced a **second**
+generation of the same defect: six pointers to a "review record" section that did not exist,
+and figures corrected at one site and left standing at five others. The class is
+`stale-observation`/`stale-comment`, it matches RC-18 in prior art, and it is now recorded as
+RC-60 rules 2 and 4.
+
+### Dispositions
+
+**Fixed (14 classes)**: the three false greens; the vacuous 1 MB guard's comment; the
+handoff's self-contradictions; the calibration miscount and misattributed slowest case; the
+`ImportTypeNode` and `import x = require()` blind spots in **both** AST sweeps; the two
+sweeps' divergent boundary spellings, now one shared `TEST_ONLY` predicate; the abandoned
+promise; the overstated layering citation; the fixture boundary's uncited enforcement; the
+misattributed load mechanism (V8 background threads, not memory bandwidth); the scale
+control's own wall-clock dependence; the inverted floor-versus-median rationale.
+
+**Declined with evidence (2)**: widening the AST sweeps to `createRequire`, `module.require`
+and aliased `require` — population is one operator acting deliberately, and the limit is now
+stated at the guard and cited from all four documents that assert the rule. And
+`processor.test.ts::savedFilepath` not registering artefacts for cleanup — out of diff, and
+the artefacts land in an OS-reaped temp directory.
+
+**With the director (2)**: the ratio-form conversion of the budget guards, and committing the
+mutation matrix as a runnable artefact. Both are recorded under *Follow-up work*.
+
+**Blockers: none.** No P1 was found in either round.

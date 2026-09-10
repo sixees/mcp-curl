@@ -2507,6 +2507,12 @@ and this branch had not merged when the correction was made.
 
 **Class:** K-6, K-4, K-1 — *class-id:* `unchecked-assertion`
 
+**Mechanism superseded:** RC-60 (2026-09-10) — the mechanism list this entry records as
+complete was one short, and the figures below are corrected in place accordingly. The
+*lesson* stands unchanged; what moved is the count and the floor. Corrected rather than
+annotated alone because the ledger's freeze boundary is merge and this branch had not
+merged when the correction was made.
+
 - **The plan said:** the todo asked only for the clock to change — *"Keep `REDOS_BUDGET_MS`
   at 100 and keep every case; only the clock changes"* — so the existing calibration was
   treated as a fact to carry across, and the re-measurement was scoped to restating the old
@@ -2519,17 +2525,18 @@ and this branch had not merged when the correction was made.
   population was recorded as 0.15 – 10 ms and measures **0.11 – 22 ms** idle, ~30 ms through
   the suite and **~53 ms beside 72 CPU hogs**; the weakest regression was recorded as 254 ms,
   which was the vitest *duration column*, not the CPU figure. **(2)** Only two of at least
-  four cost-bearing mechanisms were probed — the `withinClosableRegion` region bound and
+  six cost-bearing mechanisms were probed — the `withinClosableRegion` region bound and
   `stripHtmlComments`'s no-closer latch. The two missed, `stripTagTokens`'s `noGt` latch and
   the attribute character classes, carry the **weakest** regressions there are: `noGt`
-  removal costs 117 ms against a 100 ms budget. Found by `performance-oracle`, which measured
+  removal costs 112-126 ms against a 100 ms budget. Found by `performance-oracle`, which measured
   rather than read, and confirmed by re-measuring the full 24-case × 5-mechanism matrix.
 - **What changed:** `strip-blocks.test.ts::REDOS_BUDGET_MS`'s docblock now states the real
-  window (~53 – 117 ms), says the budget **cannot be widened**, and records that a 2 s
+  window (~53 – 112 ms), says the budget **cannot be widened**, and records that a 2 s
   budget fails on 10 of the 18 regressions and passes the other 8. Every one of the 24 flood
-  inputs carries the figure it reaches under the mutation it guards, and the **seven that
-  cannot fail at this budget are marked `NO TEETH`** — six have no mutation crossing 100 ms
-  and `closer flood with no >` regresses only to 97 ms. Five of the six beacon inputs contain
+  inputs carries the figure it reaches under the mutation it guards, and the **five that
+  cannot fail at this budget are marked `NO TEETH`** (recorded as seven here originally; see
+  RC-60 — `closer flood with no >` regresses to 5.0-7.2 s on the sixth mechanism and is not
+  among them). Five of the six beacon inputs contain
   no `)`, so `withinClosableRegion` returns at `end <= 0` and no pattern runs at all; that is
   now stated beside them. Two more figures this run had asserted from pre-existing prose
   rather than measurement were re-taken: the `processResponse` 1 MB case is **17 ms**, not
@@ -2552,8 +2559,8 @@ and this branch had not merged when the correction was made.
       against a hand-scan of the file.
 
   **Settled by the director on 2026-09-10, and binding: `REDOS_BUDGET_MS` stays at 100 ms,
-  documented as measured.** The window is ~53 – 117 ms and 100 ms sits near its top, which
-  leaves the seven marked cases unable to fail and ~1.9x above the slowest loaded pass. The
+  documented as measured.** The window is ~53 – 112 ms and 100 ms sits near its top, which
+  leaves the five marked cases unable to fail and ~1.9x above the slowest loaded pass. The
   todo had settled the same value on the premise that the margin was 50x and 2.5x; that
   premise is refuted, so the question was put again on the real figures and answered the same
   way — 100 ms still separates every measured regression from every measured pass, and the
@@ -2561,7 +2568,11 @@ and this branch had not merged when the correction was made.
   or a per-subject split, is answered by citing this record rather than by re-weighing it**
   (`.claude/rules/03-divergence.md` → *Settled conflicts stay settled*). What would reopen it
   is new measurement, not a new argument: a host where a passing case crosses ~75 ms, or a
-  newly found mechanism whose regression lands below 117 ms.
+  newly found mechanism whose regression lands below **112 ms** — the floor across three
+  independent runs, corrected from the 117 ms median this entry first recorded (RC-60). The
+  5 ms between the two is the band where this decision flips, so quote the floor.
+  `strip-blocks.test.ts::REDOS_BUDGET_MS` owns the figure; cite it rather than this line if
+  the two ever disagree.
 
 ### RC-60 — the run that wrote "derive the mechanism list from the subject" then shipped a list derived from the guard
 
@@ -2589,14 +2600,25 @@ and this branch had not merged when the correction was made.
   markers in the file — and the handoff's "18 have teeth, 6 do not, and a seventh" totals 25
   of 24 cases. `rg -c 'NO TEETH'` answers this in one command. The double-count is what let
   the miscount survive re-measurement, in four documents at once (the docblock, RC-59, the
-  handoff, and the annotation itself). Corrected accounting: **19 of 24 have teeth, 5 do
-  not.** Two other figures were also single-read: the slowest passing case is `non-boundary
+  handoff, and the annotation itself). Corrected accounting: **20 of 24 have teeth, 4 do
+  not** — and it was corrected twice more inside the same review, which is the finding
+  rather than a footnote. The second pass found the sixth mechanism
+  (`lastTagCloserEnd`'s attribute walk, 5.0-7.2 s, detected by exactly one case that was
+  marked toothless). The third found that a **PAIR** is needed to witness a seventh case:
+  `openers nested inside the bounding closer` costs under 6 ms under either the walk or the
+  widened opener class alone and **3.9 s under both**, so no single-mechanism matrix can see
+  it — and one reviewer "positively verified" the 19/5 count that round by probing
+  singletons, its instrument unable to see what it reported absent (K-18). A seventh
+  mechanism, `lastTagCloserEnd`'s `\b` word-char check, is detected only by `non-boundary
+  closer name` at 875-899 ms and appeared in no list at all. Two other figures were also single-read: the slowest passing case is `non-boundary
   closer name` (15 ms median, stable) and not `closer flood with no \`>\`` (11 ms median but
   the highest cold spike, which is why one read names it), and the weakest regression floors
   at **112 ms** across three independent runs rather than the 117 ms a median gave.
-- **The budget is untouched by this.** RC-59's stated reopening condition is a newly found
-  mechanism whose regression lands *below* 117 ms; this one lands three orders above it, so
-  the director's 100 ms stands and this entry does not reopen it.
+- **The budget is untouched by this.** RC-59's reopening condition is a newly found
+  mechanism whose regression lands *below* the weakest-regression floor — **112 ms**, as
+  corrected here and in RC-59 in place; this one lands three orders above it, so the
+  director's 100 ms stands and this entry does not reopen it. (RC-59 first stated that
+  threshold as 117 ms, a median rather than a floor. Both now read 112.)
 - **What this costs next time:** three rules.
   1. **Writing a rule in the same run that must obey it does not make the run obey it.**
       RC-59's rule 1 was correct, was written first, and was then not applied to its own
@@ -2609,3 +2631,10 @@ and this branch had not merged when the correction was made.
   3. **A `NO TEETH` marker is a claim about a mechanism list, not about a case, so it expires
       when the list grows.** Record the mechanisms a case was cleared against, not just the
       verdict — an unqualified verdict reads as permanent and licenses deletion.
+  4. **A mutation matrix over singletons cannot witness a bound that only fails in
+      combination, and "no single mutation exceeds N" is not the claim a `NO TEETH` marker
+      makes.** Probe subsets. Three rounds each re-derived this matrix by hand and each was
+      narrower than the subject in a different place — two mechanisms of seven, then five of
+      seven, then singletons where a pair was needed. **A hand-re-derived probe cannot be a
+      positive control on itself**, which is the argument for making the matrix a runnable
+      artefact rather than prose; that remains open and is with the director.

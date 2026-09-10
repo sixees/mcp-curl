@@ -37,33 +37,46 @@ import {
  *   median** — three independent runs put the minimum at 112-118, so the real
  *   margin over the budget is 1.12x rather than the 1.17x a median suggests
  *
- * **So the usable window is about 53 - 117 ms, 100 ms sits near the top of it,
- * and the budget cannot be widened.** An earlier form of this docblock put the
- * weakest regression at 254 ms and concluded there was 2.5x of room below it.
- * That figure came from probing two mechanisms of four; the two it missed —
- * `stripTagTokens`'s `noGt` latch and the attribute character classes — carry
- * the weakest regressions there are. Widening past ~112 ms yields a guard that
- * passes with `noGt` deleted and the tag strip quadratic on any `>`-free flood,
- * which would be the sixth instance of the shape this file's comments count.
+ * **So the usable window is about 53 - 112 ms, 100 ms sits near the top of it,
+ * and the budget cannot be widened.** 112 is the floor of the weakest regression
+ * and 53 the slowest loaded pass; quote those two and nothing else, because a
+ * median OVERSTATES the margin — 1.17x where the floor gives 1.12x — and the
+ * overstatement is what licenses a widening.
  *
- * **A 2 s budget — this guard's first form — fails on 10 of the 18 regressions
+ * An earlier form of this docblock put the
+ * weakest regression at 254 ms and concluded there was 2.5x of room below it.
+ * That figure came from probing two mechanisms of SEVEN; among the five it
+ * missed, `stripTagTokens`'s `noGt` latch and the attribute character classes
+ * carry the weakest regressions there are. Widening past ~112 ms yields a guard
+ * that passes with `noGt` deleted and the tag strip quadratic on any `>`-free
+ * flood, which would be the fifth instance of the shape this file's comments
+ * count.
+ *
+ * **A 2 s budget — this guard's first form — fails on 12 of the 20 regressions
  * and passes the other 8**, including every `noGt` and region-bound regression
  * in the hundreds of milliseconds. That is the measured form of `LESSONS.md`
  * RC-11's lesson, and the reason a budget wide enough to be safe from jitter was
  * also wide enough to be worthless.
  *
- * **Five cases cannot fail at this budget, and each is marked below** — no
- * mutation of any enumerated mechanism crosses 100 ms on them. They are kept
- * because each pins an input shape the patterns must survive, but a green result
- * from one is evidence about the input space and not about the defence.
+ * **Four cases cannot fail at this budget, and each is marked below.** They are
+ * kept because each pins an input shape the patterns must survive, but a green
+ * result from one is evidence about the input space and not about the defence.
  *
- * **The count was seven, then six, and the arithmetic is why it kept moving:
- * a case is toothless only against the mechanisms someone probed.** The list
- * has to be derived from `strip-blocks.ts` and not from this docblock — the
- * sixth mechanism, `lastTagCloserEnd`'s attribute walk, was missed for two
- * rounds, and the one case that regresses on it (5.0 - 7.2 s) was marked
- * toothless the whole time. So: 24 cases, **19 with teeth, 5 without**.
- * `LESSONS.md` RC-59.
+ * **A `NO TEETH` marker must name the mechanism SUBSET it was probed against,
+ * and that is the rule this table kept breaking.** The count was seven, then
+ * six, then five, and each correction had the same cause: a case is toothless
+ * only against what someone probed, and the probe was re-derived by hand each
+ * round and was narrower than the subject each time in a different place. Two
+ * mechanisms of six the first round. Five of seven the second — the missed one,
+ * `lastTagCloserEnd`'s attribute walk, is detected by exactly one case, which
+ * was marked toothless throughout. And singletons where a PAIR is required the
+ * third: `openers nested inside the bounding closer` costs under 6 ms under
+ * either the walk or the widened opener class and **3.9 s under both**, so no
+ * single-mutation matrix can see it.
+ *
+ * So: 24 cases, **20 with teeth, 4 without** — and derive the mechanism list
+ * from `strip-blocks.ts`, over subsets rather than singletons, never from this
+ * docblock. `LESSONS.md` RC-60 owns the count; RC-59 recorded a superseded one.
  *
  * The inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES`
  * (256 KB) `stripBlocksFixedPoint` returns its input untouched, so an oversized
@@ -412,7 +425,8 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         ["<script opener flood, no `>` anywhere", "<script".repeat((256 * 1024) / 7)],
         // `noGt` latch removed: 133 ms
         ["<style opener flood, no `>` anywhere", "<style".repeat((256 * 1024) / 6)],
-        // `noGt` latch removed: 117 ms — the WEAKEST regression in the table, and what pins the budget
+        // `noGt` latch removed: 112 - 126 ms, floor 112 — the WEAKEST regression in the
+        // table, and what pins the budget. `REDOS_BUDGET_MS` owns the figure; quote the floor
         ["opener flood behind a leading `>`", ">" + "<script".repeat((256 * 1024) / 7)],
         // region bound removed: 1.1 s
         ["complete <script> openers, no closer", "<script>".repeat(32000)],
@@ -433,9 +447,14 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // Round 2. Each defeats the round-1 bound in a different way: a
         // non-boundary name accepted as a closer, and a closer whose attribute
         // run swallows the openers that follow it.
-        // region bound removed: 886 ms
+        // region bound removed: 886 ms. Also the only detector of a second mechanism:
+        // `lastTagCloserEnd`'s `\b` word-char check removed, 875-899 ms — `</scripture>`
+        // is then accepted as a script closer.
         ["non-boundary closer name", "<script></scripture>".repeat(13000)],
-        // NO TEETH: no mutation exceeds 8 ms
+        // `lastTagCloserEnd`'s walk re-admitting `<` AND the opener class widened to
+        // `[^>]*`, TOGETHER: 3.9 s. Either alone stays under 6 ms, which is why five
+        // rounds of single-mutation probing marked this `NO TEETH`. It is the only case
+        // in the table that detects that pair — do not delete it.
         ["openers nested inside the bounding closer", "</script " + "<script".repeat(35000) + ">"],
         // Round 3: the scan must not trade the cap for a quadratic.
         // NO TEETH: no mutation exceeds 18 ms

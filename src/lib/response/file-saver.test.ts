@@ -48,6 +48,24 @@ afterEach(async () => {
 const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
+ * The one spelling of "test-only file", and it is shared deliberately.
+ *
+ * **Both sweeps key on this, and that is the whole point.** What this walk
+ * excludes is exactly what the import sweep must forbid production from
+ * reaching; two hand-maintained spellings drift, and the drift is silent in the
+ * worst direction. It already was: the walk excluded `.test.ts` **and**
+ * `.test-fixture.` while the import sweep matched only the second, so a
+ * production `import { w } from "./helpers.test.js"` was invisible to both — the
+ * test file never opened, the specifier never flagged — and `ARCHITECTURE.md`
+ * invariant 17 nonetheless declared the pair jointly sufficient.
+ *
+ * Matches a filename (`helpers.test.ts`) and a specifier (`./helpers.test.js`)
+ * alike. The leading dot is load-bearing: it keeps `latest-config.ts` and
+ * `fs/promises` out.
+ */
+const TEST_ONLY = /\.test(-fixture)?\./;
+
+/**
  * Every production `.ts` under `src/` — no tests, no fixtures.
  *
  * **Two sweeps below share this list, and sharing it is the point.** Each
@@ -56,10 +74,10 @@ const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
  * means — at which point one of them is enforcing its rule over a smaller tree
  * than it claims, silently.
  *
- * The `.test-fixture.` exclusion is what makes the suffix load-bearing: a file
- * carrying it is not swept for `fs` bindings, so nothing may reach one from
- * production. `CONVENTIONS.md` → *Naming* states that rule and the sweep in
- * *nothing in production imports a test-only module* enforces it.
+ * The exclusion is what makes the suffix load-bearing: an excluded file is not
+ * swept for `fs` bindings, so nothing may reach one from production.
+ * `CONVENTIONS.md` → *Naming* states that rule and the sweep in *nothing in
+ * production imports a test-only module* enforces it.
  */
 const productionFiles = async (d: string): Promise<string[]> => {
     const out: string[] = [];
@@ -67,11 +85,7 @@ const productionFiles = async (d: string): Promise<string[]> => {
         const p = join(d, entry.name);
         if (entry.isDirectory()) {
             out.push(...(await productionFiles(p)));
-        } else if (
-            entry.name.endsWith(".ts") &&
-            !entry.name.endsWith(".test.ts") &&
-            !entry.name.includes(".test-fixture.")
-        ) {
+        } else if (entry.name.endsWith(".ts") && !TEST_ONLY.test(entry.name)) {
             out.push(p);
         }
     }
@@ -317,6 +331,17 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
                     found.add("* (namespace re-export)");
                 }
             }
+            // Same blind spot as the fixture sweep, on the binding side:
+            // `import fsp = require("node:fs/promises")` binds the whole
+            // namespace, and its ExternalModuleReference is not a CallExpression.
+            if (
+                ts.isImportEqualsDeclaration(node) &&
+                ts.isExternalModuleReference(node.moduleReference)
+            ) {
+                const e = node.moduleReference.expression;
+                if (!ts.isStringLiteral(e)) found.add("* (unreadable import-equals specifier)");
+                else if (isFsModule(e.text)) found.add("* (import-equals namespace)");
+            }
             if (ts.isCallExpression(node)) {
                 const target = node.expression;
                 const arg = node.arguments[0];
@@ -363,6 +388,10 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         ['import { promises } from "node:fs";', "the whole promises API as one binding"],
         ['import { default as fs } from "node:fs";', "default via a named clause"],
         ['import * as fsp from "node:fs/promises";', "namespace"],
+        // `import x = require()` binds the namespace too, and its
+        // ExternalModuleReference is not a CallExpression — invisible to the
+        // dynamic arm below until the import-equals arm was added.
+        ['import fsp = require("node:fs/promises");', "import-equals namespace"],
         ['const f = require("node:fs");', "require"],
         ['const { writeFile } = await import("fs/promises");', "dynamic import"],
         ['const { writeFile } = await import(`fs/promises`);', "dynamic import, template literal"],
@@ -426,7 +455,6 @@ describe("nothing in production imports a test-only module", () => {
     // traversal would put invariant 17's enforcement at risk to save a dozen
     // lines.
 
-    const FIXTURE_MARK = ".test-fixture";
 
     /**
      * Module specifiers this file pulls in, with a marker for any the parse
@@ -468,6 +496,19 @@ describe("nothing in production imports a test-only module", () => {
                         : "* (unreadable specifier)"
                 );
             }
+            // `import fx = require("./x.js")` — an ImportEqualsDeclaration, whose
+            // `moduleReference` is an ExternalModuleReference and NOT a
+            // CallExpression, so the dynamic arm below never sees it. It reads as
+            // an ordinary import statement and TypeScript emits it as
+            // `createRequire(import.meta.url)(...)`, so the *accidental* import
+            // this sweep exists for is spelled in the one form it could not see.
+            if (
+                ts.isImportEqualsDeclaration(node) &&
+                ts.isExternalModuleReference(node.moduleReference)
+            ) {
+                const e = node.moduleReference.expression;
+                found.add(ts.isStringLiteral(e) ? e.text : "* (unreadable import-equals specifier)");
+            }
             // `type T = typeof import("./x.js")` — a distinct node kind, not an
             // ImportDeclaration, and the idiom this repository already uses at 13
             // sites. Erased before emit, so it ships nothing; included because the
@@ -501,9 +542,11 @@ describe("nothing in production imports a test-only module", () => {
         return [...found];
     };
 
+    // `TEST_ONLY` is the walk's own exclusion predicate, shared rather than
+    // restated — see its docblock for what the second spelling cost.
     const fixtureImports = (source: string, name = "probe.ts"): string[] =>
         moduleSpecifiers(source, name).filter(
-            (spec) => spec.includes(FIXTURE_MARK) || spec.startsWith("* (")
+            (spec) => TEST_ONLY.test(spec) || spec.startsWith("* (")
         );
 
     it.each([
@@ -522,6 +565,11 @@ describe("nothing in production imports a test-only module", () => {
         ["const m = await import(`./cpu-time.test-fixture.js`);", "dynamic, template literal"],
         ['const m = require("./cpu-time.test-fixture.js");', "require"],
         ["const m = await import(spec);", "unreadable dynamic specifier"],
+        // A `.test.ts` module, which `productionFiles` also excludes from the
+        // `fs` sweep — so before `TEST_ONLY` was shared, this was reported by
+        // neither guard and the pair was nonetheless documented as sufficient.
+        ['import { w } from "./helpers.test.js";', "a .test.ts module"],
+        ['import fx = require("./cpu-time.test-fixture.js");', "import-equals"],
     ])("reports a test-only import: %s (%s)", (source) => {
         expect(fixtureImports(source)).not.toEqual([]);
     });
@@ -530,6 +578,11 @@ describe("nothing in production imports a test-only module", () => {
         ['import { readFile } from "fs/promises";', "an ordinary module"],
         ['import { parseResponseWithMetadata } from "./parser.js";', "a sibling production module"],
         ['import type { Stats } from "fs/promises";', "a type-only ordinary import"],
+        // The other direction of the type-position arm above. Without this, an
+        // edit reducing that arm to an unconditional "unreadable" marker reddens
+        // nothing — production holds no `typeof import()` today, so over-reporting
+        // is invisible until the first module writes one.
+        ['type T = typeof import("./parser.js");', "a type-position import of a production module"],
     ])("does not report %s (%s)", (source) => {
         expect(fixtureImports(source)).toEqual([]);
     });

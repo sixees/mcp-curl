@@ -2,6 +2,10 @@
 import { describe, it, expect } from "vitest";
 import { cpuMs } from "./cpu-time.test-fixture.js";
 
+/** Long enough that a wall clock cannot mistake it for jitter, short enough to
+ *  cost the suite nothing. Both assertions in the clock case are scaled from it. */
+const BLOCK_MS = 50;
+
 /**
  * `cpuMs` is itself a guard, and both of its guards fail closed by throwing —
  * which is exactly the shape a later simplification deletes without turning
@@ -16,10 +20,6 @@ import { cpuMs } from "./cpu-time.test-fixture.js";
  * this file, `strip-blocks.test.ts` and `parser.test.ts`. Re-run that if the
  * check is touched — the count moves whenever a case is added.
  */
-/** Long enough that a wall clock cannot mistake it for jitter, short enough to
- *  cost the suite nothing. Both assertions in the clock case are scaled from it. */
-const BLOCK_MS = 50;
-
 describe("cpuMs", () => {
     it("reports the CPU the work actually cost", () => {
         // The positive control, and the reason it comes first: a `cpuMs` that
@@ -30,10 +30,7 @@ describe("cpuMs", () => {
             for (let i = 0; i < 3_000_000; i++) n += i % 7;
             return n;
         };
-        const startedAt = Date.now();
         const ms = cpuMs(spin);
-        const wall = Date.now() - startedAt;
-        expect(ms).toBeGreaterThan(0);
         expect(ms).toBeLessThan(60_000);
 
         // **And anchor the SCALE, not just the sign.** `process.cpuUsage()`
@@ -42,14 +39,28 @@ describe("cpuMs", () => {
         // passes, and so does the wall-clock case below — an under-reporting
         // clock satisfies an upper bound more easily, not less. Measured: with
         // that one character changed, all 131 cases across this file,
-        // `strip-blocks.test.ts` and `parser.test.ts` pass, which makes every
+        // `strip-blocks.test.ts` and `parser.test.ts` passed, which made every
         // budget in the suite unfailable by any regression under 100 seconds.
         //
-        // A busy spin burns wall clock and CPU at roughly 1:1, so the two agree
-        // within an order of magnitude. The band is deliberately an order wide —
-        // it is a unit check, not a timing assertion, so contention cannot flake
-        // it — and no constant-factor error survives it.
-        expect(ms).toBeGreaterThan(wall / 10);
+        // **An absolute floor, and deliberately not a comparison against wall
+        // clock.** 3,000,000 iterations cannot cost under half a millisecond of
+        // CPU on any host Node runs on, and this is a LOWER bound on CPU time,
+        // so contention pushes the reading up and away from failing. Bounding it
+        // below by a `Date.now()` delta instead — the first form of this line —
+        // reintroduced precisely the defect this file exists to close: the
+        // docblock in `cpu-time.test-fixture.ts` records 6-22 ms of CPU reading
+        // as 124-161 ms of wall clock under load, a 7-20x ratio, so any wall-clock
+        // ratio tolerance is a false red waiting for a loaded run.
+        //
+        // **What it does not catch, stated so the claim is not read wider than it
+        // is:** an under-report smaller than ~4.8x (the margin between the
+        // measured 2.4 ms and this floor), and any OVER-report. Over-reporting
+        // makes every budget stricter, so it fails safe. Measured teeth: the
+        // `1_000_000` divisor slip reads 0.0025 and the one-order `10_000` slip
+        // reads 0.24-0.41 — both below the floor, so both fail deterministically,
+        // which a wall-clock ratio did not (it passed 5 of 8 reads on the
+        // one-order slip, decided by millisecond rounding).
+        expect(ms).toBeGreaterThan(0.5);
     });
 
     it("reads a clock that ignores time this process did not spend", () => {
@@ -72,6 +83,13 @@ describe("cpuMs", () => {
         // assertion is the control — it proves the body really did block, so a
         // low CPU reading means the clock ignored it rather than that nothing
         // happened.
+        //
+        // **`>=`, and do not tidy it to `>`.** `Atomics.wait` waits on a monotonic
+        // deadline while `Date.now()` truncates, so `floor(t0+50) - floor(t0)` is
+        // exactly 50 at the boundary — the margin here is zero by construction and
+        // the measurement is one-sided. 140 reps across idle and 48-hog runs: 0
+        // failures, minimum exactly 50, median 55. Load is the safe direction,
+        // since a deschedule only inflates `wall`.
         expect(wall).toBeGreaterThanOrEqual(BLOCK_MS);
         expect(cpu).toBeLessThan(BLOCK_MS / 2);
     });
