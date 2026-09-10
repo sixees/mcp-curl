@@ -560,3 +560,56 @@ None filed this round. **0 filed, 0 open against #41.**
 `scripts/redos-teeth-matrix.mjs`, `src/lib/response/strip-blocks.test.ts`,
 `src/lib/response/file-saver.test.ts`, `LESSONS.md`,
 `docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`
+
+## Review Comments Addressed — 2026-09-10 (Surface 3, round 2)
+
+Same invocation shape: codex and Copilot requested, 15-minute wait. **9 entries, 7 new
+findings, 6 classes** — two bots on one class. **No P1s.** Baseline before the request was 1
+(codex's status-summary comment, which has no resolved state and returns permanently).
+
+**Every one of the six was on round 1's fixes, and five were defects round 1 introduced.**
+That is `01-known-shapes.md` → K-16 as a measurement rather than a warning: the newest fix is
+the least-reviewed text on the branch. `pr-resolver-safety` → *the escalation ladder* says to
+expect exactly this and not to read it as a failure — but it also says to check that the
+previous fix was correct before climbing, and here two of them were not.
+
+**Copilot: 🟢 Approval recommended, 15/15 files, 0 new comments.** Its review body arrived on
+the `review` surface because it filed no inline threads — that surface has no resolved state
+and cannot be hidden, so it returns on every future fetch.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `normBody` stripped whitespace *inside* string literals | coderabbit (🟠 Major) + codex | Fix (P2) | `t.trim()`. Verified first: `"</ script>"` and `"</script>"` normalised equal under `\s+` collapsing, so property 4 certified a drift on the one case whose distinguishing character is a space. Probed after: a synthetic whitespace-only drift is caught, and 24/24 still identical |
+| Property 4 compared only one direction | codex | Fix (P2) | Both directions now. Scoped to the three `it.each([...])("ReDoS: ...")` tables, because nine of the file's rows are behavioural and demanding a matrix cell for them would be a false failure. **My first parse of those tables was wrong** — a non-greedy match swallowed the intervening behavioural tables and reported 33 flood rows where there are 24; it now closes each `it.each([` at its own `])(` |
+| `execFileSync("npx", …)` cannot launch a `.cmd` shim | codex | Fix (P2) | Replaced with esbuild's `buildSync` JS API, which removes the subprocess, the `npx` resolution and the `cwd` argument together. `esbuild` declared in `devDependencies` — it was previously reached only transitively via `tsup` and `vitest`. Codex's suggested route does not work as written: `node_modules/esbuild/bin/esbuild` is a native Go binary, and `node` on it fails |
+| Weakest regression taken from per-case maxima | codex | Fix (P2) | Now the minimum over every individual crossing. The figure moved **116.2 → 114.0 ms**, confirming the direction of the error: a maximum can only overstate the margin, which is what licenses widening. Output now reports the crossing count (32) as the denominator |
+| Four `NO TEETH` markers claimed 8 mechanisms / 3 pairs | codex | Fix (P2) | Now seven and two. The stale counts were *larger* than the truth, so they claimed more had been cleared than was measured — the unsafe direction for a marker whose purpose is to license deletion. RC-60 rule 3 is exactly this, and round 1 broke it in the same commit that wrote the markers |
+| A second stale "five marked cases" in RC-59 | coderabbit (🔵 Trivial) | Fix (P3) | Corrected. Round 1 fixed one instance of this figure and did not sweep for the rest — K-4 |
+
+### Declined Findings
+
+**No finding was declined this round, and no remedy was declined outright.** One remedy was
+*adjusted* rather than declined — codex's "invoke the local esbuild JavaScript entry with
+Node" — because the path it names is a native binary; the intent (stop shelling out to `npx`)
+was implemented by a different and simpler route, recorded in the reply.
+
+### Verification
+
+- Suite **1363 / 1356 passed / 7 skipped / 0 failed**
+- `npm run redos:matrix -- --check` **exit 0**, all four properties: seven mechanisms each
+  witnessed by an attributable crossing, 20/4, 4 markers reconciling, 3 ReDoS tables and
+  24/24 inputs identical in both directions
+- `tsc` at the pre-existing 12, none in a touched file
+- Property 4 probed in three directions before being trusted — whitespace-only drift, a
+  test-side row the matrix does not measure, and a numeric drift. All three caught
+
+### Outstanding Todos
+
+None filed this round. **0 filed, 0 open against #41.**
+
+### Files Modified
+
+`scripts/redos-teeth-matrix.mjs`, `src/lib/response/strip-blocks.test.ts`, `LESSONS.md`,
+`package.json`, `docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`

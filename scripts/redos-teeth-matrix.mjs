@@ -35,7 +35,7 @@
 // It mutates a BUNDLE under the system temp directory. The repository source is never
 // written to.
 
-import { execFileSync } from "node:child_process";
+import { buildSync } from "esbuild";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -163,8 +163,15 @@ const fail = [];
 // repository source is bundled where its imports work and every mutation is applied to the
 // self-contained output. The anchors in MECHANISMS are therefore bundle-shaped and carry no
 // `!` assertions: esbuild strips them, so `text[j]!` in the TypeScript is `text[j]` here.
+//
+// **esbuild's JS API, not `execFileSync("npx", ...)`.** Node cannot launch a `.cmd` shim
+// with `execFile`, and that is what `npx` is on Windows — so the subprocess form failed
+// there even after the paths were fixed. The API removes the subprocess, the `npx`
+// resolution and the `cwd` argument at once, which is why it is the fix rather than a
+// shell flag. `esbuild` is declared in `devDependencies` for this; it was previously
+// reached only as a transitive dependency of `tsup` and `vitest`.
 const PRISTINE = join(work, "pristine.mjs");
-execFileSync("npx", ["esbuild", SRC, "--bundle", "--format=esm", "--platform=node", `--outfile=${PRISTINE}`, "--log-level=error"], { cwd: ROOT });
+buildSync({ entryPoints: [SRC], bundle: true, format: "esm", platform: "node", outfile: PRISTINE, logLevel: "error" });
 const source = readFileSync(PRISTINE, "utf8");
 
 /** Apply a subset of mechanisms, asserting each anchor matched exactly once. */
@@ -260,9 +267,17 @@ const width = Math.max(...CASES.map(([, l]) => l.length));
 const cols = subsets.filter((s) => s[0] !== "baseline").map((s) => s.join("+"));
 const fmt = (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}s` : v.toFixed(1));
 console.log("\n" + "case".padEnd(width) + "  " + "base".padStart(8) + cols.map((c) => c.slice(0, 13).padStart(15)).join(""));
+// **Two different questions, so two lists.** `teeth` answers *does this case have any
+// detector* — one entry per case, for the accounting. `crossings` holds EVERY cell above
+// budget, because the weakest regression is the tightest side of the budget window and a
+// per-row maximum cannot report it: a case whose `noGt` cell sits just over the budget and
+// whose `walk` cell costs seconds contributes only the seconds, so the figure that justifies
+// the window is taken from the wrong cell and overstates the margin.
 const teeth = [];
+const crossings = [];
 CASES.forEach(([, label], i) => {
     const row = cols.map((c) => results.get(c)[i].ms);
+    row.forEach((v, j) => { if (v > BUDGET_MS) crossings.push({ label, by: cols[j], ms: v }); });
     const max = Math.max(...row);
     if (max > BUDGET_MS) teeth.push({ label, by: cols[row.indexOf(max)], ms: max });
     console.log(label.padEnd(width) + "  " + fmt(base[i].ms).padStart(8) + row.map((v) => (v > BUDGET_MS ? `*${fmt(v)}` : fmt(v)).padStart(15)).join(""));
@@ -276,10 +291,10 @@ console.log(`passing population: ${fmt(Math.min(...base.map((b) => b.ms)))} - ${
 // **`teeth` empty is a state, not an impossibility** — it means no mutation made any case
 // expensive, which is the single most important thing this script could ever report. A bare
 // `reduce` throws `TypeError` on it, so the run died before properties 1-3 could say so.
-const weakest = teeth.length ? teeth.reduce((a, b) => (a.ms < b.ms ? a : b)) : null;
+const weakest = crossings.length ? crossings.reduce((a, b) => (a.ms < b.ms ? a : b)) : null;
 console.log(
     weakest
-        ? `weakest regression: ${fmt(weakest.ms)} ms — ${weakest.label} via ${weakest.by}`
+        ? `weakest regression: ${fmt(weakest.ms)} ms — ${weakest.label} via ${weakest.by} (of ${crossings.length} crossings)`
         : "weakest regression: NONE — no mutation exceeded the budget on any case"
 );
 console.log(`\nwithout teeth (${without.length}):`);
@@ -325,42 +340,68 @@ if (marked.length !== without.length) fail.push(`marker count ${marked.length} !
 for (const m of marked) if (!without.includes(m)) fail.push(`"${m}" is marked NO TEETH but a subset puts it above the budget`);
 for (const w of without) if (!marked.includes(w)) fail.push(`"${w}" has no subset above the budget and is not marked NO TEETH`);
 
-// ---- property 4: this matrix measures the TEST's inputs, not a copy of them
+// ---- property 4: this matrix measures the TEST's inputs, in BOTH directions
 //
 // **The reconciliation above compares labels, so a drifted body passed it unseen.** CASES
 // restates each input independently, and one had already drifted: `opener flood, no closer`
 // read `repeat(65535)` here against `repeat(65536)` in the test — so the cell reported as
-// that guard's teeth was measured on a different string. An edit making a real test input
-// cheap can leave this copy expensive and keep `--check` green, which is the whole failure
-// this script exists to prevent, one level up.
+// that guard's teeth was measured on a different string.
 //
 // Compared as source text rather than by sharing a fixture: the test's table is inside a
 // `.test.ts` with vitest imports, so sharing it would mean a new fixture module and a second
 // bundle here. Comparing the text costs a regex and turns a silent drift into a named
 // failure, which is the property that was missing.
-const rowsOf = (src, re) => new Map([...src.matchAll(re)].map((m) => [m[1], m[2].trim()]));
-// Whitespace only, and deliberately no substitution rules: CASES is written with the
-// test file's own literal spellings so the two are textually identical. A normaliser that
-// taught itself to see two spellings as equal is a normaliser that hides the next drift.
-const normBody = (t) => t.replace(/\s+/g, "");
-const testRows = rowsOf(readFileSync(TEST, "utf8"), /^\s*\["([^"]+)",\s*(.+?)\],\s*$/gm);
-const selfRows = rowsOf(readFileSync(SELF, "utf8"), /^\s*\["(?:comment|block|beacon)",\s*"([^"]+)",\s*(.+?)\],\s*$/gm);
-console.log("\n=== this matrix's inputs vs the test file's ===");
-if (selfRows.size !== CASES.length) {
-    fail.push(`parsed ${selfRows.size} case rows out of this script's own source but CASES holds ${CASES.length} — the row regex no longer matches the table, so property 4 is not checking anything`);
+//
+// **Whitespace is significant and is NOT normalised away.** `"</ script>"` and `"</script>"`
+// are different inputs — one is the whole point of `openers borrowing a whitespace closer's
+// \`>\`` — and a normaliser that collapsed whitespace read them as equal, certifying a drift
+// on the one case whose distinguishing character is a space. Only the surrounding indentation
+// is trimmed. The cost is that a purely cosmetic reformat inside a row reads as drift; that
+// direction fails loudly, which is the safe one.
+//
+// **Both directions, because a one-way check has a silent gap.** Iterating this script's rows
+// alone catches a case measured here and absent there, but not a flood case added to the test
+// that this matrix never measures — a new guard whose teeth nobody checks, with `--check`
+// green. So the test's three `it.each([...])("ReDoS: ...")` tables are read and their labels
+// required here too. Scoped to those tables: the file's other `it.each` rows are behavioural
+// cases with no timing budget, and demanding a matrix cell for them would be a false failure.
+const trimOnly = (t) => t.trim();
+const rowsIn = (src, re) => new Map([...src.matchAll(re)].map((m) => [m[1], trimOnly(m[2])]));
+
+// Each `it.each([` is closed by its OWN `])(`, and only then is the title checked. A
+// non-greedy match from the first `it.each([` to the first `])("ReDoS:` swallows every
+// behavioural table in between and silently reports 33 flood rows where there are 24.
+const testSrc = readFileSync(TEST, "utf8");
+const floodRows = new Map();
+let scan = 0;
+let floodTables = 0;
+while ((scan = testSrc.indexOf("it.each([", scan)) !== -1) {
+    const bodyStart = scan + "it.each([".length;
+    const bodyEnd = testSrc.indexOf("])(", bodyStart);
+    if (bodyEnd === -1) break;
+    if (testSrc.slice(bodyEnd + 3, bodyEnd + 30).startsWith('"ReDoS:')) {
+        floodTables++;
+        for (const [label, expr] of rowsIn(testSrc.slice(bodyStart, bodyEnd), /^\s*\["([^"]+)",\s*(.+?)\],\s*$/gm)) floodRows.set(label, expr);
+    }
+    scan = bodyEnd;
 }
+const selfRows = rowsIn(readFileSync(SELF, "utf8"), /^\s*\["(?:comment|block|beacon)",\s*"([^"]+)",\s*(.+?)\],\s*$/gm);
+
+console.log("\n=== this matrix's inputs vs the test file's ReDoS tables ===");
+if (floodTables === 0) fail.push("found no `it.each([...])(\"ReDoS: ...\")` table in strip-blocks.test.ts — the parse has broken, so property 4 is comparing against nothing");
+if (selfRows.size !== CASES.length) fail.push(`parsed ${selfRows.size} case rows out of this script's own source but CASES holds ${CASES.length} — the row regex no longer matches the table, so property 4 is not checking anything`);
+
 let matched = 0;
 for (const [label, expr] of selfRows) {
-    const testExpr = testRows.get(label);
-    if (testExpr === undefined) {
-        fail.push(`case "${label}" is measured here but no row with that label exists in strip-blocks.test.ts — the matrix is measuring an input the suite does not test`);
-    } else if (normBody(testExpr) !== normBody(expr)) {
-        fail.push(`case "${label}" has DRIFTED: test has \`${testExpr}\`, this matrix measures \`${expr}\``);
-    } else {
-        matched++;
-    }
+    const testExpr = floodRows.get(label);
+    if (testExpr === undefined) fail.push(`case "${label}" is measured here but no ReDoS table in strip-blocks.test.ts has that label — the matrix is measuring an input the suite does not guard`);
+    else if (testExpr !== expr) fail.push(`case "${label}" has DRIFTED: test has \`${testExpr}\`, this matrix measures \`${expr}\``);
+    else matched++;
 }
-console.log(`  ${matched}/${selfRows.size} inputs identical to strip-blocks.test.ts`);
+for (const label of floodRows.keys()) {
+    if (!selfRows.has(label)) fail.push(`strip-blocks.test.ts guards "${label}" but this matrix never measures it — its teeth are unverified and nothing else would say so`);
+}
+console.log(`  ${floodTables} ReDoS tables, ${floodRows.size} guarded inputs; ${matched}/${selfRows.size} measured here and identical`);
 
 rmSync(work, { recursive: true, force: true });
 if (fail.length) {

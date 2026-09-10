@@ -110,7 +110,9 @@ function calibrateBudgetMs(): number {
  * rather than prose: a hand-re-derived probe cannot be a positive control on itself.
  *
  * Its last run: **24 cases, 20 with teeth, 4 without**; warm passing population
- * 0.1 - 15.9 ms; weakest regression 116.2 ms via `noGt`. All seven mechanisms are
+ * 0.1 - 16.1 ms; weakest regression **114.0 ms** via `noGt`, the true minimum over all 32
+ * individual crossings rather than the minimum of per-case maxima — a maximum can only
+ * overstate the margin, which is the direction that licenses widening. All seven mechanisms are
  * witnessed by a crossing **attributable to that mechanism** — a case above budget with it
  * and under budget without it — which is what stops one bound's teeth being credited to
  * another. `mdLabel` is witnessed only by `region+mdLabel`, which is why the matrix probes
@@ -122,7 +124,7 @@ function calibrateBudgetMs(): number {
  * `LESSONS.md` RC-61.
  *
  * **The matrix derives its own budget the same way, so its threshold moves between runs** —
- * 95.3 ms and 106.7 ms on two consecutive runs of the same host, both inside the 53 - 112
+ * 95.3, 102.1 and 106.7 ms on three consecutive runs of the same host, all inside the 53 - 112
  * window. A case whose regression lands near the top of that window can therefore change
  * classification run to run, and the marker reconciliation would report it. That is the
  * instrument being honest about a measurement, not a defect; it is also why the floor of the
@@ -537,10 +539,10 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // case in the table that detects that pair — do not delete it.
         ["openers nested inside the bounding closer", "</script " + "<script".repeat(35000) + ">"],
         // Splices: the scan must not trade the iteration cap for a quadratic.
-        // NO TEETH: cleared against all eight mechanisms and the three probed pairs by
+        // NO TEETH: cleared against all seven mechanisms and the two probed pairs by
         // `scripts/redos-teeth-matrix.mjs`; peak 18 ms
         ["deep script splice", "<scr".repeat(30000) + "<script>" + "ipt>".repeat(30000)],
-        // NO TEETH: cleared against all eight mechanisms and the three probed pairs by
+        // NO TEETH: cleared against all seven mechanisms and the two probed pairs by
         // `scripts/redos-teeth-matrix.mjs`; peak 7 ms
         ["deep style splice", "<sty".repeat(30000) + "<style>" + "le>".repeat(30000)],
         // The axis every case above misses. All of them either
@@ -595,12 +597,12 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
         ["`[` flood", "[".repeat(256 * 1024)],
         // region bound removed AND label class re-admitting `[`: 40.9 s
         ["`![` flood", "![".repeat((256 * 1024) / 2)],
-        // NO TEETH: cleared against all eight mechanisms and the three probed pairs by
+        // NO TEETH: cleared against all seven mechanisms and the two probed pairs by
         // `scripts/redos-teeth-matrix.mjs`; peak 2 ms
         ["`[](` flood", "[](".repeat((256 * 1024) / 3)],
         // region bound removed: 2.8 s
         ["unterminated URL flood", "[a](https://x".repeat(19000)],
-        // NO TEETH: cleared against all eight mechanisms and the three probed pairs by
+        // NO TEETH: cleared against all seven mechanisms and the two probed pairs by
         // `scripts/redos-teeth-matrix.mjs`; peak 1 ms
         ["unterminated URL flood, one trailing `)`", "[a](https://x".repeat(19000) + ")"],
         // region bound removed: 2.7 s

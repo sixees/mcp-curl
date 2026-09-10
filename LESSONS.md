@@ -2560,7 +2560,7 @@ merged when the correction was made.
 
   **Settled by the director on 2026-09-10, and binding: `REDOS_BUDGET_MS` stays at 100 ms,
   documented as measured.** The window is ~53 – 112 ms and 100 ms sits near its top, which
-  leaves the five marked cases unable to fail and ~1.9x above the slowest loaded pass. The
+  leaves the four marked cases unable to fail and ~1.9x above the slowest loaded pass. The
   todo had settled the same value on the premise that the margin was 50x and 2.5x; that
   premise is refuted, so the question was put again on the real figures and answered the same
   way — 100 ms still separates every measured regression from every measured pass, and the
