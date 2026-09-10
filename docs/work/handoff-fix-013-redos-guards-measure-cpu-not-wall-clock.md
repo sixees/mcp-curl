@@ -299,16 +299,17 @@ anything regresses.
 - **Finding 7 — the 21 unexamined flood cases: probed in this branch.** Result is the
   matrix above.
 
-### Still open, and it is a decision rather than a gap
+### Settled by the director, not open
 
 **The budget's value is now a live question.** The usable window is ~53 – 117 ms and 100 ms
 sits near the top of it. That leaves the seven marked cases unable to fail, and only ~1.9x
 between the slowest loaded pass and the threshold. The todo settled "keep the budget at
 100" on the premise that the margin was 50x above passing and 2.5x below regressing; both
 halves of that premise are refuted. Lowering toward ~75 ms would sit more centrally and
-give `closer flood with no >` teeth at 97 ms, at the cost of pass headroom. **Not changed
-here — the value was settled by the director on a premise that has since been measured
-false, so it goes back to the director rather than being quietly re-decided.**
+give `closer flood with no >` teeth at 97 ms, at the cost of pass headroom. **Put back to the director on the real figures and answered on
+2026-09-10: 100 ms stays, documented as measured.** `LESSONS.md` RC-59 carries that as a
+binding record — a later round proposing ~75 ms or a per-subject split is answered by citing
+it, and what reopens it is new measurement rather than a new argument.
 
 ### Round-2 reviewer note
 

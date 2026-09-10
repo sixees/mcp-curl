@@ -2551,8 +2551,14 @@ and this branch had not merged when the correction was made.
       checking that its extremes actually are extreme — `sort … | head -1` and `tail -1`
       against a hand-scan of the file.
 
-  **Open, and with the director:** the window is ~53 – 117 ms and 100 ms sits near its top,
-  which leaves the seven marked cases unable to fail and little headroom above the slowest
-  loaded pass. The todo settled "keep the budget at 100" on the premise that the margin was
-  50x and 2.5x; that premise is now refuted, so the budget's value is a live question rather
-  than a settled one.
+  **Settled by the director on 2026-09-10, and binding: `REDOS_BUDGET_MS` stays at 100 ms,
+  documented as measured.** The window is ~53 – 117 ms and 100 ms sits near its top, which
+  leaves the seven marked cases unable to fail and ~1.9x above the slowest loaded pass. The
+  todo had settled the same value on the premise that the margin was 50x and 2.5x; that
+  premise is refuted, so the question was put again on the real figures and answered the same
+  way — 100 ms still separates every measured regression from every measured pass, and the
+  alternatives trade pass headroom for one more case's teeth. **A later round proposing ~75 ms,
+  or a per-subject split, is answered by citing this record rather than by re-weighing it**
+  (`.claude/rules/03-divergence.md` → *Settled conflicts stay settled*). What would reopen it
+  is new measurement, not a new argument: a host where a passing case crosses ~75 ms, or a
+  newly found mechanism whose regression lands below 117 ms.
