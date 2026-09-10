@@ -53,7 +53,8 @@
     "start": "node dist/index.js",
     "dev": "tsup --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "redos:matrix": "node scripts/redos-teeth-matrix.mjs"
   },
   "keywords": [
     "mcp",

@@ -13,16 +13,107 @@ import {
 } from "./strip-blocks.js";
 
 /**
- * CPU-time budget for the ReDoS floods below, in milliseconds.
+ * How many times a benign cap-sized pass the floods are allowed to cost.
+ *
+ * **This is the budget's real form; the millisecond figure is derived from it.** 8 x the
+ * measured baseline reproduces the 100 ms the director settled in RC-59 on this host
+ * (12.4 ms x 8 = 99), so that decision is carried across rather than reopened — what
+ * changes is that the number now scales with the host instead of describing one machine.
+ *
+ * The window, in these terms: the slowest loaded pass sits at ~4.3x and the weakest
+ * regression at ~9.0x, so 8 sits where 100 ms sat — near the top, and not widenable.
+ */
+const REDOS_BUDGET_RATIO = 8;
+
+/**
+ * A benign body at cap size: one full region, patterns scan it and match nothing.
+ *
+ * **Two properties make it usable as a denominator, and both are measured** — a
+ * denominator that moves under mutation, or that is noisier than the subject, eats the
+ * margin it exists to buy:
+ *
+ * - **mutation-invariant.** `noGt`, the attribute walk, and the two paired — 1.00x of
+ *   the unmutated median. A mutation must move the numerator only.
+ * - **the most stable candidate measured**, 1.18x across 15 warm reads, against 1.51x
+ *   for a body carrying a real block and 1.26x for benign markup.
+ */
+const BENIGN_BASELINE_BODY = "a".repeat(STRIP_PATH_MAX_BYTES - 10) + "</script>";
+
+/**
+ * The budget in milliseconds, measured on the host running the suite.
+ *
+ * **Warm first, then take a median.** A cold reading is roughly double a warm one — V8
+ * background compile lands in `process.cpuUsage()`, which `cpuMs` documents — and a cold
+ * denominator would derive a budget twice as wide as intended.
+ */
+function calibrateBudgetMs(): number {
+    for (let i = 0; i < 3; i++) stripBlocksFixedPoint(BENIGN_BASELINE_BODY);
+    const reads: number[] = [];
+    for (let i = 0; i < 9; i++) reads.push(cpuMs(() => stripBlocksFixedPoint(BENIGN_BASELINE_BODY)));
+    reads.sort((a, b) => a - b);
+    const median = reads[4]!;
+
+    // **Assert the divisor exists rather than flooring it** — `parser.test.ts` owns this
+    // idiom and the reason. A tick-accounted host reads 0, and `0 * 8` is a budget every
+    // case fails; failing here says which host and why, instead of 24 mystery reds.
+    if (!(median > 0)) {
+        throw new Error(
+            "the ReDoS budget is derived from a measured baseline and this host reported 0 ms " +
+                "of CPU for a 256 KB pass — its clock is too coarse to calibrate against. " +
+                "Raise the read count, or pin an absolute budget for this host."
+        );
+    }
+    // A calibration far outside the measured band is a broken measurement, not a slow
+    // host: at 25x the baseline the budget would exceed the weakest regression and every
+    // guard below would go green while the bound it defends was gone. Fail loudly.
+    if (median > 200) {
+        throw new Error(
+            `the ReDoS baseline measured ${median.toFixed(1)} ms, far above the 9-16 ms band ` +
+                "this was calibrated in. A budget derived from it would sit above the weakest " +
+                "regression and every flood below would pass with its bound deleted."
+        );
+    }
+    return median * REDOS_BUDGET_RATIO;
+}
+
+/**
+ * CPU-time budget for the ReDoS floods below, in milliseconds — **derived from a
+ * measured baseline on this host, not fixed.** `REDOS_BUDGET_RATIO` above is the
+ * real budget; see `calibrateBudgetMs`.
+ *
+ * **Why derive it.** An absolute millisecond figure separating two populations that
+ * both scale with the host's single-core throughput is a property of one machine.
+ * Both walls move together when the host changes, and neither was anchored to
+ * anything in the repository; there is no CI here, so the suite runs wherever the
+ * operator is and `prepublishOnly` runs it on whatever host publishes. A ratio moves
+ * with them. It also removes the load excursion that was eating the tight side of the
+ * window: under contention numerator and denominator inflate together, where an
+ * absolute figure absorbed the whole of it — measured at 1.06x of the idle ratio
+ * under light load here, and the mechanism measured at 48-72 CPU hogs by the
+ * Surface-2 performance pass.
+ *
+ * **What it does not do:** a ratio catches an exponent change, not a constant-factor
+ * one. Every regression in the matrix below is an exponent change, so that is the
+ * right trade here — but a bound whose removal merely doubles a cost would need an
+ * absolute figure.
  *
  * **The clock is CPU time and not wall clock, which is what makes these guards
  * reliable beside the suite's own parallel workers.** `cpuMs` in
  * `cpu-time.test-fixture.ts` owns why, and owns the pool precondition it rests
  * on.
  *
- * **Calibrated by probing every mechanism against every case, and each input
- * below records the figure it reaches under the mutation it guards.** The
- * matrix, not this constant, is what bounds the constant:
+ * **The matrix is a script, not this prose: `scripts/redos-teeth-matrix.mjs`.** It
+ * derives the mechanism list from `strip-blocks.ts`, probes subsets rather than
+ * singletons, computes the accounting, and **asserts** that every mechanism has a
+ * detector and that the `NO TEETH` markers below match what it measures. Run it after
+ * touching either file; `--check` exits non-zero. The figures in this docblock and in
+ * the tables below are its output. It exists because this accounting was re-derived by
+ * hand three times and was wrong three times (`LESSONS.md` RC-60).
+ *
+ * Its last run: **24 cases, 20 with teeth, 4 without**, passing population 0.1 - 15.5 ms,
+ * weakest regression 120 ms via `noGt`. Every one of the eight mechanisms is witnessed —
+ * `closerClass` only by the `walk+closerClass` pair, and `mdLabel` only by
+ * `region+mdLabel`, which is why singletons were never enough:
  *
  * - passing population, idle: **0.11 - 22 ms**. The case that pins the ceiling
  *   is `non-boundary closer name` at **15 ms median / 22 ms cold**, measured
@@ -82,7 +173,7 @@ import {
  * (256 KB) `stripBlocksFixedPoint` returns its input untouched, so an oversized
  * flood would pass by doing nothing at all.
  */
-const REDOS_BUDGET_MS = 100;
+const REDOS_BUDGET_MS = calibrateBudgetMs();
 
 describe("stripHtmlComments", () => {
     it("strips a single comment", () => {

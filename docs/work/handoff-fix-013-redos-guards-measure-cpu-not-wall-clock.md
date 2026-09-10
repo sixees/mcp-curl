@@ -230,7 +230,7 @@ there is no POST-AUDIT annotation to add.
 - [x] **Probe the remaining flood cases for teeth** (finding 7) — **done in this branch**,
       director's call. The Surface-2 review found the mechanism list one short; the
       corrected accounting is in the review record.
-- [ ] **Director's call: convert the strip budgets to a RATIO, keeping 100 ms as the derived
+- [x] **DONE — the strip budgets are now derived from a measured baseline, keeping 100 ms as the derived
       value.** Surface 2 measured this and it is **`s`-to-`m`, not `l`** — the premise that
       made it `l` was per-case conversion, which is not needed. One baseline measured once per
       file with `REDOS_BUDGET_MS` derived from it leaves all 24 assertion lines unchanged and
@@ -240,7 +240,7 @@ there is no POST-AUDIT annotation to add.
       1.9x against floods at 1.03x — so a stable denominator is the `m` part, and a ratio
       catches an exponent change rather than a constant-factor one. **RC-59's settled 100 ms
       is not reopened by this**; the value survives as the derived target.
-- [ ] **Director's call: commit the mutation matrix as a runnable artefact.** Declined once at
+- [x] **DONE — the mutation matrix is committed as `scripts/redos-teeth-matrix.mjs`.** Declined once at
       effort `m`, and the count has since been wrong in three consecutive rounds for the same
       reason: a hand-re-derived probe cannot be a positive control on itself. `LESSONS.md`
       RC-60 rule 4 records the argument; the counter-argument is that it is test scaffolding
@@ -466,7 +466,13 @@ stated at the guard and cited from all four documents that assert the rule. And
 `processor.test.ts::savedFilepath` not registering artefacts for cleanup — out of diff, and
 the artefacts land in an OS-reaped temp directory.
 
-**With the director (2)**: the ratio-form conversion of the budget guards, and committing the
-mutation matrix as a runnable artefact. Both are recorded under *Follow-up work*.
+**Taken by the director, and done in this branch (2)**: the budget guards are now derived
+from a measured baseline (`REDOS_BUDGET_RATIO = 8` x a benign cap-sized pass, reproducing the
+settled 100 ms on this host), and the mutation matrix is committed as
+`scripts/redos-teeth-matrix.mjs` / `npm run redos:matrix`. The matrix asserts its own
+properties and **failed them on its first run**, catching three hand-written transforms that
+were wrong; the corrected run reproduces 20-with-teeth/4-without independently and agrees
+with the four markers in the file. Teeth improved: the `noGt` regression fails four cases
+against the derived budget where it failed three against the fixed one.
 
 **Blockers: none.** No P1 was found in either round.

@@ -2574,6 +2574,14 @@ merged when the correction was made.
   `strip-blocks.test.ts::REDOS_BUDGET_MS` owns the figure; cite it rather than this line if
   the two ever disagree.
 
+  **Carried, not reopened: the budget is now DERIVED.** `REDOS_BUDGET_RATIO = 8` times a
+  measured benign cap-sized pass reproduces this 100 ms on the host it was settled on, so the
+  director's decision survives while the number stops describing one machine. The denominator
+  was chosen by measurement — mutation-invariant at 1.00x and the most stable of three
+  candidates at 1.18x — because a denominator that moves under mutation eats the margin a
+  ratio exists to buy. Teeth improved rather than held: the `noGt` regression now fails four
+  cases where the fixed figure failed three.
+
 ### RC-60 — the run that wrote "derive the mechanism list from the subject" then shipped a list derived from the guard
 
 **Date:** 2026-09-10 · **PR:** #41 · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
@@ -2636,5 +2644,12 @@ merged when the correction was made.
       makes.** Probe subsets. Three rounds each re-derived this matrix by hand and each was
       narrower than the subject in a different place — two mechanisms of seven, then five of
       seven, then singletons where a pair was needed. **A hand-re-derived probe cannot be a
-      positive control on itself**, which is the argument for making the matrix a runnable
-      artefact rather than prose; that remains open and is with the director.
+      positive control on itself**, so the matrix is now a runnable artefact:
+      `scripts/redos-teeth-matrix.mjs` (`npm run redos:matrix`). It derives the mechanism
+      list from `strip-blocks.ts`, probes subsets, computes the accounting, and asserts that
+      every mechanism has a detector and that the `NO TEETH` markers match what it measures.
+      **Its first run failed its own assertions and was right to** — three of the transforms
+      written into it by hand were wrong (the region bound removed on one arm of three, a
+      closing class mutated where an opening one was meant, the markdown label class widened
+      on the image pattern only), and the corrected run then reproduced 20/4 independently.
+      That is the difference between a control and a claim.
