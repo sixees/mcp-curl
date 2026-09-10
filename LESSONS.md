@@ -2532,11 +2532,11 @@ merged when the correction was made.
   rather than read, and confirmed by re-measuring the full 24-case × 5-mechanism matrix.
 - **What changed:** `strip-blocks.test.ts::REDOS_BUDGET_MS`'s docblock now states the real
   window (~53 – 112 ms), says the budget **cannot be widened**, and records that a 2 s
-  budget fails on 10 of the 18 regressions and passes the other 8. Every one of the 24 flood
-  inputs carries the figure it reaches under the mutation it guards, and the **five that
-  cannot fail at this budget are marked `NO TEETH`** (recorded as seven here originally; see
-  RC-60 — `closer flood with no >` regresses to 5.0-7.2 s on the sixth mechanism and is not
-  among them). Five of the six beacon inputs contain
+  budget fails on 12 of the 20 regressions and passes the other 8. Every one of the 24 flood
+  inputs carries the figure it reaches under the mutation it guards, and the **four that
+  cannot fail at this budget are marked `NO TEETH`** (recorded as seven here originally, then
+  as five; the measured answer is four and RC-60 owns how it was reached — `closer flood with
+  no >` regresses to 5.0-7.2 s on a mechanism this run never probed and is not among them). Five of the six beacon inputs contain
   no `)`, so `withinClosableRegion` returns at `end <= 0` and no pattern runs at all; that is
   now stated beside them. Two more figures this run had asserted from pre-existing prose
   rather than measurement were re-taken: the `processResponse` 1 MB case is **17 ms**, not
@@ -2653,3 +2653,46 @@ merged when the correction was made.
       closing class mutated where an opening one was meant, the markdown label class widened
       on the image pattern only), and the corrected run then reproduced 20/4 independently.
       That is the difference between a control and a claim.
+
+### RC-61 — the control counted a crossing without asking which mutation caused it, and the masked entry was not a bound at all
+
+**Date:** 2026-09-10 · **PR:** #41 · **Plan:** `docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`
+
+**Class:** K-17, K-15, K-16 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** RC-60 rule 4 replaced a hand-re-derived teeth matrix with a runnable
+  artefact, `scripts/redos-teeth-matrix.mjs`, on the grounds that *"a hand-re-derived probe
+  cannot be a positive control on itself"*. Its property 1 asserts that every enumerated
+  mechanism has at least one case that detects it, and its first corrected run reported all
+  eight witnessed — `closerClass` by the `walk+closerClass` pair, `mdLabel` by
+  `region+mdLabel`.
+- **Reality was:** property 1 counted **any** case above budget under **any** subset
+  containing the mechanism, without asking whether removing *that* mechanism is what made
+  the case expensive. So one bound's teeth were credited to another sitting beside it in the
+  same subset: `walk` alone puts `closer flood with no >` at **7.3 s** and `walk+closerClass`
+  at **7.2 s**, so the pair crossed on the walk and the closing attribute class was reported
+  as witnessed on a cost it contributes nothing to. Found by `chatgpt-codex-connector` on the
+  open PR, which named `walk+closerClass` and `region+mdLabel` as having "the same masking
+  problem" — correct on the first and, as it turned out, not on the second.
+- **And the masked entry was not a bound.** Requiring an attributable crossing made
+  `closerClass` fail outright, and it fails because widening the block patterns' *closing*
+  attribute class from `[^<>]*` to `[^>]*` is **measurably free**: no crossing on any of the
+  24 cases under any subset, none on six inputs built to target it, no behavioural difference
+  on four more, and the whole 169-case suite green with the real source mutated. The fixed
+  point plus `stripTagTokens` converge to the same output either way. It is a defensive
+  symmetry with the *opening* class, which is real — so the entry was removed from the
+  mechanism list with the measurement recorded beside it, and the strict check kept.
+- **What this costs next time:** two rules.
+  1. **A witness check must attribute the crossing, not merely observe one in the same
+     experiment.** Where a probe mutates more than one thing, "this subset is over budget"
+     says nothing about which member caused it — and the reassuring direction is the default,
+     so every mechanism in a subset containing one real detector reads as detected.
+     `.claude/rules/01-known-shapes.md` → K-17 is this shape: the check's two sides shared a
+     source. The fix is one comparison the data already supports — above budget **with** the
+     mechanism, at or below **without** it — and every comparator is already measured, so it
+     costs no extra runs.
+  2. **A cost matrix cannot witness a bound that costs nothing, and listing one there
+     manufactures a false green rather than a gap.** The question to ask of a candidate
+     mechanism is not *"is this bound real?"* but *"is it in this instrument's domain?"* —
+     measure its removal before enumerating it. Three of this branch's rounds each corrected
+     the mechanism *list*; none had asked whether a member belonged in the list at all.

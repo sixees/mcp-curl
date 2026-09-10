@@ -61,8 +61,13 @@ const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
  * signature is a pass.
  *
  * Matches a filename (`helpers.test.ts`) and a specifier (`./helpers.test.js`)
- * alike, and both suffixes: `.test.` and `.test-fixture.`. The leading dot is
- * load-bearing: it keeps `latest-config.ts` and `fs/promises` out.
+ * alike, and both suffixes: `.test.` and `.test-fixture.`.
+ *
+ * **The leading dot is load-bearing, and the case it excludes is a name ENDING in
+ * `test`:** without it, `latest.ts` and `greatest.tsx` match, and a production
+ * module called any such thing would be silently dropped from the `fs` sweep —
+ * an exclusion that reads as compliance. Measured: `/test\.?/` matches
+ * `latest.ts`, `/\.test\./` does not.
  */
 const TEST_ONLY = /\.test(-fixture)?\./;
 

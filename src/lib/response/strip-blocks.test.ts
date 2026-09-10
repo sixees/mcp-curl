@@ -110,10 +110,23 @@ function calibrateBudgetMs(): number {
  * rather than prose: a hand-re-derived probe cannot be a positive control on itself.
  *
  * Its last run: **24 cases, 20 with teeth, 4 without**; warm passing population
- * 0.1 - 14.5 ms; weakest regression 113.5 ms via `noGt`. All eight mechanisms are
- * witnessed, and two of them ONLY in combination — `closerClass` by `walk+closerClass`
- * and `mdLabel` by `region+mdLabel`, one detector each — which is why the matrix probes
+ * 0.1 - 15.9 ms; weakest regression 116.2 ms via `noGt`. All seven mechanisms are
+ * witnessed by a crossing **attributable to that mechanism** — a case above budget with it
+ * and under budget without it — which is what stops one bound's teeth being credited to
+ * another. `mdLabel` is witnessed only by `region+mdLabel`, which is why the matrix probes
  * subsets rather than singletons.
+ *
+ * **Seven, not eight: the closing attribute class is not a mechanism.** Widening it is
+ * measurably free in both time and behaviour, so the matrix records why it is excluded
+ * rather than listing it and reporting it as witnessed on another mutation's cost.
+ * `LESSONS.md` RC-61.
+ *
+ * **The matrix derives its own budget the same way, so its threshold moves between runs** —
+ * 95.3 ms and 106.7 ms on two consecutive runs of the same host, both inside the 53 - 112
+ * window. A case whose regression lands near the top of that window can therefore change
+ * classification run to run, and the marker reconciliation would report it. That is the
+ * instrument being honest about a measurement, not a defect; it is also why the floor of the
+ * weakest regression is the figure to quote and a median is not.
  *
  * **The window the budget sits in needs two figures the matrix does not take, because
  * neither is a warm single-process read. State the condition with each** (RC-59 rule 2):

@@ -13,7 +13,7 @@
 //   node scripts/redos-teeth-matrix.mjs            # the matrix, and the accounting
 //   node scripts/redos-teeth-matrix.mjs --check    # exit 1 if an asserted property fails
 //
-// **It asserts three properties. Each is a way the test file can go quietly toothless:**
+// **It asserts four properties. Each is a way the test file can go quietly toothless:**
 //
 //   1. Every enumerated mechanism has at least one case that detects it. A mechanism with
 //      no detector is a bound nothing guards, and nothing else in the suite says so.
@@ -22,6 +22,9 @@
 //      expired one invites deleting a live guard.
 //   3. The `NO TEETH` marker count in the test file equals the count this matrix computes.
 //      A claim of the form *N of M do X* has a one-line verification and rarely gets one.
+//   4. Every input measured here is byte-identical to the test file's row of the same label.
+//      CASES is a second copy of that table, and a copy that drifts measures a guard nobody
+//      runs — the same class as a toothless case, one level up.
 //
 // **Mechanisms are derived from the subject, and subsets are probed — not singletons.**
 // `openers nested inside the bounding closer` costs under 6 ms under either the attribute
@@ -36,17 +39,18 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const SRC = new URL("../src/lib/response/strip-blocks.ts", import.meta.url).pathname;
-const TEST = new URL("../src/lib/response/strip-blocks.test.ts", import.meta.url).pathname;
-// The settled figure `strip-blocks.test.ts`'s ratio reproduces on the calibration host,
-// held absolute here because this script classifies teeth and must not move with whatever
-// host runs it. Properties 2 and 3 compare against the test file's markers, so a host whose
-// derived budget lands far from 100 ms can disagree with them legitimately — read a failure
-// there against `REDOS_BUDGET_MS`'s window before believing a marker is wrong.
-const BUDGET_MS = 100;
-const K = 256 * 1024;
+// **`fileURLToPath`, never `URL.pathname`.** A URL's pathname is percent-encoded, so a
+// checkout under a path containing a space or a `#` yields `/tmp/redos%20matrix/...` and
+// every filesystem call here looks for something that does not exist; on Windows it also
+// yields `/C:/...`, which is not a native path. `CONVENTIONS.md` → *Language and style*
+// names both platforms as supported targets, and `scripts/integration-test.mjs` already
+// takes this route.
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const SELF = fileURLToPath(import.meta.url);
+const SRC = join(ROOT, "src/lib/response/strip-blocks.ts");
+const TEST = join(ROOT, "src/lib/response/strip-blocks.test.ts");
 const CHECK = process.argv.includes("--check");
 /** Above this a cell is unambiguously over budget, so one read is enough. */
 const REPEAT_BELOW_MS = 400;
@@ -85,13 +89,6 @@ const MECHANISMS = {
             ["/<style\\b[^<>]*>", "/<style\\b[^>]*>"],
         ],
     },
-    closerClass: {
-        what: "the block patterns' CLOSING attribute class, [^<>]* widened to [^>]*",
-        edits: [
-            ["<\\/\\s*script\\b[^<>]*>/gi", "<\\/\\s*script\\b[^>]*>/gi"],
-            ["<\\/\\s*style\\b[^<>]*>/gi", "<\\/\\s*style\\b[^>]*>/gi"],
-        ],
-    },
     walk: {
         what: "lastTagCloserEnd's attribute walk excluding `<`",
         edits: [['text[j] !== ">" && text[j] !== "<"', 'text[j] !== ">"']],
@@ -100,6 +97,17 @@ const MECHANISMS = {
         what: "lastTagCloserEnd's \\b word-char check",
         edits: [["WORD_CHAR_PATTERN.test(text[j])", "false"]],
     },
+    // **The block patterns' CLOSING attribute class is deliberately NOT here.** Widening
+    // `[^<>]*` to `[^>]*` on `</script`/`</style` is measurably free: no crossing on any of
+    // the 24 cases under any subset, none on six inputs built to target it, and no
+    // behavioural difference on four more — the fixed point plus `stripTagTokens` converge
+    // to the same output either way, and the whole suite stays green. So it is a defensive
+    // symmetry with the opening class rather than a bound, and a cost matrix cannot witness
+    // something that costs nothing. It was listed here for two rounds and read as witnessed,
+    // because the un-attributed property 1 credited `lastTagCloserEnd`'s walk with its
+    // teeth: `walk` alone puts `closer flood with no >` at 7.3 s and `walk+closerClass` at
+    // 7.2 s, so the pair crossed on the walk and the closing class got the credit.
+    // **Do not re-add it from a reading of `strip-blocks.ts`** — measure it first.
     mdLabel: {
         what: "the markdown label class re-admitting `[`, image AND link",
         edits: [["[^\\]\\[\\n]*", "[^\\]\\n]*"]],
@@ -107,26 +115,24 @@ const MECHANISMS = {
     },
 };
 
-// Subsets probed beyond every singleton. Each pair is here because it is the only subset
-// that witnesses something, and in each case the second mechanism is unreachable until
-// the first is broken: `closerClass` costs nothing while `lastTagCloserEnd`'s walk still
-// stops a closer at `<`, and `mdLabel` costs nothing while the region bound still
-// early-returns. `walk+openerClass` is the pair that makes `openers nested inside the
-// bounding closer` regress at all. Property 1 below is what turns a missing pair into a
+// Subsets probed beyond every singleton, each because it is the only one that witnesses
+// something. `walk+openerClass` is what makes `openers nested inside the bounding closer`
+// regress at all — either mutation alone leaves it under 6 ms. `region+mdLabel` is the only
+// subset that witnesses `mdLabel`, which costs nothing while the region bound still
+// early-returns on a body with no `)`. Property 1 below is what turns a missing pair into a
 // failure rather than into a mechanism silently reported as unguarded.
 const PAIRS = [
     ["walk", "openerClass"],
-    ["walk", "closerClass"],
     ["region", "mdLabel"],
 ];
 
 const CASES = [
-    ["comment", "opener flood, no closer", "<!--".repeat(65535)],
+    ["comment", "opener flood, no closer", "<!--".repeat(65536)],
     ["comment", "opener flood, one interior closer", "<!--".repeat(4) + "-->" + "<!--".repeat(65531)],
     ["comment", "deep splice flood", "<!".repeat(60000) + "--".repeat(60000)],
-    ["block", "<script opener flood, no `>` anywhere", "<script".repeat(K / 7)],
-    ["block", "<style opener flood, no `>` anywhere", "<style".repeat(K / 6)],
-    ["block", "opener flood behind a leading `>`", ">" + "<script".repeat(K / 7)],
+    ["block", "<script opener flood, no `>` anywhere", "<script".repeat((256 * 1024) / 7)],
+    ["block", "<style opener flood, no `>` anywhere", "<style".repeat((256 * 1024) / 6)],
+    ["block", "opener flood behind a leading `>`", ">" + "<script".repeat((256 * 1024) / 7)],
     ["block", "complete <script> openers, no closer", "<script>".repeat(32000)],
     ["block", "complete <style> openers, no closer", "<style>".repeat(32000)],
     ["block", "openers with a foreign closer", "<script></x>".repeat(20000)],
@@ -139,9 +145,9 @@ const CASES = [
     ["block", "openers borrowing the closer's `>`", "<script".repeat(30000) + "</script>"],
     ["block", "style openers borrowing the closer's `>`", "<style".repeat(30000) + "</style>"],
     ["block", "openers borrowing a whitespace closer's `>`", "<script".repeat(30000) + "</ script>"],
-    ["beacon", "`[` flood", "[".repeat(K)],
-    ["beacon", "`![` flood", "![".repeat(K / 2)],
-    ["beacon", "`[](` flood", "[](".repeat(K / 3)],
+    ["beacon", "`[` flood", "[".repeat(256 * 1024)],
+    ["beacon", "`![` flood", "![".repeat((256 * 1024) / 2)],
+    ["beacon", "`[](` flood", "[](".repeat((256 * 1024) / 3)],
     ["beacon", "unterminated URL flood", "[a](https://x".repeat(19000)],
     ["beacon", "unterminated URL flood, one trailing `)`", "[a](https://x".repeat(19000) + ")"],
     ["beacon", "unterminated image URL flood", "![a](https://x".repeat(18000)],
@@ -158,7 +164,7 @@ const fail = [];
 // self-contained output. The anchors in MECHANISMS are therefore bundle-shaped and carry no
 // `!` assertions: esbuild strips them, so `text[j]!` in the TypeScript is `text[j]` here.
 const PRISTINE = join(work, "pristine.mjs");
-execFileSync("npx", ["esbuild", SRC, "--bundle", "--format=esm", "--platform=node", `--outfile=${PRISTINE}`, "--log-level=error"], { cwd: new URL("..", import.meta.url).pathname });
+execFileSync("npx", ["esbuild", SRC, "--bundle", "--format=esm", "--platform=node", `--outfile=${PRISTINE}`, "--log-level=error"], { cwd: ROOT });
 const source = readFileSync(PRISTINE, "utf8");
 
 /** Apply a subset of mechanisms, asserting each anchor matched exactly once. */
@@ -205,6 +211,39 @@ async function measure(js) {
     return out;
 }
 
+// ---- the budget, DERIVED exactly as the test derives it
+//
+// **A fixed figure here cannot classify teeth for a test whose budget is a ratio.**
+// `strip-blocks.test.ts::REDOS_BUDGET_MS` is `median(a benign cap-sized pass) x ratio`, so
+// on a host whose baseline is not ~12.5 ms the two disagree — and properties 2 and 3 below
+// compare this script's classification against that file's markers. With a 20 ms baseline
+// the tests allow 160 ms, so a 120 ms mutation reads as teeth here while the guard it is
+// meant to certify stays green: the reconciliation certifies the wrong answer, which is the
+// class `LESSONS.md` RC-60 is about. Same body, same ratio, same denominator.
+//
+// **The ratio is READ from the test file, not restated here** — one declaration, and a
+// change to it cannot leave this script measuring against the old one.
+const ratioMatch = /const REDOS_BUDGET_RATIO = (\d+);/.exec(readFileSync(TEST, "utf8"));
+if (!ratioMatch) throw new Error("could not read REDOS_BUDGET_RATIO from strip-blocks.test.ts — it has been renamed or reshaped, and this script cannot classify teeth against a budget it cannot find");
+const RATIO = Number(ratioMatch[1]);
+
+// The baseline body is pinned rather than parsed: an expression is not safe to evaluate out
+// of a file, and asserting the text is what makes a change to it fail loudly here instead of
+// silently measuring a different denominator from the test's.
+const BASELINE_EXPR = 'const BENIGN_BASELINE_BODY = "a".repeat(STRIP_PATH_MAX_BYTES - 10) + "</script>";';
+if (!readFileSync(TEST, "utf8").includes(BASELINE_EXPR)) throw new Error(`strip-blocks.test.ts no longer declares its baseline as ${BASELINE_EXPR} — update BASELINE_EXPR here and the construction below together, or this script derives its budget from a different body than the test does`);
+
+const calib = await import(pathToFileURL(bundle("calibrate", source)).href);
+const BENIGN = "a".repeat(calib.STRIP_PATH_MAX_BYTES - 10) + "</script>";
+for (let i = 0; i < 3; i++) calib.stripBlocksFixedPoint(BENIGN);
+const calibReads = [];
+for (let i = 0; i < 9; i++) calibReads.push(cpu(() => calib.stripBlocksFixedPoint(BENIGN)));
+calibReads.sort((a, b) => a - b);
+const CALIB_MEDIAN = calibReads[4];
+if (!(CALIB_MEDIAN > 0)) throw new Error("this host reported 0 ms of CPU for a 256 KB benign pass — its clock is too coarse to calibrate a budget against");
+const BUDGET_MS = CALIB_MEDIAN * RATIO;
+process.stderr.write(`  budget ${BUDGET_MS.toFixed(1)} ms (baseline ${CALIB_MEDIAN.toFixed(1)} ms x ${RATIO})\n`);
+
 const subsets = [["baseline"], ...Object.keys(MECHANISMS).map((m) => [m]), ...PAIRS];
 const results = new Map();
 
@@ -231,26 +270,51 @@ CASES.forEach(([, label], i) => {
 
 // ---- the accounting, computed rather than asserted
 const without = CASES.filter(([, l]) => !teeth.some((t) => t.label === l)).map(([, l]) => l);
-console.log(`\n=== ACCOUNTING (budget ${BUDGET_MS} ms; * = above it) ===`);
+console.log(`\n=== ACCOUNTING (budget ${BUDGET_MS.toFixed(1)} ms = ${CALIB_MEDIAN.toFixed(1)} x ${RATIO}; * = above it) ===`);
 console.log(`${CASES.length} cases — ${teeth.length} with teeth, ${without.length} without`);
 console.log(`passing population: ${fmt(Math.min(...base.map((b) => b.ms)))} - ${fmt(Math.max(...base.map((b) => b.ms)))} ms`);
-const weakest = teeth.reduce((a, b) => (a.ms < b.ms ? a : b));
-console.log(`weakest regression: ${fmt(weakest.ms)} ms — ${weakest.label} via ${weakest.by}`);
+// **`teeth` empty is a state, not an impossibility** — it means no mutation made any case
+// expensive, which is the single most important thing this script could ever report. A bare
+// `reduce` throws `TypeError` on it, so the run died before properties 1-3 could say so.
+const weakest = teeth.length ? teeth.reduce((a, b) => (a.ms < b.ms ? a : b)) : null;
+console.log(
+    weakest
+        ? `weakest regression: ${fmt(weakest.ms)} ms — ${weakest.label} via ${weakest.by}`
+        : "weakest regression: NONE — no mutation exceeded the budget on any case"
+);
 console.log(`\nwithout teeth (${without.length}):`);
 for (const l of without) console.log(`  - ${l}`);
 
-// ---- property 1: every mechanism has a detector
-// A mechanism counts as witnessed if ANY probed subset containing it has a detector.
-// Some bounds only fail in combination — the markdown label class needs the region bound
-// broken too — so requiring a singleton detector would report a guarded bound as unguarded.
-console.log("\n=== every mechanism is witnessed by some subset ===");
+// ---- property 1: every mechanism has a detector, ATTRIBUTABLE to that mechanism
+//
+// **A crossing under a subset is not evidence about every mechanism in it.** Counting any
+// case over budget would let one mechanism's teeth stand in for another's: `region+mdLabel`
+// is over budget on the unterminated-URL cases because `region` alone does that, so deleting
+// both `[`-flood detectors would still report `mdLabel` as witnessed — property 1 passing on
+// another mutation's teeth, which is the false green it exists to catch.
+//
+// So require a crossing the mechanism is responsible for: a case above budget WITH it and at
+// or below budget WITHOUT it. Every comparator is already measured — a singleton's is the
+// baseline, a pair's is the other singleton — so this costs no extra runs.
+const subsetWithout = (label, name) => {
+    const rest = label.split("+").filter((x) => x !== name);
+    return rest.length === 0 ? "baseline" : rest.join("+");
+};
+console.log("\n=== every mechanism is witnessed by a crossing ATTRIBUTABLE to it ===");
 for (const name of Object.keys(MECHANISMS)) {
     const containing = cols.filter((c) => c.split("+").includes(name));
-    const best = containing.map((c) => ({ c, n: CASES.filter((_, i) => results.get(c)[i].ms > BUDGET_MS).length })).filter((x) => x.n > 0);
-    const ok = best.length > 0;
-    const via = ok ? best.map((b) => `${b.c}(${b.n})`).join(", ") : "nothing";
-    console.log(`  ${ok ? "ok  " : "FAIL"} ${name.padEnd(14)} witnessed by ${via}`);
-    if (!ok) fail.push(`mechanism "${name}" (${MECHANISMS[name].what}) is witnessed by no probed subset — either it is a bound nothing guards, or a subset is missing from PAIRS`);
+    const attributed = [];
+    for (const c of containing) {
+        const ref = results.get(subsetWithout(c, name));
+        // A subset whose comparator was never measured cannot attribute anything. Skipping it
+        // is safe: it can only withhold credit, never grant it.
+        if (!ref) continue;
+        const n = CASES.filter((_, i) => results.get(c)[i].ms > BUDGET_MS && ref[i].ms <= BUDGET_MS).length;
+        if (n > 0) attributed.push(`${c}(${n})`);
+    }
+    const ok = attributed.length > 0;
+    console.log(`  ${ok ? "ok  " : "FAIL"} ${name.padEnd(14)} witnessed by ${ok ? attributed.join(", ") : "nothing"}`);
+    if (!ok) fail.push(`mechanism "${name}" (${MECHANISMS[name].what}) has no crossing attributable to it — every case above budget in a subset containing it is already above budget without it. Either it is a bound nothing guards, or the subset that would witness it is missing from PAIRS`);
 }
 
 // ---- properties 2 and 3: the test file's markers must match this matrix
@@ -260,6 +324,43 @@ console.log(`  markers in strip-blocks.test.ts: ${marked.length}   computed with
 if (marked.length !== without.length) fail.push(`marker count ${marked.length} != computed ${without.length}`);
 for (const m of marked) if (!without.includes(m)) fail.push(`"${m}" is marked NO TEETH but a subset puts it above the budget`);
 for (const w of without) if (!marked.includes(w)) fail.push(`"${w}" has no subset above the budget and is not marked NO TEETH`);
+
+// ---- property 4: this matrix measures the TEST's inputs, not a copy of them
+//
+// **The reconciliation above compares labels, so a drifted body passed it unseen.** CASES
+// restates each input independently, and one had already drifted: `opener flood, no closer`
+// read `repeat(65535)` here against `repeat(65536)` in the test — so the cell reported as
+// that guard's teeth was measured on a different string. An edit making a real test input
+// cheap can leave this copy expensive and keep `--check` green, which is the whole failure
+// this script exists to prevent, one level up.
+//
+// Compared as source text rather than by sharing a fixture: the test's table is inside a
+// `.test.ts` with vitest imports, so sharing it would mean a new fixture module and a second
+// bundle here. Comparing the text costs a regex and turns a silent drift into a named
+// failure, which is the property that was missing.
+const rowsOf = (src, re) => new Map([...src.matchAll(re)].map((m) => [m[1], m[2].trim()]));
+// Whitespace only, and deliberately no substitution rules: CASES is written with the
+// test file's own literal spellings so the two are textually identical. A normaliser that
+// taught itself to see two spellings as equal is a normaliser that hides the next drift.
+const normBody = (t) => t.replace(/\s+/g, "");
+const testRows = rowsOf(readFileSync(TEST, "utf8"), /^\s*\["([^"]+)",\s*(.+?)\],\s*$/gm);
+const selfRows = rowsOf(readFileSync(SELF, "utf8"), /^\s*\["(?:comment|block|beacon)",\s*"([^"]+)",\s*(.+?)\],\s*$/gm);
+console.log("\n=== this matrix's inputs vs the test file's ===");
+if (selfRows.size !== CASES.length) {
+    fail.push(`parsed ${selfRows.size} case rows out of this script's own source but CASES holds ${CASES.length} — the row regex no longer matches the table, so property 4 is not checking anything`);
+}
+let matched = 0;
+for (const [label, expr] of selfRows) {
+    const testExpr = testRows.get(label);
+    if (testExpr === undefined) {
+        fail.push(`case "${label}" is measured here but no row with that label exists in strip-blocks.test.ts — the matrix is measuring an input the suite does not test`);
+    } else if (normBody(testExpr) !== normBody(expr)) {
+        fail.push(`case "${label}" has DRIFTED: test has \`${testExpr}\`, this matrix measures \`${expr}\``);
+    } else {
+        matched++;
+    }
+}
+console.log(`  ${matched}/${selfRows.size} inputs identical to strip-blocks.test.ts`);
 
 rmSync(work, { recursive: true, force: true });
 if (fail.length) {

@@ -476,3 +476,87 @@ with the four markers in the file. Teeth improved: the `noGt` regression fails f
 against the derived budget where it failed three against the fixed one.
 
 **Blockers: none.** No P1 was found in either round.
+
+## Review Comments Addressed — 2026-09-10 (Surface 3, round 1)
+
+`/sixees-workflow:review-pr-comments #41 --wait=15`, codex and Copilot requested. **10 bot
+comments, 7 classes** — three bots independently reported one class, so the comment count
+overstates the finding count by three. **No P1s.** Baseline before the request was 3
+comments (CodeRabbit, from an earlier unrequested pass); 7 arrived after the triggers.
+
+**Six of the seven findings were in `scripts/redos-teeth-matrix.mjs`**, which this branch
+added two commits earlier and which no reviewer had ever seen — the least-reviewed file on
+the branch, and `01-known-shapes.md` → K-16 predicts exactly that. A high fix rate here is
+the expected shape, not a triage failure.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `URL.pathname` used as a filesystem path | coderabbit + copilot + codex | Fix (P2) | All three instances converted to one `fileURLToPath` root. Class swept: `rg '\.pathname'` returns three filesystem uses, all in this script. `file-saver.ts`'s `URL.pathname` is a URL component and correct |
+| `teeth.reduce` throws on an empty array | coderabbit | Fix (P3) | Guarded; prints `weakest regression: NONE` so properties 1-4 still run. A crash, not a false pass — it destroyed the report in the one state where the report matters most |
+| Matrix threshold fixed at 100 ms vs the test's derived budget | codex | Fix (P2) | Matrix now derives it the same way. The ratio is **read from `strip-blocks.test.ts`**, not restated; the baseline body is pinned by an asserted text match. Live rather than theoretical: the derived budget measured 106.7 ms and 95.3 ms on two runs of this host, against the hardcoded 100 |
+| Property 1 counted crossings it could not attribute | codex | Fix (P2) | Attribution required — above budget with the mechanism, at or below without it. Every comparator was already measured, so no extra runs. **The check then failed, correctly** — see below |
+| Matrix duplicated the test's case bodies; drift measured | codex | Fix (P2) | `65535` → `65536` corrected, every row rewritten to the test's verbatim text, local `K` shorthand removed, and a new **property 4** fails on any label or body that differs. Reports 24/24 identical; synthetic drift confirmed it fires |
+| `TEST_ONLY` docblock cited two non-examples | copilot | Fix (P3) | Both claims were false — measured. `latest.ts`/`greatest.tsx` are what the leading dot excludes; the docblock now says so with the consequence attached |
+| RC-59 carried numbers that were neither historical nor measured | coderabbit | Fix (P3), remedy declined | Corrected to four and "12 of the 20", matching RC-60 and the test docblock. **Proposed 17/7 declined** — see below |
+| `closerClass` has no attributable detector | *found by the property-1 fix* | Fix (P2) | Removed from the mechanism list with the measurement recorded. **RC-61 filed** |
+
+### Declined Findings
+
+**No finding was declined this round — all seven were fixed.** Two *proposed remedies* were
+declined, with the class fixed another way:
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| "Move the case definitions to a shared fixture" | codex | P2 | In scope | Took the "or otherwise verify the bodies" arm of the same suggestion. The test's table sits in a `.test.ts` with vitest imports, so sharing it needs a new fixture module plus a second esbuild bundle in the script — to protect one hand-maintained dev tool with one consumer. Property 4 closes the same class (a drifted body is now a named failure) for a regex and twenty lines. Revisit if the table gains a second consumer |
+| "State 17 above-budget cases and seven `NO TEETH`" | coderabbit | P3 | In scope | Both figures are wrong. Seven was RC-59's *original* error, which RC-60 exists to correct; 17 has never been measured. The answer is 20 with teeth / 4 without, computed by the matrix on three independent runs, and `rg -c 'NO TEETH'` returns 4. Applying 17/7 would have put a third wrong number into a ledger agents grep |
+
+### What the property-1 fix found
+
+Codex named `walk+closerClass` and `region+mdLabel` as both having the masking problem. It
+was **right about the first and wrong about the second**, and the corrected check said so:
+
+| `closer flood with no >` | budget 106.7 ms |
+|---|---|
+| `closerClass` alone | 12.1 ms — no teeth |
+| `walk` alone | **7.3 s** |
+| `walk+closerClass` | **7.2 s** |
+
+The pair crossed on the walk, so the closing attribute class had been credited with teeth it
+contributes nothing to. Chased down: widening `[^<>]*` to `[^>]*` on the closing class is
+**measurably free** — no crossing on any of the 24 cases under any subset, none on six inputs
+built to target it, no behavioural difference on four more, and the full 169-case suite green
+with the real source mutated and restored. The fixed point plus `stripTagTokens` converge to
+the same output either way. It is a defensive symmetry with the *opening* class, which is
+real; it is not a bound a cost matrix can witness. Removed from the list, measurement
+recorded beside it, strict check kept.
+
+### Reality Corrections
+
+- **RC-61** — *the control counted a crossing without asking which mutation caused it, and
+  the masked entry was not a bound at all.* Class K-17, K-15, K-16 · `unchecked-assertion`.
+  Two rules: a witness check must attribute the crossing, not merely observe one in the same
+  experiment; and a cost matrix cannot witness a bound that costs nothing, so measure a
+  candidate mechanism's removal before enumerating it.
+
+### Verification
+
+- Suite **1363 / 1356 passed / 7 skipped / 0 failed**
+- `npm run redos:matrix -- --check` **exit 0**, all four properties holding: seven mechanisms
+  each witnessed by an attributable crossing, 20/4 accounting, 4 markers reconciling, 24/24
+  inputs identical to the test file
+- `tsc` at the pre-existing 12, none in a touched file
+- Property 4 probed with a synthetic drift before being trusted; `closerClass`'s freedom
+  established by mutating the real source, and the source verified byte-identical to HEAD
+  afterwards
+
+### Outstanding Todos
+
+None filed this round. **0 filed, 0 open against #41.**
+
+### Files Modified
+
+`scripts/redos-teeth-matrix.mjs`, `src/lib/response/strip-blocks.test.ts`,
+`src/lib/response/file-saver.test.ts`, `LESSONS.md`,
+`docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`
