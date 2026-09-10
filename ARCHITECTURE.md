@@ -450,7 +450,25 @@ what a violation looks like, it does not belong on this list.
     binding from `fs`** — in any import form, including an alias, a default import,
     a re-export or a dynamic `import()`. Enforced by
     `src/lib/response/file-saver.test.ts`, which parses each production module and
-    fails closed on a form it cannot enumerate. **The remedy for a failing offender
+    fails closed on a form it cannot enumerate. **That sweep skips every test-only
+    filename, so this invariant holds JOINTLY with a second sweep in the same file
+    — *nothing in production imports a test-only module* — which is what stops a
+    write binding being parked in a test-only module and imported from
+    production.** Neither half is sufficient: delete the second and the first
+    returns an empty offender list for exactly that shape, which is byte-identical
+    to compliance. Both key on one shared predicate,
+    `file-saver.test.ts::TEST_ONLY`, so the set one skips is the set the other
+    forbids. **Cite that predicate for which names are test-only; do not restate
+    its pattern here.** A second spelling lets the two sweeps cover different sets
+    while the pair still reads as jointly sufficient, and a name one skips and the
+    other does not match is invisible to both at once.
+    **Complete for every plain-import spelling, and NOT for indirect
+    `require` forms — `createRequire(...)`, `module.require(...)`, an aliased
+    `require` — which are a stated residual declined on population; the decline
+    and its reasoning live at `file-saver.test.ts::moduleSpecifiers`.** Cite that
+    rather than reading this invariant as covering them.
+    `CONVENTIONS.md` → *Naming* owns the fixture-suffix rule.
+    **The remedy for a failing offender
     list is to route the new site through `writeUniqueFile`, never to widen the
     guard's owner.** `LESSONS.md` RC-56 records why the guard names what is
     permitted rather than what is forbidden, and what the enumerating forms that

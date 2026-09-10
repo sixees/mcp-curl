@@ -34,6 +34,7 @@ when a rule here looks arbitrary.
 | Files | kebab-case, one concern per file, named for what it owns | `post-processor.ts`, `strip-blocks.ts`, `unicode-attack-ranges.ts` |
 | Directories | singular concern noun under `src/lib/` | `security/`, `response/`, `execution/` |
 | Tests | co-located, `*.test.ts` beside the source | `ssrf.test.ts` beside `ssrf.ts` |
+| Test-only modules in the production tree | `*.test-fixture.ts`, and **never imported from production** — the suffix is the boundary. Two sweeps in `file-saver.test.ts` hold it jointly: the invariant-17 `fs` sweep skips every test-only filename, and *nothing in production imports a test-only module* is what makes the rule enforced rather than habitual. Remove either and the other reports an empty offender list, which reads exactly like compliance. Both key on one shared predicate, `file-saver.test.ts::TEST_ONLY` — cite it for which names count rather than restating its pattern, because a second spelling lets the two sweeps cover different sets while the pair still reads as sufficient. The residual it does not cover is stated at `file-saver.test.ts::moduleSpecifiers` | `curl-output.test-fixture.ts`, `cpu-time.test-fixture.ts` |
 | Branches | `type/short-slug`, matching the commit type vocabulary | `fix/separate-response-headers-from-body` |
 | Env vars | `MCP_CURL_*` prefix, except protocol-level ones (`TRANSPORT`, `PORT`, `MCP_AUTH_TOKEN`) | `MCP_CURL_ALLOW_LOCALHOST`, `MCP_CURL_OUTPUT_DIR` |
 

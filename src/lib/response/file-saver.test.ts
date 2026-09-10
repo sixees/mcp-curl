@@ -45,6 +45,59 @@ afterEach(async () => {
     if (dir) await rm(dir, { recursive: true, force: true });
 });
 
+const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/**
+ * The one spelling of "test-only file", and it is shared deliberately.
+ *
+ * **Both sweeps key on this, and that is the whole point.** What this walk
+ * excludes is exactly what the import sweep must forbid production from
+ * reaching, so two hand-maintained spellings would drift — and the drift is
+ * silent in the worst direction. A name one sweep skips and the other does not
+ * match is invisible to both at once: the file is never opened for `fs`
+ * bindings and the specifier importing it is never flagged, so each reports an
+ * empty list and `ARCHITECTURE.md` invariant 17 reads as jointly satisfied.
+ * That is the shape `LESSONS.md` RC-56 rule 1 names — an omission whose
+ * signature is a pass.
+ *
+ * Matches a filename (`helpers.test.ts`) and a specifier (`./helpers.test.js`)
+ * alike, and both suffixes: `.test.` and `.test-fixture.`.
+ *
+ * **The leading dot is load-bearing, and the case it excludes is a name ENDING in
+ * `test`:** without it, `latest.ts` and `greatest.tsx` match, and a production
+ * module called any such thing would be silently dropped from the `fs` sweep —
+ * an exclusion that reads as compliance. Measured: `/test\.?/` matches
+ * `latest.ts`, `/\.test\./` does not.
+ */
+const TEST_ONLY = /\.test(-fixture)?\./;
+
+/**
+ * Every production `.ts` under `src/` — no tests, no fixtures.
+ *
+ * **Two sweeps below share this list, and sharing it is the point.** Each
+ * enforces a different rule about what production code may contain, and a
+ * second copy of the walk would let the two disagree about what "production"
+ * means — at which point one of them is enforcing its rule over a smaller tree
+ * than it claims, silently.
+ *
+ * The exclusion is what makes the suffix load-bearing: an excluded file is not
+ * swept for `fs` bindings, so nothing may reach one from production.
+ * `CONVENTIONS.md` → *Naming* states that rule and the sweep in *nothing in
+ * production imports a test-only module* enforces it.
+ */
+const productionFiles = async (d: string): Promise<string[]> => {
+    const out: string[] = [];
+    for (const entry of await readdir(d, { withFileTypes: true })) {
+        const p = join(d, entry.name);
+        if (entry.isDirectory()) {
+            out.push(...(await productionFiles(p)));
+        } else if (entry.name.endsWith(".ts") && !TEST_ONLY.test(entry.name)) {
+            out.push(p);
+        }
+    }
+    return out;
+};
+
 describe("saveResponseToFile — two saves never resolve to one path", () => {
     it("separates two URLs differing only in their query string", async () => {
         const urlA = "https://api.example.test/items?page=1";
@@ -227,7 +280,6 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         "rm", "rmSync", "rmdir", "unlink", "chmod",
     ]);
 
-    const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const OWNER = join("lib", "response", "file-saver.ts");
     const isFsModule = (spec: string): boolean => /^(node:)?fs(\/promises)?$/.test(spec);
 
@@ -285,6 +337,17 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
                     found.add("* (namespace re-export)");
                 }
             }
+            // Same blind spot as the fixture sweep, on the binding side:
+            // `import fsp = require("node:fs/promises")` binds the whole
+            // namespace, and its ExternalModuleReference is not a CallExpression.
+            if (
+                ts.isImportEqualsDeclaration(node) &&
+                ts.isExternalModuleReference(node.moduleReference)
+            ) {
+                const e = node.moduleReference.expression;
+                if (!ts.isStringLiteral(e)) found.add("* (unreadable import-equals specifier)");
+                else if (isFsModule(e.text)) found.add("* (import-equals namespace)");
+            }
             if (ts.isCallExpression(node)) {
                 const target = node.expression;
                 const arg = node.arguments[0];
@@ -313,24 +376,6 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         return [...found];
     };
 
-    /** Every production `.ts` under `src/` — no tests, no fixtures. */
-    const productionFiles = async (d: string): Promise<string[]> => {
-        const out: string[] = [];
-        for (const entry of await readdir(d, { withFileTypes: true })) {
-            const p = join(d, entry.name);
-            if (entry.isDirectory()) {
-                out.push(...(await productionFiles(p)));
-            } else if (
-                entry.name.endsWith(".ts") &&
-                !entry.name.endsWith(".test.ts") &&
-                !entry.name.includes(".test-fixture.")
-            ) {
-                out.push(p);
-            }
-        }
-        return out;
-    };
-
     it("sees the owner, so an empty offender list means something", async () => {
         // The positive control. A sweep that cannot find the one site it knows
         // about has not witnessed the absence of any others.
@@ -349,6 +394,10 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         ['import { promises } from "node:fs";', "the whole promises API as one binding"],
         ['import { default as fs } from "node:fs";', "default via a named clause"],
         ['import * as fsp from "node:fs/promises";', "namespace"],
+        // `import x = require()` binds the namespace too, and its
+        // ExternalModuleReference is not a CallExpression — invisible to the
+        // dynamic arm below until the import-equals arm was added.
+        ['import fsp = require("node:fs/promises");', "import-equals namespace"],
         ['const f = require("node:fs");', "require"],
         ['const { writeFile } = await import("fs/promises");', "dynamic import"],
         ['const { writeFile } = await import(`fs/promises`);', "dynamic import, template literal"],
@@ -390,6 +439,170 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
             if (rel === OWNER) continue;
             const bindings = forbiddenFsBindings(await readFile(file, "utf-8"), rel);
             if (bindings.length > 0) offenders.push(`${rel} (${bindings.join(", ")})`);
+        }
+        expect(offenders).toEqual([]);
+    });
+});
+
+describe("nothing in production imports a test-only module", () => {
+    // **This guard is what makes the `.test-fixture.ts` suffix a boundary rather
+    // than a habit.** `productionFiles` above excludes the suffix, so a fixture
+    // is never swept for `fs` bindings — which means a file-content write placed
+    // in one and imported from production satisfies invariant 17's sweep and
+    // reports an empty offender list. That is byte-identical to compliance,
+    // which is the failure `LESSONS.md` RC-56 was filed for. `tsup` bundles from
+    // four entry points, so today the exposure is latent rather than live; this
+    // is what keeps it that way.
+    //
+    // **Deliberately not folded into `forbiddenFsBindings`.** That function
+    // reads import *bindings* and this one reads *specifiers* — two rules, and
+    // a single function answering both could not say which one failed. Its walk
+    // is also the most-reviewed code in this file; a refactor to share the
+    // traversal would put invariant 17's enforcement at risk to save a dozen
+    // lines.
+
+    /**
+     * Module specifiers this file pulls in, with a marker for any the parse
+     * cannot read.
+     *
+     * **Fails closed on the ARGUMENT, and enumerates the TARGET — the two
+     * halves are not the same claim.** A specifier nothing here can resolve — a
+     * computed expression, an interpolated template — may name a fixture as
+     * easily as not, so it is reported rather than cleared. But the decision to
+     * look at all keys on a list of call and import shapes, and a shape absent
+     * from that list is not "unreadable", it is invisible: `createRequire(...)`,
+     * `module.require(...)` and an aliased `require` all return an empty list,
+     * which reads exactly like compliance.
+     *
+     * **That is a known and accepted limit, not an oversight**, and the reason
+     * is the population: reaching it needs someone with commit access parking a
+     * write binding in a fixture and importing it by indirection, deliberately.
+     * This is a single-operator tool. What this guard is for is the *accidental*
+     * import, which is always a plain `import` — every value-import spelling of
+     * that is either matched or fails closed. Widen the target test if the
+     * threat model ever gains a second author; do not read the sentence above as
+     * covering it today.
+     *
+     * Type-only imports are **not** exempt here, where they are exempt from the
+     * `fs` sweep. The difference is the available remedy: a type cannot be
+     * routed through `writeUniqueFile`, so reporting it there would leave
+     * weakening the guard as the only way out — whereas a type imported from a
+     * fixture can simply be moved, and the boundary rule says nothing in
+     * production may reach one.
+     */
+    const moduleSpecifiers = (source: string, name = "probe.ts"): string[] => {
+        const sf = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true);
+        const found = new Set<string>();
+        const visit = (node: ts.Node): void => {
+            if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+                found.add(
+                    ts.isStringLiteral(node.moduleSpecifier)
+                        ? node.moduleSpecifier.text
+                        : "* (unreadable specifier)"
+                );
+            }
+            // `import fx = require("./x.js")` — an ImportEqualsDeclaration, whose
+            // `moduleReference` is an ExternalModuleReference and NOT a
+            // CallExpression, so neither the import arm above nor the dynamic arm
+            // below sees it. It reads in review as an ordinary import statement,
+            // which puts it squarely in the *accidental* class the docblock above
+            // says this sweep is for.
+            if (
+                ts.isImportEqualsDeclaration(node) &&
+                ts.isExternalModuleReference(node.moduleReference)
+            ) {
+                const e = node.moduleReference.expression;
+                found.add(ts.isStringLiteral(e) ? e.text : "* (unreadable import-equals specifier)");
+            }
+            // `type T = typeof import("./x.js")` — a distinct node kind, not an
+            // ImportDeclaration, and an idiom this repository uses across its test
+            // suites. Erased before emit, so it ships nothing; swept anyway because
+            // the docblock above says type imports are not exempt here, and a rule
+            // that holds for `import type` and not for this spelling holds for
+            // neither.
+            if (ts.isImportTypeNode(node)) {
+                const a = node.argument;
+                found.add(
+                    ts.isLiteralTypeNode(a) && ts.isStringLiteral(a.literal)
+                        ? a.literal.text
+                        : "* (unreadable type-position specifier)"
+                );
+            }
+            if (ts.isCallExpression(node)) {
+                const target = node.expression;
+                const arg = node.arguments[0];
+                const isDynamic =
+                    target.kind === ts.SyntaxKind.ImportKeyword ||
+                    (ts.isIdentifier(target) && target.text === "require");
+                if (isDynamic) {
+                    found.add(
+                        arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))
+                            ? arg.text
+                            : "* (unreadable dynamic specifier)"
+                    );
+                }
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(sf);
+        return [...found];
+    };
+
+    // `TEST_ONLY` is the walk's own exclusion predicate, shared rather than
+    // restated — see its docblock for what the second spelling cost.
+    const fixtureImports = (source: string, name = "probe.ts"): string[] =>
+        moduleSpecifiers(source, name).filter(
+            (spec) => TEST_ONLY.test(spec) || spec.startsWith("* (")
+        );
+
+    it.each([
+        // Each row is a way to reach a test-only module. As with the `fs` sweep,
+        // the set is what makes the guard's direction testable: an empty result
+        // for any of these would be indistinguishable from compliance.
+        ['import { cpuMs } from "./cpu-time.test-fixture.js";', "plain named"],
+        ['import cpuMs from "./cpu-time.test-fixture.js";', "default"],
+        ['import * as fx from "./cpu-time.test-fixture.js";', "namespace"],
+        ['import "./cpu-time.test-fixture.js";', "side-effect"],
+        ['import type { T } from "./cpu-time.test-fixture.js";', "type-only — not exempt here"],
+        ['type T = typeof import("./cpu-time.test-fixture.js");', "type-position import()"],
+        ['export { cpuMs } from "./cpu-time.test-fixture.js";', "re-export"],
+        ['export * from "./cpu-time.test-fixture.js";', "namespace re-export"],
+        ['const m = await import("./cpu-time.test-fixture.js");', "dynamic"],
+        ["const m = await import(`./cpu-time.test-fixture.js`);", "dynamic, template literal"],
+        ['const m = require("./cpu-time.test-fixture.js");', "require"],
+        ["const m = await import(spec);", "unreadable dynamic specifier"],
+        // A `.test.ts` module, which `productionFiles` also excludes from the
+        // `fs` sweep — so before `TEST_ONLY` was shared, this was reported by
+        // neither guard and the pair was nonetheless documented as sufficient.
+        ['import { w } from "./helpers.test.js";', "a .test.ts module"],
+        ['import fx = require("./cpu-time.test-fixture.js");', "import-equals"],
+    ])("reports a test-only import: %s (%s)", (source) => {
+        expect(fixtureImports(source)).not.toEqual([]);
+    });
+
+    it.each([
+        ['import { readFile } from "fs/promises";', "an ordinary module"],
+        ['import { parseResponseWithMetadata } from "./parser.js";', "a sibling production module"],
+        ['import type { Stats } from "fs/promises";', "a type-only ordinary import"],
+        // The other direction of the type-position arm above. Without this, an
+        // edit reducing that arm to an unconditional "unreadable" marker reddens
+        // nothing — production holds no `typeof import()` today, so over-reporting
+        // is invisible until the first module writes one.
+        ['type T = typeof import("./parser.js");', "a type-position import of a production module"],
+    ])("does not report %s (%s)", (source) => {
+        expect(fixtureImports(source)).toEqual([]);
+    });
+
+    it("finds no production module importing a test-only module", async () => {
+        const files = await productionFiles(srcRoot);
+        // The positive control: a sweep that walked nothing witnesses nothing.
+        expect(files.length).toBeGreaterThan(20);
+
+        const offenders: string[] = [];
+        for (const file of files) {
+            const rel = relative(srcRoot, file);
+            const specs = fixtureImports(await readFile(file, "utf-8"), rel);
+            if (specs.length > 0) offenders.push(`${rel} (${specs.join(", ")})`);
         }
         expect(offenders).toEqual([]);
     });

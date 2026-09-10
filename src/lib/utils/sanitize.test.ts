@@ -773,8 +773,30 @@ describe("detectInjectionPattern — wall-clock ReDoS budget (PR-8 / B7-sub-4)",
     // Mirrors PR-7's `strip-blocks.test.ts` shape: a pathological input
     // sized at the upstream MAX_RESPONSE_SIZE / 10 floor to verify the
     // widened `[\s\S]{0,80}` segments don't introduce catastrophic
-    // backtracking. CI-tolerant 2 s budget; representative laptop runs
-    // observe ~270 ms on this shape (security review bench).
+    // backtracking. CI-tolerant 2 s budget. This shape measures **48-53 ms**, wall
+    // and CPU within a millisecond of each other — which is what makes the wall
+    // clock adequate here and is the measurement to re-take before touching the
+    // budget.
+    //
+    // **Left on the wall clock deliberately, where `strip-blocks.test.ts`'s
+    // budgets are on CPU time** (`LESSONS.md` RC-57). The mechanism that broke
+    // those reaches here too — a descheduled `Date.now()` counts time this
+    // process did not spend — so this is a judgement about the margin and not a
+    // claim of immunity: 2 s against a measured 48-53 ms is ~40x, and no run
+    // taken under the load that failed those budgets failed this case. **The ~40x
+    // margin is the whole reason it stays; the note below is about cost, not
+    // permission.**
+    // Should it start failing, the remedy is CPU time rather than a wider budget.
+    //
+    // **Do not cite the layering arrow as forbidding that.** The arrow places
+    // four directories — `config/ → security/ → tools/`, plus `utils/` as leaf —
+    // and `response/` is not one of them, so it cannot adjudicate an import from
+    // there; `docs/todos/011` owns that gap and records the edge as unplaced. What
+    // is true is narrower: `utils/` is leaf-level, no test in this directory
+    // imports upward today, and todo 011's proposed DAG would put `response/`
+    // above `utils/` — so importing the fixture from here is a placement question
+    // to settle rather than a rule already broken, and the honest price is a
+    // module move plus its import sites.
     it("matches a 1 MB pathological 'ignore' chain in well under 2 s", () => {
         const chunk = "ignore ".repeat(150_000); // ~1 MB; densely-shaped near-misses
         const t0 = Date.now();

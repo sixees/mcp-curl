@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { parseResponseWithMetadata } from "./parser.js";
 import { LIMITS } from "../config/limits.js";
+import { cpuMs } from "./cpu-time.test-fixture.js";
 
 /** parseResponseWithMetadata takes exact octets; tests mostly start from strings. */
 const buf = (s: string) => Buffer.from(s, "utf8");
@@ -148,27 +149,30 @@ describe("parseResponseWithMetadata", () => {
         // failing suffix rescanned once per starting offset — measured quadratic
         // at 27.4x for 8x input.
         //
-        // CPU time and a ratio, never a wall-clock budget: `docs/todos/013`
-        // records that this suite's absolute wall-clock ReDoS budgets fail under
-        // its own parallelism. Verified stable under 28 concurrent CPU hogs at
-        // load average 178 — p50 2.2, worst 5.6 against the threshold of 10 —
-        // and across 14 full-suite runs with zero failures of this case.
-        //
-        // **`process.cpuUsage()` is only usable here because vitest defaults to
-        // the `forks` pool and this project sets no `poolOptions`**, so the
-        // counter sees this file's worker process alone. Adding
-        // `poolOptions: { pool: "threads" }` would put sibling workers' CPU in
-        // the same counter and break this guard silently.
+        // A ratio over CPU time, never a wall-clock budget — `cpuMs` owns why,
+        // and owns the pool precondition both rest on. Verified stable under 28
+        // concurrent CPU hogs at load average 178 — p50 2.2, worst 5.6 against
+        // the threshold of 10.
         const at = (n: number) => {
             const ct = "a/b" + ";a=b".repeat(32) + " \t".repeat(n) + "X";
             const raw = `body${SEP}${ct}`;
-            const t0 = process.cpuUsage();
-            for (let i = 0; i < 50; i++) parseResponseWithMetadata(buf(raw), SEP);
-            const u = process.cpuUsage(t0);
-            return (u.user + u.system) / 1000 / 50;
+            return (
+                cpuMs(() => {
+                    for (let i = 0; i < 50; i++) parseResponseWithMetadata(buf(raw), SEP);
+                }) / 50
+            );
         };
         at(50); // warm
-        const small = Math.max(at(50), 0.0005);
+        const small = at(50);
+        // **Assert the divisor exists; never floor it.** A floor turns a reading
+        // the clock could not resolve into a real-looking number, and the
+        // arithmetic then reports `0 / floor` — a ratio of zero, which passes,
+        // from two measurements that never happened. Failing here instead says
+        // "this host cannot measure it", which is a different thing from "no
+        // regression". Measured 0.0013 – 0.0064 ms per parse on a microsecond
+        // clock, so the loop is ~66 µs and the assertion has room; a
+        // tick-accounted host is where it fires.
+        expect(small).toBeGreaterThan(0);
         const large = at(400);
 
         // 8x the input. The head match measures ~1x; the replaced grammar

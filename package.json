@@ -1,6 +1,6 @@
 {
   "name": "mcp-curl",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "MCP server for executing cURL commands",
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
@@ -53,7 +53,8 @@
     "start": "node dist/index.js",
     "dev": "tsup --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "redos:matrix": "node scripts/redos-teeth-matrix.mjs"
   },
   "keywords": [
     "mcp",
@@ -73,6 +74,7 @@
     "@types/express": "^4.17.21",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.5.0",
+    "esbuild": "^0.27.2",
     "tsup": "^8.5.1",
     "typescript": "^5.5.4",
     "vitest": "^4.0.18"

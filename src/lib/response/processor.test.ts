@@ -318,13 +318,37 @@ describe("processResponse — HTML <script>/<style> stripping (PR-7 / B8)", () =
     });
 
     it("ReDoS regression: 1 MB pathological body completes within CI-tolerant 2 s", async () => {
-        // Snyk's textbook ReDoS shape would make `<script\b[^>]*>[\s\S]*?</script>`
-        // hang for SECONDS-to-MINUTES on adversarial input. Our pattern shape and
-        // the 256 KB skip-cap together bound wall-clock well under 100 ms in
-        // benchmarks; the 2 s assertion here is a CI-tolerant safety bound that
-        // still catches catastrophic backtracking (which would not complete at
-        // all within the test timeout) without flaking on slow runners. Strict
-        // perf targets belong in a benchmark suite, not unit tests.
+        // **This guards the CAP, not the patterns, and the distinction is the
+        // whole value of the case.** At 1 MB the body is 4x `STRIP_PATH_MAX_BYTES`,
+        // so `defendText`'s `exceedsStripCap` gate skips steps 3-5 together and
+        // `stripBlocksFixedPoint`, `stripHtmlComments` and `stripMarkdownBeacons`
+        // never run. Verified by probe: with `stripBlocksFixedPoint` throwing
+        // unconditionally on entry, this case still passes. So the measured
+        // **17 ms** is the always-on sanitiser and detector over 1 MB, and it
+        // would read the same with every ReDoS bound in `strip-blocks.ts`
+        // deleted. Do not credit the pattern shape for it, and do not argue a
+        // pattern margin from it — `strip-blocks.test.ts` is where the pattern
+        // bounds are guarded, on sub-cap inputs that reach them.
+        //
+        // The 2 s assertion is a CI-tolerant safety bound that still catches
+        // catastrophic backtracking in the always-on passes (which would not
+        // complete at all within the test timeout) without flaking on slow
+        // runners. Strict perf targets belong in a benchmark suite, not here.
+        //
+        // **Left on the wall clock deliberately, where `strip-blocks.test.ts`'s
+        // budgets are on CPU time** (`LESSONS.md` RC-57). The mechanism that broke
+        // those reaches here too — a descheduled `Date.now()` counts time this
+        // process did not spend — so this is a judgement about the margin and not
+        // a claim of immunity: 2 s against a measured 17 ms is ~117x, and no run
+        // taken under the load that failed those budgets failed this case. Should it
+        // start failing, the remedy is CPU time rather than a wider budget: a 2 s
+        // budget is what let eight of the strip regressions pass their own probe, and
+        // `strip-blocks.test.ts::REDOS_BUDGET_MS` owns that figure — read it there
+        // rather than trusting this sentence. **`cpuMs` will not do it as it stands:**
+        // the subject here is
+        // awaited, and `cpuMs` measures synchronous work and refuses a promise
+        // outright. Taking the remedy means giving that fixture a measure which
+        // samples across the await.
         const opener = "<script>";
         const filler = "<".repeat(1024 * 1024 - opener.length);
         const body = opener + filler;
@@ -662,8 +686,8 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         // Structural now, and strictly stronger: on the JSON arm no defence pass
         // runs over the body at all — `processResponse` hands the decoded bytes
         // straight through — so the artefact still carries the attack codepoints
-        // a pass would have removed. Nothing to time, and one less wall-clock
-        // guard in the class `docs/todos/013` tracks.
+        // a pass would have removed. Nothing to time, so no timing guard here to
+        // keep honest.
         const zwsp = "\u200b";
         const body = JSON.stringify({ note: `a${zwsp}b [x](file:)`, pad: "p".repeat(2000) });
         const result = await processText(body, {

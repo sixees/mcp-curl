@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.2] - 2026-09-10
+
+### Notes
+
+- **Nothing in the published package changed.** No production module was touched,
+  so `dist` builds byte-identical to 4.0.1. This release exists so the branch that
+  rewrote the ReDoS timing guards has a tag; consumers can skip it.
+
+### Changed
+
+- **The invariant-15 ReDoS guards measure CPU time, not wall clock.** `Date.now()`
+  keeps counting while a vitest worker is descheduled, so beside the suite's own
+  parallel workers the guards measured host load rather than pattern cost: cases
+  costing 6-22 ms of CPU read 124-161 ms of wall clock under contention and failed
+  a 100 ms budget. No margin closes that, because a descheduled measurement is
+  unbounded however wide the budget is. `response/cpu-time.test-fixture.ts::cpuMs`
+  is the clock, and it refuses a body it could only have measured a prefix of.
+
+- **The budget is derived from a measured baseline rather than pinned.** An
+  absolute millisecond figure separating two populations that both scale with the
+  host's single-core throughput is a property of one machine, and there is no CI
+  here — the suite runs wherever the operator is. `REDOS_BUDGET_RATIO` is now the
+  declaration and `strip-blocks.test.ts::calibrateBudgetMs` derives the figure.
+
+### Added
+
+- **`npm run redos:matrix` — the teeth matrix as a runnable control rather than
+  prose.** It derives the mechanism list from `strip-blocks.ts`, mutates a bundle
+  of the real source, probes subsets rather than singletons, and asserts four
+  properties: every mechanism has a detector attributable to it, every `NO TEETH`
+  marker really has none, the marker count matches, and every input it measures is
+  byte-identical to the test's row of the same label *and* timed against the same
+  function. `--check` exits non-zero. Not part of `npm test` — runtime is minutes.
+
+- `esbuild` as a direct devDependency, for the matrix's bundling step. It was
+  previously reached only transitively through `tsup` and `vitest`.
+
 ## [4.0.1] - 2026-09-09
 
 ### Security

@@ -1,5 +1,6 @@
 // src/lib/response/strip-blocks.test.ts
 import { describe, it, expect } from "vitest";
+import { cpuMs } from "./cpu-time.test-fixture.js";
 import {
     IMAGE_REMOVED_PLACEHOLDER,
     LINK_REMOVED_PLACEHOLDER,
@@ -12,24 +13,167 @@ import {
 } from "./strip-blocks.js";
 
 /**
- * Wall-clock budget for the ReDoS floods below.
+ * How many times a benign cap-sized pass the floods are allowed to cost.
  *
- * **Calibrated against a probe, not chosen for comfort.** With the bound in
- * `withinClosableRegion` removed, the floods run 243 ms – 10.3 s; with it, all
- * of them run 1–2 ms. 100 ms sits 50× above the passing case and below the
- * weakest regression, so it separates the two on every input here.
+ * **This is the budget's real form; the millisecond figure is derived from it.** 8 x the
+ * measured baseline reproduces the 100 ms the director settled in RC-59 on this host
+ * (12.4 ms x 8 = 99), so that decision is carried across rather than reopened — what
+ * changes is that the number now scales with the host instead of describing one machine.
  *
- * The previous budget was 2 s, and **four of these floods passed the probe at
- * that budget** — the codex-reported cases land at 0.9–1.7 s, so a guard set at
- * 2 s could not fail on the very defect it was added for. A budget wide enough
- * to be safe from jitter was also wide enough to be worthless; the answer was
- * to measure both sides and pick between them, not to widen it further.
- *
- * The inputs cannot simply be made larger to widen the gap: above
- * `STRIP_PATH_MAX_BYTES` (256 KB) `stripBlocksFixedPoint` returns its input
- * untouched, so an oversized flood would pass by doing nothing at all.
+ * The window, in these terms: the slowest loaded pass sits at ~4.3x and the weakest
+ * regression at ~9.0x, so 8 sits where 100 ms sat — near the top, and not widenable.
  */
-const REDOS_BUDGET_MS = 100;
+const REDOS_BUDGET_RATIO = 8;
+
+/**
+ * A benign body at cap size: one full region, patterns scan it and match nothing.
+ *
+ * **Two properties make it usable as a denominator, and both are measured** — a
+ * denominator that moves under mutation, or that is noisier than the subject, eats the
+ * margin it exists to buy:
+ *
+ * - **mutation-invariant.** `noGt`, the attribute walk, and the two paired — 1.00x of
+ *   the unmutated median. A mutation must move the numerator only.
+ * - **the most stable candidate measured**, 1.18x across 15 warm reads, against 1.51x
+ *   for a body carrying a real block and 1.26x for benign markup.
+ */
+const BENIGN_BASELINE_BODY = "a".repeat(STRIP_PATH_MAX_BYTES - 10) + "</script>";
+
+/**
+ * The budget in milliseconds, measured on the host running the suite.
+ *
+ * **Warm first, then take a median.** A cold reading is roughly double a warm one — V8
+ * background compile lands in `process.cpuUsage()`, which `cpuMs` documents — and a cold
+ * denominator would derive a budget twice as wide as intended.
+ */
+function calibrateBudgetMs(): number {
+    for (let i = 0; i < 3; i++) stripBlocksFixedPoint(BENIGN_BASELINE_BODY);
+    const reads: number[] = [];
+    for (let i = 0; i < 9; i++) reads.push(cpuMs(() => stripBlocksFixedPoint(BENIGN_BASELINE_BODY)));
+    reads.sort((a, b) => a - b);
+    const median = reads[4]!;
+
+    // **Assert the divisor exists rather than flooring it** — `parser.test.ts` owns this
+    // idiom and the reason. A tick-accounted host reads 0, and `0 * 8` is a budget every
+    // case fails; failing here says which host and why, instead of 24 mystery reds.
+    if (!(median > 0)) {
+        throw new Error(
+            "the ReDoS budget is derived from a measured baseline and this host reported 0 ms " +
+                "of CPU for a 256 KB pass — its clock is too coarse to calibrate against. " +
+                "Raise the read count, or pin an absolute budget for this host."
+        );
+    }
+    // A calibration far outside the measured band is a broken measurement, not a slow
+    // host: at 25x the baseline the budget would exceed the weakest regression and every
+    // guard below would go green while the bound it defends was gone. Fail loudly.
+    if (median > 200) {
+        throw new Error(
+            `the ReDoS baseline measured ${median.toFixed(1)} ms, far above the 9-16 ms band ` +
+                "this was calibrated in. A budget derived from it would sit above the weakest " +
+                "regression and every flood below would pass with its bound deleted."
+        );
+    }
+    return median * REDOS_BUDGET_RATIO;
+}
+
+/**
+ * CPU-time budget for the ReDoS floods below, in milliseconds — **derived from a
+ * measured baseline on this host, not fixed.** `REDOS_BUDGET_RATIO` above is the
+ * real budget; see `calibrateBudgetMs`.
+ *
+ * **Why derive it.** An absolute millisecond figure separating two populations that
+ * both scale with the host's single-core throughput is a property of one machine.
+ * Both walls move together when the host changes, and neither was anchored to
+ * anything in the repository; there is no CI here, so the suite runs wherever the
+ * operator is and `prepublishOnly` runs it on whatever host publishes. A ratio moves
+ * with them. A ratio also absorbs most of the load excursion that eats the tight side
+ * of the window: under contention numerator and denominator inflate together, where an
+ * absolute figure takes the whole of it. The ratio measures 1.06x of its idle value
+ * under light load, where a single CPU reading under the same load spreads several-fold
+ * — `cpuMs` records that spread.
+ *
+ * **What it does not do:** a ratio catches an exponent change, not a constant-factor
+ * one. Every regression the matrix finds is an exponent change, so that is the right
+ * trade here — but a bound whose removal merely doubles a cost would need an absolute
+ * figure.
+ *
+ * **The clock is CPU time and not wall clock, which is what makes these guards
+ * reliable beside the suite's own parallel workers.** `cpuMs` in
+ * `cpu-time.test-fixture.ts` owns why, and owns the pool precondition it rests
+ * on.
+ *
+ * **`scripts/redos-teeth-matrix.mjs` owns the accounting, not this prose.** It derives
+ * the mechanism list from `strip-blocks.ts`, probes subsets rather than singletons,
+ * computes which cases have teeth, and **asserts** that every mechanism has a detector
+ * and that the `NO TEETH` markers below match what it measures. Run it after touching
+ * either file; `--check` exits non-zero. `LESSONS.md` RC-60 records why it is a script
+ * rather than prose: a hand-re-derived probe cannot be a positive control on itself.
+ *
+ * Its runs: **24 cases, 20 with teeth, 4 without**; warm passing population 0.1 - 16 ms;
+ * weakest regression **113 - 116 ms** via `noGt`, taken each run as the true minimum over all
+ * 32 individual crossings rather than as the minimum of per-case maxima — a maximum can only
+ * overstate the margin, which is the direction that licenses widening. The counts are stable
+ * across runs and the two timings are not, so they are quoted as ranges; the 112 ms floor
+ * below is the figure to design against. All seven mechanisms are
+ * witnessed by a crossing **attributable to that mechanism** — a case above budget with it
+ * and under budget without it — which is what stops one bound's teeth being credited to
+ * another. `mdLabel` is witnessed only by `region+mdLabel`, which is why the matrix probes
+ * subsets rather than singletons.
+ *
+ * **Seven, not eight: the closing attribute class is not a mechanism.** Widening it is
+ * measurably free in both time and behaviour, so the matrix records why it is excluded
+ * rather than listing it and reporting it as witnessed on another mutation's cost.
+ * `LESSONS.md` RC-61.
+ *
+ * **The matrix derives its own budget the same way, and asserts this file's whole derivation
+ * rather than only its ratio** — the warmups, the read count, the median index and the band
+ * above, each pinned verbatim there, because a threshold agreeing on two of six terms is a
+ * threshold that silently diverges (`LESSONS.md` RC-62). It reads `toBeLessThan`'s boundary
+ * too: a measurement equal to the budget fails here, so the matrix counts it as a crossing.
+ *
+ * **Its threshold still moves between runs** — 95 - 107 ms across five runs of the same host,
+ * all inside the 53 - 112 window. Quoted as a range rather than a list of readings: the point
+ * is the spread, and a list invites a new entry on every run.
+ *
+ * A case whose regression lands near the top of that window can therefore change
+ * classification run to run, and the marker reconciliation would report it. That is the
+ * instrument being honest about a measurement, not a defect; it is also why the floor of the
+ * weakest regression is the figure to quote and a median is not.
+ *
+ * **The window the budget sits in needs two figures the matrix does not take, because
+ * neither is a warm single-process read. State the condition with each** (RC-59 rule 2):
+ *
+ * - **~53 ms** — the slowest passing case, `non-boundary closer name`, beside 48-72 CPU
+ *   hogs. CPU time is not perfectly load-invariant and the budget has to allow for it
+ * - **112 ms** — the FLOOR of the weakest regression, `opener flood behind a leading
+ *   \`>\`` under `noGt`, taken as the minimum of three independent runs. Quote
+ *   the floor, never a median: the median reads 117-126 and so claims a 1.17x margin
+ *   where the real one is 1.12x, and that overstatement is what licenses a widening
+ *
+ * **So the usable window is about 53 - 112 ms and 100 ms sits near the top of it.**
+ * Widening past ~112 ms yields a guard that passes with `noGt` deleted and the tag
+ * strip quadratic on any \`>\`-free flood.
+ *
+ * **A 2 s budget — the obvious CI-tolerant figure, and the one `processor.test.ts` and
+ * `sanitize.test.ts` still carry — fails on 12 of the 20 regressions and passes the
+ * other 8**, including every `noGt` and region-bound regression in the hundreds of
+ * milliseconds. That is the measured form of `LESSONS.md` RC-11's lesson:
+ * a budget wide enough to be safe from jitter was also wide enough to be worthless.
+ *
+ * **Four cases cannot fail at this budget, and each is marked below.** They are kept
+ * because each pins an input shape the patterns must survive, but a green result from
+ * one is evidence about the input space and not about the defence.
+ *
+ * **A `NO TEETH` marker is a claim about a mechanism list, not about a case, so it
+ * expires when the list grows** (RC-60 rule 3). Each marker below therefore names what
+ * cleared it, and the matrix — not this file — is what holds that list current. Never
+ * re-derive the mechanisms from this docblock; derive them from `strip-blocks.ts`.
+ *
+ * The inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES` (256 KB)
+ * `stripBlocksFixedPoint` returns its input untouched, so an oversized flood would
+ * pass by doing nothing at all.
+ */
+const REDOS_BUDGET_MS = calibrateBudgetMs();
 
 describe("stripHtmlComments", () => {
     it("strips a single comment", () => {
@@ -100,14 +244,23 @@ describe("stripHtmlComments", () => {
     // and destructive, which is why it went (RC-11). Removing it addressed the
     // destruction and left the cost unbounded, and no guard here covered the
     // comment strip at all. Found by codex and CodeQL on PR #33.
+    //
+    // **Each input names the mutation it fails under, and where the closer sits is
+    // the whole difference between a guard and a decoration.** A closer at the END
+    // — `"<!--".repeat(65535) + "-->"` — is found by the first opener's `indexOf`,
+    // which jumps to end-of-input: the latch is never consulted and there is no
+    // quadratic to bound, so the case reads 1.1 ms with the latch and 1.2 ms
+    // without. Only a closer INSIDE the flood leaves the remaining openers past
+    // the last closer, which is the state the latch exists for.
     it.each([
+        // no-closer latch removed: 37.5 s
         ["opener flood, no closer", "<!--".repeat(65536)],
-        ["opener flood, one trailing closer", "<!--".repeat(65535) + "-->"],
+        // no-closer latch removed: 34.1 s
+        ["opener flood, one interior closer", "<!--".repeat(4) + "-->" + "<!--".repeat(65531)],
+        // no-closer latch removed: 30.3 s
         ["deep splice flood", "<!".repeat(60000) + "--".repeat(60000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
-        const start = Date.now();
-        stripHtmlComments(body);
-        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
+        expect(cpuMs(() => stripHtmlComments(body))).toBeLessThan(REDOS_BUDGET_MS);
     });
 });
 
@@ -356,27 +509,53 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
     // Both were found by review, not here. A flood is only a guard if its
     // closing token is the one the pattern actually needs.
     //
-    // Budget is deliberately loose. The measured post-fix figures are all under
-    // 2 ms; a regression restores seconds, so anything between is unambiguous
-    // and CI jitter cannot reach it.
+    // `REDOS_BUDGET_MS` owns the threshold and its calibration. The two figures
+    // above are about which inputs are load-bearing, not about the budget.
     it.each([
+        // `noGt` latch removed: 120 ms
         ["<script opener flood, no `>` anywhere", "<script".repeat((256 * 1024) / 7)],
+        // `noGt` latch removed: 133 ms
         ["<style opener flood, no `>` anywhere", "<style".repeat((256 * 1024) / 6)],
+        // `noGt` latch removed: 112 - 126 ms, floor 112 — the WEAKEST regression in the
+        // table, and what pins the budget. `REDOS_BUDGET_MS` owns the figure; quote the floor
         ["opener flood behind a leading `>`", ">" + "<script".repeat((256 * 1024) / 7)],
+        // region bound removed: 1.1 s
         ["complete <script> openers, no closer", "<script>".repeat(32000)],
+        // region bound removed: 1.1 s
         ["complete <style> openers, no closer", "<style>".repeat(32000)],
+        // region bound removed: 1.7 s
         ["openers with a foreign closer", "<script></x>".repeat(20000)],
+        // region bound removed: 926 ms
         ["one real block, then an opener flood", "<script>x</script>" + "<script>".repeat(30000)],
+        // `lastTagCloserEnd`'s attribute walk re-admitting `<`: 5.0 - 7.2 s — and this
+        // case is the ONLY one of the 24 that regresses on that mechanism. Do not
+        // delete it. `noGt` removed reaches 90-97 ms here — under the budget on every
+        // read — so a probe that omits the walk marks this case toothless and licenses
+        // deleting the sole guard on a 7-second regression; the bound is the one its
+        // own subject names,
+        // `strip-blocks.ts::lastTagCloserEnd`, "the attribute run, which may not
+        // contain `<`".
         ["closer flood with no `>`", "</script".repeat(30000)],
-        // Round 2. Each defeats the round-1 bound in a different way: a
-        // non-boundary name accepted as a closer, and a closer whose attribute
-        // run swallows the openers that follow it.
+        // These two defeat a `</`-only bound in different ways: a non-boundary name
+        // accepted as a closer, and a closer whose attribute run swallows the
+        // openers that follow it.
+        // region bound removed: 886 ms. Also the only detector of a second mechanism:
+        // `lastTagCloserEnd`'s `\b` word-char check removed, 875-899 ms — `</scripture>`
+        // is then accepted as a script closer.
         ["non-boundary closer name", "<script></scripture>".repeat(13000)],
+        // `lastTagCloserEnd`'s walk re-admitting `<` AND the opener class widened to
+        // `[^>]*`, TOGETHER: 3.9 s. Either alone stays under 6 ms, so no single-mutation
+        // probe can witness this case and one will report it toothless. It is the only
+        // case in the table that detects that pair — do not delete it.
         ["openers nested inside the bounding closer", "</script " + "<script".repeat(35000) + ">"],
-        // Round 3: the scan must not trade the cap for a quadratic.
+        // Splices: the scan must not trade the iteration cap for a quadratic.
+        // NO TEETH: cleared against all seven mechanisms and the two probed pairs by
+        // `scripts/redos-teeth-matrix.mjs`; peak 18 ms
         ["deep script splice", "<scr".repeat(30000) + "<script>" + "ipt>".repeat(30000)],
+        // NO TEETH: cleared against all seven mechanisms and the two probed pairs by
+        // `scripts/redos-teeth-matrix.mjs`; peak 7 ms
         ["deep style splice", "<sty".repeat(30000) + "<style>" + "le>".repeat(30000)],
-        // Round 4, and the axis every case above misses. All of them either
+        // The axis every case above misses. All of them either
         // omit the closer — so the region is empty and the pass never runs —
         // or give each opener a `>` of its own. These do neither: one real
         // closer at the end puts the whole body in scope, and no opener has
@@ -384,8 +563,11 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // for a second closer that does not exist. Measured 2881 ms / 2460 ms
         // before the opener class excluded `<`. Reported by
         // chatgpt-codex-connector on PR #33 round 4.
+        // opener class widened to `[^>]*`: 2.9 s
         ["openers borrowing the closer's `>`", "<script".repeat(30000) + "</script>"],
+        // opener class widened to `[^>]*`: 2.5 s
         ["style openers borrowing the closer's `>`", "<style".repeat(30000) + "</style>"],
+        // opener class widened to `[^>]*`: 2.9 s
         ["openers borrowing a whitespace closer's `>`", "<script".repeat(30000) + "</ script>"],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         // **The sixth toothless-guard shape, caught before it cost anything.**
@@ -395,9 +577,7 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // any literal above and the whole block is vacuous and still green.
         // Reported by coderabbitai on PR #33 round 5.
         expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(STRIP_PATH_MAX_BYTES);
-        const start = Date.now();
-        stripBlocksFixedPoint(body);
-        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
+        expect(cpuMs(() => stripBlocksFixedPoint(body))).toBeLessThan(REDOS_BUDGET_MS);
     });
 });
 
@@ -413,17 +593,32 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
     // scanning forward without limit, so `"[a](https://x".repeat(19000)` — a
     // complete beacon prefix with no `)` anywhere — still took 2.9 s. Found by
     // review. All five passes are now bounded at the last `)`.
+    //
+    // **Five of the six inputs below contain no `)` at all, so on current code
+    // they run no pattern.** `lastCloserEnd(input, ")")` is 0 for them and
+    // `withinClosableRegion` returns at `end <= 0` before any replace starts —
+    // which is why they cost 0.11-0.15 ms and why two of them need the region
+    // bound AND the label class broken together before anything regresses. That
+    // is a legitimate guard on the bound itself, but it is invisible to any
+    // single-mutation probe, so read their figures as measuring the early
+    // return, not the patterns.
     it.each([
+        // region bound removed AND label class re-admitting `[`: 82.5 s (either alone stays under 4 ms)
         ["`[` flood", "[".repeat(256 * 1024)],
+        // region bound removed AND label class re-admitting `[`: 40.9 s
         ["`![` flood", "![".repeat((256 * 1024) / 2)],
+        // NO TEETH: cleared against all seven mechanisms and the two probed pairs by
+        // `scripts/redos-teeth-matrix.mjs`; peak 2 ms
         ["`[](` flood", "[](".repeat((256 * 1024) / 3)],
+        // region bound removed: 2.8 s
         ["unterminated URL flood", "[a](https://x".repeat(19000)],
+        // NO TEETH: cleared against all seven mechanisms and the two probed pairs by
+        // `scripts/redos-teeth-matrix.mjs`; peak 1 ms
         ["unterminated URL flood, one trailing `)`", "[a](https://x".repeat(19000) + ")"],
+        // region bound removed: 2.7 s
         ["unterminated image URL flood", "![a](https://x".repeat(18000)],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
-        const start = Date.now();
-        stripMarkdownBeacons(body);
-        expect(Date.now() - start).toBeLessThan(REDOS_BUDGET_MS);
+        expect(cpuMs(() => stripMarkdownBeacons(body))).toBeLessThan(REDOS_BUDGET_MS);
     });
 
     it("replaces external image with [image removed]", () => {

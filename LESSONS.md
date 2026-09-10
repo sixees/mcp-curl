@@ -2419,3 +2419,323 @@ and this branch had not merged when the correction was made.
      AST, and node-kind enumeration inside the AST could not see an unresolvable
      expression. `skill: pr-resolver-safety` → *the escalation ladder* rung 3 names
      this — recognise that no fix exists at that layer and move the precondition.
+
+### RC-57 — the remedy named two of three sites, and cited a precedent deleted two PRs earlier
+
+**Date:** 2026-09-09 · **PR:** — (filed pre-push) · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
+
+**Class:** K-4, K-7 — *class-id:* `stale-comment`
+
+- **The plan said:** `docs/todos/013` closed with *"Two sites: `strip-blocks.test.ts:110`
+  and `:400`"*, and prescribed *"the same remedy already applied to `processor.test.ts`'s
+  ratio guard … 0 false failures in 6 runs under 24-spinner load"*. The consumer who
+  escalated it independently repeated both claims — *"the fix is two lines"* — which is
+  what made them read as corroborated rather than copied.
+- **Reality was:** three assertion sites share `REDOS_BUDGET_MS`, not two. The third
+  guards `stripMarkdownBeacons` and carries six flood cases — invariant 15's markdown
+  half, the one that measured 82 s before the `[` exclusion. And the cited precedent was
+  not at the cited site: the CPU-time ratio guard entered `processor.test.ts` in #37
+  (`ccf6e62`) and was **deleted in #39** (`6effe5b`), because removing the over-cap arm
+  left the ratio with nothing to compare. `processor.test.ts` today holds a plain
+  `Date.now()` budget. The live precedent is
+  `parser.test.ts::"costs the same on a pathological tail as on a short one"`, and it is
+  stronger than the remedy as written — it records a **pool precondition** neither source
+  mentions: `process.cpuUsage()` is per-process, so it measures one file's work only under
+  vitest's default `forks` pool.
+- **What changed:** all three sites moved to `cpuMs` from the new
+  `src/lib/response/cpu-time.test-fixture.ts`, which is the single implementation and
+  **asserts** the pool precondition instead of documenting it — forcing `--pool=threads`
+  now fails 25 cases with an explanatory error where it previously returned a
+  contaminated number that read as a pass. `parser.test.ts`'s inline copy of the idiom,
+  and its prose copy of the warning, fold into the fixture.
+  `processor.test.ts::"ReDoS regression: 1 MB pathological body"` and
+  `sanitize.test.ts::"matches a 1 MB pathological 'ignore' chain"` keep wall clock with
+  the reason recorded in place.
+- **What this costs next time:** two rules.
+  1. **A remedy that names its sites by line number has told you the author's sample, not
+      the class.** Both sources here named the same two lines because the second read the
+      first; agreement between a todo and the consumer who escalated it is one
+      observation, not two. Re-derive the site list from the *shared symbol* —
+      `rg REDOS_BUDGET_MS` finds three in one command — before pricing the change as two
+      lines. `CONVENTIONS.md` → *Referring to code and to files* already forbids citing a
+      line number for exactly this reason, and this is what the ban buys.
+  2. **A remedy citing an in-repo precedent is a claim about HEAD, and it is checkable in
+      one `git log -S`.** This one had been true for two PRs and was two months stale by
+      the time it was acted on. The site it pointed at still existed, still held a timing
+      guard, and still looked like the thing described — which is why reading the file
+      would not have caught it either. Check that the *mechanism* is there, not that the
+      file is.
+
+  The site-count half has no exact `class-id`; `stale-comment` is the nearest noun and
+  covers the dead citation rather than the short sweep.
+
+### RC-58 — the acceptance criterion was already satisfied by the unfixed code
+
+**Date:** 2026-09-09 · **PR:** — (filed pre-push) · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
+
+**Class:** K-1, K-18 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** acceptance criterion 1 was *"four consecutive `npm test` full-suite
+  runs pass with zero failures"*. The todo's own evidence recorded 1-3 failures on every
+  one of eight runs across two branches, so four clean runs read as a decisive test of the
+  fix.
+- **Reality was:** four full-suite runs at HEAD on an idle machine were **1332 passed, 0
+  failed, 4/4 green — before any change**. The criterion certified nothing: the flake
+  needs contention to surface, and this machine had 24 idle cores. Under 28 CPU spinners
+  the failure returned immediately — 2 of 4 runs, at 124 ms and 161 ms against the 100 ms
+  budget, a different case each time. A run of the criterion as written, on the unfixed
+  tree, would have closed the todo as already-resolved.
+- **What changed:** the verification standard became the *comparison* rather than the
+  count — the same 28-spinner load run against both trees, which is the only form in
+  which the numbers mean anything. Baseline 2/4 failing, fixed 3/3 green. The load
+  harness is scratch and is not committed; what is durable is the figure recorded in
+  `REDOS_BUDGET_MS`'s docblock and in `cpuMs`, both of which now state the measured CPU
+  cost of both populations rather than a wall-clock number that depended on the host.
+- **What this costs next time:** **an acceptance criterion for a flake must name the load
+  it is measured under, or it is a criterion the unfixed code can pass.** A flake's
+  reproduction rate is a property of the machine, so "N clean runs" inherits whatever the
+  next machine happens to be doing — and it fails in the reassuring direction, which is
+  why nothing would have reported it. The general form: **when a criterion is "the bad
+  thing stops happening", establish the positive control first** — reproduce the failure
+  on the unfixed tree, in this session, on this host. `01-known-shapes.md` → K-18 is this
+  shape, and its instruction ("run it where it must return a result") is what the spinners
+  were for.
+
+### RC-59 — the budget's calibration was measured on two mechanisms of four, and its own figures came from a mis-sorted probe
+
+**Date:** 2026-09-09 · **PR:** — (filed pre-push) · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
+
+**Class:** K-6, K-4, K-1 — *class-id:* `unchecked-assertion`
+
+**Mechanism superseded:** RC-60 (2026-09-10) — the mechanism list this entry records as
+complete was one short, and the figures below are corrected in place accordingly. The
+*lesson* stands unchanged; what moved is the count and the floor. Corrected rather than
+annotated alone because the ledger's freeze boundary is merge and this branch had not
+merged when the correction was made.
+
+- **The plan said:** the todo asked only for the clock to change — *"Keep `REDOS_BUDGET_MS`
+  at 100 and keep every case; only the clock changes"* — so the existing calibration was
+  treated as a fact to carry across, and the re-measurement was scoped to restating the old
+  wall-clock figures in CPU terms.
+- **Reality was:** the restated figures were wrong in both directions, by two independent
+  mistakes. **(1)** They came from a probe whose output was sorted with
+  `sort -t' ' -k2 -g` over lines reading `AssertionError: expected 0.147 to be less than …`
+  — field 2 is the word `expected`, identical on every line, so the sort did nothing and the
+  reported minimum and maximum were whichever lines happened to land first. The passing
+  population was recorded as 0.15 – 10 ms and measures **0.11 – 22 ms** idle, ~30 ms through
+  the suite and **~53 ms beside 72 CPU hogs**; the weakest regression was recorded as 254 ms,
+  which was the vitest *duration column*, not the CPU figure. **(2)** Only two of at least
+  six cost-bearing mechanisms were probed — the `withinClosableRegion` region bound and
+  `stripHtmlComments`'s no-closer latch. The two missed, `stripTagTokens`'s `noGt` latch and
+  the attribute character classes, carry the **weakest** regressions there are: `noGt`
+  removal costs 112-126 ms against a 100 ms budget. Found by `performance-oracle`, which measured
+  rather than read, and confirmed by re-measuring the full 24-case × 5-mechanism matrix.
+- **What changed:** `strip-blocks.test.ts::REDOS_BUDGET_MS`'s docblock now states the real
+  window (~53 – 112 ms), says the budget **cannot be widened**, and records that a 2 s
+  budget fails on 12 of the 20 regressions and passes the other 8. Every one of the 24 flood
+  inputs carries the figure it reaches under the mutation it guards, and the **four that
+  cannot fail at this budget are marked `NO TEETH`** (recorded as seven here originally, then
+  as five; the measured answer is four and RC-60 owns how it was reached — `closer flood with
+  no >` regresses to 5.0-7.2 s on a mechanism this run never probed and is not among them). Five of the six beacon inputs contain
+  no `)`, so `withinClosableRegion` returns at `end <= 0` and no pattern runs at all; that is
+  now stated beside them. Two more figures this run had asserted from pre-existing prose
+  rather than measurement were re-taken: the `processResponse` 1 MB case is **17 ms**, not
+  ~100 ms, and `detectInjectionPattern` on 1 MB is **48-53 ms**, not ~270 ms.
+- **What this costs next time:** three rules.
+  1. **A two-sided calibration is only as strong as the mechanism list it was probed
+      against, and the mechanism list is derived from the subject, not from the guard.** Ask
+      *what could I delete from this code that would make it slow?* and enumerate that,
+      before reading any figure. Probing the mechanisms someone already documented finds the
+      bound they already knew about, and the weakest bound is the one that decides the
+      threshold.
+  2. **A recorded figure that decides a threshold states the conditions it was taken
+      under.** A bare pair of numbers cannot be re-checked, which is how "0.15 – 10 ms"
+      survived beside a case actually costing 22 ms. Host, load and run count, or the figure
+      is not evidence.
+  3. **A shell pipeline that ranks the evidence is part of the measurement and gets the same
+      scrutiny as the measurement.** The mis-sorted key here produced numbers that were
+      plausible, ordered, and wrong, and nothing downstream could tell. Verify a sort by
+      checking that its extremes actually are extreme — `sort … | head -1` and `tail -1`
+      against a hand-scan of the file.
+
+  **Settled by the director on 2026-09-10, and binding: `REDOS_BUDGET_MS` stays at 100 ms,
+  documented as measured.** The window is ~53 – 112 ms and 100 ms sits near its top, which
+  leaves the four marked cases unable to fail and ~1.9x above the slowest loaded pass. The
+  todo had settled the same value on the premise that the margin was 50x and 2.5x; that
+  premise is refuted, so the question was put again on the real figures and answered the same
+  way — 100 ms still separates every measured regression from every measured pass, and the
+  alternatives trade pass headroom for one more case's teeth. **A later round proposing ~75 ms,
+  or a per-subject split, is answered by citing this record rather than by re-weighing it**
+  (`.claude/rules/03-divergence.md` → *Settled conflicts stay settled*). What would reopen it
+  is new measurement, not a new argument: a host where a passing case crosses ~75 ms, or a
+  newly found mechanism whose regression lands below **112 ms** — the floor across three
+  independent runs, corrected from the 117 ms median this entry first recorded (RC-60). The
+  5 ms between the two is the band where this decision flips, so quote the floor.
+  `strip-blocks.test.ts::REDOS_BUDGET_MS` owns the figure; cite it rather than this line if
+  the two ever disagree.
+
+  **Carried, not reopened: the budget is now DERIVED.** `REDOS_BUDGET_RATIO = 8` times a
+  measured benign cap-sized pass reproduces this 100 ms on the host it was settled on, so the
+  director's decision survives while the number stops describing one machine. The denominator
+  was chosen by measurement — mutation-invariant at 1.00x and the most stable of three
+  candidates at 1.18x — because a denominator that moves under mutation eats the margin a
+  ratio exists to buy. Teeth improved rather than held: the `noGt` regression now fails four
+  cases where the fixed figure failed three.
+
+### RC-60 — the run that wrote "derive the mechanism list from the subject" then shipped a list derived from the guard
+
+**Date:** 2026-09-10 · **PR:** #41 · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
+
+**Class:** K-4, K-16, K-8 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** RC-59 had just been filed, and its own first rule is *"a two-sided
+  calibration is only as strong as the mechanism list it was probed against, and the
+  mechanism list is derived from the subject, not from the guard."* The re-measurement that
+  produced RC-59 enumerated five mechanisms and recorded a "24-case × 5-mechanism matrix" as
+  complete.
+- **Reality was:** the list was still derived from the guard. `strip-blocks.ts` carries a
+  sixth cost-bearing bound — `lastTagCloserEnd`'s attribute walk, whose `text[j] !== "<"`
+  term the function's own comment calls out as separately learned ("the attribute run, which
+  may not contain `<`"). Removing it costs **5.0 - 7.2 s** on `closer flood with no \`>\``,
+  50-70x the budget, and that case is the **only** one of the 24 that regresses on it — every
+  other stays under 32 ms. It was annotated `NO TEETH` for two rounds, and the docblock
+  explains a marked case as "evidence about the input space and not about the defence", which
+  is an invitation to delete the sole guard on a 7-second ReDoS regression. Found by
+  `security-sentinel` re-deriving the list from the subject and measuring 7 mechanisms × 24
+  cases; the walk regression reproduced independently at 5,006 ms.
+- **And the arithmetic said so all along.** The count was stated as "seven cases cannot fail;
+  six have no mutation crossing 100 ms and one regresses to 97 ms" against **six** `NO TEETH`
+  markers in the file — and the handoff's "18 have teeth, 6 do not, and a seventh" totals 25
+  of 24 cases. `rg -c 'NO TEETH'` answers this in one command. The double-count is what let
+  the miscount survive re-measurement, in four documents at once (the docblock, RC-59, the
+  handoff, and the annotation itself). Corrected accounting: **20 of 24 have teeth, 4 do
+  not** — and it was corrected twice more inside the same review, which is the finding
+  rather than a footnote. The second pass found the sixth mechanism
+  (`lastTagCloserEnd`'s attribute walk, 5.0-7.2 s, detected by exactly one case that was
+  marked toothless). The third found that a **PAIR** is needed to witness a seventh case:
+  `openers nested inside the bounding closer` costs under 6 ms under either the walk or the
+  widened opener class alone and **3.9 s under both**, so no single-mechanism matrix can see
+  it — and one reviewer "positively verified" the 19/5 count that round by probing
+  singletons, its instrument unable to see what it reported absent (K-18). A seventh
+  mechanism, `lastTagCloserEnd`'s `\b` word-char check, is detected only by `non-boundary
+  closer name` at 875-899 ms and appeared in no list at all. Two other figures were also single-read: the slowest passing case is `non-boundary
+  closer name` (15 ms median, stable) and not `closer flood with no \`>\`` (11 ms median but
+  the highest cold spike, which is why one read names it), and the weakest regression floors
+  at **112 ms** across three independent runs rather than the 117 ms a median gave.
+- **The budget is untouched by this.** RC-59's reopening condition is a newly found
+  mechanism whose regression lands *below* the weakest-regression floor — **112 ms**, as
+  corrected here and in RC-59 in place; this one lands three orders above it, so the
+  director's 100 ms stands and this entry does not reopen it. (RC-59 first stated that
+  threshold as 117 ms, a median rather than a floor. Both now read 112.)
+- **What this costs next time:** three rules.
+  1. **Writing a rule in the same run that must obey it does not make the run obey it.**
+      RC-59's rule 1 was correct, was written first, and was then not applied to its own
+      matrix — because the enumeration had already happened. A rule authored mid-run binds
+      the *next* run unless something re-executes the step it governs. **Re-run the step.**
+  2. **A count is a cheap positive control on a claim about a set, and it is the one nobody
+      runs.** Four documents asserted "seven" while the file contained six marks. Any claim
+      of the form *N of M do X* has a one-line verification; if the prose and the `grep`
+      disagree, the prose has never been checked.
+  3. **A `NO TEETH` marker is a claim about a mechanism list, not about a case, so it expires
+      when the list grows.** Record the mechanisms a case was cleared against, not just the
+      verdict — an unqualified verdict reads as permanent and licenses deletion.
+  4. **A mutation matrix over singletons cannot witness a bound that only fails in
+      combination, and "no single mutation exceeds N" is not the claim a `NO TEETH` marker
+      makes.** Probe subsets. Three rounds each re-derived this matrix by hand and each was
+      narrower than the subject in a different place — two mechanisms of seven, then five of
+      seven, then singletons where a pair was needed. **A hand-re-derived probe cannot be a
+      positive control on itself**, so the matrix is now a runnable artefact:
+      `scripts/redos-teeth-matrix.mjs` (`npm run redos:matrix`). It derives the mechanism
+      list from `strip-blocks.ts`, probes subsets, computes the accounting, and asserts that
+      every mechanism has a detector and that the `NO TEETH` markers match what it measures.
+      **Its first run failed its own assertions and was right to** — three of the transforms
+      written into it by hand were wrong (the region bound removed on one arm of three, a
+      closing class mutated where an opening one was meant, the markdown label class widened
+      on the image pattern only), and the corrected run then reproduced 20/4 independently.
+      That is the difference between a control and a claim.
+
+### RC-61 — the control counted a crossing without asking which mutation caused it, and the masked entry was not a bound at all
+
+**Date:** 2026-09-10 · **PR:** #41 · **Plan:** `docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`
+
+**Class:** K-17, K-15, K-16 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** RC-60 rule 4 replaced a hand-re-derived teeth matrix with a runnable
+  artefact, `scripts/redos-teeth-matrix.mjs`, on the grounds that *"a hand-re-derived probe
+  cannot be a positive control on itself"*. Its property 1 asserts that every enumerated
+  mechanism has at least one case that detects it, and its first corrected run reported all
+  eight witnessed — `closerClass` by the `walk+closerClass` pair, `mdLabel` by
+  `region+mdLabel`.
+- **Reality was:** property 1 counted **any** case above budget under **any** subset
+  containing the mechanism, without asking whether removing *that* mechanism is what made
+  the case expensive. So one bound's teeth were credited to another sitting beside it in the
+  same subset: `walk` alone puts `closer flood with no >` at **7.3 s** and `walk+closerClass`
+  at **7.2 s**, so the pair crossed on the walk and the closing attribute class was reported
+  as witnessed on a cost it contributes nothing to. Found by `chatgpt-codex-connector` on the
+  open PR, which named `walk+closerClass` and `region+mdLabel` as having "the same masking
+  problem" — correct on the first and, as it turned out, not on the second.
+- **And the masked entry was not a bound.** Requiring an attributable crossing made
+  `closerClass` fail outright, and it fails because widening the block patterns' *closing*
+  attribute class from `[^<>]*` to `[^>]*` is **measurably free**: no crossing on any of the
+  24 cases under any subset, none on six inputs built to target it, no behavioural difference
+  on four more, and the whole 169-case suite green with the real source mutated. The fixed
+  point plus `stripTagTokens` converge to the same output either way. It is a defensive
+  symmetry with the *opening* class, which is real — so the entry was removed from the
+  mechanism list with the measurement recorded beside it, and the strict check kept.
+- **What this costs next time:** two rules.
+  1. **A witness check must attribute the crossing, not merely observe one in the same
+     experiment.** Where a probe mutates more than one thing, "this subset is over budget"
+     says nothing about which member caused it — and the reassuring direction is the default,
+     so every mechanism in a subset containing one real detector reads as detected.
+     `.claude/rules/01-known-shapes.md` → K-17 is this shape: the check's two sides shared a
+     source. The fix is one comparison the data already supports — above budget **with** the
+     mechanism, at or below **without** it — and every comparator is already measured, so it
+     costs no extra runs.
+  2. **A cost matrix cannot witness a bound that costs nothing, and listing one there
+     manufactures a false green rather than a gap.** The question to ask of a candidate
+     mechanism is not *"is this bound real?"* but *"is it in this instrument's domain?"* —
+     measure its removal before enumerating it. Three of this branch's rounds each corrected
+     the mechanism *list*; none had asked whether a member belonged in the list at all.
+
+### RC-62 — the fix read one term of the derivation out of its source and left five of them restated
+
+**Date:** 2026-09-10 · **PR:** #41 · **Plan:** `docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`
+
+**Class:** K-4, K-16, K-17 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** round 2 of Surface 3 found that `scripts/redos-teeth-matrix.mjs` pinned
+  an absolute 100 ms budget while `strip-blocks.test.ts` derives its own from a measured
+  baseline, so the control classified mutations against a threshold the tests do not use.
+  The fix read `REDOS_BUDGET_RATIO` out of the test file and asserted the baseline body's
+  text verbatim — "one declaration, and a change to it cannot leave this script measuring
+  against the old one".
+- **Reality was:** the threshold has six terms, and the fix read two. Three warmups, nine
+  reads, the median index, the clock and the sanity band that *refuses* a baseline above
+  200 ms were all still independently restated in the script — so changing
+  `calibrateBudgetMs` to a mean, or to five reads, or raising its band, leaves `--check`
+  green while it classifies teeth against a number the suite never produces. Found by
+  `chatgpt-codex-connector` on the open PR, one round after the finding that produced the
+  partial fix. The same round found the control's *comparator* restated too: the tests reject
+  a reading equal to the budget (`toBeLessThan`), and the matrix classified equality as
+  no teeth.
+- **And the round found it five more times.** Every one of round 3's six findings landed on
+  an earlier round's fix, in the same shape: a check whose reach was derived from the instance
+  the reviewer named rather than from the class it belongs to. The `mdLabel` mutation asserted
+  `hits >= 1` where four arms share the anchor, so respelling one arm leaves the mutation
+  applying to three and a surviving arm supplies the crossing. Property 4 compared labels and
+  bodies but not *which function the table times*, so a row moved between the comment, block
+  and beacon tables keeps certifying teeth measured on a function it no longer exercises. The
+  thenable guard in `cpu-time.test-fixture.ts` tested `typeof === "object"` and not
+  `"function"`, so a callable thenable passes the check the guard exists to fail.
+- **What this costs next time:** two rules.
+  1. **When a finding says "this control restates its subject", the fix covers every term of
+     the restatement — not the term the reviewer named.** The reviewer names the instance it
+     found; the class is *the whole quantity the control reimplements*.
+     `.claude/rules/01-known-shapes.md` → K-4 is this shape, and its question is the test:
+     was the query derived from the class's definition, or from the instance in hand? Here the
+     definition was one function, `calibrateBudgetMs`, sitting in a file already being read.
+  2. **A control must borrow its subject's comparator, not a near-copy of it.** `>` against
+     `toBeLessThan` differ on exactly one value, which is the value where the guard fails and
+     the control says it cannot — so the disagreement is invisible until it certifies the
+     wrong answer. Where a threshold is shared, state the comparison once and use it on both
+     sides of the boundary; `overBudget` in the matrix is that shape.
