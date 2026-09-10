@@ -62,10 +62,15 @@ export function cpuMs(work: () => unknown): number {
  * clock that samples across the `await`; there is no caller for one yet.
  */
 function assertMeasuredToCompletion(returned: unknown): void {
-    const thenable =
-        typeof returned === "object" &&
-        returned !== null &&
-        typeof (returned as { then?: unknown }).then === "function";
+    // **A thenable is anything that can HOLD a callable `then`, and that is two
+    // typeof results, not one.** Promise assimilation asks only for the property,
+    // so `Object.assign(() => {}, { then() {} })` is a thenable that an
+    // object-only test reads as an ordinary return value — the guard passes, the
+    // clock stopped at the first await, and the budget is compared against a
+    // synchronous prefix. That is the exact false green this function exists to
+    // refuse, reached through the one type it was not asking about.
+    const holdsProperties = typeof returned === "function" || (typeof returned === "object" && returned !== null);
+    const thenable = holdsProperties && typeof (returned as { then?: unknown }).then === "function";
     if (!thenable) return;
     // The promise is already running and this throw means nobody will ever await
     // it, so a rejection inside it would surface as an unhandled rejection —

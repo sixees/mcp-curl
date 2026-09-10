@@ -22,9 +22,10 @@
 //      expired one invites deleting a live guard.
 //   3. The `NO TEETH` marker count in the test file equals the count this matrix computes.
 //      A claim of the form *N of M do X* has a one-line verification and rarely gets one.
-//   4. Every input measured here is byte-identical to the test file's row of the same label.
-//      CASES is a second copy of that table, and a copy that drifts measures a guard nobody
-//      runs — the same class as a toothless case, one level up.
+//   4. Every input measured here is byte-identical to the test file's row of the same label,
+//      AND is timed against the same function there as here. CASES is a second copy of that
+//      table, and a copy that drifts — in its bytes or in what it calls — measures a guard
+//      nobody runs, the same class as a toothless case one level up.
 //
 // **Mechanisms are derived from the subject, and subsets are probed — not singletons.**
 // `openers nested inside the bounding closer` costs under 6 ms under either the attribute
@@ -58,10 +59,14 @@ const REPEAT_BELOW_MS = 400;
 /**
  * Each mechanism is a named source transform, with the property it removes.
  *
- * **Every `find` is asserted to match** — exactly once, or at least once where the
- * mechanism sets `all`, because one class is shared by several patterns. An anchor
- * matching nothing would silently measure the UNMUTATED subject and report every case
- * as toothless, which is a green run that proves the opposite of what it claims.
+ * **Every `find` is asserted to match an EXACT number of times** — once, or `sites` where
+ * the mechanism sets it, because one class is shared by several patterns. An anchor matching
+ * nothing would silently measure the UNMUTATED subject and report every case as toothless,
+ * which is a green run that proves the opposite of what it claims. An anchor matching FEWER
+ * sites than it did is the quieter half of the same failure: the mutation then lands on a
+ * subset of the arms, and a surviving arm can supply the crossing that reports the mechanism
+ * witnessed while the arm nobody mutated is never probed at all. So the count is pinned
+ * rather than floored — `sites` applies to each of the mechanism's edits.
  */
 const MECHANISMS = {
     region: {
@@ -111,7 +116,10 @@ const MECHANISMS = {
     mdLabel: {
         what: "the markdown label class re-admitting `[`, image AND link",
         edits: [["[^\\]\\[\\n]*", "[^\\]\\n]*"]],
-        all: true,
+        // Four arms in the bundle — image and link, external and dangerous-scheme. The
+        // source carries a fifth occurrence in a docblock; esbuild strips comments, so the
+        // count here is over the BUNDLE and 5 would never match.
+        sites: 4,
     },
 };
 
@@ -179,14 +187,16 @@ function mutate(names) {
     let out = source;
     for (const n of names) {
         const m = MECHANISMS[n];
+        const want = m.sites ?? 1;
         for (const [find, into] of m.edits) {
             const hits = out.split(find).length - 1;
             // An anchor matching nothing silently measures the UNMUTATED subject and
-            // reports every case as toothless — the failure this assertion exists for.
-            if (m.all ? hits < 1 : hits !== 1) {
-                throw new Error(`mechanism "${n}": anchor ${JSON.stringify(find)} matched ${hits} times (expected ${m.all ? ">=1" : "1"}) — it has moved in strip-blocks.ts`);
+            // reports every case as toothless. Matching fewer than `want` mutates only some
+            // of the arms, which lets a surviving arm's crossing certify the mechanism.
+            if (hits !== want) {
+                throw new Error(`mechanism "${n}": anchor ${JSON.stringify(find)} matched ${hits} times, expected ${want} — it has moved in strip-blocks.ts, or an arm of it has been respelled`);
             }
-            out = m.all ? out.split(find).join(into) : out.replace(find, into);
+            out = out.split(find).join(into);
         }
     }
     return out;
@@ -230,7 +240,8 @@ async function measure(js) {
 //
 // **The ratio is READ from the test file, not restated here** — one declaration, and a
 // change to it cannot leave this script measuring against the old one.
-const ratioMatch = /const REDOS_BUDGET_RATIO = (\d+);/.exec(readFileSync(TEST, "utf8"));
+const testSrc = readFileSync(TEST, "utf8");
+const ratioMatch = /const REDOS_BUDGET_RATIO = (\d+);/.exec(testSrc);
 if (!ratioMatch) throw new Error("could not read REDOS_BUDGET_RATIO from strip-blocks.test.ts — it has been renamed or reshaped, and this script cannot classify teeth against a budget it cannot find");
 const RATIO = Number(ratioMatch[1]);
 
@@ -238,7 +249,30 @@ const RATIO = Number(ratioMatch[1]);
 // of a file, and asserting the text is what makes a change to it fail loudly here instead of
 // silently measuring a different denominator from the test's.
 const BASELINE_EXPR = 'const BENIGN_BASELINE_BODY = "a".repeat(STRIP_PATH_MAX_BYTES - 10) + "</script>";';
-if (!readFileSync(TEST, "utf8").includes(BASELINE_EXPR)) throw new Error(`strip-blocks.test.ts no longer declares its baseline as ${BASELINE_EXPR} — update BASELINE_EXPR here and the construction below together, or this script derives its budget from a different body than the test does`);
+if (!testSrc.includes(BASELINE_EXPR)) throw new Error(`strip-blocks.test.ts no longer declares its baseline as ${BASELINE_EXPR} — update BASELINE_EXPR here and the construction below together, or this script derives its budget from a different body than the test does`);
+
+// **The whole derivation is verified, not only its two inputs.** The ratio is read and the
+// baseline body is pinned above, but the warmups, the read count, the median index, the clock
+// and the sanity band are reimplemented below — so a change to any of them inside
+// `calibrateBudgetMs` leaves this script classifying mutations against a threshold the tests
+// do not use. That is RC-60's class with the ratio held constant, and it is silent: both
+// sides still produce a number. Each statement that decides the figure is asserted verbatim
+// inside that function, and the 0 ms throw is not, because it aborts rather than moves it.
+const CALIBRATION_STEPS = [
+    "for (let i = 0; i < 3; i++) stripBlocksFixedPoint(BENIGN_BASELINE_BODY);",
+    "for (let i = 0; i < 9; i++) reads.push(cpuMs(() => stripBlocksFixedPoint(BENIGN_BASELINE_BODY)));",
+    "reads.sort((a, b) => a - b);",
+    "const median = reads[4]!;",
+    "if (median > 200) {",
+    "return median * REDOS_BUDGET_RATIO;",
+];
+const calibStart = testSrc.indexOf("function calibrateBudgetMs(): number {");
+const calibEnd = testSrc.indexOf("\n}\n", calibStart);
+if (calibStart === -1 || calibEnd === -1) throw new Error("could not find strip-blocks.test.ts::calibrateBudgetMs — it has been renamed or reshaped, and this script cannot verify that it derives the same budget the tests do");
+const calibSrc = testSrc.slice(calibStart, calibEnd);
+for (const step of CALIBRATION_STEPS) {
+    if (!calibSrc.includes(step)) throw new Error(`strip-blocks.test.ts::calibrateBudgetMs no longer contains \`${step}\` — its derivation has changed, so re-derive the calibration below to match it before trusting any classification from this script`);
+}
 
 const calib = await import(pathToFileURL(bundle("calibrate", source)).href);
 const BENIGN = "a".repeat(calib.STRIP_PATH_MAX_BYTES - 10) + "</script>";
@@ -248,7 +282,19 @@ for (let i = 0; i < 9; i++) calibReads.push(cpu(() => calib.stripBlocksFixedPoin
 calibReads.sort((a, b) => a - b);
 const CALIB_MEDIAN = calibReads[4];
 if (!(CALIB_MEDIAN > 0)) throw new Error("this host reported 0 ms of CPU for a 256 KB benign pass — its clock is too coarse to calibrate a budget against");
+// The test refuses a baseline above this band rather than deriving a budget from it, so this
+// script refuses it too. Without the mirror, a host the suite will not run on still gets a
+// green `--check` here — teeth certified against a budget the tests never produce.
+if (CALIB_MEDIAN > 200) throw new Error(`this host's benign baseline measured ${CALIB_MEDIAN.toFixed(1)} ms, above the band strip-blocks.test.ts::calibrateBudgetMs accepts — it throws rather than deriving a budget from that, so there is no threshold here to classify against`);
 const BUDGET_MS = CALIB_MEDIAN * RATIO;
+
+// **The test's comparator, stated once, rather than four near-copies of it.** Every guarded
+// row asserts `toBeLessThan(REDOS_BUDGET_MS)`, so a reading EQUAL to the budget FAILS the
+// test — and `>` here would classify that same reading as no teeth, marking a case toothless
+// while the guard it certifies goes red. Equality is reachable rather than theoretical: CPU
+// readings are microsecond-quantised and the budget is an integer ratio of one of them.
+const overBudget = (ms) => ms >= BUDGET_MS;
+
 process.stderr.write(`  budget ${BUDGET_MS.toFixed(1)} ms (baseline ${CALIB_MEDIAN.toFixed(1)} ms x ${RATIO})\n`);
 
 const subsets = [["baseline"], ...Object.keys(MECHANISMS).map((m) => [m]), ...PAIRS];
@@ -277,10 +323,10 @@ const teeth = [];
 const crossings = [];
 CASES.forEach(([, label], i) => {
     const row = cols.map((c) => results.get(c)[i].ms);
-    row.forEach((v, j) => { if (v > BUDGET_MS) crossings.push({ label, by: cols[j], ms: v }); });
+    row.forEach((v, j) => { if (overBudget(v)) crossings.push({ label, by: cols[j], ms: v }); });
     const max = Math.max(...row);
-    if (max > BUDGET_MS) teeth.push({ label, by: cols[row.indexOf(max)], ms: max });
-    console.log(label.padEnd(width) + "  " + fmt(base[i].ms).padStart(8) + row.map((v) => (v > BUDGET_MS ? `*${fmt(v)}` : fmt(v)).padStart(15)).join(""));
+    if (overBudget(max)) teeth.push({ label, by: cols[row.indexOf(max)], ms: max });
+    console.log(label.padEnd(width) + "  " + fmt(base[i].ms).padStart(8) + row.map((v) => (overBudget(v) ? `*${fmt(v)}` : fmt(v)).padStart(15)).join(""));
 });
 
 // ---- the accounting, computed rather than asserted
@@ -324,7 +370,7 @@ for (const name of Object.keys(MECHANISMS)) {
         // A subset whose comparator was never measured cannot attribute anything. Skipping it
         // is safe: it can only withhold credit, never grant it.
         if (!ref) continue;
-        const n = CASES.filter((_, i) => results.get(c)[i].ms > BUDGET_MS && ref[i].ms <= BUDGET_MS).length;
+        const n = CASES.filter((_, i) => overBudget(results.get(c)[i].ms) && !overBudget(ref[i].ms)).length;
         if (n > 0) attributed.push(`${c}(${n})`);
     }
     const ok = attributed.length > 0;
@@ -333,7 +379,7 @@ for (const name of Object.keys(MECHANISMS)) {
 }
 
 // ---- properties 2 and 3: the test file's markers must match this matrix
-const marked = [...readFileSync(TEST, "utf8").matchAll(/^\s*\/\/ NO TEETH[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*\["([^"]+)"/gm)].map((m) => m[1]);
+const marked = [...testSrc.matchAll(/^\s*\/\/ NO TEETH[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*\["([^"]+)"/gm)].map((m) => m[1]);
 console.log("\n=== the test file's NO TEETH markers vs this matrix ===");
 console.log(`  markers in strip-blocks.test.ts: ${marked.length}   computed without teeth: ${without.length}`);
 if (marked.length !== without.length) fail.push(`marker count ${marked.length} != computed ${without.length}`);
@@ -359,6 +405,13 @@ for (const w of without) if (!marked.includes(w)) fail.push(`"${w}" has no subse
 // is trimmed. The cost is that a purely cosmetic reformat inside a row reads as drift; that
 // direction fails loudly, which is the safe one.
 //
+// **The label is not the guard — the label plus the function is.** Each of the three tables
+// times a different entry point, and this script picks its own with a hard-coded
+// `ENTRY[group]`. Compared on labels and bodies alone, moving a row from the block table to
+// the beacon table changes which function the suite times while every byte still matches, so
+// `--check` keeps certifying teeth measured on a function that row no longer exercises. So
+// the timed call is read out of each table's callback and required to agree.
+//
 // **Both directions, because a one-way check has a silent gap.** Iterating this script's rows
 // alone catches a case measured here and absent there, but not a flood case added to the test
 // that this matrix never measures — a new guard whose teeth nobody checks, with `--check`
@@ -366,12 +419,10 @@ for (const w of without) if (!marked.includes(w)) fail.push(`"${w}" has no subse
 // required here too. Scoped to those tables: the file's other `it.each` rows are behavioural
 // cases with no timing budget, and demanding a matrix cell for them would be a false failure.
 const trimOnly = (t) => t.trim();
-const rowsIn = (src, re) => new Map([...src.matchAll(re)].map((m) => [m[1], trimOnly(m[2])]));
 
 // Each `it.each([` is closed by its OWN `])(`, and only then is the title checked. A
 // non-greedy match from the first `it.each([` to the first `])("ReDoS:` swallows every
 // behavioural table in between and silently reports 33 flood rows where there are 24.
-const testSrc = readFileSync(TEST, "utf8");
 const floodRows = new Map();
 let scan = 0;
 let floodTables = 0;
@@ -381,21 +432,44 @@ while ((scan = testSrc.indexOf("it.each([", scan)) !== -1) {
     if (bodyEnd === -1) break;
     if (testSrc.slice(bodyEnd + 3, bodyEnd + 30).startsWith('"ReDoS:')) {
         floodTables++;
-        for (const [label, expr] of rowsIn(testSrc.slice(bodyStart, bodyEnd), /^\s*\["([^"]+)",\s*(.+?)\],\s*$/gm)) floodRows.set(label, expr);
+        // **Which function the table TIMES, read from the table rather than assumed.**
+        //
+        // Bounded at the table's OWN closing `});` at describe-body indentation, not at the
+        // next `it.each([`. Reaching to the next table would make the answer depend on what
+        // happens to sit between them: it is one timed call per table today, so the loose
+        // bound is right by accident, and the first `cpuMs` test added between two tables
+        // would break it. This bound cannot see past its own callback.
+        const cbEnd = testSrc.indexOf("\n    });", bodyEnd);
+        const timed =
+            cbEnd === -1
+                ? []
+                : [...new Set([...testSrc.slice(bodyEnd, cbEnd).matchAll(/cpuMs\(\(\) => (\w+)\(body\)\)/g)].map((m) => m[1]))];
+        if (timed.length !== 1) {
+            fail.push(`a ReDoS table in strip-blocks.test.ts times ${timed.length === 0 ? "no" : timed.length} functions (${timed.join(", ") || "none found"}) — property 4 cannot say which function its rows exercise, so the identity check below is not checking anything`);
+        }
+        for (const m of testSrc.slice(bodyStart, bodyEnd).matchAll(/^\s*\["([^"]+)",\s*(.+?)\],\s*$/gm)) {
+            floodRows.set(m[1], { expr: trimOnly(m[2]), fn: timed.length === 1 ? timed[0] : null });
+        }
     }
     scan = bodyEnd;
 }
-const selfRows = rowsIn(readFileSync(SELF, "utf8"), /^\s*\["(?:comment|block|beacon)",\s*"([^"]+)",\s*(.+?)\],\s*$/gm);
+const selfRows = new Map(
+    [...readFileSync(SELF, "utf8").matchAll(/^\s*\["(comment|block|beacon)",\s*"([^"]+)",\s*(.+?)\],\s*$/gm)].map((m) => [
+        m[2],
+        { expr: trimOnly(m[3]), fn: ENTRY[m[1]] },
+    ])
+);
 
 console.log("\n=== this matrix's inputs vs the test file's ReDoS tables ===");
 if (floodTables === 0) fail.push("found no `it.each([...])(\"ReDoS: ...\")` table in strip-blocks.test.ts — the parse has broken, so property 4 is comparing against nothing");
 if (selfRows.size !== CASES.length) fail.push(`parsed ${selfRows.size} case rows out of this script's own source but CASES holds ${CASES.length} — the row regex no longer matches the table, so property 4 is not checking anything`);
 
 let matched = 0;
-for (const [label, expr] of selfRows) {
-    const testExpr = floodRows.get(label);
-    if (testExpr === undefined) fail.push(`case "${label}" is measured here but no ReDoS table in strip-blocks.test.ts has that label — the matrix is measuring an input the suite does not guard`);
-    else if (testExpr !== expr) fail.push(`case "${label}" has DRIFTED: test has \`${testExpr}\`, this matrix measures \`${expr}\``);
+for (const [label, self] of selfRows) {
+    const row = floodRows.get(label);
+    if (row === undefined) fail.push(`case "${label}" is measured here but no ReDoS table in strip-blocks.test.ts has that label — the matrix is measuring an input the suite does not guard`);
+    else if (row.expr !== self.expr) fail.push(`case "${label}" has DRIFTED: test has \`${row.expr}\`, this matrix measures \`${self.expr}\``);
+    else if (row.fn !== self.fn) fail.push(`case "${label}" is timed against ${row.fn}() in strip-blocks.test.ts but measured against ${self.fn}() here — the row has moved between the comment, block and beacon tables, so every teeth verdict for it was computed on a function that row no longer exercises`);
     else matched++;
 }
 for (const label of floodRows.keys()) {

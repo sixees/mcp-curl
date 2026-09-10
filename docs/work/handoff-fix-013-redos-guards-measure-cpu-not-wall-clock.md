@@ -613,3 +613,93 @@ None filed this round. **0 filed, 0 open against #41.**
 
 `scripts/redos-teeth-matrix.mjs`, `src/lib/response/strip-blocks.test.ts`, `LESSONS.md`,
 `package.json`, `docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`
+
+## Review Comments Addressed — 2026-09-10 (Surface 3, round 3)
+
+Same invocation shape: codex and Copilot requested, 15-minute wait. **10 entries, 7 new
+findings, 6 classes** — two bots on the comparator, two on the thenable. **No P1s.** Baseline
+before the request was 2 (codex's status-summary comment and Copilot's round-2 approval body,
+neither of which has a resolved state, so both return on every fetch).
+
+**All six were on an earlier round's fixes, and this is the third consecutive round where
+that is true** — `01-known-shapes.md` → K-16. What is new is the *shape* they share, and it
+is not K-16: each was a check whose reach was derived from the instance a reviewer named
+rather than from the class it belongs to. Round 2 was told the matrix restated the test's
+budget, read the ratio out of the test file, and left five other terms of the same derivation
+hard-coded. **RC-62 filed** for that, with the comparator finding as its second rule.
+
+**CodeRabbit reviewed this round without being requested, and the reason is worth keeping.**
+It was not in `--request`; `.coderabbit.yaml` sets no `auto_review` key, so its default
+applies and it reviews **every push** to the PR. Its review names the range
+`4b1668b..c5b9b10` — round 2's push, four minutes before it ran — not our round-3 trigger.
+So on this repository, leaving CodeRabbit out of `--request` never means CodeRabbit is
+silent, and its findings still need dispositioning. This one was real and duplicated codex's.
+
+**Copilot: 🔵 Needs a closer look, 15/15 files, 0 new comments, 2 suppressed** — both
+suppressed comments were the thenable class codex filed inline, one of them asking for the
+missing test case. Down from 🟢 last round, and the downgrade was earned: the class it names
+is real and is now fixed.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `cpuMs`'s thenable check ignores callable thenables | codex + Copilot (2 suppressed) | Fix (P2) | `typeof returned === "function"` is now an accepted carrier of `then`. Promise assimilation asks only for a callable `then`, so `Object.assign(() => {}, { then() {} })` passed the guard as an ordinary value and the budget was compared against a synchronous prefix. **Probed both ways**: the new expectation fails against the old object-only check with `expected [Function] to throw an error`, and passes against the fix |
+| The matrix classified a reading *equal* to the budget as no teeth | codex + coderabbit (🟡 Minor) | Fix (P2) | The test asserts `toBeLessThan(REDOS_BUDGET_MS)`, so equality is a failure there and was a pass here. Stated once as `overBudget = (ms) => ms >= BUDGET_MS` and read by all four sites — `crossings`, the teeth accounting, the printed `*`, and property 1's attribution on both sides. One comparison site remains where there were four |
+| Only 2 of the budget's 6 terms were verified against the test | codex | Fix (P2) | Every statement in `calibrateBudgetMs` that decides the figure is now asserted verbatim, scoped to that function's body. The sanity band is **mirrored** as well as verified: the test refuses a baseline above 200 ms, and without the mirror a host the suite will not run on still got a green `--check` against a budget the tests never produce. Not shared as a function — it sits in a `.test.ts` with vitest imports, so sharing means a fixture module and a second bundle |
+| `mdLabel`'s shared anchor asserted `hits >= 1` for 4 arms | codex | Fix (P2) | `all: true` replaced by `sites: 4`, asserted exactly. Respelling one arm previously left the mutation applying to three, and a surviving arm could supply the crossing that reported the mechanism witnessed. Count measured before pinning: 4 in the bundle, the source's 5th occurrence being a docblock esbuild strips |
+| Property 4 compared labels and bodies but not the timed function | codex | Fix (P2) | Each ReDoS table's `cpuMs(() => fn(body))` is now read from its own callback, required to resolve to exactly one name, and required to match this script's `ENTRY[group]` per row. A row moved between the comment, block and beacon tables previously kept certifying teeth measured on a function it no longer exercises |
+| `esbuild` declared in the manifest, absent from the lockfile | codex | Fix (P2) | `npm install --package-lock-only`. The regeneration also caught two pre-existing staleness items it cannot skip — `version` 3.7.0 → 4.0.1 and the root `engines` block — both already facts in `package.json`. No `node_modules/*` entry changed, so the dependency graph is untouched |
+
+### Declined Findings
+
+**No finding was declined this round.** Six findings, six fixes; five of the six replaced a
+loose check with an exact one, so the script is shorter in three places than it was.
+
+### Caught in this round's own fixes, before the commit
+
+**The first version of the timed-function check bounded each table's callback at the NEXT
+`it.each([`**, which makes the answer depend on what happens to sit between two tables. It is
+one timed call per table today — so the loose bound was right by accident, and the first
+`cpuMs` test added between two tables would have broken it with a confusing failure. Bounded
+at the table's own closing `});` instead, which cannot see past its own callback. K-16 applied
+to the round's own output rather than waiting for round 4 to apply it.
+
+### Reality Corrections
+
+- **RC-62** — *the fix read one term of the derivation out of its source and left five of them
+  restated.* Class K-4, K-16, K-17 · `unchecked-assertion`. Two rules: when a finding says a
+  control restates its subject, the fix covers every term of the restatement rather than the
+  one the reviewer named; and a control borrows its subject's comparator rather than a
+  near-copy of it.
+
+### Verification
+
+- Suite **1363 / 1356 passed / 7 skipped / 0 failed**
+- `npm run redos:matrix -- --check` **exit 0** twice — once on the fixes, once after the
+  callback bound was tightened. All four properties both times: **24 cases / 20 with teeth /
+  4 without**, seven mechanisms each witnessed by an attributable crossing, 4 markers
+  reconciling, 3 ReDoS tables and **24/24** inputs identical *and* timed against the same
+  function in both files. Budget 98.3 then 95.2 ms; weakest regression 113.2 then 116.1 ms
+  via `noGt` of 32 crossings. The docblock now quotes the stable counts and gives the two
+  varying timings as ranges, which is what stops a re-run staling it
+- The three new checks probed against a deliberate drift, not just read:
+  a calibration read count changed 9 → 7 (caught before the budget is even derived), one of
+  `mdLabel`'s four arms respelled to an equivalent character class (caught as
+  *matched 3 times, expected 4*), and a ReDoS row moved from the beacon table into the block
+  table with its bytes unchanged (caught as a timed-function mismatch)
+- `tsc` at the pre-existing 12 (`src/lib.test.ts`, `post-processor.test.ts`,
+  `schema.test.ts`), none in a touched file
+- The thenable fix probed against the pre-fix source, which is what distinguished a real
+  mechanism from a plausible one
+
+### Outstanding Todos
+
+None filed this round. **0 filed, 0 open against #41.**
+
+### Files Modified
+
+`scripts/redos-teeth-matrix.mjs`, `src/lib/response/cpu-time.test-fixture.ts`,
+`src/lib/response/cpu-time.test-fixture.test.ts`, `src/lib/response/strip-blocks.test.ts`,
+`package-lock.json`, `LESSONS.md`,
+`docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`

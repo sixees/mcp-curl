@@ -2696,3 +2696,46 @@ merged when the correction was made.
      mechanism is not *"is this bound real?"* but *"is it in this instrument's domain?"* —
      measure its removal before enumerating it. Three of this branch's rounds each corrected
      the mechanism *list*; none had asked whether a member belonged in the list at all.
+
+### RC-62 — the fix read one term of the derivation out of its source and left five of them restated
+
+**Date:** 2026-09-10 · **PR:** #41 · **Plan:** `docs/work/handoff-fix-013-redos-guards-measure-cpu-not-wall-clock.md`
+
+**Class:** K-4, K-16, K-17 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** round 2 of Surface 3 found that `scripts/redos-teeth-matrix.mjs` pinned
+  an absolute 100 ms budget while `strip-blocks.test.ts` derives its own from a measured
+  baseline, so the control classified mutations against a threshold the tests do not use.
+  The fix read `REDOS_BUDGET_RATIO` out of the test file and asserted the baseline body's
+  text verbatim — "one declaration, and a change to it cannot leave this script measuring
+  against the old one".
+- **Reality was:** the threshold has six terms, and the fix read two. Three warmups, nine
+  reads, the median index, the clock and the sanity band that *refuses* a baseline above
+  200 ms were all still independently restated in the script — so changing
+  `calibrateBudgetMs` to a mean, or to five reads, or raising its band, leaves `--check`
+  green while it classifies teeth against a number the suite never produces. Found by
+  `chatgpt-codex-connector` on the open PR, one round after the finding that produced the
+  partial fix. The same round found the control's *comparator* restated too: the tests reject
+  a reading equal to the budget (`toBeLessThan`), and the matrix classified equality as
+  no teeth.
+- **And the round found it five more times.** Every one of round 3's six findings landed on
+  an earlier round's fix, in the same shape: a check whose reach was derived from the instance
+  the reviewer named rather than from the class it belongs to. The `mdLabel` mutation asserted
+  `hits >= 1` where four arms share the anchor, so respelling one arm leaves the mutation
+  applying to three and a surviving arm supplies the crossing. Property 4 compared labels and
+  bodies but not *which function the table times*, so a row moved between the comment, block
+  and beacon tables keeps certifying teeth measured on a function it no longer exercises. The
+  thenable guard in `cpu-time.test-fixture.ts` tested `typeof === "object"` and not
+  `"function"`, so a callable thenable passes the check the guard exists to fail.
+- **What this costs next time:** two rules.
+  1. **When a finding says "this control restates its subject", the fix covers every term of
+     the restatement — not the term the reviewer named.** The reviewer names the instance it
+     found; the class is *the whole quantity the control reimplements*.
+     `.claude/rules/01-known-shapes.md` → K-4 is this shape, and its question is the test:
+     was the query derived from the class's definition, or from the instance in hand? Here the
+     definition was one function, `calibrateBudgetMs`, sitting in a file already being read.
+  2. **A control must borrow its subject's comparator, not a near-copy of it.** `>` against
+     `toBeLessThan` differ on exactly one value, which is the value where the guard fails and
+     the control says it cannot — so the disagreement is invisible until it certifies the
+     wrong answer. Where a threshold is shared, state the comparison once and use it on both
+     sides of the boundary; `overBudget` in the matrix is that shape.

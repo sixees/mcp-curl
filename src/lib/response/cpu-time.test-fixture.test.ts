@@ -107,5 +107,11 @@ describe("cpuMs", () => {
         // admits this by void-return assignability, so nothing upstream objects.
         expect(() => cpuMs(async () => Promise.resolve("work"))).toThrow(/returned a promise/);
         expect(() => cpuMs(() => ({ then: () => undefined }))).toThrow(/returned a promise/);
+        // Both types that can carry a `then`, because the check has to ask about
+        // both: a function object is a thenable to promise assimilation, and a
+        // guard testing only `typeof === "object"` lets it through as a value.
+        expect(() => cpuMs(() => Object.assign(() => undefined, { then: () => undefined }))).toThrow(
+            /returned a promise/
+        );
     });
 });

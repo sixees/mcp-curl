@@ -109,10 +109,12 @@ function calibrateBudgetMs(): number {
  * either file; `--check` exits non-zero. `LESSONS.md` RC-60 records why it is a script
  * rather than prose: a hand-re-derived probe cannot be a positive control on itself.
  *
- * Its last run: **24 cases, 20 with teeth, 4 without**; warm passing population
- * 0.1 - 16.1 ms; weakest regression **114.0 ms** via `noGt`, the true minimum over all 32
- * individual crossings rather than the minimum of per-case maxima — a maximum can only
- * overstate the margin, which is the direction that licenses widening. All seven mechanisms are
+ * Its runs: **24 cases, 20 with teeth, 4 without**; warm passing population 0.1 - 16 ms;
+ * weakest regression **113 - 116 ms** via `noGt`, taken each run as the true minimum over all
+ * 32 individual crossings rather than as the minimum of per-case maxima — a maximum can only
+ * overstate the margin, which is the direction that licenses widening. The counts are stable
+ * across runs and the two timings are not, so they are quoted as ranges; the 112 ms floor
+ * below is the figure to design against. All seven mechanisms are
  * witnessed by a crossing **attributable to that mechanism** — a case above budget with it
  * and under budget without it — which is what stops one bound's teeth being credited to
  * another. `mdLabel` is witnessed only by `region+mdLabel`, which is why the matrix probes
@@ -123,9 +125,17 @@ function calibrateBudgetMs(): number {
  * rather than listing it and reporting it as witnessed on another mutation's cost.
  * `LESSONS.md` RC-61.
  *
- * **The matrix derives its own budget the same way, so its threshold moves between runs** —
- * 95.3, 102.1 and 106.7 ms on three consecutive runs of the same host, all inside the 53 - 112
- * window. A case whose regression lands near the top of that window can therefore change
+ * **The matrix derives its own budget the same way, and asserts this file's whole derivation
+ * rather than only its ratio** — the warmups, the read count, the median index and the band
+ * above, each pinned verbatim there, because a threshold agreeing on two of six terms is a
+ * threshold that silently diverges (`LESSONS.md` RC-62). It reads `toBeLessThan`'s boundary
+ * too: a measurement equal to the budget fails here, so the matrix counts it as a crossing.
+ *
+ * **Its threshold still moves between runs** — 95 - 107 ms across five runs of the same host,
+ * all inside the 53 - 112 window. Quoted as a range rather than a list of readings: the point
+ * is the spread, and a list invites a new entry on every run.
+ *
+ * A case whose regression lands near the top of that window can therefore change
  * classification run to run, and the marker reconciliation would report it. That is the
  * instrument being honest about a measurement, not a defect; it is also why the floor of the
  * weakest regression is the figure to quote and a median is not.
