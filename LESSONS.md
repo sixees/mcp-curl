@@ -2562,3 +2562,50 @@ and this branch had not merged when the correction was made.
   (`.claude/rules/03-divergence.md` → *Settled conflicts stay settled*). What would reopen it
   is new measurement, not a new argument: a host where a passing case crosses ~75 ms, or a
   newly found mechanism whose regression lands below 117 ms.
+
+### RC-60 — the run that wrote "derive the mechanism list from the subject" then shipped a list derived from the guard
+
+**Date:** 2026-09-10 · **PR:** #41 · **Plan:** `docs/todos/013-P2-redos-budget-guards-fail-under-the-suites-own-parallelism.md`
+
+**Class:** K-4, K-16, K-8 — *class-id:* `unchecked-assertion`
+
+- **The plan said:** RC-59 had just been filed, and its own first rule is *"a two-sided
+  calibration is only as strong as the mechanism list it was probed against, and the
+  mechanism list is derived from the subject, not from the guard."* The re-measurement that
+  produced RC-59 enumerated five mechanisms and recorded a "24-case × 5-mechanism matrix" as
+  complete.
+- **Reality was:** the list was still derived from the guard. `strip-blocks.ts` carries a
+  sixth cost-bearing bound — `lastTagCloserEnd`'s attribute walk, whose `text[j] !== "<"`
+  term the function's own comment calls out as separately learned ("the attribute run, which
+  may not contain `<`"). Removing it costs **5.0 - 7.2 s** on `closer flood with no \`>\``,
+  50-70x the budget, and that case is the **only** one of the 24 that regresses on it — every
+  other stays under 32 ms. It was annotated `NO TEETH` for two rounds, and the docblock
+  explains a marked case as "evidence about the input space and not about the defence", which
+  is an invitation to delete the sole guard on a 7-second ReDoS regression. Found by
+  `security-sentinel` re-deriving the list from the subject and measuring 7 mechanisms × 24
+  cases; the walk regression reproduced independently at 5,006 ms.
+- **And the arithmetic said so all along.** The count was stated as "seven cases cannot fail;
+  six have no mutation crossing 100 ms and one regresses to 97 ms" against **six** `NO TEETH`
+  markers in the file — and the handoff's "18 have teeth, 6 do not, and a seventh" totals 25
+  of 24 cases. `rg -c 'NO TEETH'` answers this in one command. The double-count is what let
+  the miscount survive re-measurement, in four documents at once (the docblock, RC-59, the
+  handoff, and the annotation itself). Corrected accounting: **19 of 24 have teeth, 5 do
+  not.** Two other figures were also single-read: the slowest passing case is `non-boundary
+  closer name` (15 ms median, stable) and not `closer flood with no \`>\`` (11 ms median but
+  the highest cold spike, which is why one read names it), and the weakest regression floors
+  at **112 ms** across three independent runs rather than the 117 ms a median gave.
+- **The budget is untouched by this.** RC-59's stated reopening condition is a newly found
+  mechanism whose regression lands *below* 117 ms; this one lands three orders above it, so
+  the director's 100 ms stands and this entry does not reopen it.
+- **What this costs next time:** three rules.
+  1. **Writing a rule in the same run that must obey it does not make the run obey it.**
+      RC-59's rule 1 was correct, was written first, and was then not applied to its own
+      matrix — because the enumeration had already happened. A rule authored mid-run binds
+      the *next* run unless something re-executes the step it governs. **Re-run the step.**
+  2. **A count is a cheap positive control on a claim about a set, and it is the one nobody
+      runs.** Four documents asserted "seven" while the file contained six marks. Any claim
+      of the form *N of M do X* has a one-line verification; if the prose and the `grep`
+      disagree, the prose has never been checked.
+  3. **A `NO TEETH` marker is a claim about a mechanism list, not about a case, so it expires
+      when the list grows.** Record the mechanisms a case was cleared against, not just the
+      verdict — an unqualified verdict reads as permanent and licenses deletion.

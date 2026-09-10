@@ -86,18 +86,19 @@ each with the reason and the margin recorded beside it.
 
 ## Known issues and limitations
 
-- **21 of the 24 flood cases are unexamined for the toothless shape.** `security-sentinel`
-  probed all three `stripHtmlComments` cases and found one decorative; it explicitly did
-  not examine the 15 `stripBlocksFixedPoint` and 6 `stripMarkdownBeacons` cases, naming
-  them *suspected-unknown, not suspected-defective*. Confirming each needs one probe per
-  cost-bearing mechanism per case. Not done here. **This is the largest thing this branch
-  leaves open** and it is a decision for the director, not a silent decline.
+- **CLOSED — the 21 flood cases were probed.** This bullet described the state before the
+  addendum; the result is in *The full teeth matrix* below and the accounting is corrected
+  in the review record at the end of this file. Read those, not this. Left in place so the
+  ordering stays legible: it was the largest thing the branch left open, the director
+  called it, and it was done here rather than deferred.
 - **The `*.test-fixture.ts` boundary is a filename with no import guard.**
   `file-saver.test.ts::productionFiles` exempts the suffix by name, so a write binding
   placed in a fixture and imported from production would satisfy invariant 17's sweep. This
   branch doubles the exempt set from one file to two. The rule is now written
   (`CONVENTIONS.md` → *Naming*) and the new fixture carries the boundary note, but nothing
-  mechanical enforces it. Declined as out of scope; see *Follow-up work*.
+  mechanical enforces it. **CLOSED — no longer declined:** the director's call sent it into
+  this branch, and `file-saver.test.ts` now carries a *nothing in production imports a
+  test-only module* sweep. See the addendum and the review record.
 - **The load harness is scratch and is not committed.** What is durable is the measured CPU
   figures in `REDOS_BUDGET_MS`'s docblock and in `cpuMs`. Reproducing the original failure
   needs contention: on an idle 24-core machine the unfixed code passes 4/4.
@@ -119,7 +120,10 @@ gate here is the load comparison below, not the count.
 | baseline `aaf323a` | 4/4 green | **2 of 4 runs failed** — 124 ms and 161 ms against the 100 ms budget, different case each run |
 | this branch | green | **3/3 green** at load average 12-23 |
 
-Final full suite: **1342 total, 1335 passed, 0 failed, 7 pre-existing skips, 287 suites.**
+Final full suite **as of this section's writing: 1342 total, 1335 passed, 0 failed, 7
+pre-existing skips, 287 suites** — superseded twice since, by the addendum's own work and
+then by the Surface-2 review. The current figure is in the review record at the end of this
+file; that is authoritative and this is the state at the first commit.
 `tsc --noEmit` holds at the pre-existing 12 (schema.test.ts 7, post-processor.test.ts 4,
 lib.test.ts 1) with **zero in any file this branch touches**.
 
@@ -148,9 +152,12 @@ HEAD.
 ```
 git log --oneline main..HEAD
 55030de test(response): measure the ReDoS guards in CPU time, not wall clock
+2c0bc76 test(response): close two toothless guards Surface 2 found in the clock change
+650a5d6 test(response): re-measure the budget's calibration, and enforce the fixture boundary
+45ae2a9 docs(lessons): record the budget decision as binding
 ```
 
-A second commit carries the review fixes and this handoff.
+Four commits at the time of the Surface-2 review; that review's fixes add to them.
 
 ## Review context
 
@@ -194,7 +201,8 @@ security-review-parser `ok`. No reviewer failed.
 
 **The sweep question is closed by an independent pass.**
 `pattern-recognition-specialist` derived the class from its definition rather than from my
-instances, swept all 39 test files plus `jscpd`, opened every candidate, and confirms the
+instances, swept all 39 test files plus `jscpd` (40 existed at the merge-base and 41 after this
+branch, so the count was one short as written), opened every candidate, and confirms the
 two remaining wall-clock sites are the complete remainder — no fourth site.
 
 **Fixes are the least-reviewed text on this branch.** Findings 1-5 were all written after
@@ -211,13 +219,12 @@ there is no POST-AUDIT annotation to add.
 
 ## Follow-up work
 
-- [ ] **Director's call: extend invariant 17's sweep to forbid a production import of
-      `*.test-fixture.ts`** (finding 6). A few lines against the existing AST walker in
-      `file-saver.test.ts` plus a positive control. Declined here as out of scope; say the
-      word and it goes in this branch.
-- [ ] **Director's call: probe the remaining 21 flood cases for teeth** (finding 7). One
-      probe per cost-bearing mechanism per case. This is `l` effort and its own piece of
-      work; it wants a todo rather than this branch.
+- [x] **Extend invariant 17's sweep to forbid a production import of
+      `*.test-fixture.ts`** (finding 6) — **done in this branch**, director's call. The
+      Surface-2 review then found the sweep enumerates call targets; see the review record.
+- [x] **Probe the remaining flood cases for teeth** (finding 7) — **done in this branch**,
+      director's call. The Surface-2 review found the mechanism list one short; the
+      corrected accounting is in the review record.
 - [ ] **If this repo gains a Linux CI runner with tick-based CPU accounting**, re-check the
       ratio guard: the divisor assertion will fail loudly there rather than passing
       vacuously, which is intended, but the loop count may need raising until the reading
@@ -272,9 +279,12 @@ re-measured. That prose was itself stale; both figures are now measured at HEAD 
 ### The full teeth matrix, 24 cases × 5 mechanisms
 
 Measured on esbuild bundles under the scratchpad — the repository source was never
-mutated for this. **18 of 24 cases have a mutation above the budget; 6 do not**, and a
-seventh (`closer flood with no >`) regresses only to 97 ms, under the threshold. Every
-case now carries its figure inline, and the seven are marked `NO TEETH`.
+mutated for this. **Superseded by the Surface-2 review.** This said "18 of 24 have a
+mutation above the budget; 6 do not, and a seventh regresses only to 97 ms" — which totals
+25 cases of 24, and the double-count concealed a miscount. The mechanism list was also one
+short. Corrected: **19 of 24 cases have teeth, 5 do not**, and `closer flood with no >` is
+not among the five — it is the sole detector of a sixth mechanism, at 5.0-7.2 s. See the
+review record. Every case carries its figure inline.
 
 Also recorded, because no single-mutation probe can show it: **5 of the 6 beacon inputs
 contain no `)` at all**, so `lastCloserEnd` is 0, `withinClosableRegion` returns at

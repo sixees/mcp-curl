@@ -24,21 +24,27 @@ import {
  * below records the figure it reaches under the mutation it guards.** The
  * matrix, not this constant, is what bounds the constant:
  *
- * - passing population, idle: **0.11 - 22 ms**; slowest is `closer flood with
- *   no \`>\``
- * - slowest passing case beside 72 CPU hogs: **~53 ms** — CPU time is not
- *   perfectly load-invariant, and the budget has to allow for that
- * - weakest regression above the budget: **117 ms**, `opener flood behind a
- *   leading \`>\`` under the `noGt` latch
+ * - passing population, idle: **0.11 - 22 ms**. The case that pins the ceiling
+ *   is `non-boundary closer name` at **15 ms median / 22 ms cold**, measured
+ *   warm over 5 reads in one process. `closer flood with no \`>\`` reads lower
+ *   typically (11 ms median) but spikes highest on a cold first call, which is
+ *   why a single-read probe names it instead — **state the condition with the
+ *   figure, or the next reader re-measures a different one** (RC-59 rule 2)
+ * - slowest passing case beside 48-72 CPU hogs: **~53 ms**, same case. CPU time
+ *   is not perfectly load-invariant and the budget has to allow for that
+ * - weakest regression above the budget: **112 - 126 ms**, `opener flood behind
+ *   a leading \`>\`` under the `noGt` latch. **Quote the 112 ms floor, not a
+ *   median** — three independent runs put the minimum at 112-118, so the real
+ *   margin over the budget is 1.12x rather than the 1.17x a median suggests
  *
  * **So the usable window is about 53 - 117 ms, 100 ms sits near the top of it,
  * and the budget cannot be widened.** An earlier form of this docblock put the
  * weakest regression at 254 ms and concluded there was 2.5x of room below it.
  * That figure came from probing two mechanisms of four; the two it missed —
  * `stripTagTokens`'s `noGt` latch and the attribute character classes — carry
- * the weakest regressions there are. Widening past ~117 ms yields a guard that
+ * the weakest regressions there are. Widening past ~112 ms yields a guard that
  * passes with `noGt` deleted and the tag strip quadratic on any `>`-free flood,
- * which would be the seventh instance of the shape this file's comments count.
+ * which would be the sixth instance of the shape this file's comments count.
  *
  * **A 2 s budget — this guard's first form — fails on 10 of the 18 regressions
  * and passes the other 8**, including every `noGt` and region-bound regression
@@ -46,11 +52,18 @@ import {
  * RC-11's lesson, and the reason a budget wide enough to be safe from jitter was
  * also wide enough to be worthless.
  *
- * **Seven cases cannot fail at this budget, and each is marked below.** Six have
- * no mutation crossing 100 ms at all, and `closer flood with no \`>\`` regresses
- * only to 97 ms. They are kept because each pins an input shape the patterns
- * must survive, but a green result from one is evidence about the input space
- * and not about the defence. `LESSONS.md` RC-59.
+ * **Five cases cannot fail at this budget, and each is marked below** — no
+ * mutation of any enumerated mechanism crosses 100 ms on them. They are kept
+ * because each pins an input shape the patterns must survive, but a green result
+ * from one is evidence about the input space and not about the defence.
+ *
+ * **The count was seven, then six, and the arithmetic is why it kept moving:
+ * a case is toothless only against the mechanisms someone probed.** The list
+ * has to be derived from `strip-blocks.ts` and not from this docblock — the
+ * sixth mechanism, `lastTagCloserEnd`'s attribute walk, was missed for two
+ * rounds, and the one case that regresses on it (5.0 - 7.2 s) was marked
+ * toothless the whole time. So: 24 cases, **19 with teeth, 5 without**.
+ * `LESSONS.md` RC-59.
  *
  * The inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES`
  * (256 KB) `stripBlocksFixedPoint` returns its input untouched, so an oversized
@@ -409,7 +422,13 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         ["openers with a foreign closer", "<script></x>".repeat(20000)],
         // region bound removed: 926 ms
         ["one real block, then an opener flood", "<script>x</script>" + "<script>".repeat(30000)],
-        // NO TEETH at this budget: its only regression is `noGt` removed at 97 ms, under the 100 ms threshold
+        // `lastTagCloserEnd`'s attribute walk re-admitting `<`: 5.0 - 7.2 s — and this
+        // case is the ONLY one of the 24 that regresses on that mechanism. Do not
+        // delete it: `noGt` removed reaches only 97 ms here, so a probe of the five
+        // mechanisms this table's other figures cover marks it toothless, which is
+        // what it was marked for two rounds. The sixth mechanism is the one its own
+        // subject names — `strip-blocks.ts::lastTagCloserEnd`, "the attribute run,
+        // which may not contain `<`".
         ["closer flood with no `>`", "</script".repeat(30000)],
         // Round 2. Each defeats the round-1 bound in a different way: a
         // non-boundary name accepted as a closer, and a closer whose attribute

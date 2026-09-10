@@ -783,11 +783,19 @@ describe("detectInjectionPattern — wall-clock ReDoS budget (PR-8 / B7-sub-4)",
     // those reaches here too — a descheduled `Date.now()` counts time this
     // process did not spend — so this is a judgement about the margin and not a
     // claim of immunity: 2 s against a measured 48-53 ms is ~40x, and no run
-    // measured while that class was open ever failed this case. Should it start failing, the
-    // remedy is CPU time rather than a wider budget, and taking it means moving
-    // `cpu-time.test-fixture.ts` down into this directory — `utils/` is
-    // leaf-level, so importing it from `response/` would invert the layering
-    // arrow.
+    // measured while that class was open ever failed this case. **The ~40x margin
+    // is the whole reason it stays; the note below is about cost, not permission.**
+    // Should it start failing, the remedy is CPU time rather than a wider budget.
+    //
+    // **Do not cite the layering arrow as forbidding that.** The arrow places
+    // four directories — `config/ → security/ → tools/`, plus `utils/` as leaf —
+    // and `response/` is not one of them, so it cannot adjudicate an import from
+    // there; `docs/todos/011` owns that gap and records the edge as unplaced. What
+    // is true is narrower: `utils/` is leaf-level, no test in this directory
+    // imports upward today, and todo 011's proposed DAG would put `response/`
+    // above `utils/` — so importing the fixture from here is a placement question
+    // to settle rather than a rule already broken, and the honest price is a
+    // module move plus its import sites.
     it("matches a 1 MB pathological 'ignore' chain in well under 2 s", () => {
         const chunk = "ignore ".repeat(150_000); // ~1 MB; densely-shaped near-misses
         const t0 = Date.now();

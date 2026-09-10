@@ -318,15 +318,22 @@ describe("processResponse — HTML <script>/<style> stripping (PR-7 / B8)", () =
     });
 
     it("ReDoS regression: 1 MB pathological body completes within CI-tolerant 2 s", async () => {
-        // Snyk's textbook ReDoS shape would make `<script\b[^>]*>[\s\S]*?</script>`
-        // hang for SECONDS-to-MINUTES on adversarial input. Our pattern shape and
-        // the 256 KB skip-cap together bound this case at **17 ms** — measured at
-        // HEAD, where the figure here previously said "well under 100 ms in
-        // benchmarks" and had not been re-taken since; the 2 s assertion is a
-        // CI-tolerant safety bound that
-        // still catches catastrophic backtracking (which would not complete at
-        // all within the test timeout) without flaking on slow runners. Strict
-        // perf targets belong in a benchmark suite, not unit tests.
+        // **This guards the CAP, not the patterns, and the distinction is the
+        // whole value of the case.** At 1 MB the body is 4x `STRIP_PATH_MAX_BYTES`,
+        // so `defendText`'s `exceedsStripCap` gate skips steps 3-5 together and
+        // `stripBlocksFixedPoint`, `stripHtmlComments` and `stripMarkdownBeacons`
+        // never run. Verified by probe: with `stripBlocksFixedPoint` throwing
+        // unconditionally on entry, this case still passes. So the measured
+        // **17 ms** is the always-on sanitiser and detector over 1 MB, and it
+        // would read the same with every ReDoS bound in `strip-blocks.ts`
+        // deleted. Do not credit the pattern shape for it, and do not argue a
+        // pattern margin from it — `strip-blocks.test.ts` is where the pattern
+        // bounds are guarded, on sub-cap inputs that reach them.
+        //
+        // The 2 s assertion is a CI-tolerant safety bound that still catches
+        // catastrophic backtracking in the always-on passes (which would not
+        // complete at all within the test timeout) without flaking on slow
+        // runners. Strict perf targets belong in a benchmark suite, not here.
         //
         // **Left on the wall clock deliberately, where `strip-blocks.test.ts`'s
         // budgets moved to CPU time** (`LESSONS.md` RC-57). The mechanism that

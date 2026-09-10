@@ -4,10 +4,11 @@
 //
 // **`.test-fixture.ts`, not `.ts`, and the suffix is the boundary.** Nothing in
 // production may import this file. `tsup` bundles from the four entry points so
-// it does not ship today, but a production import would compile, read as an
-// ordinary intra-directory import in review, and land test scaffolding in
-// `dist/` and on npm. Every other member of this directory is a registered tool
-// handler, so the name is the only thing distinguishing them.
+// it does not ship today, and `file-saver.test.ts`'s *nothing in production
+// imports a test-only module* sweep is what keeps it that way — before that
+// guard a production import would have compiled and read as an ordinary
+// intra-directory import in review. Every other member of this directory is a
+// registered tool handler, so the name is the only thing distinguishing them.
 // `CONVENTIONS.md` → *Naming* owns the rule.
 //
 // **Shared by three of the four suites that stub the executor**, because the

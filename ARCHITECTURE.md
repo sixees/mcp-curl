@@ -450,7 +450,14 @@ what a violation looks like, it does not belong on this list.
     binding from `fs`** — in any import form, including an alias, a default import,
     a re-export or a dynamic `import()`. Enforced by
     `src/lib/response/file-saver.test.ts`, which parses each production module and
-    fails closed on a form it cannot enumerate. **The remedy for a failing offender
+    fails closed on a form it cannot enumerate. **That sweep skips any filename
+    containing `.test-fixture.`, so this invariant holds JOINTLY with a second
+    sweep in the same file — *nothing in production imports a test-only module* —
+    which is what stops a write binding being parked in a fixture and imported
+    from production.** Neither half is sufficient: delete the second and the first
+    returns an empty offender list for exactly that shape, which is byte-identical
+    to compliance. `CONVENTIONS.md` → *Naming* owns the fixture-suffix rule.
+    **The remedy for a failing offender
     list is to route the new site through `writeUniqueFile`, never to widen the
     guard's owner.** `LESSONS.md` RC-56 records why the guard names what is
     permitted rather than what is forbidden, and what the enumerating forms that

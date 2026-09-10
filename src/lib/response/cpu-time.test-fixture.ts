@@ -3,8 +3,11 @@
 // **`.test-fixture.ts`, not `.ts`, and the suffix is the boundary.** Nothing in
 // production may import this file. Every other module in this directory is
 // production code on the strip path, so the name is the only thing separating
-// them — and `file-saver.test.ts`'s production sweep, which enforces invariant
-// 17, exempts this suffix by name. `CONVENTIONS.md` → *Naming* owns the rule.
+// them. `file-saver.test.ts`'s invariant-17 `fs` sweep SKIPS this suffix, and
+// its *nothing in production imports a test-only module* sweep is what makes the
+// rule enforced rather than habitual — the two hold jointly, so removing either
+// leaves the other reporting an empty offender list.
+// `CONVENTIONS.md` → *Naming* owns the rule.
 import { isMainThread } from "node:worker_threads";
 
 /**
@@ -20,10 +23,18 @@ import { isMainThread } from "node:worker_threads";
  * number.
  *
  * **CPU time is not perfectly load-invariant either, and the budget has to
- * allow for it.** Memory-bandwidth contention shows up as real cycles: the
- * slowest flood measures ~22 ms idle and ~53 ms beside 72 CPU hogs. That is a
- * 2.4x spread rather than the 20x-plus a wall clock shows, which is what makes
- * a budget possible at all — not a claim that the reading is fixed.
+ * allow for it.** The slowest flood measures ~22 ms idle and ~53 ms beside 72
+ * CPU hogs — a 2.4x spread rather than the 20x-plus a wall clock shows, which
+ * is what makes a budget possible at all, not a claim that the reading is fixed.
+ *
+ * **The dominant contributor is V8's background threads, not memory bandwidth.**
+ * Measured on the pinning case: 31.5 ms of CPU against 17.9 ms of `hrtime` wall
+ * on the first large call, converging to 14.2/14.2 by the fourth — so roughly
+ * half of a cold reading is compile work whose size depends on host parallelism
+ * rather than on the pattern. `--v8-pool-size=0` and `=1` reproduce the same
+ * curve, which is what rules out the libuv threadpool `assertOwnProcess` cannot
+ * see. Worth knowing because it says which way to move: warm the case, do not
+ * widen the budget.
  */
 export function cpuMs(work: () => unknown): number {
     assertOwnProcess();
@@ -53,6 +64,11 @@ function assertMeasuredToCompletion(returned: unknown): void {
         returned !== null &&
         typeof (returned as { then?: unknown }).then === "function";
     if (!thenable) return;
+    // The promise is already running and this throw means nobody will ever await
+    // it, so a rejection inside it would surface as an unhandled rejection —
+    // reported against whichever case happens to be running when it lands, not
+    // against this one. Adopting it here keeps the error below the only error.
+    void Promise.resolve(returned).catch(() => {});
     throw new Error(
         "cpuMs() measures synchronous work, and this body returned a promise — the " +
             "clock stopped at its first await, so the reading covers a fraction of the " +

@@ -432,10 +432,23 @@ describe("nothing in production imports a test-only module", () => {
      * Module specifiers this file pulls in, with a marker for any the parse
      * cannot read.
      *
-     * **Fails closed, for the same reason `forbiddenFsBindings` does.** A
-     * specifier nothing here can resolve — a computed expression, an
-     * interpolated template — may name a fixture as easily as not, so it is
-     * reported rather than cleared.
+     * **Fails closed on the ARGUMENT, and enumerates the TARGET — the two
+     * halves are not the same claim.** A specifier nothing here can resolve — a
+     * computed expression, an interpolated template — may name a fixture as
+     * easily as not, so it is reported rather than cleared. But the decision to
+     * look at all keys on a list of call and import shapes, and a shape absent
+     * from that list is not "unreadable", it is invisible: `createRequire(...)`,
+     * `module.require(...)` and an aliased `require` all return an empty list,
+     * which reads exactly like compliance.
+     *
+     * **That is a known and accepted limit, not an oversight**, and the reason
+     * is the population: reaching it needs someone with commit access parking a
+     * write binding in a fixture and importing it by indirection, deliberately.
+     * This is a single-operator tool. What this guard is for is the *accidental*
+     * import, which is always a plain `import` — every value-import spelling of
+     * that is either matched or fails closed. Widen the target test if the
+     * threat model ever gains a second author; do not read the sentence above as
+     * covering it today.
      *
      * Type-only imports are **not** exempt here, where they are exempt from the
      * `fs` sweep. The difference is the available remedy: a type cannot be
@@ -453,6 +466,19 @@ describe("nothing in production imports a test-only module", () => {
                     ts.isStringLiteral(node.moduleSpecifier)
                         ? node.moduleSpecifier.text
                         : "* (unreadable specifier)"
+                );
+            }
+            // `type T = typeof import("./x.js")` — a distinct node kind, not an
+            // ImportDeclaration, and the idiom this repository already uses at 13
+            // sites. Erased before emit, so it ships nothing; included because the
+            // docblock says type imports are not exempt here, and one spelling of a
+            // type import was already tested while this one was cleared.
+            if (ts.isImportTypeNode(node)) {
+                const a = node.argument;
+                found.add(
+                    ts.isLiteralTypeNode(a) && ts.isStringLiteral(a.literal)
+                        ? a.literal.text
+                        : "* (unreadable type-position specifier)"
                 );
             }
             if (ts.isCallExpression(node)) {
@@ -489,6 +515,7 @@ describe("nothing in production imports a test-only module", () => {
         ['import * as fx from "./cpu-time.test-fixture.js";', "namespace"],
         ['import "./cpu-time.test-fixture.js";', "side-effect"],
         ['import type { T } from "./cpu-time.test-fixture.js";', "type-only — not exempt here"],
+        ['type T = typeof import("./cpu-time.test-fixture.js");', "type-position import()"],
         ['export { cpuMs } from "./cpu-time.test-fixture.js";', "re-export"],
         ['export * from "./cpu-time.test-fixture.js";', "namespace re-export"],
         ['const m = await import("./cpu-time.test-fixture.js");', "dynamic"],
