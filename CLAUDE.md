@@ -16,6 +16,21 @@ own the rest, and each fact lives in exactly one of them:
 Session rules under `.claude/rules/` load automatically. They are gitignored and
 per-clone — run `/sixees-workflow:init-compound` in a fresh clone to get them.
 
+**This document is read at the start of every session, and that is the whole
+mechanism.** Nothing here is checked by anything. Keep it short enough to be read:
+a `CLAUDE.md` nobody reaches the end of governs only its first half.
+
+**This guidance is offered forward; your answers never are.**
+`/sixees-workflow:refresh-compound` reports what the current scaffold carries that
+this copy lacks — the paragraphs saying what this document owns and how to keep it —
+and inserts only what you authorise. It writes no answer and removes no line.
+`/sixees-workflow:reconcile-standards` is the other pass: it moves prose that belongs
+in a sibling into that sibling, moves prose that belongs *here* in from one, and reconciles this file's section names against **the
+shipped scaffold's** — never against the sections already in this copy, which are the
+thing being measured. Both ask before writing, and neither commits.
+**Keep this paragraph outside the blockquote above**, which you are told to delete once
+the document is filled.
+
 ## Build Commands
 
 ```bash
