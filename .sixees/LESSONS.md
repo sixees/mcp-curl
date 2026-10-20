@@ -1,46 +1,118 @@
 # Lessons
 
-> Seeded by `/sixees-workflow:init-compound`. **It is yours now** — nothing
-> overwrites it, and nothing refreshes it. Append to it; do not rewrite it.
+> Seeded by `/sixees-workflow:init-compound`. **It is yours now** —
+> `/sixees-workflow:refresh-compound` brings this guidance forward around your
+> entries and never replaces one.
 
-**This file is the Reality Correction ledger.** Every RC lands here permanently,
-and here only — because a handoff is read once, by the run that wrote it, and
-then archived. An RC recorded only in the handoff expires at merge, and the next
-session rediscovers the lesson and files it again under a new number. This is the
-one place a lesson outlives the run that learned it.
+**What this document owns:** what reality turned out to be, and what finding out cost.
+It answers ***Why is this rule here?***
+
+What it does **not** own: the instructions for working here (`CLAUDE.md`), how the
+system is put together (`ARCHITECTURE.md`), or the standard an output must meet
+(`CONVENTIONS.md`). **A rule belongs in one of those three; this file holds the incident
+that earned it**, so a rule restated here is a second copy of somebody else's.
+
+**This file is the Reality Correction ledger, and it is the single source of truth
+for RCs.** Every RC lands here and nowhere else.
+
+**Never change what a filed entry claims**, and read that as the narrow rule it is: what
+it protects is the *claims*, not the bytes. The *RC ledger* section below grants a closed
+set of dispositions over a filed entry — tightening its prose, retiring its narrative,
+folding it onto the later entry that now owns its lesson, and withdrawing a lesson that has
+stopped being true.
+
+**Three of those four alter no claim at all. The fourth removes one, and says so.** That
+asymmetry is the rule rather than an exception to it: **what is forbidden is making an entry
+state something it did not state** — a claim edited, reversed, softened or brought up to
+date, so the record of what was believed no longer says what was believed. **Withdrawal does
+not do that.** It removes the lesson outright and stamps the date and the reason for removing
+it, leaving nothing that misreports what the entry once held. **A removal that announces
+itself is not a falsified record; a silent correction is.** So this paragraph **authorises**
+withdrawal; read it as forbidding one and you have read the wider rule below.
+
+**"This file is append-only" is a wider rule than anything here states, and it is the
+reading to guard against.** It is what a reader arrives with, it sounds like caution, and
+it costs nothing visible: a ledger governed by it simply grows until the agents that grep
+it can no longer hold it, with every measurement saying the discipline is working.
+
+**This guidance is brought forward; your entries never are touched.**
+`/sixees-workflow:refresh-compound` rebuilds this file from the current scaffold when you
+agree to it: the opening paragraphs and the sections marked as shipped take the scaffold's
+current text, a section you have answered keeps yours, a section under a heading of your own
+is carried as it is, and every entry is carried byte for byte. It takes a copy first, shows
+every line it did not carry, and restores the ones you say are yours. An id that would vanish
+is named, so it is restored before its number can be issued again.
+`/sixees-workflow:reconcile-standards` reaches this file for **one thing only**: a
+citation its own rename **or move** broke, repaired in place under *RC ledger*'s law below. It
+classifies no section of this ledger, proposes no rename in it, moves no prose into or
+out of it, and edits no claim. Both ask before writing, and neither commits.
+**Keep these paragraphs outside the blockquote above**, which you are told to delete once
+you have read it.
+
+**Why it exists, and it is the whole point of the file.** A handoff is read once,
+by the reviewer of the work in hand, and then it is archived. An RC recorded there
+is a lesson that expires the moment the PR merges — so the next session rediscovers
+it, pays for it again, and files it again under a new number. This file is the one
+place a lesson outlives the run that learned it. **Nothing points back at an entry
+from a handoff, a plan or a todo** — those are archived, answered and closed, and an
+entry that depended on one of them would expire with it.
 
 It is not a changelog. A changelog says what shipped; this says what reality
-turned out to be, and what it cost to find out. Read it when a rule looks
-arbitrary, and **before planning anything that touches a surface an RC already
-names** — but never as a checklist: a defect matching none of these still needs
-its own investigation.
+turned out to be, and what it cost to find out.
+
+Read it when a rule looks arbitrary, and **before planning anything that touches a
+surface an RC already names**. Do not read it as a checklist: a new defect that
+looks like none of these still needs its own investigation.
 
 ---
 
 ## Filing an RC
+<!-- sixees:shipped -->
 
-**When.** The plan said X and reality was Y, and the work had to change course.
-Not this: plan typos go to commit history, requirement pivots to a kickoff update,
-unrelated bugs to the todo system.
+**When.** Reality diverges from the plan. What the plan assumed was not true, and
+the work had to change course.
 
 **Number.** `RC-N`, sequential across the whole trail. The unit — per project, per
 feature or per theme — is declared in this project's Compound Engineering profile.
-Claim it at the time; it is durable once assigned.
+**The number is issued when the entry is appended here, and here is the only place
+one is ever issued** — which is what stops a single run issuing one twice. **It is not a
+lock across branches:** two that append before either merges both read the same highest
+number and both claim the next, and the merge conflict is what surfaces it. Durable once
+assigned.
 
-**Where.** Appended to the ledger below, and **nowhere else.** A handoff may point
-at the ids a run filed; it does not restate the entries. Add a one-line `POST-AUDIT`
-annotation in the plan pointing at the RC, and **never retro-edit plan text** — the
-plan records what was believed, and correcting it in place destroys the evidence
-that anything diverged.
+**Where.** Appended to the ledger below, and **nowhere else.** Nothing points back at
+it and nothing has to: **an RC is not tied to the plan, the todo or the handoff that
+produced it**, because the lesson outlives all three. A plan is answered and archived, a
+todo is closed, a handoff is read once by one reviewer — and the rule the run learned is
+still true after every one of them is gone. **That independence is the point of the
+ledger**, not an omission in it.
+
+**So do not retro-edit the plan either.** Not to record the divergence, and not to make
+the plan match what happened: the plan is the record of what was believed, and correcting
+it in place destroys the only evidence that anything diverged.
+
+**What is not an RC.** Plan typos go to commit history. Requirement pivots go to a
+kickoff update. Unrelated bugs go to the todo system. An RC is specifically: the
+plan said X, reality was Y.
+
+**And a divergence that is an RC still may not earn an entry.** `skill: file-lessons`
+holds the gates, and more than one of its outcomes files nothing — a rule this ledger
+**already records**, one a loaded shape **already covers**, an entry the operator refuses.
+**Say so where the work is recorded** — the commit body, the PR, the review reply — so the
+recurrence is visible to whoever reads that work. **A shape's third instance reads as its
+first if nobody says it recurred**, and the ledger already holds the rule itself.
+**Filing remains the default**: where you cannot tell whether the rule is already here,
+file. A duplicate entry is recoverable by a reconcile pass; a lesson nobody wrote down
+is not.
 
 ### Entry format
 
 ```markdown
 ### RC-N — <one line: what reality turned out to be>
 
-**Date:** YYYY-MM-DD · **PR:** #N · **Plan:** <path>
+**Date:** YYYY-MM-DD · **PR:** #N
 
-**Class:** <the `K-` shapes and local `C` classes this instantiates, or `—`> — *class-id:* <the `skill: review-findings` defect nouns this instantiates>
+**Class:** <the `K-` shapes and local `C` classes this instantiates, or `—`>
 
 - **The plan said:** what was assumed, and where that assumption came from.
 - **Reality was:** what was actually true, and how it was discovered.
@@ -49,24 +121,41 @@ that anything diverged.
   rule; say so rather than inventing one.
 ```
 
-Every field is required; `—` fills one that has no value. **The `class-id`
-suffix on the `Class:` line is part of the format, not decoration** — it is the key
-`/sixees-workflow:review` joins a live finding to a divergence already recorded here,
-and it must be a defect noun from `skill: review-findings` → *The class-id vocabulary*
-rather than a phrase you coined. Every entry below carries one; this line did not say
-so until RC-28, which is why RC-27 and RC-28 were both filed without it and had to be
-corrected. Name the files and
-symbols — an RC that says "fixed the auth handling" is a note to nobody, because
-the next reader needs to know *where* to be careful. Closing prose after the four
-bullets is fine for who found it and how, but it never stands in for them.
+**Two of those lines are read by a machine, and that is why the shape is fixed.**
+`learnings-researcher` — the agent dispatched to find prior art before work starts —
+locates entries by grepping the **heading** for `^### RC-N — <title>` and the
+**`Class:`** line at the start of a line. Both anchors are exact:
 
-**A near-miss is recorded as caught**, never re-framed as a failure that slipped
-through. A dense ledger is the discipline working; a thin one usually means filing
-stopped, not that diverging did.
+- A heading with no ` — <title>` carries no text to match a search term against, so
+  the entry is unreachable by subject however the pattern is widened.
+- A `Class:` written as a list item (`- **Class:**`) does not match, so the entry
+  drops out of every shape lookup.
 
-**Settled conflicts stay settled** — `.claude/rules/03-divergence.md` owns that
-rule. A finding that reverses an earlier round goes to the director, and the
-answer is recorded here as an RC later rounds cite rather than re-litigate.
+**An entry missing either is invisible to that agent, and nothing errors** — not when
+you write it, and not when the search comes back short. The failure is a run that
+finds no prior art and reports that there is none. So conforming here is not house
+style; it is the difference between a lesson that is found again and one that is only
+stored.
+
+Name the files and symbols. An RC that says "fixed the auth handling" is a note to
+nobody — the next reader needs to know *where* to be careful.
+
+### A near-miss is recorded as caught
+
+An RC found before merge is recorded as **caught**, not re-framed as a failure that
+slipped through. A dense ledger is the discipline working, and a project whose
+ledger is thin is usually one that stopped filing, not one that stopped diverging.
+
+### Settled conflicts stay settled
+
+**A review finding that reverses an earlier round's change is a divergence, and
+gets an RC like any other.** It is not a fix to apply.
+
+When a finding asks you to undo what a previous round did: stop, state both
+positions in one line each, and put it to the operator. Record the answer here.
+Then treat that RC as binding — a later round proposing the same reversal is
+answered by citing it, not by re-litigating. Without this, review surfaces with no
+memory of each other oscillate, and round N's fix becomes round N+1's finding.
 
 ---
 
@@ -117,87 +206,199 @@ entry restating an existing class under a new name with its own counter.
 ---
 
 ## RC ledger
+<!-- sixees:shipped -->
 
-> Newest last. Append; **never rewrite what an entry claims.** If an RC turns out
-> to be wrong, file a new one that says so and cite it.
+> Newest last. Append; **never rewrite what an entry claims.** If an RC turns out to
+> be wrong, file a new one that says so and cite it.
 >
-> **Three annotations may be added to a filed entry, and no other annotation type.** A
-> `**Class:**` line; a `**Mechanism superseded:**` line naming what no longer
-> exists at HEAD and the RC that replaced it; and an `**Also filed as:**` line
-> naming the ids folded onto this entry and whatever only they said. All three are
-> **additive** — they sit above the body and change no word of it, because the body
-> records what was believed, and correcting it in place destroys the only evidence
-> anything diverged.
+> **That is not the same as append-only, and this file is not append-only.** Everything
+> below states what may be done to an entry already in it. A claim is protected; the
+> prose carrying it, the narrative around it, and — where the lesson itself has stopped
+> being true — the lesson are each dispositionable, by
+> `/sixees-workflow:reconcile-lessons`, with an operator authorising each one.
 >
-> **That closes the annotation set, and nothing else** — it is not a prohibition on
-> every edit. Tightening an entry's prose and correcting a still-unmerged entry are
-> both permitted, by the two clauses below; read this sentence as bounding what may
-> be *added above* a body, never as freezing a body the freeze boundary has not yet
-> reached.
->
-> **The body is frozen; an annotation is maintained.** It points at HEAD, so when
-> HEAD moves again the pointer names the newer RC — an annotation that has itself
-> gone stale is the defect it exists to prevent.
->
-> **The superseded annotation is required, not optional**, because an entry's
-> lesson outlives its fix and this format states both in one breath. A binding
-> entry is cited rather than re-checked, so stale mechanism prose inside one is
-> the most expensive a repository can hold: the next round is told not to look.
->
-> **Condensing is not correcting.** An entry's prose may be tightened so long as
-> every claim, file, symbol, measurement and decision survives intact. What is
-> forbidden is changing what an entry *says* — the body is the record of what was
-> believed, and correcting it in place destroys the only evidence anything
-> diverged. Read the prohibition beside its own rationale: *"never edit"* is wider
-> than the property it defends, and saying the same thing in fewer words touches
-> that property not at all.
+> **Condensing is not correcting.** An entry's prose may be tightened so long as every
+> claim, file, symbol, measurement and decision survives intact. What is forbidden is
+> changing what an entry *says* — the body is the record of what was believed, and
+> correcting it in place destroys the only evidence anything diverged. Read the
+> prohibition beside its own rationale: *"never edit"* is wider than the property it
+> defends, and saying the same thing in fewer words touches that property not at all.
 >
 > **The freeze boundary is merge.** An entry whose branch has not merged may be
-> corrected in place — the belief and its correction sit inside one round, so there
-> is no divergence for the body to be evidence of. **Once merged the body is
-> frozen**, and a wrong claim is answered by a new RC that cites it.
+> corrected in place — the belief and its correction sit inside one round, so there is
+> no divergence for the body to be evidence of. **Once merged the body is frozen**, and
+> a wrong claim is answered by a new RC that cites it.
 >
-> **Entries come in two lengths, and the short ones are not unfinished.** An entry
-> that something outside this file cites is kept whole, because a citation makes its
-> detail load-bearing somewhere else. An entry nothing cites keeps its heading, its
-> `Class:`, every annotation, any binding declaration and its *What this costs next
-> time* — and its plan/reality/what-changed narrative is retired. That split is this
-> preamble's own doctrine applied to itself: **an entry's lesson outlives its fix.**
-> The heading carries the narrative in one line, which is why headings here state
-> what reality turned out to be. `git grep RC-N` outside this file is the test, so
-> **a short entry becomes a candidate for restoring in full the moment something
-> cites it.**
+> **A citation repaired because a rename or a move broke it is not a change to the body, and
+> it is the one write here that a command other than `/sixees-workflow:reconcile-lessons` may
+> make.** `/sixees-workflow:reconcile-standards` renames a section in `CLAUDE.md`,
+> `ARCHITECTURE.md` or `CONVENTIONS.md`, **and moves one between them**, and every entry
+> citing that section stops resolving the moment it does. **Both breakages are the same
+> breakage**: a rename moves the section's name and a move moves the document it sits in, and
+> an address is equally stale either way. **The claim is untouched** — the entry asserts the same
+> thing about the same rule, and only the address of the rule has moved — so the freeze
+> does not reach it. Without this clause the ledger is the one file a structural pass
+> knowingly leaves broken, and it is the file nobody re-reads. **Only the citation's text
+> changes**: the entry's heading, its `**Class:**` line and every other word of the body
+> are untouched, and an edit reaching any of them is the wrong edit. That command asks
+> before each one and never commits.
 >
-> **This is the pass `/sixees-workflow:reconcile-lessons` performs**, once this file
-> has grown past what its readers can hold. It proposes; you authorise.
+> **The annotation set is closed, and these are its members.** A `**Class:**` line; a
+> `**Mechanism superseded:**` line naming what no longer exists at HEAD and the RC that
+> replaced it; an `**Also filed as:**` line naming the ids folded onto this entry and
+> whatever only they said; a `**Folded into:**` line naming the single later entry that now
+> owns this one's lesson; and a `**Withdrawn:**` line, whose own clause is below. All of
+> them are **additive** — they sit above the body and change no word of it, because the
+> body is the record of what was believed, and correcting it in place destroys the only
+> evidence anything diverged.
 >
-> **This preamble is shipped prose and this copy is yours** — nothing refreshes it,
-> so a repository onboarded against an older bundle keeps an older law indefinitely,
-> and the pass above then declines dispositions in exactly the ledgers that most
-> need them. `/sixees-workflow:refresh-compound` → *Step 5: Offer the ledger preamble
-> forward* reports which clauses the current scaffold carries that this copy lacks,
-> and inserts the ones you authorise — above the first entry heading and nowhere
-> else. **It never reads or writes an entry.**
+> **`**Also filed as:**` and `**Folded into:**` are a matched pair, and both halves are
+> pinned shapes rather than phrasings.** The first sits on the owner and the second on the
+> entry folded onto it, each at line start, each naming ids:
 >
-> **Nothing in this law lets an entry be deleted.** A mechanism that no longer exists
-> is marked dead by the `**Mechanism superseded:**` annotation and the lesson stays;
-> an entry nothing cites is shortened to that lesson.
-> `/sixees-workflow:reconcile-lessons` carries no disposition that deletes one, so a
-> request to *"remove the RCs that no longer apply"* is answered by shortening.
+> ```
+> **Folded into:** RC-N
+> ```
 >
-> **So every id this file has ever issued still names an entry, and two properties
-> hold without anything having to check them.** The next number is allocated by
-> reading the highest `RC-[0-9]+` here, so no number can be issued twice; and a
-> citation of `RC-N` written anywhere in the repository still resolves. Both are
-> properties of entries *staying*, which is why deletion is the one operation this
-> law does not grant.
+> **A consumer keys on the shape, never on the wording**, exactly as it does for
+> `**Withdrawn:**` — an agent told to *follow the pointer to the owner* needs a pointer it
+> can find, and *one line naming the owner* is an instruction to a writer, not something a
+> reader can match. **A folded entry carries exactly one**, because it has exactly one
+> owner; where a fold is later folded again, the line names the newest owner, per the
+> maintenance rule below.
 >
-> **A project may override that on its director's authority**, recorded as an RC in
-> its own trail. The override is then the project's and nothing refreshes it away —
-> but it comes with no tooling: the deletion is performed by hand, and the two
-> properties above become a human's to hold, meaning nothing may cite the id outside
-> its own entry and the id must stay somewhere in this file so the allocation query
-> still counts it as issued.
+> **The body is frozen; an annotation is maintained.** It points at HEAD, so when HEAD
+> moves again the pointer names the newer RC — an annotation that has itself gone stale
+> is the defect it exists to prevent.
+>
+> **`**Mechanism superseded:**` is required rather than optional, because an entry's lesson
+> outlives its fix and this format states them in one breath.** A reader arriving for
+> the durable half is told the mechanism with equal confidence, and a binding entry is
+> *cited rather than re-litigated* — so a stale mechanism inside one is the most
+> expensive stale prose a repository can hold: the next round is instructed not to
+> check it. Append-only and current are in conflict only if rewriting the entry is the
+> sole way to correct it.
+>
+> **Entries come in more than one length, and a short one is not unfinished.** This clause
+> states the first two — whole, and shortened to its lesson; the withdrawal clause below
+> states the third, and it is the only one that does not end in a lesson. An entry that
+> something outside this file cites is kept whole, because a citation makes its detail
+> load-bearing somewhere else. An entry nothing cites keeps its heading, its `Class:`,
+> every annotation, any binding declaration and its *What this costs next time* — and
+> its plan/reality/what-changed narrative is retired. That split is this preamble's own
+> doctrine applied to itself: **an entry's lesson outlives its fix.** The heading
+> carries the narrative in one line, which is why headings here state what reality
+> turned out to be. `git grep RC-N` outside this file is the test, so **a short entry
+> becomes a candidate for restoring in full the moment something cites it.**
+>
+> **Where two entries hold one lesson, the LATER entry owns it and the earlier one is
+> folded onto it.** The rule is that plain, and it is mechanical rather than a
+> judgement: **the newest entry is always the owner.** A second entry gets written
+> because the first did not capture the whole picture, so the later one is the earlier
+> one extended — sharper wording, a failing case the first lacked, a surface it never
+> reached. Folding the newer onto the older keeps the weaker statement and discards the
+> reason the second entry was filed at all.
+>
+> **So the folded entry is always the lower id, and that is a safety fact, not a
+> convenience.** Older entries are the ones outside prose has had longer to cite, so the
+> entry this disposition destroys is systematically the more-cited of the pair —
+> **nothing may cite it, and the check is not optional.** The folded entry keeps its
+> heading, its `Class:`, its annotations and a pointer to the owner, so **`RC-N` still
+> resolves to an entry called `RC-N`** and no id is ever freed.
+>
+> **And a lesson can expire.** The doctrine above — *an entry's lesson outlives its
+> fix* — is the common case and not a law of nature: it holds because mechanisms die
+> faster than rules do, not because a rule cannot die. **A project's stack, goals and
+> constraints move, and a rule anchored to what it moved away from stops being true** —
+> not stale, not superseded by a sharper version of itself, but **wrong to follow.** A
+> rule about the datastore the project migrated off is the clean case. Left standing,
+> such an entry is worse than a long one: it is prior art a researching agent will
+> return, phrased as something this project learned the hard way.
+>
+> **So an entry may be WITHDRAWN, and withdrawal is what a request to "remove the RCs
+> that no longer apply" is answered with.** It keeps the heading, the `**Date:**`, the
+> `**Class:**`, every annotation and a `**Withdrawn:**` line giving the date and the
+> reason; it loses the narrative and **the lesson**. That last part is what separates it
+> from the shortening above, where the lesson is precisely what survives — so the two
+> are not degrees of the same operation and must never be offered as though they were.
+>
+> **The annotation is `**Withdrawn:**` and the word "retired" is deliberately not used
+> for it.** A ledger may already spell its own supersession marker with that word,
+> meaning an entry that is *still here, body intact, read for its history* — the
+> opposite of this. **A marker that cannot collide is worth more than a paragraph
+> defending one that can**, so the token is pinned as a line-start
+> `**Withdrawn:** YYYY-MM-DD — <reason>`, and every consumer keys on that shape rather
+> than on the word. Any other spelling is the project's own vocabulary and this clause
+> says nothing about it.
+>
+> **Withdrawal is bounded on both sides, because its failure is silent and permanent.**
+> Nothing may cite the entry, **and** its subject must be gone from the code at HEAD —
+> an absent subject is the evidence that the world the rule was written for is the one
+> the project left. A live subject is a rule that may still be load-bearing, whoever
+> believes otherwise. **Neither half is sufficient alone**, and an entry that clears both
+> is still only a *candidate*: whether the lesson has stopped being true is the
+> operator's call and nothing computes it.
+>
+> **Withdrawal reads the whole file, never a slice of it.** A ledger is reconciled in
+> slices because attention is finite, but an obsolete rule is obsolete wherever it sits
+> — and the ones a project most needs gone arrive as a **class**: a stack it migrated
+> off, a subsystem it deleted, a constraint that lifted, with tens or hundreds of
+> entries behind one reason. **A pass that only withdrew inside the current slice would
+> leave the rest of that class standing and report the slice clean**, which is the
+> condition this disposition exists to end. The other dispositions may be sliced;
+> this one is whole-file by definition.
+>
+> **An entry carrying a binding declaration is not withdrawable**, whatever the other two
+> bounds say. A binding declaration is a scope question an operator closed, and later
+> rounds are answered by citing it instead of re-arguing it — so withdrawing the lesson
+> that carries one re-opens the question with nothing on screen saying it was ever
+> closed, and the next round's finding looks new. **Unsettling a settled call is the
+> operator's own act**, taken deliberately and recorded as a divergence in its own right;
+> it is not a side effect of a tidying pass. **There is no partial withdrawal that keeps
+> the declaration and drops the rule around it** — what is left binds nothing a reader
+> can name. **The other dispositions are unaffected**: such an entry may still be
+> condensed, and may still be shortened to its lesson, which keeps the declaration by
+> definition. **Every disposition that takes the lesson off this entry is closed to it** —
+> withdrawal, and being the folded side of a fold, which moves the lesson to the owner and
+> would carry the declaration away with it.
+>
+> **This is the pass `/sixees-workflow:reconcile-lessons` performs**, once this file has
+> grown past what its readers can hold. It proposes; you authorise.
+>
+> **This preamble is shipped prose and this copy is yours** — nothing replaces it, so a
+> repository onboarded against an older bundle would otherwise keep an older law
+> indefinitely, and the pass above would then decline dispositions in exactly the ledgers
+> that most need them.
+> `/sixees-workflow:refresh-compound` → *Step 5: Offer the seeded guidance forward* replaces
+> it with the current scaffold's, above the first entry heading and nowhere else. **It never
+> edits an entry.**
+>
+> **Nothing in this law lets an entry be deleted, and every route above stops short of
+> it on purpose.** A mechanism that no longer exists is marked dead by the
+> `**Mechanism superseded:**` annotation and the lesson stays; an entry nothing cites is
+> shortened to that lesson; a lesson that has stopped being true is withdrawn; a lesson a
+> later entry now states is folded onto it. `/sixees-workflow:reconcile-lessons` carries
+> no disposition that deletes one.
+>
+> **Withdrawal is what makes that affordable.** The objection to an append-only ledger was
+> never really about bytes — it was that an obsolete rule keeps being returned as advice,
+> and deletion looked like the only answer to it. Withdrawal answers it directly: the rule
+> stops being stated, the id stops being a dangling risk, and the entry stays where the
+> counter and every citation can still find it.
+>
+> **So every id this file has ever issued still names an entry, and two properties hold
+> without anything having to check them.** The next number is allocated by reading the highest
+> `RC-[0-9]+` here, so no number can be issued twice; and a citation of `RC-N` written anywhere
+> in the repository still resolves. Both are properties of entries *staying*, which is why
+> deletion is the one operation this law does not grant.
+>
+> **A project may override that on its operator's authority**, recorded as an RC in its own
+> trail. **Write it under a heading of your own** — a `##` section between this one and the
+> first entry — because this section is shipped prose and a refresh replaces it, while a
+> section only your copy has is carried as it is. The override is then the project's and
+> nothing refreshes it away — but it comes with no tooling: the deletion is performed by hand, and the two properties above become a human's
+> to hold, meaning nothing may cite the id outside its own entry and the id must stay somewhere
+> in this file so the allocation query still counts it as issued.
 
 ### RC-1 — An invariant can be satisfied by the bug it was written to prevent
 
