@@ -90,7 +90,9 @@ export async function executeJqQuery(
     _extra: JqQueryExtra
 ): Promise<JqQueryResult> {
     try {
-        // Validate file path and get the real path (prevents TOCTOU attacks)
+        // Validate file path and get the real path; the read below opens that
+        // resolved path, which narrows but does not close the window between check
+        // and read
         const validatedFilePath = await validateFilePath(params.filepath);
 
         // Resolve and validate output directory if saving (returns real path with symlinks resolved)
@@ -133,7 +135,7 @@ export async function executeJqQuery(
             const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
 
             // Encoded here rather than handed over as text: `writeUniqueFile`
-            // takes `Buffer` only, so the decode stays visible at the site that
+            // takes `Buffer` only, so the encoding stays visible at the site that
             // decides it (`LESSONS.md` RC-33). Shared with `curl_execute`'s save
             // path so neither site can drift from `flag: "wx"` or from the
             // filename sanitiser — two filters over one source file reach the
@@ -172,5 +174,6 @@ export async function executeJqQuery(
 
 // Registration lives in `tools/index.ts::registerAllTools`, which routes this
 // executor through `extensible/tool-wrapper.ts` so the post-processor wrap
-// (invariant 1) applies. A bare `registerTool` here is what let the shipped
-// binary return unwrapped output — see `docs/todos/006`.
+// (invariant 1) applies. A bare `registerTool` here would return unwrapped
+// output from the shipped binary while every unit test of the wrap stayed
+// green.

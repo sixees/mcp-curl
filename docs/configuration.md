@@ -222,14 +222,16 @@ every wrap call (one UUID per response, shared by every text part). Spotlighting
 is always combined with the always-on **defence-in-depth wrap** that runs over
 every tool result emitted by the server (`curl_execute`, `jq_query`, YAML
 endpoints, custom tools, and `beforeRequest` short-circuit returns). The wrap
-runs three steps in fixed order on each text part:
+runs these steps in fixed order on each text part:
 
-1. **Detect** injection patterns against the **original** text and emit a
-   throttled `[injection-defense] [host]` log line.
-2. **Sanitise** Unicode attack chars and collapse whitespace runs — on every
-   part except one that parses as JSON, which is returned exactly as written.
+1. **Detect** injection patterns against the original text and its sanitised
+   form, and emit a throttled `[injection-defense] [host]` log line on a match.
+   A part that parses as JSON is detected on and never rewritten.
+2. **Defend** every other part with the full `defendText` pipeline: sanitise
+   Unicode attack chars and collapse whitespace runs, strip markup comments,
+   `<script>`/`<style>` blocks and markdown beacons, then detect again.
 3. **Spotlight** the text using a per-message UUID — only when this flag is
-   `true`.
+   `true` and the result is not an error.
 
 Steps 1 and 2 run regardless of this flag. The wrap is idempotent (same
 result wrapped twice is a no-op) and fail-open (an internal exception returns

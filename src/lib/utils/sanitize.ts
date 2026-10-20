@@ -68,10 +68,10 @@ const RESPONSE_SANITIZE_PATTERN = new RegExp(
 // regression-locked in `sanitize.test.ts` via the 200-char-gap negative
 // case and the wall-clock ReDoS budget.
 //
-// Single-keyword and structural-token patterns retain their existing
-// shapes — only the multi-keyword phrase matchers
+// Only the multi-keyword phrase matchers
 // (ignore/disregard/forget/override/do-not-follow/pass-contents/
-// exfiltrate-creds) consume the shared fragment.
+// exfiltrate-creds) consume the shared fragment; single-keyword and
+// structural-token patterns have no inter-keyword gap to bound.
 const INJECTION_PATTERNS = new RegExp(
     [
         // Explicit instruction override
@@ -179,7 +179,8 @@ const SANITIZE_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
  *
  * Whitespace runs collapse to a single ASCII space (rather than a marker like
  * "[WHITESPACE REMOVED]") because callers may JSON.parse the sanitized output
- * (see response/processor.ts → applyJqFilterToParsed). Inserting a non-whitespace
+ * (`response/processor.ts → defendText` re-reads its post-sanitise body with
+ * `isDefinitelyJson`, and a direct caller may persist what it returns). Inserting a non-whitespace
  * marker into the middle of a JSON document — between tokens or inside a deeply
  * pretty-printed value — would break the parse. A single space preserves
  * JSON validity while still neutralising the padding attack (the hidden tail
@@ -244,8 +245,10 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * trivially bypassed by a motivated attacker (paraphrase, encoding, novel
  * jailbreak phrasing), and gating on it leaks the rule-set to whoever can
  * probe the behaviour. The defence layer is `sanitizeResponse` (Unicode
- * normalisation) plus `applySpotlighting` (trust-boundary sentinel) — both
- * always run regardless of detection state. Examples of misuse:
+ * normalisation), which runs on every non-JSON text part, plus
+ * `applySpotlighting` (trust-boundary sentinel), which runs only where
+ * `enableSpotlighting` is set — neither is gated on detection state, and a
+ * JSON document is returned unchanged with detection alone. Examples of misuse:
  *
  *     // ❌ Never do this — converts a signal into a refusal gate.
  *     if (detectInjectionPattern(externalContent)) {
@@ -260,17 +263,11 @@ function isWhitespacePaddingMatch(match: string): boolean {
  *     return sanitized;
  *
  * Prefer the `sanitizeAndDetect(text, label)` composer (re-exported from the
- * public barrel) over hand-wiring the primitives — it locks the project's
- * canonical detect-then-sanitise ordering: detection runs on the **original**
- * text (so signals the sanitiser would later strip — e.g. Unicode-attack
- * payloads such as bidi overrides or zero-width characters — still fire the
- * per-host log) and sanitisation produces the bytes the LLM actually sees
- * (see `detection-logger.ts → sanitizeAndDetect`). Calling this
- * matcher directly on **already-sanitised** text trades that signal-
- * preservation for invisible-char-split coverage instead: phrases like
- * "Ig​nore" (zero-width space splitting `ignore`) collapse to `Ignore`
- * after sanitisation and become detectable. Both call shapes are
- * legitimate; pick based on which class you care about preserving.
+ * public barrel) over hand-wiring the primitives — it detects on the
+ * **original** text and on its sanitised form, then returns the sanitised
+ * bytes the LLM actually sees (see `detection-logger.ts → detectAndLog`,
+ * which owns why both). Calling this matcher on one form alone covers only
+ * the class that form shows; `@param input` below names both.
  *
  * **Normalisation.** The matcher normalises its input
  * before testing the pattern set, currently via
@@ -286,13 +283,13 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * (10 MB) cap and collected immediately after `.test()` returns, so the
  * memory footprint stays well inside `MAX_TOTAL_RESPONSE_MEMORY`
  * (100 MB). UTS #39 confusable folding (Cyrillic/Greek look-alikes like
- * `і`, `а`, `р`) is NOT covered by NFKC and remains a documented gap;
- * see the comment on `INJECTION_PATTERNS` above for the deferral
- * rationale.
+ * `і`, `а`, `р`) is NOT covered by NFKC and remains a documented gap,
+ * pinned by the `documents NFKC's UTS #39 limit` case in
+ * `sanitize.test.ts`.
  *
  * **Stability contract:** the *intent* — return `true` when the
- * provided input (either the original text via `sanitizeAndDetect` or
- * pre-sanitised text via direct call) matches a known prompt-injection
+ * provided input (the original or the sanitised form, both of which
+ * `sanitizeAndDetect` tests) matches a known prompt-injection
  * signal, and never mutate the bytes flowing through `sanitizeResponse`
  * — is stable. The specific pattern set and the specific normalisation
  * algorithm (currently NFKC) are **implementation**: the pattern set
@@ -308,8 +305,9 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * @param input - Content to scan. The production path,
  *   `detection-logger.ts → detectAndLog`, calls this on the original text
  *   AND on its `sanitizeResponse` form, because each representation hides a
- *   class from the other: a later strip stage would erase a phrase from the
- *   sanitised text but not the original, and a phrase an invisible character
+ *   class from the other: a phrase spaced with a `\s`-matching character the
+ *   sanitiser removes (U+2028, U+2029, U+FEFF) is whole only in the original,
+ *   and a phrase an invisible character
  *   splits (`Ig`+ZWSP+`nore`) is whole only in the sanitised form. A direct
  *   caller wanting both classes does the same.
  * @returns true if any injection pattern matched
@@ -334,7 +332,7 @@ export const SPOTLIGHT_SENTINEL_PREFIX = "---EXTERNAL-CONTENT-BEGIN-";
  *   - **Compact 32-hex** (no dashes) — `randomUUID().replace(/-/g, "")`
  *   - **RFC 4122 8-4-4-4-12 layout** (with dashes) — direct `randomUUID()` output
  *
- * The earlier looser pattern `/^[0-9a-f-]{32,36}$/i` accepted strings made
+ * A looser `/^[0-9a-f-]{32,36}$/i` shape would accept strings made
  * entirely (or mostly) of dashes — e.g. 36 dashes — which produces a
  * predictable, low-entropy sentinel that an attacker can spoof in payload
  * content. The wrapper layer always passes `randomUUID()` so this only
@@ -362,9 +360,10 @@ const SPOTLIGHT_HEADER_PATTERN = /^---EXTERNAL-CONTENT-BEGIN-([0-9a-f-]{32,36})-
  *
  * **Why this is stricter than `startsWith(SPOTLIGHT_SENTINEL_PREFIX)`.** The
  * idempotence guard's purpose is "is this output of a previous
- * `applySpotlighting` call?" A prefix-only check answered "no" to that
- * question whenever the begin sentinel was prepended — including by an
- * attacker who controls the HTTP response body. By requiring the matching
+ * `applySpotlighting` call?" A prefix-only check would answer "yes" to that
+ * question whenever the begin sentinel is prepended — including by an
+ * attacker who controls the HTTP response body, whose content would then
+ * skip wrapping. By requiring the matching
  * end sentinel with the same UUID, the only way to produce a false-positive
  * is to forge a complete, well-formed envelope (raising bypass cost from
  * ~26 prepended bytes to ~120 bytes plus consistent UUID at both ends).
@@ -435,7 +434,7 @@ export function applySpotlighting(content: string, requestId: string): string {
     // produce nested sentinels with two different UUIDs.
     //
     // The check requires a *complete* envelope (begin + matching end + same UUID), not
-    // just the begin prefix — a prefix-only check let an attacker who controls the HTTP
+    // just the begin prefix — a prefix-only check would let an attacker who controls the HTTP
     // response body prepend the public sentinel prefix and bypass spotlighting entirely.
     // Idempotence runs first because the requestId is unused on this path — validating
     // it would only block legitimate double-wrap attempts that we already short-circuit.

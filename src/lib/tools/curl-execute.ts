@@ -25,12 +25,13 @@ export interface CurlExecuteResult {
      * One entry per remote-controlled region, never one entry spanning two.
      *
      * `content[0]` is the body (or the server-authored saved-to-file message) on
-     * every branch. A SECOND entry carries the response header text and a THIRD
-     * carries server-authored notices — truncation, undetermined or unsupported
-     * headers, a non-zero exit code. Both are plain-branch only: under
-     * `include_metadata` the headers travel in the envelope's `headers` key and
-     * the notices in its own fields. ARCHITECTURE.md invariant 13; the wrap
-     * defends each entry independently, which is what keeps invariant 16 true.
+     * every branch. After it, in this order and each only when present, come the
+     * response header text and the server-authored notices — header truncation,
+     * undetermined or unsupported headers, a lossy UTF-8 decode, a non-zero exit
+     * code. Both are plain-branch only: under `include_metadata` the headers
+     * travel in the envelope's `headers` key and the notices in its own fields.
+     * ARCHITECTURE.md invariant 13; the wrap defends each entry independently,
+     * which is what keeps invariant 16 true.
      */
     content: Array<{ type: "text"; text: string }>;
     isError?: boolean;
@@ -276,9 +277,8 @@ export async function executeCurlRequest(
         });
 
         // cURL stderr is remote-influenced — under `verbose` it carries the
-        // origin's own response headers — and reached the model with no
-        // pipeline at all. Not a shorter one: none. Same treatment as the
-        // header channel, so the two text channels stay symmetric.
+        // origin's own response headers — so it takes the same defence as the
+        // header channel, and the two text channels stay symmetric.
         const defendedStderr = result.stderr
             ? defendText(result.stderr, {
                   contentType: MARKDOWN_MIME,
@@ -404,5 +404,6 @@ export async function executeCurlRequest(
 
 // Registration lives in `tools/index.ts::registerAllTools`, which routes this
 // executor through `extensible/tool-wrapper.ts` so the post-processor wrap
-// (invariant 1) applies. A bare `registerTool` here is what let the shipped
-// binary return unwrapped output — see `docs/todos/006`.
+// (invariant 1) applies. A bare `registerTool` here would return unwrapped
+// output from the shipped binary while every unit test of the wrap stayed
+// green.

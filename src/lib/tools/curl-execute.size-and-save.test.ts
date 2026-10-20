@@ -248,16 +248,14 @@ describe("curl_execute saved artefact — 'did a filter run' has one answer", ()
 
 describe("curl_execute — a jq_filter never discards an unparseable body", () => {
     it("saves and reports an HTML error page fetched with a jq_filter", async () => {
-        // **At `executeCurlRequest` because the defect is the composition, not
-        // either link.** The filter gate refused correctly and the saver saved
-        // correctly; the fault was only that the refusal threw about a hundred
-        // lines ABOVE `shouldSave`, so the diagnostic body was discarded
-        // outright — no path, no byte count, nothing to open — while the same
-        // page fetched without a filter was persisted and reported.
-        // `docs/todos/018` → *Bad JSON: report, save, do not inline* and
-        // `curl_execute`'s own description both promise that save with no
-        // filter exception. A unit test beside the gate cannot see this: the
-        // gate's own behaviour is unchanged.
+        // **At `executeCurlRequest` because the property is the composition, not
+        // either link.** The filter gate and the saver can each be correct while a
+        // refusal raised above `shouldSave` discards the diagnostic body outright —
+        // no path, no byte count, nothing to open — where the same page fetched
+        // without a filter is persisted and reported. `docs/todos/018` → *Bad JSON:
+        // report, save, do not inline* and `curl_execute`'s own description both
+        // promise that save with no filter exception, and a unit test beside the
+        // gate cannot see a throw placed above the save.
         const body = Buffer.from(
             "<html><body><h1>502 Bad Gateway</h1><!-- trace-id: abc123 --></body></html>",
             "utf8"
@@ -294,7 +292,7 @@ describe("curl_execute — a saved JSON body says which bytes reached disk", () 
         // A JSON document always goes to disk as the origin sent it, whatever
         // Step 2 would have changed: the reader is `jq_query`, which trims as
         // the classifier does. So the exactness claim holds on this arm even
-        // for a leading U+FEFF, the one body that used to be saved sanitised.
+        // for a leading U+FEFF, which Step 2 would remove. `LESSONS.md` RC-64.
         //
         // The escape, never a literal invisible character: a bare U+FEFF in this
         // source is invisible in review and survives an editor round-trip badly.

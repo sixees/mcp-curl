@@ -227,10 +227,11 @@ import { randomUUID } from "node:crypto";
 const defended = defendText(externalContent, {
     hostname,                       // label for the throttled injection log
     contentType,                    // the origin's Content-Type, when you know it
-    contentTypeUndetermined: false, // REQUIRED — no default. `false` says you
+    contentTypeUndetermined: false, // REQUIRED by the type. `false` says you
                                     // know the type (including knowing the
                                     // origin sent none); `true` says you could
-                                    // not determine it. See below.
+                                    // not determine it. Omitted at runtime, it
+                                    // resolves to `true`. See below.
     // decodeEntities: false,       // when your consumer does not decode
 });
 const wrapped = config.enableSpotlighting
@@ -312,8 +313,9 @@ layer does differs by tool — a uniform "defended twice" is not true of any of
 them:
 
 - **`curl_execute`** detects on the body before classifying it, and rewrites
-  nothing. A non-JSON body is never returned inline, so it does not reach the
-  wrap at all; it is saved, and the wrap sees only the server-authored report.
+  no JSON body. A non-JSON body is never returned inline, so it does not reach
+  the wrap at all; it is saved — sanitised where it carried attack codepoints
+  or long whitespace runs — and the wrap sees only the server-authored report.
   An inline JSON body is returned as the origin sent it, and the wrap detects on
   it again without rewriting it.
 - **`jq_query`** detects on the filter's output and returns it unchanged, and

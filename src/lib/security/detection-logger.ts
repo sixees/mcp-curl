@@ -44,13 +44,15 @@ export function logInjectionDetected(hostname: string): void {
  * Detect injection patterns and log a hit, leaving the text alone.
  *
  * **Two representations, because each hides a class from the other.** The
- * original is what a later strip stage would erase a phrase from, so detecting
- * there keeps the signal for that class; the sanitised form is what a
- * zero-width or bidi split hides from, so `Ig\u200bnore previous instructions`
- * matches only there. Testing both rewrites nothing — this is the detection a
- * caller returning the origin's payload still owes (`LESSONS.md` RC-49): the
- * per-host log is an operator signal ARCHITECTURE.md invariant 7 forbids
- * suppressing.
+ * sanitiser removes U+2028, U+2029 and U+FEFF, which `\s` matches, so a phrase
+ * spaced with them (`system\u2028prompt`) matches only in the original; it
+ * also removes zero-width and bidi characters, so a phrase they split
+ * (`Ig\u200bnore previous instructions`) matches only in the sanitised form.
+ * Both forms are taken before any strip stage runs, so either one keeps the
+ * signal for a phrase a later stage would erase. Testing both rewrites
+ * nothing — this is the detection a caller returning the origin's payload
+ * still owes (`LESSONS.md` RC-49): the per-host log is an operator signal
+ * ARCHITECTURE.md invariant 7 forbids suppressing.
  *
  * @param text - The original text
  * @param label - Hostname or filename used as the log label
@@ -62,8 +64,9 @@ export function detectAndLog(text: string, label: string, sanitised?: string): v
 }
 
 /**
- * {@link detectAndLog} for a JSON document returned unchanged — which is every
- * JSON arm, so both of them call this rather than the text form.
+ * {@link detectAndLog} plus a decoded read, for text that may be a JSON
+ * document returned unchanged: `defendForInline` calls it on its JSON arm, and
+ * `processResponse` calls it on every body above its JSON/non-JSON fork.
  *
  * **A document can spell a phrase with string escapes** — `Ig\u200bnore` or
  * `\u0049gnore`, six ASCII bytes per character — which neither text form
@@ -71,8 +74,8 @@ export function detectAndLog(text: string, label: string, sanitised?: string): v
  * decoded rendering is tested too, and discarded: this rewrites nothing
  * (`LESSONS.md` RC-49). `JSON.stringify` writes every non-control character
  * literally, which is what lets the sanitised read join a split phrase. The
- * parse runs only when the text carries a `\u` escape, and not at all on text
- * that is not JSON.
+ * parse is attempted only when the text carries a `\u` escape, and text that
+ * does not parse adds nothing beyond the two text forms.
  *
  * @param text - The text as returned
  * @param label - Hostname or filename used as the log label
@@ -142,7 +145,10 @@ export function stopInjectionCleanup(interval: NodeJS.Timeout): void {
 
 /**
  * Evict entries older than the throttle window.
- * Called on a periodic interval to prevent unbounded map growth.
+ * Run by `startInjectionCleanup`'s interval where a caller started one, and by
+ * `setBounded` before it evicts a live entry at the cap — the cap, not the
+ * interval, is the bound, because the `mcp-curl` root entry exports no
+ * cleanup starter.
  */
 export function cleanupInjectionDetectionMap(): void {
     const now = Date.now();

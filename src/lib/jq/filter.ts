@@ -16,9 +16,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     // into the marker, so `.price.rawJSON` returns the string `"3.140"` and
     // leaks an internal representation as if the origin had sent it. It also
     // turns a scalar into a container for any walk that keys off "is this an
-    // object?" — the same guard `response/processor.ts` needs at its own three
-    // structural tests, and the reason `isRawNumber` is exported beside the
-    // reviver rather than kept private to it.
+    // object?" — which is why `isRawNumber` lives beside the reviver in
+    // `utils/json-lexeme.ts`, where any such walk can reach it.
     if (isRawNumber(value)) return false;
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }

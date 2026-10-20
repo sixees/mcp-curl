@@ -241,8 +241,7 @@ describe("executeJqQuery — file save behavior", () => {
         // At this site the name is built from `basename(sourceFile)` and **the
         // filter never reaches it**, so two filters over one file arrive at the
         // namer identical. No differing query string is needed — batching two
-        // filters in a turn is enough, which is why `docs/todos/012` carries
-        // this as its own criterion.
+        // filters in a turn is enough, which is why this is a case of its own.
         //
         // `Date.now` is pinned because the clock cannot discriminate two writes
         // inside one millisecond: let it run and this case measures the
@@ -366,19 +365,18 @@ describe("executeJqQuery — input boundary errors", () => {
 // -----------------------------------------------------------------------------
 // jq_query's grammar, and the decision behind it.
 //
-// `docs/todos/001` asked for a beacon inside a saved file to be STRIPPED in the
-// returned text, on the reading that `jq_query` took a shorter defence path than
-// `defendText`. It does not: `applyJqFilter` parses its input as JSON and
-// returns `JSON.stringify(...)`, so this text is a JSON document, and
-// a JSON document takes no strip stage on any path, deliberately, because
-// `<script>` and `[a](b)` are legitimate inside JSON string values.
+// `jq_query` does not take a shorter defence path than `defendText`:
+// `applyJqFilter` parses its input as JSON and returns `JSON.stringify(...)`,
+// so this text is a JSON document, and a JSON document takes no strip stage
+// on any path, deliberately, because `<script>` and `[a](b)` are legitimate
+// inside JSON string values.
 //
-// So the asymmetry the todo named was not `jq_query`-vs-`curl_execute`; it was
-// JSON-vs-everything, and it holds identically for `curl_execute --jq_filter`
-// on the same bytes. Stripping here would have made this tool the odd one out
-// AND silently rewritten what `save_to_file` persists. Recorded as RC-8; these
-// tests pin the decided behaviour so a later round reads the decision instead
-// of re-opening it.
+// So the asymmetry is JSON-vs-everything, not `jq_query`-vs-`curl_execute`,
+// and it holds identically for `curl_execute --jq_filter` on the same bytes.
+// Stripping here would make this tool the odd one out AND silently rewrite
+// what `save_to_file` persists. `LESSONS.md` RC-8; these tests pin the
+// decided behaviour so a later round reads the decision instead of
+// re-opening it.
 // -----------------------------------------------------------------------------
 
 describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded)", () => {
@@ -396,11 +394,10 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
     });
 
     it("and the wrap returns it verbatim too — RC-10 reversed on both halves", async () => {
-        // **RC-10's split is gone, and the director settled it that way.** It
-        // read "persisted keeps the JSON exemption; returned does not", and the
-        // returned half rested on `defendForInline` classifying a JSON string
-        // leaf as non-JSON. `classifyBody` now accepts any value that parses, so
-        // a filter returning a string leaf takes the verbatim arm.
+        // **The returned copy takes the JSON exemption, as the persisted one
+        // does.** `classifyBody` accepts any value that parses, so a filter
+        // returning a string leaf takes `defendForInline`'s verbatim arm.
+        // `LESSONS.md` RC-47 reverses RC-10's persisted/returned split.
         //
         // The population is internal staff reading their own APIs' data through
         // a filter they wrote, so a beacon reaching them is not a threat this
@@ -465,12 +462,11 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
     // JSON and the wrap returns JSON unchanged, so the two are the same bytes —
     // and these cases fail if either stops being true.
     //
-    // **The cap is taken from a real uncapped call, never re-derived.** The
-    // first version of this guard computed it with `JSON.stringify` and was
-    // toothless: jq pretty-prints with a two-space indent, so the assumed 530
-    // bytes were really 642, the result was already over the cap on its own
-    // size, and it saved to file with the fix reverted just as it did with the
-    // fix in. It passed for the wrong reason and proved nothing.
+    // **The cap is taken from a real uncapped call, never re-derived.** jq
+    // pretty-prints with a two-space indent, so a cap computed with
+    // `JSON.stringify` understates the output, puts the result over the cap on
+    // its own size, and saves to file whether or not the gate is correct — a
+    // guard that passes for the wrong reason.
     // **A string of beacons**, because it is the shape the strip arm would
     // grow — `[link removed]` is longer than `[a](file:)` — so an at-cap result
     // that stays at-cap is evidence the wrap took the JSON arm and the gate's

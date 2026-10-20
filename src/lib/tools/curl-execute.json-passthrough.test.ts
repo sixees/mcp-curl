@@ -4,10 +4,9 @@
 //
 // **At `executeCurlRequest` rather than beside `defendForInline`**, because
 // every one of these is a property of the COMPOSITION and a direct assertion on
-// the defence cannot see it. Measured on this branch: `defendForInline` returned
-// a JSON body byte-exact while the shipped path still rewrote it, because
-// `formatResponse` prefixed the header block and the wrap's undivided scan ran
-// over the join. A unit test on the defence passed throughout.
+// the defence cannot see it: `defendForInline` can return a JSON body
+// byte-exact while a join upstream of it — header text or a notice in the same
+// string — still sends the composed text down the wrap's undivided scan.
 // `skill: pr-resolver-safety` -> *Where the regression test goes*.
 
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
@@ -118,8 +117,7 @@ describe("018 AC1 — a JSON body survives byte for byte", () => {
         // re-serialising defence emits `1.5`. `keepNumberLexeme` is what keeps
         // the trailing zero, and this is the case that measures it.
         ["trailing-zero decimal", '{"price":1.50}'],
-        // Key order was declined as harmless while it still happened; now it
-        // cannot happen, so it is pinned.
+        // Key order is the origin's, because nothing re-serialises the body.
         ["key order", '{"z":1,"m":2,"a":3}'],
         ["non-ASCII keys", '{"ключ":"значение","日本":"語"}'],
         // **Escaped, because that is the only form that reaches a parser.** An
@@ -215,11 +213,11 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         savedPathFrom(text);
     });
 
-    // A scalar parses, so it IS JSON: the round trip is a validity check, and
-    // what comes back is the payload the origin sent. An endpoint answering
-    // `null` for "no record" is the case that made this worth changing — it used
-    // to write a file `jq_query` cannot even open, because a top-level scalar has
-    // no path to address (`jq/filter.ts` refuses a pathless filter).
+    // A scalar parses, so it IS JSON: the parse is a validity check, and what
+    // comes back is the payload the origin sent. An endpoint answering `null`
+    // for "no record" is the ordinary case — saving it instead would hand the
+    // model a file holding one value that a path-only filter grammar
+    // (`jq/filter.ts` refuses a pathless filter) has nothing to address in.
     for (const [name, body] of [
         ["null", "null"],
         ["a number", "42"],
@@ -238,16 +236,11 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
 
     it("reports the byte count and the path, and echoes NO remote token", async () => {
         // **The declared content type is deliberately absent from this
-        // sentence.** `docs/todos/018` settles it onto the `include_metadata`
-        // JSON field, where the serialiser escapes it; this string is
-        // server-authored prose a model reads as ours, so a remote-echoed token
-        // inside it is what ARCHITECTURE.md invariant 13 admits only in last
-        // position. A first draft interpolated it, and two existing cases in
-        // `register-all-tools.test.ts` caught it.
-        //
-        // **`declared_content_type` is not added by this change**, and nothing
-        // regressed: it was never reported on any branch before. It is coupled
-        // to `MEDIA_TYPE_HEAD`'s deletion, which is the next slice of 018.
+        // sentence.** This string is server-authored prose a model reads as ours,
+        // so a remote-echoed token inside it is what ARCHITECTURE.md invariant 13
+        // admits only in last position. No branch reports the declared type;
+        // `docs/todos/018` settles it onto an `include_metadata` JSON field, where
+        // the serialiser would escape it.
         const body = "<html>nope</html>";
         const text = await fetchBody(body, "text/html");
         expect(text).not.toContain("text/html");
@@ -267,11 +260,12 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
         expect(onDisk).toBe(page);
     });
 
-    // The other side of the sentence above. `diskContent` writes the origin's
-    // octets only where Step 2 was a no-op; where it removed a codepoint the
-    // file is the sanitised text, and claiming exactness there told a reader
-    // diffing the file against the origin that a difference was the origin's.
-    // Reported by chatgpt-codex-connector and coderabbitai on PR #39.
+    // The other side of the sentence above. For a non-JSON body `diskContent`
+    // writes the origin's octets only where Step 2 was a no-op; where it removed
+    // a codepoint the file is the sanitised text, and claiming exactness there
+    // would tell a reader diffing the file against the origin that a difference
+    // was the origin's. Reported by chatgpt-codex-connector and coderabbitai on
+    // PR #39.
     it("says the file is NOT byte-identical when Step 2 changed the body", async () => {
         // The template literal interprets `\u200b`, so `page` already holds a
         // real U+200B. A `.replace` for the six-character text `\u200b` found
@@ -325,8 +319,9 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The four cases Surface 2 round 1 found in the arms above — each an ordinary
-// response from an ordinary API, none of them adversarial.
+// Ordinary responses from ordinary APIs, none of them adversarial, that the
+// arms above must not mishandle: an empty body, a scalar under a filter, and
+// a JSON document led by a BOM or a Unicode space.
 // ---------------------------------------------------------------------------
 describe("018 — the ordinary-response cases round 1 found", () => {
     it("returns an empty body inline and writes NO file (204 / HEAD / 304)", async () => {
@@ -411,24 +406,21 @@ describe("018 — the ordinary-response cases round 1 found", () => {
 // AC 6 — the artefact gate is the same rule as the body gate, and inherits no
 // strip cap.
 //
-// **Both directions, at a size that reaches the save arm**, which is the whole
-// point: `parseJsonDocument` returns `undefined` above `STRIP_PATH_MAX_BYTES`
-// (262,144) while the default inline cap is 500,000, so the arm where this
-// question exists is the arm where `isDefinitelyJson` always answers "not
-// JSON". Both cases below fail against that predicate.
+// **At a size that reaches the save arm**, which is the whole point:
+// `isDefinitelyJson` answers "not JSON" above `STRIP_PATH_MAX_BYTES` (262,144)
+// while the default inline cap is 500,000, so the arm where this question
+// exists is the arm where that predicate always answers no. Every case below
+// sits in that band.
 // ---------------------------------------------------------------------------
 describe("018 AC6 — the artefact gate is the body gate, with no strip cap", () => {
-    // **A zero-width space is what makes these two cases able to fail**, and
-    // without it neither could. Above `STRIP_PATH_MAX_BYTES` no strip stage runs
-    // at all, so at 600 KB the defended text equals the origin text for any
-    // benign body — and an assertion comparing them would pass whichever branch
-    // the artefact took. Step 2 removes this codepoint at ANY size, so it is the
-    // one discriminator available here.
-    //
-    // That is the same false green the last round of this work recorded: an
-    // `application/json` fixture is exempt from the strip stages, so the
-    // defended text equalled the origin bytes and the assertion could not tell
-    // them apart. Caught by probing, not by reading. `LESSONS.md` RC-33.
+    // **A zero-width space is what lets the bare-string case below fail.** Above
+    // `STRIP_PATH_MAX_BYTES` no strip stage runs at all, so at 600 KB the
+    // sanitised text equals the origin text for any benign body — and an
+    // assertion comparing them would pass whichever form the artefact took.
+    // Step 2 removes this codepoint at ANY size, so it is the one discriminator
+    // available here: the file keeps it only if the origin's octets were written.
+    // An `application/json` fixture with no such codepoint is the false green
+    // `LESSONS.md` RC-33 records.
     const ZWSP = "\u200b";
 
     it("persists a 600 KB OBJECT body as the origin's exact octets", async () => {
@@ -580,12 +572,11 @@ describe("018 — two remote regions, two content entries", () => {
     }
 
     it("emits the notice exactly ONCE on the saved plain branch", async () => {
-        // **The fix for the notice prefix introduced this, and no test caught
-        // it.** `formatResponse` kept joining the notice to the saved-to-file
-        // MESSAGE — sound in itself, since both sides are server-authored — while
-        // `curl-execute.ts` also appends the notice entry unconditionally. So on
-        // a non-zero exit with a saved body the model received it twice. One
-        // rule now: notices travel as their own entry, always. `LESSONS.md` RC-46.
+        // Notices travel as their own entry on every branch, the saved one
+        // included, and `curl-execute.ts` appends that entry unconditionally — so
+        // joining the notice onto the saved-to-file message, sound in itself since
+        // both sides are server-authored, would deliver it twice on a non-zero
+        // exit. `LESSONS.md` RC-46.
         const base = curlOutputFor({ body: "<html>nope</html>", contentType: "text/html" });
         mockedExecuteCommand.mockResolvedValue({ ...base, exitCode: 18 });
         const result = await executeCurlRequest(

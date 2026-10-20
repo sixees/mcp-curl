@@ -71,11 +71,13 @@ export interface McpCurlConfig {
      * leaving spotlighting off.
      *
      * **"As the origin wrote it" includes Unicode attack codepoints.** A JSON
-     * document carrying a literal U+200B or U+202E comes back with it; only
-     * the injection-detection log notices. `curl_execute` reports the
+     * document carrying a literal U+200B or U+202E comes back with it, and
+     * nothing reports the codepoint itself: the injection-detection log fires
+     * only where one splits an injection phrase. `curl_execute` reports the
      * exceptions it can see: `body_decode_lossy` for a non-UTF-8 origin, and
      * `savedMessage` naming which form an artefact holds — the sanitised one
-     * only for a body that parses solely once a leading U+FEFF is removed. The
+     * only for a non-JSON body Step 2 changed; a JSON document, a leading
+     * U+FEFF included, is always saved as the origin's octets. The
      * wrap is idempotent via a
      * module-private, non-enumerable `Symbol` tag with an own-property check
      * (so the tag cannot be forged from outside the wrap module and an

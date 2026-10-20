@@ -93,8 +93,8 @@ export interface WrapperConfig {
  * text tuple) and the SDK's `CallToolResult` (multi-part array).
  *
  * `text?: string` (not `unknown`) — the runtime guard inside `processTextPart`
- * already enforces the string check, so the type can be tight; downstream
- * consumers no longer need a redundant `typeof === "string"` check.
+ * already enforces the string check, so the type can be tight and downstream
+ * consumers need no redundant `typeof === "string"` check.
  */
 export interface WrappableContentPart {
     type: string;
@@ -204,7 +204,7 @@ function tag<T extends object>(result: T): T {
 /**
  * Defend one text part.
  *
- * Passes `contentTypeUndetermined: true` because at this
+ * `defendForInline` passes `contentTypeUndetermined: true` because at this
  * boundary the content type genuinely is undetermined: a `registerCustomTool()`
  * handler return, a `beforeRequest` short-circuit and a YAML endpoint result
  * arrive as bare text with no declared grammar. `defendText` reads that as the
@@ -215,9 +215,9 @@ function tag<T extends object>(result: T): T {
  * question with `classifyBody` before these options exist, so the flag's job
  * here is to stop `defendText` re-asking it with a different predicate
  * (`isDefinitelyJson`) and reaching a different answer — one rule, one
- * decision site. Its secondary reason still holds: the exemption is about a
- * persisted artefact, `processResponse` writes to disk and `jq_query` reads it
- * back, and nothing on this boundary writes to disk. `LESSONS.md` RC-10.
+ * decision site. Its secondary reason still holds: the exemption protects a
+ * persisted artefact, and nothing on this boundary writes to disk.
+ * `LESSONS.md` RC-10.
  *
  * **A beacon inside a JSON string value therefore reaches the model, and that
  * is settled rather than overlooked.** A whole-document strip pairs `<!--` in

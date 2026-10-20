@@ -42,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`curl_execute`'s description states the contract it keeps.** It said attack
   codepoints are removed from a JSON body first; it now says nothing in one is
   removed or rewritten, and names every transform a saved non-JSON artefact can
-  carry. Saved-file messages quote the decoded size beside the on-disk size when a
-  lossy decode grew the body, name the U+FFFD substitution on a sanitised artefact,
+  carry. The over-cap message quotes the decoded size beside the on-disk size when a
+  lossy decode grew the body; saved-file messages name the U+FFFD substitution on a sanitised artefact,
   and no longer tell the model `jq_query` cannot read a non-JSON body's file.
 
 - **The over-cap notice leads with the saved file.** It says the file is valid to
