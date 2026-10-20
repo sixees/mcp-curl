@@ -24,6 +24,7 @@ import { DEFAULT_USER_AGENT } from "../config/index.js";
 // `curl-output.test-fixture.ts` — so this is what ties it to the contract.
 import type { CommandResult } from "../execution/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
+import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
 import { isWrappedResult } from "../response/index.js";
 
 // The real separator length, not a short stand-in: the metadata search window
@@ -167,9 +168,29 @@ const ZWSP = "\u200b";
 
 const textOf = (result: unknown) => (result as { content: { text: string }[] }).content[0].text;
 
+/**
+ * **The witness that the wrap COMPLETED on a JSON part: its tag, and no
+ * `[wrap-error]` line.** The tag alone is not one — `createWrapper`'s catch
+ * logs the error and then tags the untouched result, which is byte-identical
+ * to a correct detect-only pass. The detection log is not one either here:
+ * the body path logs the same host first and the throttle swallows the wrap's
+ * own line. What a fail-open leaves behind is the error line, so its absence
+ * beside the tag is what separates the two.
+ */
+function expectWrapCompleted(result: unknown, spy: { mock: { calls: unknown[][] } }): void {
+    expect(isWrappedResult(result)).toBe(true);
+    const lines = spy.mock.calls.map((c) => String(c[0]));
+    expect(lines.filter((l) => l.startsWith("[wrap-error]"))).toEqual([]);
+}
+
+// Captured, not printed: `expectWrapCompleted` reads it for `[wrap-error]`.
+let errorSpy: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
     clearInjectionDetectionMap();
+    clearWrapErrorMap();
     vi.clearAllMocks();
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
 // Teardown at describe scope, not in the test bodies. An in-body
@@ -180,6 +201,7 @@ beforeEach(() => {
 // `extensible/tool-wrapper.test.ts`.
 afterEach(() => {
     vi.unstubAllEnvs();
+    errorSpy.mockRestore();
 });
 
 describe("registerAllTools — the shipped binary's registration path", () => {
@@ -213,7 +235,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         const text = textOf(result);
 
         // The wrap ran.
-        expect(isWrappedResult(result)).toBe(true);
+        expectWrapCompleted(result, errorSpy);
         // And returned the value verbatim: the codepoint and the beacon both stay.
         expect(text).toContain(ZWSP);
         expect(text).toContain("evil.test");
@@ -326,7 +348,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
                 });
                 const text = textOf(result);
 
-                expect(isWrappedResult(result)).toBe(true);
+                expectWrapCompleted(result, errorSpy);
                 // Byte for byte, at every depth: the JSON arm held.
                 expect(text).toContain(ZWSP);
                 expect(text).toContain("evil.test");
@@ -495,7 +517,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
             const text = textOf(result);
 
-            expect(isWrappedResult(result)).toBe(true);
+            expectWrapCompleted(result, errorSpy);
             expect(text).toBe(body);
             // The header text is its own entry, so nothing paired across the join.
             expect((result as { content: unknown[] }).content).toHaveLength(2);
@@ -636,7 +658,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             const result = await handlers.get("curl_execute")!(params({}), { sessionId: undefined });
             const text = textOf(result);
 
-            expect(isWrappedResult(result)).toBe(true);
+            expectWrapCompleted(result, errorSpy);
             expect(text).toContain("9223372036854775807");
             expect(text).toBe(body);
         });
