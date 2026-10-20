@@ -4,8 +4,8 @@
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
 // the full response-side defence — `defendForInline`, then optional
 // spotlighting — over each text content part of a `CallToolResult`. A part that
-// parses as JSON takes that function's verbatim arm (Step 2 alone); every other
-// part gets Steps 2-5.
+// parses as JSON takes that function's verbatim arm (detection only, no
+// rewrite); every other part gets Steps 2-5.
 // Server-scope config (the spotlighting flag) is bound once at server
 // creation; request-scope hostname is passed per call so the per-host
 // injection-detection throttle keys correctly.
@@ -24,8 +24,8 @@
 //    part reaches `defendText()`, whose Step 2 detects on the **original**
 //    text before sanitisation; that ordering is load-bearing because Steps
 //    3-5 strip the byte sequences the detector looks for, so detecting first
-//    preserves the log signal. A JSON part gets Step 2 alone, which detects
-//    and sanitises and rewrites nothing else. `processTextPart` below states
+//    preserves the log signal. A JSON part is detected on and returned
+//    unchanged (`LESSONS.md` RC-49). `processTextPart` below states
 //    which options this boundary passes on the non-JSON arm, and what each
 //    one costs.
 //
@@ -173,8 +173,8 @@ export function isWrappedResult(result: unknown): boolean {
  * trade-off: a downstream wrap on the same frozen result will re-run the
  * pipeline. That is semantically harmless: `defendForInline` is idempotent on
  * this boundary's options — the entity decode is off, every remaining stage
- * rewrites to a form it no longer matches, and the JSON arm sanitises and
- * detects without rewriting, which is a fixed point — and `applySpotlighting`
+ * rewrites to a form it no longer matches, and the JSON arm detects without
+ * rewriting, which is a fixed point — and `applySpotlighting`
  * short-circuits on already-wrapped envelopes. The worst case is one extra linear pass over the
  * body, never a correctness issue.
  *

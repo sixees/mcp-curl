@@ -6,10 +6,10 @@ import { basename } from "path";
 import { JqQuerySchema, type JqQueryInput } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
-import { validateFilePath } from "../security/index.js";
+import { detectAndLog, validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
-import { getErrorMessage, sanitizeDescription, JSON_MIME } from "../utils/index.js";
-import { defendText, exceedsInlineCap, writeUniqueFile } from "../response/index.js";
+import { getErrorMessage, sanitizeDescription } from "../utils/index.js";
+import { exceedsInlineCap, writeUniqueFile } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
@@ -104,39 +104,29 @@ export async function executeJqQuery(
 
             const filtered = applyJqFilter(content, params.jq_filter);
 
-        // Defend after filtering — jq may concentrate injection strings from
-        // sparse input. Detection logging is throttled per label inside the helper.
+        // Detect after filtering — jq may concentrate injection strings from
+        // sparse input, and `JSON.parse` decodes escapes into real characters.
+        // Detection logging is throttled per label inside the helper.
         //
-        // Routed through the shared pipeline rather than an assembled subset of
-        // it (invariant 1a). `applyJqFilter` parses its input as JSON and
-        // returns `JSON.stringify(...)`, so this text IS a JSON document and
-        // gets the pipeline's JSON arm: sanitise + detect, no markup or
-        // markdown stripping. That is the same treatment `curl_execute
-        // --jq_filter` gives the identical bytes, and the reason is
-        // `processResponse`'s: `<script>` and `[a](b)` are legitimate inside
-        // JSON string values, and this output is written to disk under
-        // `save_to_file` and read back by this same tool.
-        //
-        // Calling `defendText` rather than reproducing its JSON arm is what
-        // keeps that true: if the JSON grammar's treatment ever changes, this
-        // channel follows instead of silently staying behind.
-        //
-        // This governs what gets WRITTEN under `save_to_file`. Persisted keeps
-        // the exemption; returned does not (ARCHITECTURE.md invariant 1a).
+        // **Detect, never rewrite.** `applyJqFilter` parses its input as JSON and
+        // returns `JSON.stringify(...)`, so this text IS a JSON document — the
+        // origin's data, selected — and the middleware contract every JSON arm
+        // follows applies to it: it is the agent's, not this server's to
+        // sanitise (`LESSONS.md` RC-49). That is the same treatment
+        // `curl_execute --jq_filter` and the post-processor wrap give the
+        // identical bytes, and it governs what is returned and what is written
+        // under `save_to_file` alike.
         const label = basename(validatedFilePath);
-        const persisted = defendText(filtered, {
-            contentType: JSON_MIME,
-            contentTypeUndetermined: false,
-            hostname: label,
-        });
+        detectAndLog(filtered, label);
+        const persisted = filtered;
 
         // Handle result size and file saving.
         //
         // **The gate weighs the bytes the model receives, and here they are the
         // same bytes as the ones on disk.** `persisted` is a JSON document, so
         // the post-processor wrap's `defendForInline` takes its verbatim arm —
-        // sanitise and detect, no markup stripping and no re-serialisation —
-        // which cannot lengthen the text.
+        // detection only, no rewrite of any kind — which cannot lengthen the
+        // text.
         //
         // `exceedsInlineCap` is still the call to make rather than a bare byte
         // comparison. It owns the rule that a size gate answers about the

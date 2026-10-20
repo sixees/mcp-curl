@@ -226,11 +226,12 @@ runs three steps in fixed order on each text part:
 
 1. **Detect** injection patterns against the **original** text and emit a
    throttled `[injection-defense] [host]` log line.
-2. **Sanitise** Unicode attack chars and collapse whitespace runs.
-3. **Spotlight** the sanitised text using a per-message UUID — only when this
-   flag is `true`.
+2. **Sanitise** Unicode attack chars and collapse whitespace runs — on every
+   part except one that parses as JSON, which is returned exactly as written.
+3. **Spotlight** the text using a per-message UUID — only when this flag is
+   `true`.
 
-Steps 1 and 2 always run regardless of this flag. The wrap is idempotent (same
+Steps 1 and 2 run regardless of this flag. The wrap is idempotent (same
 result wrapped twice is a no-op) and fail-open (an internal exception returns
 the original result and logs `[wrap-error] [host]`), so defence-in-depth never
 breaks the handler boundary.

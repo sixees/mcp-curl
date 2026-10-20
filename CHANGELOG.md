@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: a JSON payload is detected on, never rewritten, at every layer.**
+  The server is middleware: the payload is the calling agent's to interpret. Unicode
+  attack codepoints (zero-width, bidi overrides and the rest of the sanitiser's
+  class) are no longer removed from a JSON body by `curl_execute`, from
+  `jq_query`'s or `curl_execute --jq_filter`'s output, or from a JSON text part the
+  wrap returns — which includes the results of YAML-schema tools and custom tools
+  registered on `McpCurlServer`. The `[injection-defense]` detection log still
+  fires on all of them. A custom tool that wants those codepoints removed from its
+  JSON result removes them itself. Non-JSON text — headers, stderr, a non-JSON
+  custom-tool result — keeps the full pipeline.
+
+- **A saved JSON body is the origin's octets whenever they parse as they are.** A
+  body that parses only once a leading U+FEFF is removed is still saved and
+  returned in that sanitised form, since `jq_query` cannot open the raw octets;
+  the message says which form the file holds.
+
+- **The over-cap notice leads with the saved file.** It says the file is valid to
+  analyse with `jq_query` at no further request, and offers narrowing the next
+  request (fewer fields, a limit, pagination) second — on a rate-limited API a
+  re-request spends quota the bytes on disk do not. It no longer claims an "inline
+  defence pass" that does not run on JSON.
+
 ## [4.0.2] - 2026-09-10
 
 ### Notes

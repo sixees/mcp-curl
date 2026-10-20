@@ -288,8 +288,10 @@ describe("executeJqQuery — file save behavior", () => {
 });
 
 describe("executeJqQuery — defence-in-depth observability", () => {
-    it("strips Unicode-attack characters from filtered output (sanitization)", async () => {
-        // Zero-width space (U+200B) inside a string value — must not survive sanitization.
+    it("returns Unicode-attack characters in filtered output verbatim", async () => {
+        // Zero-width space (U+200B) inside a string value. The output is the
+        // origin's data, selected, and not this server's to rewrite
+        // (`LESSONS.md` RC-49); detection is the next case.
         const ZWSP = "\u200B";
         const file = join(allowedDir, "zwsp.json");
         await writeFile(file, JSON.stringify({ msg: `hel${ZWSP}lo` }));
@@ -300,8 +302,7 @@ describe("executeJqQuery — defence-in-depth observability", () => {
         );
 
         expect(result.isError).toBeUndefined();
-        expect(result.content[0].text).not.toContain(ZWSP);
-        expect(result.content[0].text).toBe('"hello"');
+        expect(result.content[0].text).toBe(`"hel${ZWSP}lo"`);
     });
 
     it("logs an injection-defense detection event when filtered content matches a known pattern", async () => {
@@ -418,10 +419,12 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
         expect(wrapped.content[0].text).toBe(JSON.stringify(`see ${beacon}`));
     });
 
-    it("still sanitises Unicode attack characters concentrated by the filter", async () => {
-        // The teeth for the two tests above: they assert that something is NOT
-        // removed, and an implementation that defended nothing at all would
-        // satisfy both. This one fails unless Step 2 actually runs.
+    it("returns Unicode attack characters concentrated by the filter verbatim", async () => {
+        // The tests above assert that something is NOT removed, and so does
+        // this one: no pass rewrites a JSON document. What an implementation
+        // that defended nothing at all would fail is detection — "logs an
+        // injection-defense detection event when filtered content matches a
+        // known pattern" is that case.
         const file = join(allowedDir, "bidi.json");
         await writeFile(
             file,
@@ -433,9 +436,7 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
             { filepath: file, jq_filter: ".note" } as never,
             {}
         );
-        expect(result.content[0].text).not.toContain("\u202E");
-        expect(result.content[0].text).not.toContain("\u200B");
-        expect(result.content[0].text).toContain("okeviltext");
+        expect(result.content[0].text).toBe(JSON.stringify("ok\u202Eevil\u200Btext"));
     });
 
     it("an ERROR result is defended in full by the wrap", async () => {

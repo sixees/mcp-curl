@@ -697,12 +697,13 @@ function savedMessage(facts: SavedMessageFacts): string {
  * 1. Size guard against {@link LIMITS.MAX_RESPONSE_SIZE}, on the wire octets and
  *    again on the decode — a body that is not valid UTF-8 decodes LARGER,
  *    because each bad sequence becomes a three-byte replacement character.
- * 2. **Sanitise + detect**, always, and the only defence pass on this path.
- * 3. Classify, once, with {@link classifyBody}.
- * 4. A `jq_filter` runs only on a JSON body, and its output is re-sanitised
- *    because `JSON.parse` can decode an escape into a real attack codepoint.
- * 5. A JSON body inside `maxResultSize` is returned; anything else is saved and
- *    its path reported.
+ * 2. **Detect**, always, on the origin's decode. Nothing on this path rewrites
+ *    the payload; a sanitised copy exists only for step 3.
+ * 3. Classify, once, with {@link classifyBody}, over that sanitised copy.
+ * 4. A `jq_filter` runs only on a JSON body, and its output is re-detected
+ *    because `JSON.parse` can decode an escape into a real injection phrase.
+ * 5. A JSON body inside `maxResultSize` is returned as the origin's decode;
+ *    anything else is saved and its path reported.
  *
  * **No strip stage runs here, on either arm.** ARCHITECTURE.md invariants 1a and
  * 14 carry why, and `LESSONS.md` RC-47 carries who decided it. `defendText`

@@ -203,7 +203,7 @@ here are for a pipeline that runs outside the MCP handler boundary.
 
 | Helper | Use when... | Notes |
 |--------|-------------|-------|
-| `defendText(text, options)` | You want the defence the built-in tools apply. | **This is the whole pipeline.** Everything below it is one stage of it. |
+| `defendText(text, options)` | You want the defence the built-in tools apply to non-JSON text. | **This is the whole pipeline.** Everything below it is one stage of it. |
 | `applySpotlighting(text, requestId)` | You're emitting external content and want the LLM to treat it as data, not instructions. | Idempotent — pre-wrapped content is returned unchanged. Pass `randomUUID()`. |
 | `sanitizeAndDetect(text, label)` | You want Step 2 alone — the Unicode strip plus the detection log. | Locks the detect-on-original ordering. **Not the full defence:** see the warning below. |
 | `sanitizeResponse(text)` | You need only the Unicode/whitespace strip without the detection signal. | Lower-level still. |
@@ -306,12 +306,13 @@ idempotent and the sanitiser is idempotent on already-sanitised text.
 layer does differs by tool — a uniform "defended twice" is not true of any of
 them:
 
-- **`curl_execute`** applies Step 2 alone before classifying. A non-JSON body is
-  never returned inline, so it does not reach the wrap at all; it is saved, and
-  the wrap sees only the server-authored report. An inline JSON body is
-  sanitised again at the wrap, with no strip stage.
-- **`jq_query`** runs `defendText` over the filter's output under the JSON
-  grammar, then the wrap takes its verbatim-JSON arm on the same text.
+- **`curl_execute`** detects on the body before classifying it, and rewrites
+  nothing. A non-JSON body is never returned inline, so it does not reach the
+  wrap at all; it is saved, and the wrap sees only the server-authored report.
+  An inline JSON body is returned as the origin sent it, and the wrap detects on
+  it again without rewriting it.
+- **`jq_query`** detects on the filter's output and returns it unchanged, and
+  the wrap takes its verbatim-JSON arm on the same text.
 - **A custom tool's result** reaches the wrap with no tool-local body defence at
   all, which is why the wrap exists.
 
@@ -319,11 +320,14 @@ Where two passes do land on one text, the second is additive rather than
 corrective: every strip stage is idempotent, and the wrap's pass is the
 less-informed one.
 
-**Where a result parses as JSON, no strip stage runs at any layer.** `curl_execute`
-returns a JSON body as the origin sent it, and the wrap's `defendForInline` takes
-its verbatim arm for any text that parses — a JSON string leaf from `jq_query`
-included. The parse is a validity check, not a transform: what comes back is the
-payload, not a re-serialisation of it.
+**Where a result parses as JSON, nothing rewrites it at any layer** — no strip
+stage and no Unicode sanitise. `curl_execute` returns a JSON body as the origin
+sent it, and the wrap's `defendForInline` takes its verbatim arm for any text that
+parses — a JSON string leaf from `jq_query`, and a custom tool's JSON result,
+included. Injection detection still runs and still logs. The parse is a validity
+check, not a transform: what comes back is the payload, not a re-serialisation of
+it. **If your handler returns JSON and you want invisible or bidirectional
+codepoints removed, remove them yourself**: the wrap no longer does.
 
 **Why the stages come off rather than being narrowed.** Running them on a JSON
 document requires walking it, and a walk requires a round trip that is not
