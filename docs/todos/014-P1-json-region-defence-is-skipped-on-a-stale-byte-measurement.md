@@ -1,7 +1,7 @@
 ---
 id: 014
 title: "A JSON document's region-wise defence is skipped on a pre-sanitise byte measurement"
-status: open
+status: complete
 severity: P1
 tags: [code-review, security, invariant-16]
 class-id: fail-open-default
@@ -106,7 +106,7 @@ than folded into that branch.
 
 ## Acceptance criteria
 
-- [ ] **Corrected 2026-09-07 — the original criterion could not fail.** It
+- [x] **Corrected 2026-09-07 — the original criterion could not fail.** It
       specified an `application/json` declaration, and `isSniffableContentType`
       returns `false` for that type while neither `supportsMarkupComments` nor
       `isMarkdownContentType` matches it — so a declared `application/json` body
@@ -116,25 +116,40 @@ than folded into that branch.
       the collapse, so no stage would have run even had it reached the path.
       **Derive the input from the gate it must cross, not from the defect's
       prose.** The criterion is now:
-- [ ] A JSON body served with **no `Content-Type` header at all**, above
+- [x] A JSON body served with **no `Content-Type` header at all**, above
       `STRIP_PATH_MAX_BYTES` (262,144) before sanitisation and below it after —
       ~327 KB with ~60 KB of collapsible ≥50-character space runs measures
       correctly — with `<!--` in an early field and `-->` in a late one, returns
       with **every top-level key intact**, driven end to end through
       `executeCurlRequest`, and asserted on the persisted file as well as the
       inline return.
-- [ ] ~~The nested-string arm in `defendJsonLeaves` is covered by its own case — a
+- [x] ~~The nested-string arm in `defendJsonLeaves` is covered by its own case — a
       string leaf that is itself a >256 KB JSON document.~~ **Void:**
       `defendJsonLeaves` was deleted by PR #39 along with the per-leaf walk, so
       there is no arm to cover. Left struck rather than removed, because the
       criterion records what was once required.
-- [ ] Removing the fix makes the end-to-end case fail (teeth probed, not assumed).
+- [x] Removing the fix makes the end-to-end case fail (teeth probed, not assumed).
 
 ## Work log
 
 - 2026-09-06 — filed from `/sixees-workflow:review` of PR #37. Mechanism confirmed
   by data-integrity-guardian in round 2; scope confirmed out-of-diff by the
   orchestrator against `git diff`.
+- 2026-10-20 — **closed.** Audited against HEAD on
+  `fix/014-json-region-defence-end-to-end-guard`. `parseJsonDocument` no longer
+  exists. `defendForInline` decides JSON with `classifyBody`, which has no byte
+  cap, and returns a JSON document unchanged (018's first slice, `LESSONS.md`
+  RC-37, RC-49), so no defence is decided on a pre-sanitise byte count anywhere.
+  Proposed solutions 1 and 2 are obsolete: both edit the deleted function.
+  Added the end-to-end criterion as
+  `src/lib/tools/register-all-tools.test.ts::"a body the sanitiser shrinks under the strip cap"`.
+  It runs on the shipped registration path, so the wrap runs. It sends no
+  `Content-Type` and asserts on the inline return and on the persisted file.
+  "Removing the fix" was read as reinstating a pre-sanitise size gate, since
+  there is no fix of this branch's own to remove. Probed twice, once per gate:
+  a cap in `classifyBody` fails both cases, and a cap in `defendForInline` alone
+  fails the inline case with `secret` and `c` deleted. The review filed todo 021
+  (P3): the input body is now built in two suites.
 
 ## Resources
 
