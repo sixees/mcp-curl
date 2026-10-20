@@ -35,11 +35,11 @@ At your direction, this branch adds the one end-to-end case the todo's acceptanc
 
 - **The inline case is the one that catches the todo's exact mechanism.** A size cap put into `defendForInline` alone deletes `secret` and `c` and fails only that case. The persisted case catches the same cap only when it sits in `classifyBody`, because the body path goes through that function.
 - **A related case, declined.** The wrap classifies the body before sanitising it. So a body that is invalid JSON as sent but valid once sanitised can take the undivided strip, for example one with U+200B between tokens. No one is in the population that could be harmed by this. A party that controls only one string value inside a JSON response cannot put a character between tokens. Only the origin can, and the origin already authors every byte of the response. No todo was filed.
-- Todo 021 (P3) applies to this diff: the fixture now exists in two suites.
+- Todo 021 (P3) applies to this diff: the fixture now exists in two suites. **Resolved in `dd4c36a`; see *Resolved Todos*.**
 
 ## Known issues and limitations
 
-- **Todo 021: the straddle body is built twice.** The older copy in `defend-text.test.ts` checks the raw size against a hard-coded `262_144` and never measures after sanitising. This branch added the second copy, and `.claude/rules/02-reuse-first.md` says to extract a second copy rather than keep it. `/work`'s review step applies no fix, so it is filed as `pending` and is yours to call. It is effort `s` and could be folded into this branch before the push.
+- **Todo 021: the straddle body is built twice.** The older copy in `defend-text.test.ts` checks the raw size against a hard-coded `262_144` and never measures after sanitising. This branch added the second copy, and `.claude/rules/02-reuse-first.md` says to extract a second copy rather than keep it. `/work`'s review step applies no fix, so it is filed as `pending` and is yours to call. It is effort `s` and could be folded into this branch before the push. **Resolved in `dd4c36a`; see *Resolved Todos*.**
 - **Two review notes were not filed:**
   - The block comment's "both copies the model can be handed" is loose wording. The saved file reaches the model only through `jq_query`.
   - The test imports `utils/sanitize.js` directly, while `processor.ts` reaches it through the `utils/index.js` barrel.
@@ -71,13 +71,13 @@ Read the commit body of `1d8ee39`, then the new describe block. Then read `src/l
 
 ## Follow-up work
 
-- [ ] Disposition todo 021: extract the straddle fixture, or decline it.
+- [x] Disposition todo 021: extract the straddle fixture, or decline it. Extracted in `dd4c36a`.
 
 ### Outstanding Todos
 
 | File | Priority | Description | Source |
 |---|---|---|---|
-| 021 | p3 | The strip-cap straddle fixture is built twice, with two different preconditions | review, `pattern-recognition-specialist` |
+| 021 | p3 | The strip-cap straddle fixture is built twice, with two different preconditions. **Resolved in `dd4c36a`; no longer outstanding** | review, `pattern-recognition-specialist` |
 
 ### Resolved Todos
 
@@ -153,8 +153,47 @@ There was no work handoff when the review ran. The commit body was the builder's
 
 | Todo | Priority | Description | Source |
 |---|---|---|---|
-| 021 | p3 | The strip-cap straddle fixture is built twice | `pattern-recognition-specialist` |
+| 021 | p3 | The strip-cap straddle fixture is built twice. **Resolved after this review, in `dd4c36a`** | `pattern-recognition-specialist` |
 
 **Open classes without a todo:** none.
 
 **Blockers:** none.
+
+## Review Comments Addressed — 2026-10-20
+
+**PR:** #45, Surface 3, round 1. The bots requested were CodeRabbit (`full review`), Codex (`@codex review`, scoped) and Copilot (reviewer request). The baseline was 0 open comments, and this read returned 5.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| The handoff still describes todo 021 as pending, after recording it as resolved | coderabbitai | Fix needed (P3, in scope: the handoff is added in this PR) | Marked each pending-tense 021 entry as resolved, citing `dd4c36a`, in five places: *What to pay attention to*, *Known issues*, *Follow-up work*, *Outstanding Todos*, and the review record's outstanding table. These are annotations, not deletions, because handoffs are append-only |
+
+### Declined Findings
+
+None this round. Nothing was declined.
+
+### Entries carrying no finding
+
+| Entry | Reviewer | What it is |
+|---|---|---|
+| Review summary (`issue`) | chatgpt-codex-connector | Code review completed on `5586377`, with no findings |
+| Review receipt (`issue`) | chatgpt-codex-connector | "Didn't find any major issues" |
+| Command acknowledgement (`issue`, `ack`) | coderabbitai | "Full review finished" |
+| Review body (`review`) | copilot-pull-request-reviewer | "🟢 Approval recommended — no open issues". Written against `5586377`, submitted after the request. Its file table lists all 5 changed files |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None this round. Both todos on this branch were already resolved above.
+
+### Outstanding Todos
+
+None.
+
+### Files Modified
+
+- `docs/work/handoff-fix-014-json-region-defence-end-to-end-guard.md`
