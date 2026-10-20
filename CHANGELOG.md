@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.1] - 2026-10-20
+
+### Notes
+
+- **Nothing in the published package changed.** No production module was touched,
+  so `dist` builds byte-identical to 5.0.0. This release tags the branch that adds
+  the guard below; consumers can skip it.
+
+### Added
+
+- **An end-to-end guard against a JSON size decision taken before sanitising.** A
+  JSON body with no `Content-Type` is above `STRIP_PATH_MAX_BYTES` as sent and below
+  it once Step 2 collapses its padding, and carries `<!--` in an early field and
+  `-->` in a late one. The guard drives it through the shipped registration path
+  and asserts that every key survives, byte-exact, both inline and in the saved
+  artefact. A size cap reinstated in `classifyBody` fails the guard, and so does
+  one in `defendForInline` alone, which deletes the fields between the markers.
+
+- **`response/strip-cap-straddle.test-fixture.ts`** holds that input and its
+  precondition. The precondition is measured with the real cap and the real
+  sanitiser, and both the end-to-end guard and the `defendText` unit case use it,
+  so a moved cap or a changed collapse rule fails both instead of emptying one.
+
 ## [5.0.0] - 2026-10-20
 
 ### Changed

@@ -15,7 +15,7 @@
 // one stage's contract.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
@@ -27,7 +27,13 @@ import type { CommandResult } from "../execution/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
 import { isWrappedResult } from "../response/index.js";
+import {
+    STRADDLE_BODY,
+    STRADDLE_KEYS,
+    assertStraddlesStripCap,
+} from "../response/strip-cap-straddle.test-fixture.js";
 import { CURL_EXECUTE_TOOL_META } from "./curl-execute.js";
+import { savedPathFrom } from "./curl-output.test-fixture.js";
 
 // The real separator length, not a short stand-in: the metadata search window
 // is sized from it, so a shorter mock hides margin the production path lacks.
@@ -721,6 +727,62 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
             const outer = (JSON.parse(text) as { outer: string }).outer;
             expect(Object.keys(JSON.parse(outer) as object)).toEqual(["__proto__", "ok"]);
+        });
+
+        // ---------------------------------------------------------------
+        // A size gate measured before Step 2: the shared straddle body is above
+        // `STRIP_PATH_MAX_BYTES` as sent and below it after the collapse, so a
+        // JSON decision keyed on the raw byte count declines the document while
+        // the strip cap admits it, and the undivided strip deletes `secret`. No
+        // `Content-Type` at all, because a declared `application/json` never
+        // reaches the strip arm at any size and would pass against the defect.
+        // `defend-text.test.ts` pins the same input against `defendText` alone;
+        // this pins the composition, inline and in the saved artefact
+        // `jq_query` reads.
+        // ---------------------------------------------------------------
+        describe("a body the sanitiser shrinks under the strip cap", () => {
+            const body = STRADDLE_BODY;
+            const keys = STRADDLE_KEYS;
+            const saved: string[] = [];
+            afterEach(async () => {
+                await Promise.all(saved.splice(0).map((f) => rm(f, { force: true })));
+            });
+
+            it("crosses the strip cap only before sanitising", () => {
+                // The precondition the two cases below rest on, so a resized
+                // fixture fails here rather than passing them vacuously.
+                assertStraddlesStripCap();
+            });
+
+            it("returns every key inline, byte for byte", async () => {
+                mockedExecuteCommand.mockResolvedValue(curlOutput(body, ""));
+
+                const handlers = registerViaShippedPath();
+                const result = await handlers.get("curl_execute")!(params({}), {
+                    sessionId: undefined,
+                });
+
+                expectWrapCompleted(result, errorSpy);
+                expect(Object.keys(JSON.parse(textOf(result)) as object)).toEqual(keys);
+                expect(textOf(result)).toBe(body);
+            });
+
+            it("persists every key as the origin's octets", async () => {
+                mockedExecuteCommand.mockResolvedValue(curlOutput(body, ""));
+
+                const handlers = registerViaShippedPath();
+                const text = textOf(
+                    await handlers.get("curl_execute")!(params({ save_to_file: true }), {
+                        sessionId: undefined,
+                    })
+                );
+                const path = savedPathFrom(text);
+                saved.push(path);
+
+                const onDisk = await readFile(path);
+                expect(Object.keys(JSON.parse(onDisk.toString("utf8")) as object)).toEqual(keys);
+                expect(onDisk.equals(Buffer.from(body, "utf8"))).toBe(true);
+            });
         });
     });
 

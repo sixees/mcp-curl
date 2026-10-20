@@ -4,6 +4,11 @@
 
 import { describe, it, expect } from "vitest";
 import { defendText, type DefendTextOptions } from "./processor.js";
+import {
+    STRADDLE_BODY,
+    STRADDLE_KEYS,
+    assertStraddlesStripCap,
+} from "./strip-cap-straddle.test-fixture.js";
 
 const HOST = "example.test";
 
@@ -87,24 +92,15 @@ describe("defendText — the JSON exemption is decided on the bytes the strip se
     });
 
     it("keeps every key when sanitising collapses the body under the strip cap", () => {
-        // The second route, and it needs no invisible characters. Above
-        // `STRIP_PATH_MAX_BYTES` raw, `parseJsonDocument` returns undefined and
-        // the exemption is lost; the padding then collapses below the cap, so
+        // The second route, and it needs no invisible characters. A JSON test
+        // keyed on the raw byte count loses the exemption above
+        // `STRIP_PATH_MAX_BYTES`; the padding then collapses below the cap, so
         // `exceedsStripCap` is false and the strip runs on a document its own
         // size had exempted it from. Both gates now read the same bytes.
-        const run = " ".repeat(200); // >= 50 chars, collapses to one
-        const filler = Array.from({ length: 1600 }, (_, i) => `f${i}${run}`).join("");
-        const body = JSON.stringify({
-            a: "open <!--",
-            secret: "SENTINEL",
-            c: "close -->",
-            d: "kept",
-            filler,
-        });
-        expect(Buffer.byteLength(body, "utf8")).toBeGreaterThan(262_144);
+        assertStraddlesStripCap();
 
-        const out = defendText(body, { ...determined, contentType: undefined });
-        expect(keysOf(out)).toEqual(["a", "secret", "c", "d", "filler"]);
+        const out = defendText(STRADDLE_BODY, { ...determined, contentType: undefined });
+        expect(keysOf(out)).toEqual(STRADDLE_KEYS);
         expect(out).toContain("SENTINEL");
     });
 
