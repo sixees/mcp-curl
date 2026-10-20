@@ -108,6 +108,11 @@ describe("resolveRequestUrl", () => {
             expect(result.error).toContain("baseUrl");
             expect(result.error).not.toContain(baseUrl);
         });
+
+        it("refuses rather than throws on a non-string baseUrl from untyped config", () => {
+            const result = resolveRequestUrl(42 as unknown as string, "/users");
+            expect(result.ok).toBe(false);
+        });
     });
 });
 

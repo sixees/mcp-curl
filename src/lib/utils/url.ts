@@ -42,8 +42,10 @@ export type ResolvedRequestUrl =
 export function resolveRequestUrl(baseUrl: string | undefined, url: string): ResolvedRequestUrl {
     if (!baseUrl || !RELATIVE_PATH_PATTERN.test(url)) return { ok: true, url };
 
-    const joined = resolveBaseUrl(baseUrl, url);
+    // Everything that can throw is inside the try: the caller runs this before
+    // the wrap, so a throw would reach the model unwrapped (invariant 1).
     try {
+        const joined = resolveBaseUrl(baseUrl, url);
         const base = new URL(baseUrl);
         // An opaque origin serialises as "null" on both sides, so the
         // comparison alone would pass a non-http(s) base.
