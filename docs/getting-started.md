@@ -128,7 +128,8 @@ const server = new McpCurlServer()
         allowLocalhost: false,
 
         // Wrap text content parts in per-message sentinel envelopes
-        // (defence-in-depth; sanitise + injection-detect always run)
+        // (defence-in-depth; injection-detect always runs, and the sanitise
+        // runs on every non-JSON text part)
         enableSpotlighting: true,
     });
 ```

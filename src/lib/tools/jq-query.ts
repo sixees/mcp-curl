@@ -1,15 +1,15 @@
 // src/lib/tools/jq-query.ts
-// Registers the jq_query tool for querying JSON files
+// The jq_query executor and its tool metadata; registration is tools/index.ts::registerAllTools
 
 import { readFile } from "fs/promises";
 import { basename } from "path";
 import { JqQuerySchema, type JqQueryInput } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
-import { validateFilePath } from "../security/index.js";
+import { detectJsonAndLog, validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
-import { getErrorMessage, sanitizeDescription, JSON_MIME } from "../utils/index.js";
-import { defendText, exceedsInlineCap, writeUniqueFile } from "../response/index.js";
+import { getErrorMessage, sanitizeDescription } from "../utils/index.js";
+import { writeUniqueFile } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
@@ -90,7 +90,9 @@ export async function executeJqQuery(
     _extra: JqQueryExtra
 ): Promise<JqQueryResult> {
     try {
-        // Validate file path and get the real path (prevents TOCTOU attacks)
+        // Validate file path and get the real path; the read below opens that
+        // resolved path, which narrows but does not close the window between check
+        // and read
         const validatedFilePath = await validateFilePath(params.filepath);
 
         // Resolve and validate output directory if saving (returns real path with symlinks resolved)
@@ -102,61 +104,47 @@ export async function executeJqQuery(
         // Read the file using the validated real path
         const content = await readFile(validatedFilePath, { encoding: "utf-8" });
 
-            const filtered = applyJqFilter(content, params.jq_filter);
+        const filtered = applyJqFilter(content, params.jq_filter);
 
-        // Defend after filtering — jq may concentrate injection strings from
-        // sparse input. Detection logging is throttled per label inside the helper.
+        // Detect after filtering — jq may concentrate injection strings from
+        // sparse input — and with `detectJsonAndLog`, because `filtered` is
+        // `JSON.stringify` output: a decoded newline or control character is
+        // written back as an escape, which only the decoded read sees. On the
+        // saved arm nothing downstream detects at all, since the wrap receives
+        // only the saved-file notice.
+        // Detection logging is throttled per label inside the helper.
         //
-        // Routed through the shared pipeline rather than an assembled subset of
-        // it (invariant 1a). `applyJqFilter` parses its input as JSON and
-        // returns `JSON.stringify(...)`, so this text IS a JSON document and
-        // gets the pipeline's JSON arm: sanitise + detect, no markup or
-        // markdown stripping. That is the same treatment `curl_execute
-        // --jq_filter` gives the identical bytes, and the reason is
-        // `processResponse`'s: `<script>` and `[a](b)` are legitimate inside
-        // JSON string values, and this output is written to disk under
-        // `save_to_file` and read back by this same tool.
-        //
-        // Calling `defendText` rather than reproducing its JSON arm is what
-        // keeps that true: if the JSON grammar's treatment ever changes, this
-        // channel follows instead of silently staying behind.
-        //
-        // This governs what gets WRITTEN under `save_to_file`. Persisted keeps
-        // the exemption; returned does not (ARCHITECTURE.md invariant 1a).
+        // **Detect, never rewrite.** `applyJqFilter` parses its input as JSON and
+        // returns `JSON.stringify(...)`, so this text IS a JSON document — the
+        // origin's data, selected — and the middleware contract every JSON arm
+        // follows applies to it: it is the agent's, not this server's to
+        // sanitise (`LESSONS.md` RC-49). That is the same treatment
+        // `curl_execute --jq_filter` and the post-processor wrap give the
+        // identical bytes, and it governs what is returned and what is written
+        // under `save_to_file` alike.
         const label = basename(validatedFilePath);
-        const persisted = defendText(filtered, {
-            contentType: JSON_MIME,
-            contentTypeUndetermined: false,
-            hostname: label,
-        });
+        detectJsonAndLog(filtered, label);
 
         // Handle result size and file saving.
         //
         // **The gate weighs the bytes the model receives, and here they are the
-        // same bytes as the ones on disk.** `persisted` is a JSON document, so
-        // the post-processor wrap's `defendForInline` takes its verbatim arm —
-        // sanitise and detect, no markup stripping and no re-serialisation —
-        // which cannot lengthen the text.
-        //
-        // `exceedsInlineCap` is still the call to make rather than a bare byte
-        // comparison. It owns the rule that a size gate answers about the
-        // POST-defence form (invariant 14, `LESSONS.md` RC-15), and that rule
-        // binds a caller whose text is not JSON and therefore can grow. Reading
-        // the coincidence here as licence to compare bytes directly would move
-        // the rule to the call site, where the next caller has to remember it.
+        // same bytes as the ones on disk.** `filtered` is a JSON document, so the
+        // post-processor wrap's `defendForInline` returns it unchanged
+        // (ARCHITECTURE.md invariant 14, `LESSONS.md` RC-15).
         const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-        const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
+        const shouldSave =
+            params.save_to_file || Buffer.byteLength(filtered, "utf8") > maxSize;
 
         if (shouldSave) {
             const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
 
             // Encoded here rather than handed over as text: `writeUniqueFile`
-            // takes `Buffer` only, so the decode stays visible at the site that
-            // decides it (`LESSONS.md` RC-33). Shared with `curl_execute`'s save
+            // takes `Buffer` only, so the encoding stays visible at the site that
+            // decides it (`LESSONS.md` RC-33, RC-55). Shared with `curl_execute`'s save
             // path so neither site can drift from `flag: "wx"` or from the
             // filename sanitiser — two filters over one source file reach the
             // namer identical, and nothing else here would separate them.
-            const bytes = Buffer.from(persisted, "utf8");
+            const bytes = Buffer.from(filtered, "utf8");
             const filepath = await writeUniqueFile(
                 bytes,
                 targetDir,
@@ -167,11 +155,11 @@ export async function executeJqQuery(
             // Server-authored: a byte count and a path this process built from
             // a validated directory and a sanitised basename. No remote text.
             // The count describes the artefact on disk, which is this copy.
-            const persistedBytes = bytes.length;
-            return successResult(`Result (${persistedBytes} bytes) saved to: ${filepath}`);
+            const savedBytes = bytes.length;
+            return successResult(`Result (${savedBytes} bytes) saved to: ${filepath}`);
         }
 
-        return successResult(persisted);
+        return successResult(filtered);
     } catch (error) {
         const errorMessage = getErrorMessage(error);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";
@@ -190,5 +178,6 @@ export async function executeJqQuery(
 
 // Registration lives in `tools/index.ts::registerAllTools`, which routes this
 // executor through `extensible/tool-wrapper.ts` so the post-processor wrap
-// (invariant 1) applies. A bare `registerTool` here is what let the shipped
-// binary return unwrapped output — see `docs/todos/006`.
+// (invariant 1) applies. A bare `registerTool` here would return unwrapped
+// output from the shipped binary while every unit test of the wrap stayed
+// green.

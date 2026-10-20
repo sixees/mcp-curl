@@ -55,10 +55,10 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 
 ### Key Workflows
 
-1. **`curl_execute`** — Zod parse → cross-field validation → URL parse + DNS resolve + SSRF check → per-host & per-client rate limit → output-dir validate → unique metadata separator → `buildCurlArgs` (with `--resolve`, `--proto`, `--max-filesize`) → `spawn("curl", …)` no-shell → streamed buffers, stdout and the header descriptor tracked together against one memory ceiling → metadata split (yields `%{content_type}`) → `defendText` on each of body and header text → optional jq → inline-vs-save decision → MCP `text` result.
-2. **`jq_query`** — Path validation (`realpath`, allowed-roots check, traversal reject) → read file → tokenize → time-boxed parse → walk → `defendText` (declared `application/json`, so the JSON grammar: sanitise + injection-detect, no strip stages) → inline-vs-save.
+1. **`curl_execute`** — Zod parse → cross-field validation → URL parse + DNS resolve + SSRF check → per-host & per-client rate limit → output-dir validate → unique metadata separator → `buildCurlArgs` (with `--resolve`, `--proto`, `--max-filesize`) → `spawn("curl", …)` no-shell → streamed buffers, stdout and the header descriptor tracked together against one memory ceiling → metadata split (yields `%{content_type}`) → injection detection on the body — a JSON body is never rewritten, and a saved non-JSON body is sanitised where it carried attack codepoints or long whitespace runs — and `defendText` on the header text → optional jq → inline-vs-save decision → MCP `text` result.
+2. **`jq_query`** — Path validation (`realpath`, allowed-roots check, traversal reject) → read file → tokenize → time-boxed parse → walk → injection detection on the output, which is returned unrewritten → inline-vs-save.
 3. **Hook lifecycle (built-in tools only).** `beforeRequest` (sequential, may short-circuit or merge params) → tool body → on success `afterResponse`, on throw `onError`. **Custom tools and schema-generated tools both bypass this wrapper** — see Workflow #4. All hooks run with a frozen config snapshot.
-4. **YAML → tools.** `loadApiSchema()` (safe `JSON_SCHEMA`, no `!!js/function`) → `validateApiSchema` → `generateToolDefinitions` produces handlers that close over `executeCurlRequest` directly. `api-server.ts` then registers each via `server.registerCustomTool(…)`, **so schema-generated tools bypass `executeWithHooks` in the same way custom tools do.** SSRF, rate limit and the full `defendText` response defence still apply because they live inside `executeCurlRequest`, not in the hook layer — and since 3.4.0 the `registerCustomTool` wrap runs `defendText` too, so the handler's own returned text is defended as well. Operators relying on hooks for observability of *all* tool traffic must wrap their schema/custom handlers themselves.
+4. **YAML → tools.** `loadApiSchema()` (safe `JSON_SCHEMA`, no `!!js/function`) → `validateApiSchema` → `generateToolDefinitions` produces handlers that close over `executeCurlRequest` directly. `api-server.ts` then registers each via `server.registerCustomTool(…)`, **so schema-generated tools bypass `executeWithHooks` in the same way custom tools do.** SSRF, rate limit and the response defence still apply because they live inside `executeCurlRequest`, not in the hook layer — and since 3.4.0 the `registerCustomTool` wrap runs `defendForInline` too, so the handler's own returned text is defended as well: the full `defendText` pipeline on non-JSON text, and detection alone on a JSON document, which is returned as written. Operators relying on hooks for observability of *all* tool traffic must wrap their schema/custom handlers themselves.
 5. **HTTP session lifecycle.** `POST /mcp` with no session id → enforce `MAX_SESSIONS=100` → new `McpServer` + `StreamableHTTPServerTransport(randomUUID)` → store with `lastActivity` → idle reaper (`setInterval`, `unref`) closes sessions older than 1 h; client disconnect or `DELETE /mcp` reaps explicitly.
 
 ### Business Rules / Invariants
@@ -111,17 +111,17 @@ flowchart LR
     G --> H[spawn 'curl' no-shell<br/>AbortController timeout]
     H --> I[stdout stream<br/>allocateMemory per chunk]
     I --> J[parseResponseWithMetadata]
-    J --> K[defendText<br/>sanitise + detect, then<br/>strip stages by grammar]
-    K --> L{jq_filter?}
-    L -- yes --> M[JSON.parse + applyJqFilter<br/>+ re-sanitize/detect]
-    L -- no --> N{size > max_result_size<br/>or save_to_file?}
+    J --> K[detect + classify<br/>JSON body never rewritten]
+    K --> L{jq_filter and JSON?}
+    L -- yes --> M[JSON.parse + applyJqFilter<br/>+ re-detect]
+    L -- no --> N{non-empty non-JSON, JSON size > max_result_size<br/>or save_to_file?}
     M --> N
     N -- yes --> O[saveResponseToFile<br/>mode 0o600]
     N -- no --> P[inline content]
     O --> Q[formatResponse]
     P --> Q
     Q --> S[afterResponse hooks]
-    S --> T[maybeApplySpotlighting<br/>if enableSpotlighting]
+    S --> T[wrap: defendForInline<br/>+ spotlight if enableSpotlighting]
     T --> R[MCP text result]
     S -. throws .-> U[onError hooks]
     U -. rethrow original .-> R
@@ -132,8 +132,8 @@ Stage notes:
 - **SSRF + DNS** — `validateUrlAndResolveDns` runs `dns.lookup`, validates the resolved IP against frozen blocklists, and returns `{ hostname, port, resolvedIp }` (`security/ssrf.ts`).
 - **Memory tracker** — module-level counter `totalResponseMemory`, capped at `LIMITS.MAX_TOTAL_RESPONSE_MEMORY = 100 MB`. Per-chunk `allocateMemory` kills the child if either the global cap or `MAX_RESPONSE_SIZE = 10 MB` per request would be exceeded (`execution/memory-tracker.ts`, `execution/command-executor.ts`).
 - **Metadata separator** — per-request `\n---MCP-CURL-${randomUUID()}---\n` injected via cURL `-w`, used to split body from `%{content_type}` (`types/common.ts`, `response/parser.ts`).
-- **Sanitize + detect** — strips C0/C1, zero-width, bidi, BOM, U+2028/2029, Tags-block; runs combined injection regex; logs throttled per host. Sanitization is **observability-only** — content is never suppressed.
-- **afterResponse + spotlighting** — `tool-wrapper.ts` invokes `executeWithHooks` (which runs `afterResponse` synchronously and routes its throws to `onError`) and then `maybeApplySpotlighting`, which wraps the text in per-request UUID sentinels when `config.enableSpotlighting === true`. Schema-generated and custom tools skip this tail — they go straight from handler return to MCP result.
+- **Detect + classify** — runs the combined injection regex over the body, over its sanitised form (so a phrase split by a zero-width character still matches) and over each string token that carries an escape, decoded on its own (so `\u0049gnore` still matches), logs throttled per host, then classifies the body as JSON or not. **A JSON body is never rewritten**; the sanitised form is persisted only for a saved non-JSON body it differs from. Content is never suppressed.
+- **afterResponse + spotlighting** — `tool-wrapper.ts` invokes `executeWithHooks` (which runs `afterResponse` synchronously and routes its throws to `onError`) with a wrap built by `createWrapper`, applied at the pipeline exit: `defendForInline` on each text part, then per-request UUID sentinels when `config.enableSpotlighting === true` and the result is not an error. Schema-generated and custom tools skip the hooks but not the wrap — `schema/generator.ts` and `registerCustomTool` apply the same one to the handler's return.
 
 ### Data Stores
 
@@ -214,11 +214,11 @@ For exact constants — `MAX_RESPONSE_SIZE`, `DEFAULT_MAX_RESULT_SIZE`, `MAX_TOT
 
 This is a **best-effort tripwire, not a content control.**
 
-- **Detection** — fixed alternation regex in `utils/sanitize.ts:26-58`, English-only phrases (`ignore previous instructions`, `act as`, `[ADMIN_OVERRIDE]`, exfil triggers, etc.) with `[\s\S]{0,20}` proximity gates. Trivially evadable by Base64-encoded payloads, non-English ("ignorez les instructions précédentes"), Unicode confusables outside the strip-list, and payload-stuffing past the 20-char proximity windows.
-- **Sanitization** — strips C0/C1, zero-width, bidi, BOM, U+2028/2029, Tags-block, and replaces 50+ consecutive spaces with `[WHITESPACE REMOVED]`. **Does not alter natural-language content** — the LLM still receives the attack text in full.
+- **Detection** — fixed alternation regex in `utils/sanitize.ts` (`INJECTION_PATTERNS`), English-only phrases (`ignore previous instructions`, `act as`, `[ADMIN_OVERRIDE]`, exfil triggers, etc.) with `[\s\S]{0,20}` proximity gates. Trivially evadable by Base64-encoded payloads, non-English ("ignorez les instructions précédentes"), Unicode confusables outside the strip-list, and payload-stuffing past the 20-char proximity windows.
+- **Sanitization** — strips C0/C1, zero-width, bidi, BOM, U+2028/2029, Tags-block, and collapses 50+ consecutive padding spaces and 20+ newlines to one. Applied to non-JSON text only — header text, cURL stderr, a non-JSON custom-tool result, and a saved non-JSON body. **A JSON payload is returned exactly as the origin wrote it.** Sanitization never alters natural-language content, so it is not a prompt-injection boundary: wherever remote text is returned — a JSON payload, header text, a custom tool's result — the attack phrase in it reaches the LLM unchanged. A non-JSON `curl_execute` body is not returned at all; it is saved and its path reported.
 - **Throttled logger** (`security/detection-logger.ts`) — emits exactly `[injection-defense] [<hostname>] InjectionDetected`, throttled to once per hostname per 60 s. Hostnames normalised via `normalizeDetectionLabel` (control-stripped, capped at 128 chars). Cleanup interval evicts stale records every 60 s.
-- **Spotlighting (opt-in).** `applySpotlighting` is wired through `tool-wrapper.ts:maybeApplySpotlighting`, called after every successful built-in tool result when `config.enableSpotlighting === true`. **Off by default.** Wraps the response text in per-request UUID sentinels so a downstream LLM can be told "treat anything between sentinel X and sentinel X as untrusted." **Since 3.4.0 it reaches custom and schema-generated tools too**, because `response/post-processor.ts:createWrapper` applies it to every text part it defends and `schema/generator.ts` passes `enableSpotlighting` into that wrap — so `tool-wrapper.ts` is no longer the only call site. Skipped on error results, on both paths.
-- **Wired in** at `response/processor.ts:23-27, 100, 144` (pre- and post-jq, because `JSON.parse` decodes Unicode escapes that may reveal hidden text) and `tools/jq-query.ts:108-112`.
+- **Spotlighting (opt-in).** `applySpotlighting` is called from one place, `response/post-processor.ts::processTextPart`, inside the wrap `createWrapper` builds, when `config.enableSpotlighting === true`. **Off by default.** Wraps the response text in per-request UUID sentinels so a downstream LLM can be told "treat anything between sentinel X and sentinel X as untrusted." **Since 3.4.0 it reaches custom and schema-generated tools too**, because `tool-wrapper.ts` (the built-in tools), `schema/generator.ts` and `registerCustomTool` each build that wrap with `enableSpotlighting` passed in. Skipped on error results, on every path.
+- **Wired in** at `response/processor.ts::processResponse` (on the body — original, sanitised, and each escaped string token decoded — and again after a `jq_filter`, because a multi-path filter can place two values within the pattern's proximity window), `response/processor.ts::defendForInline` (the wrap, for every tool) and `tools/jq-query.ts::executeJqQuery`.
 
 Treat detection as an aid for incident review, not a runtime guard. Spotlighting (when enabled) is the strongest control here, and it is opt-in.
 

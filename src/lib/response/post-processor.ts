@@ -4,8 +4,8 @@
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
 // the full response-side defence — `defendForInline`, then optional
 // spotlighting — over each text content part of a `CallToolResult`. A part that
-// parses as JSON takes that function's verbatim arm (Step 2 alone); every other
-// part gets Steps 2-5.
+// parses as JSON takes that function's verbatim arm (detection only, no
+// rewrite); every other part gets Steps 2-5.
 // Server-scope config (the spotlighting flag) is bound once at server
 // creation; request-scope hostname is passed per call so the per-host
 // injection-detection throttle keys correctly.
@@ -24,8 +24,8 @@
 //    part reaches `defendText()`, whose Step 2 detects on the **original**
 //    text before sanitisation; that ordering is load-bearing because Steps
 //    3-5 strip the byte sequences the detector looks for, so detecting first
-//    preserves the log signal. A JSON part gets Step 2 alone, which detects
-//    and sanitises and rewrites nothing else. `processTextPart` below states
+//    preserves the log signal. A JSON part is detected on and returned
+//    unchanged (`LESSONS.md` RC-49). `processTextPart` below states
 //    which options this boundary passes on the non-JSON arm, and what each
 //    one costs.
 //
@@ -72,9 +72,11 @@ import { defendForInline } from "./processor.js";
 // module-private symbol means the only way to set the tag is to call `tag()`
 // inside this module, which only happens after the wrap pipeline has run (or
 // after a fail-open catch). The trade-off — that the tag does not survive
-// across module duplication (HMR, dual ESM/CJS resolution) — is acceptable
-// because the tag is a per-process performance optimisation; if it's lost,
-// the wrap re-runs and is semantically idempotent.
+// across module duplication (HMR, dual ESM/CJS resolution) — is accepted
+// because the tag is a per-process optimisation. If it is lost the wrap
+// re-runs: idempotent on a non-JSON part and on an unspotlighted JSON part,
+// but not on a spotlighted JSON part — the sentinel lines stop it parsing,
+// so the re-run takes the undivided strip arm across its fields.
 const WRAPPED = Symbol("mcp-curl.wrapped");
 
 /**
@@ -93,8 +95,8 @@ export interface WrapperConfig {
  * text tuple) and the SDK's `CallToolResult` (multi-part array).
  *
  * `text?: string` (not `unknown`) — the runtime guard inside `processTextPart`
- * already enforces the string check, so the type can be tight; downstream
- * consumers no longer need a redundant `typeof === "string"` check.
+ * already enforces the string check, so the type can be tight and downstream
+ * consumers need no redundant `typeof === "string"` check.
  */
 export interface WrappableContentPart {
     type: string;
@@ -171,12 +173,11 @@ export function isWrappedResult(result: unknown): boolean {
  * or Proxy-blocked). Defence-in-depth must never propagate exceptions to the
  * handler boundary, so we swallow the defineProperty failure here. The
  * trade-off: a downstream wrap on the same frozen result will re-run the
- * pipeline. That is semantically harmless: `defendForInline` is idempotent on
- * this boundary's options — the entity decode is off, every remaining stage
- * rewrites to a form it no longer matches, and the JSON arm sanitises and
- * detects without rewriting, which is a fixed point — and `applySpotlighting`
- * short-circuits on already-wrapped envelopes. The worst case is one extra linear pass over the
- * body, never a correctness issue.
+ * pipeline. That is harmless because the frozen object is only ever returned
+ * unprocessed — from the non-array pass-through and the fail-open catch —
+ * while a processed result is the fresh spread `wrap` builds, which is never
+ * frozen and so always takes the tag. The re-run is the first real pass over
+ * that content, never a second pass over defended text.
  *
  * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
  * Proxy whose `getOwnPropertyDescriptor` / `get` trap throws cannot break
@@ -204,7 +205,7 @@ function tag<T extends object>(result: T): T {
 /**
  * Defend one text part.
  *
- * Passes `contentTypeUndetermined: true` because at this
+ * `defendForInline` passes `contentTypeUndetermined: true` because at this
  * boundary the content type genuinely is undetermined: a `registerCustomTool()`
  * handler return, a `beforeRequest` short-circuit and a YAML endpoint result
  * arrive as bare text with no declared grammar. `defendText` reads that as the
@@ -215,9 +216,9 @@ function tag<T extends object>(result: T): T {
  * question with `classifyBody` before these options exist, so the flag's job
  * here is to stop `defendText` re-asking it with a different predicate
  * (`isDefinitelyJson`) and reaching a different answer — one rule, one
- * decision site. Its secondary reason still holds: the exemption is about a
- * persisted artefact, `processResponse` writes to disk and `jq_query` reads it
- * back, and nothing on this boundary writes to disk. `LESSONS.md` RC-10.
+ * decision site. Its secondary reason still holds: the exemption protects a
+ * persisted artefact, and nothing on this boundary writes to disk.
+ * `LESSONS.md` RC-10.
  *
  * **A beacon inside a JSON string value therefore reaches the model, and that
  * is settled rather than overlooked.** A whole-document strip pairs `<!--` in
@@ -286,7 +287,8 @@ function processTextPart(
  *
  * Returns a closure that takes a tool result and the hostname the request was
  * directed at, and returns a new wrapped result whose text parts have been
- * sanitised, detected, and (optionally) spotlighted. The closure is safe to
+ * defended — the full pipeline on non-JSON text, detection alone on a JSON
+ * document — and (optionally) spotlighted. The closure is safe to
  * call repeatedly on the same result thanks to symbol-tag idempotence.
  *
  * The hostname is passed per call (rather than bound into the closure) so a

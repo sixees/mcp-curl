@@ -2940,3 +2940,59 @@ merged when the correction was made.
      the control says it cannot — so the disagreement is invisible until it certifies the
      wrong answer. Where a threshold is shared, state the comparison once and use it on both
      sides of the boundary; `overBudget` in the matrix is that shape.
+
+### RC-63 — a too-large body's cheapest next step is the file already on disk, not a narrower request
+
+**Date:** 2026-10-20 · **PR:** — (branch `fix/019-json-arm-detects-without-rewriting`)
+
+**Class:** K-14 — *class-id:* `oversized-payload`
+
+- **The plan said:** RC-49 lists three things the server owes the agent, the third being
+  "when the body is too large, tell the agent to ask the API for less data", and
+  `docs/todos/019` made that wording an acceptance criterion for `savedMessage`'s over-cap
+  notice.
+- **Reality was:** the operator's APIs are rate-limited (240 requests an hour). By the time
+  the notice is written the bytes have crossed the wire and are on disk, so analysing them
+  with `jq_query` costs nothing, while a narrower re-request spends quota. Leading with
+  "ask for less" sends the agent to the expensive option first. Raised by the operator when
+  019 was planned.
+- **What changed:** `response/processor.ts::savedMessage`'s over-cap arm leads with "The
+  saved file is valid to analyse", names `jq_query` as costing no further request, and
+  offers narrowing the next request second. It also drops "once the inline defence pass is
+  applied", which named a pass that does not run on JSON. `register-all-tools.test.ts` pins
+  the order of the two sentences.
+- **What this costs next time:** **price an instruction to the agent in the agent's
+  currency.** "Ask for less" reads as free from inside the server and is not; where the
+  caller pays per request, the artefact already held is the default and a new request is
+  the fallback. RC-49's other two obligations, and its beacon settlement, are unchanged.
+
+### RC-64 — the reader was stricter than the classifier, and the fix rewrote the bytes to fit the reader
+
+**Date:** 2026-10-20 · **PR:** — (branch `fix/019-json-arm-detects-without-rewriting`)
+
+**Class:** K-17, K-23 — *class-id:* `fail-open-default`, `broken-contract`
+
+- **The plan said:** RC-44's remedy: sanitise before classifying, and persist the sanitised
+  form wherever the raw octets would not parse, because a leading U+FEFF defeats
+  `jq_query`'s `JSON.parse`. The first 019 draft kept that shape as `originIsUsable`
+  ("Step 2 was a no-op, or the untrimmed decode parses").
+- **Reality was:** two defects, found by Surface 2 and reproduced. (1) `classifyBody` trims
+  with `String.prototype.trim`, which removes 16 codepoints the sanitiser keeps (U+00A0,
+  U+1680, U+2000–U+200A, U+202F, U+205F, U+3000), so such a body was JSON, saved as "the
+  origin's exact bytes", advertised as `jq_query`-readable — and refused by `jq_query`. (2)
+  On the BOM arm the fallback was the *whole* sanitised payload: U+FE0F, ZWJ sequences and
+  50-space runs inside values were rewritten, silently inline, while the wrap returned the
+  same bytes from a custom tool verbatim.
+- **What changed:** the reader was made as tolerant as the classifier rather than the bytes
+  made to suit the reader. `jq/filter.ts::applyJqFilter` trims before parsing;
+  `processResponse` classifies the origin's decode (the question `defendForInline` asks);
+  a JSON body is the origin's octets inline and on disk; `originIsUsable` and
+  `parsesUntrimmed` are deleted, and the sanitised form survives only for a non-JSON body
+  Step 2 changed. A body that parses only once an invisible character between tokens is
+  removed is now non-JSON. Tests in `curl-execute.json-passthrough.test.ts` cover BOM, NBSP
+  and U+3000 leads through `applyJqFilter`, and emoji/padding fidelity.
+- **What this costs next time:** **when a classifier and a reader disagree on one input,
+  fix the stricter reader, never the input.** Normalising bytes to satisfy the strictest
+  consumer is a rewrite of the payload by another name. Sharpens RC-44: "classify the bytes
+  the passes read" holds, and the bytes they read should be the origin's whenever every
+  reader can be made to accept them.

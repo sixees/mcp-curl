@@ -47,37 +47,45 @@ export interface McpCurlConfig {
      * under the strictest grammar (this boundary's content type is always
      * undetermined), then optionally spotlights the result:
      *
-     *   1. **Detect** injection patterns against the **original** text and
-     *      emit a throttled `[injection-defense]` log line per hostname.
+     *   1. **Detect** injection patterns against the **original** text and its
+     *      sanitised form, and emit a throttled `[injection-defense]` log
+     *      line per hostname. A JSON part is also tested on each escaped
+     *      string token, decoded on its own.
      *   2. **Sanitise** the text (strip Unicode attack chars, collapse
      *      whitespace runs).
      *   3. **Strip** markup comments, `<script>`/`<style>` blocks and markdown
-     *      beacons (image / link / dangerous-scheme).
-     *   4. **Re-sanitise and re-detect**, because the strip stage's entity
-     *      decode can unmask an injection phrase the first pass could not see.
+     *      beacons (image / link / dangerous-scheme). The wrap does not decode
+     *      HTML entities: its output is what gets returned, and on a channel
+     *      whose consumer does not decode, a decode would manufacture live
+     *      markup from inert bytes. So an entity-encoded beacon or `<script>`
+     *      block survives this stage.
+     *   4. **Re-sanitise and re-detect** the stripped text, so a phrase the
+     *      strip stage joined still reaches the `[injection-defense]` log.
      *   5. **Spotlight** the defended text (only when this flag is `true`)
      *      using a fresh per-message UUID.
      *
-     * Steps 1-4 always run regardless of this flag — only step 5
-     * (spotlighting sentinels) is gated — **except on a text part that parses
-     * as JSON, where the wrap sanitises and detects but runs no markup,
-     * comment or markdown-beacon strip.** A JSON document is returned to the
-     * model as the origin wrote it, because rewriting a value inside one
-     * silently corrupts an API payload: `stripHtmlComments` pairs `<!--` in
+     * Steps 1-4 run regardless of this flag — only step 5
+     * (spotlighting sentinels) is gated — except above `STRIP_PATH_MAX_BYTES`
+     * (256 KB), where a part takes Steps 1-2 alone, **and on a text part that parses
+     * as JSON, where the wrap detects but rewrites nothing — no Unicode
+     * sanitise and no markup, comment or markdown-beacon strip.** A JSON
+     * document is returned to the model as the origin wrote it, because the
+     * payload is the agent's to interpret (`LESSONS.md` RC-49) and rewriting a
+     * value inside one silently corrupts an API payload: `stripHtmlComments` pairs `<!--` in
      * one field with `-->` in a later one and deletes what lies between. The
      * trade is deliberate and it is not free — a beacon or a `javascript:`
      * link inside a JSON string value reaches the model. Weigh that before
      * leaving spotlighting off.
      *
-     * **"As the origin wrote it" is bounded by the sanitise, which is not
-     * skipped.** `sanitizeAndDetect` still removes Unicode attack codepoints
-     * and collapses padding runs, so a JSON document carrying a literal
-     * U+200B or a threshold-length whitespace run comes back without it.
-     * Byte identity holds when that pass was a no-op — which is the case for
-     * every realistic payload, and is measured rather than assumed — and
-     * `curl_execute` reports the exceptions it can see: `body_decode_lossy`
-     * for a non-UTF-8 origin, and `savedMessage` naming which form an
-     * artefact holds. The wrap is idempotent via a
+     * **"As the origin wrote it" includes Unicode attack codepoints.** A JSON
+     * document carrying a literal U+200B or U+202E comes back with it, and
+     * nothing reports the codepoint itself: the injection-detection log fires
+     * only where one splits an injection phrase. `curl_execute` reports the
+     * exceptions it can see: `body_decode_lossy` for a non-UTF-8 origin, and
+     * `savedMessage` naming which form an artefact holds — the sanitised one
+     * only for a non-JSON body Step 2 changed; a JSON document, a leading
+     * U+FEFF included, is always saved as the origin's octets. The
+     * wrap is idempotent via a
      * module-private, non-enumerable `Symbol` tag with an own-property check
      * (so the tag cannot be forged from outside the wrap module and an
      * inherited tag on a wrapped prototype cannot bypass processing of

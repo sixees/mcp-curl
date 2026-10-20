@@ -41,21 +41,114 @@ export function logInjectionDetected(hostname: string): void {
 }
 
 /**
- * Detect injection patterns in raw text, then sanitize for output.
+ * Detect injection patterns and log a hit, leaving the text alone.
  *
- * Order is load-bearing: detection runs against the **original** text, before
- * any sanitisation. `defendText`'s later stages strip markup comments,
- * `<script>`/`<style>` blocks and markdown beacons, and a stage that erased a
- * malicious phrase before detection saw it would silence the per-host log
- * signal. Detecting on the original keeps that signal alive for any class of
- * injection a stripping stage would wholesale-remove.
+ * **Two representations, because each hides a class from the other.** The
+ * sanitiser removes U+2028, U+2029 and U+FEFF, which `\s` matches, so a phrase
+ * spaced with them (`system\u2028prompt`) matches only in the original; it
+ * also removes zero-width and bidi characters, so a phrase they split
+ * (`Ig\u200bnore previous instructions`) matches only in the sanitised form.
+ * Both forms are taken before any strip stage runs, so either one keeps the
+ * signal for a phrase a later stage would erase. Testing both rewrites
+ * nothing — this is the detection a caller returning the origin's payload
+ * still owes (`LESSONS.md` RC-49): the per-host log is an operator signal
+ * ARCHITECTURE.md invariant 7 forbids suppressing.
  *
- * **Acknowledged trade-off.** The reverse case (a phrase whose detection
- * needs sanitisation to *succeed* — e.g. invisible-char-split phrases like
- * `Ig\u200bnore previous instructions` where the zero-width breaks the regex
- * match) is not logged. The returned text is still sanitised so
- * nothing leaks downstream; only the observability log is lost for that
- * specific class. UTS #39 skeleton folding (deferred) would close it.
+ * @param text - The original text
+ * @param label - Hostname or filename used as the log label
+ * @param sanitised - `sanitizeResponse(text)`, where the caller already holds
+ *   it; computed here otherwise
+ */
+export function detectAndLog(text: string, label: string, sanitised?: string): void {
+    if (matchesEitherForm(text, sanitised)) logInjectionDetected(label);
+}
+
+/**
+ * {@link detectAndLog} plus a decoded read, for text that may be a JSON
+ * document returned unchanged — every built-in JSON arm calls this in place of
+ * {@link detectAndLog}, because that arm returns the origin's bytes.
+ *
+ * **A document can spell a phrase with string escapes** — `Ig\u200bnore`,
+ * `\u0049gnore`, `system\nprompt` — which neither text form shows and the
+ * model decodes on reading. So each string token carrying an escape is
+ * decoded on its own, and its decoded value tested in both forms, then
+ * discarded: this rewrites nothing (`LESSONS.md` RC-49).
+ *
+ * **Token by token, never by re-serialising the parsed document.** A parse
+ * keeps only the last of two duplicate members, so a re-serialised
+ * `{"x":"\u0049gnore …","x":"ok"}` holds `ok` alone, and `JSON.stringify`
+ * re-escapes a decoded control character, so `system\u000aprompt` comes back
+ * with a backslash and an `n` where `\s` needed a newline — the
+ * parse-and-reserialise loss `LESSONS.md` RC-24 records.
+ * Decoding each token alone also keeps a match from spanning two values.
+ * Text with no backslash has nothing to decode and costs one `includes`.
+ *
+ * @param text - The text as returned
+ * @param label - Hostname or filename used as the log label
+ * @param sanitised - `sanitizeResponse(text)`, where the caller already holds it
+ */
+export function detectJsonAndLog(text: string, label: string, sanitised?: string): void {
+    if (matchesEitherForm(text, sanitised) || matchesDecodedForm(text)) logInjectionDetected(label);
+}
+
+function matchesEitherForm(text: string, sanitised?: string): boolean {
+    return detectInjectionPattern(text) || detectInjectionPattern(sanitised ?? sanitizeResponse(text));
+}
+
+function matchesDecodedForm(text: string): boolean {
+    if (!text.includes("\\")) return false;
+    for (const token of escapedStringTokens(text)) {
+        let decoded: unknown;
+        try {
+            decoded = JSON.parse(token);
+        } catch {
+            continue;
+        }
+        if (typeof decoded === "string" && matchesEitherForm(decoded)) return true;
+    }
+    return false;
+}
+
+/**
+ * Each `"…"` token in `text` that carries a backslash, found the way a JSON
+ * lexer finds them: a quote opens a token outside one, a backslash skips the
+ * character after it, and the next unescaped quote closes it.
+ *
+ * A single linear pass rather than a regex, because `/"(?:[^"\\]|\\.)*"/g`
+ * re-scans from every quote when the closing one never comes — quadratic on a
+ * body of escaped quotes, at sizes up to the 10 MB response cap. On text that
+ * is not JSON the tokens are whatever the quotes delimit, and a token that does
+ * not parse is skipped.
+ */
+function* escapedStringTokens(text: string): Generator<string> {
+    let start = -1;
+    let escaped = false;
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        if (start < 0) {
+            if (c === 0x22) {
+                start = i;
+                escaped = false;
+            }
+        } else if (c === 0x5c) {
+            escaped = true;
+            i++;
+        } else if (c === 0x22) {
+            if (escaped) yield text.slice(start, i + 1);
+            start = -1;
+        }
+    }
+}
+
+/**
+ * Detect injection patterns, then sanitize for output.
+ *
+ * Detection runs against the **original** text as well as the sanitised form
+ * — {@link detectAndLog} owns why both. `defendText`'s later stages strip markup
+ * comments, `<script>`/`<style>` blocks and markdown beacons, and a stage that
+ * erased a malicious phrase before detection saw it would silence the per-host
+ * log signal; the sanitised form is what catches a phrase split by an
+ * invisible character.
  *
  * Detection-only: the sanitized text is returned regardless of whether
  * an injection pattern was matched. Logging is throttled per label by
@@ -66,10 +159,9 @@ export function logInjectionDetected(hostname: string): void {
  * @returns Sanitized text
  */
 export function sanitizeAndDetect(text: string, label: string): string {
-    if (detectInjectionPattern(text)) {
-        logInjectionDetected(label);
-    }
-    return sanitizeResponse(text);
+    const sanitised = sanitizeResponse(text);
+    detectAndLog(text, label, sanitised);
+    return sanitised;
 }
 
 /**
@@ -93,7 +185,10 @@ export function stopInjectionCleanup(interval: NodeJS.Timeout): void {
 
 /**
  * Evict entries older than the throttle window.
- * Called on a periodic interval to prevent unbounded map growth.
+ * Run by `startInjectionCleanup`'s interval where a caller started one, and by
+ * `setBounded` before it evicts a live entry at the cap — the cap, not the
+ * interval, is the bound, because the `mcp-curl` root entry exports no
+ * cleanup starter.
  */
 export function cleanupInjectionDetectionMap(): void {
     const now = Date.now();

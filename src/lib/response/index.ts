@@ -26,7 +26,6 @@ export {
 export {
     defendText,
     defendForInline,
-    exceedsInlineCap,
     processResponse,
     type DefendTextOptions,
     type ProcessResponseOptions,

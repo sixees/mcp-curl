@@ -16,26 +16,27 @@
 //   7. Response-side defence helpers    — sanitize / detect / spotlight / composer
 //   8. URL validation helpers           — createHttpOnlyUrlSchema, safeHostname
 //
-// PR-6b ships an internal defence-in-depth wrap (`createWrapper(config)` in
-// `src/lib/response/post-processor.ts`) that the server applies automatically,
-// with idempotence via a module-private Symbol tag.
+// The server applies an internal defence-in-depth wrap (`createWrapper(config)`
+// in `src/lib/response/post-processor.ts`) automatically, with idempotence via
+// a module-private Symbol tag.
 //
-// **Do not re-enumerate the call sites here.** This comment used to list four
-// of them, and the list was the defect: `tools/index.ts::registerAllTools` —
-// the shipped binary's own path — was a fifth site that had never been added,
-// so the enumeration read as complete while the wrap was absent from the one
-// entry point `curl-mcp` uses (`docs/todos/006`). Every tool registration now
-// goes through `extensible/tool-wrapper.ts`, so the seam is the thing to name
-// and `rg -n 'createWrapper' src` is the thing to trust.
+// **Do not enumerate the call sites here.** A list in this comment reads as
+// complete while a registration path missing from it ships unwrapped, and
+// nothing fails. The wrap is built at more than one seam, not only
+// `extensible/tool-wrapper.ts`, so `rg -n 'createWrapper' src` is the thing to
+// trust.
 // **The wrap factory is intentionally not exported** — its
 // `CallToolResult` shape is coupled to the MCP SDK. Library consumers interact
 // with it via `enableSpotlighting` (see McpCurlConfig).
 //
-// What the wrap DOES to each text part is a separate question, and that half
-// is exported: `defendText` (section 7) is the same pipeline, over a plain
-// string. Callers building a non-MCP pipeline should call it rather than
-// composing `sanitizeAndDetect` by hand — the composer is Step 2 of five, and
-// the difference is whether markdown beacons and `<script>` blocks survive.
+// What the wrap does to a NON-JSON text part is exported: `defendText`
+// (section 7) is that pipeline, over a plain string. A text part that parses
+// as JSON is detected on and returned unchanged instead, and `defendText`
+// does not reproduce that arm — see `docs/custom-tools.md` → *Composing the
+// Full Defence*. Callers building a non-MCP pipeline should call `defendText`
+// rather than composing `sanitizeAndDetect` by hand — the composer is Step 2
+// of five, and the difference is whether markdown beacons and `<script>`
+// blocks survive.
 // No subpath exports — flat barrel + section comments is the convention.
 
 // 1. Main server class
@@ -118,7 +119,10 @@ export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/u
 // the same trust boundary the server enforces on built-in tools.
 //
 // **`defendText(text, options)` is the whole pipeline, and it is what the
-// built-in tools run.** Sanitise-and-detect is Step 2 of five; Steps 3-5 —
+// built-in tools run on non-JSON text** — response headers and cURL stderr. A
+// JSON document is the calling agent's to interpret and takes no pipeline at
+// all on any built-in path; `defendText` given one still runs Step 2 over it.
+// Sanitise-and-detect is Step 2 of five; Steps 3-5 —
 // markup comments, the `<script>`/`<style>` strip, markdown beacon
 // removal and the numeric-entity re-detect — are what remove exfiltration
 // beacons and script blocks. Reach for the lower-level composers below only
@@ -135,14 +139,13 @@ export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/u
 //
 // Among the lower-level composers, prefer `sanitizeAndDetect(text, label)`
 // over hand-wiring `sanitizeResponse`
-// + `detectInjectionPattern` + `logInjectionDetected`. Since PR-6b the
-// helper detects on the **original** text *before* sanitisation: a malicious
-// pattern that the sanitiser would otherwise strip (e.g. content inside a
-// PR-7 HTML-script-strip pass) still lands in the per-host
-// `[injection-defense]` log signal, and the returned text is the sanitised
-// version. The trade-off is a small regression on invisible-char-split
-// phrases (`Ig​nore` → the matcher does not see `Ignore`) — acceptable
-// because the throttled log is observability only, not a content gate.
+// + `detectInjectionPattern` + `logInjectionDetected`. The helper detects on
+// the **original** text and on the sanitised form: a malicious pattern a later
+// strip stage would erase still lands in the per-host `[injection-defense]`
+// log signal, and so does a phrase an invisible character splits
+// (`Ig​nore`), which only the sanitised form shows whole. The returned
+// text is the sanitised version. The log is observability only, never a
+// content gate.
 //
 // `sanitizeResponse`'s visual-space rule covers the full visual-space class
 // (tabs, NBSP, en/em-spaces, NARROW NO-BREAK, MEDIUM MATHEMATICAL, IDEOGRAPHIC

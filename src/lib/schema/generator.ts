@@ -1,7 +1,7 @@
 // src/lib/schema/generator.ts
 // Generates MCP tools from API schema endpoint definitions.
 //
-// **Sanitisation contract (PR-6a).** Schemas reaching this module are
+// **Sanitisation contract.** Schemas reaching this module are
 // pre-sanitised by the `z.preprocess()` step on `ApiSchemaValidator` in
 // `src/lib/schema/validator.ts`. Every user-facing string field is already
 // stripped of bidi/zero-width/Tags-block characters before reaching here.
@@ -57,10 +57,12 @@ export interface GeneratorConfig {
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
     /**
-     * Wrap YAML-driven tool responses in spotlighting sentinels (PR-6b).
+     * Wrap YAML-driven tool responses in spotlighting sentinels.
      *
-     * Sanitise + detect always run on text responses regardless of this flag;
-     * the flag only controls the additional `applySpotlighting` step. Mirrors
+     * The response-side defence runs on every text part regardless of this flag —
+     * the full `defendText` pipeline on non-JSON text, detection alone on a JSON
+     * document, which is returned unchanged — and the flag only adds the
+     * `applySpotlighting` step, never on an error result. Mirrors
      * `McpCurlConfig.enableSpotlighting` so the YAML path inherits the same
      * setting from `createApiServer({ config })` callers without a separate
      * knob.
@@ -136,7 +138,6 @@ function createParamSchema(param: EndpointParameter): z.ZodTypeAny {
         }
     }
 
-    // Base type schemas
     switch (param.type) {
         case "number":
             return z.number();
@@ -165,7 +166,6 @@ export function buildUrl(
     pathParams: Record<string, unknown>,
     queryParams: Record<string, string>
 ): string {
-    // Substitute path parameters
     let resolvedPath = path;
     for (const [key, value] of Object.entries(pathParams)) {
         resolvedPath = resolvedPath.replace(
@@ -176,7 +176,6 @@ export function buildUrl(
 
     const url = resolveBaseUrl(baseUrl, resolvedPath);
 
-    // Append query parameters
     const queryEntries = Object.entries(queryParams);
     if (queryEntries.length === 0) {
         return url;
@@ -209,7 +208,6 @@ export function getAuthConfig(
         return { headers, queryParams };
     }
 
-    // Handle API key auth
     if (auth.apiKey) {
         const value = override?.[auth.apiKey.envVar] ?? process.env[auth.apiKey.envVar];
 
@@ -228,7 +226,6 @@ export function getAuthConfig(
         }
     }
 
-    // Handle bearer token auth
     if (auth.bearer) {
         const value = override?.[auth.bearer.envVar] ?? process.env[auth.bearer.envVar];
 
@@ -270,12 +267,10 @@ function separateParams(
     for (const paramDef of endpoint.parameters ?? []) {
         let value = params[paramDef.name];
 
-        // Apply default if value is undefined
         if (value === undefined && paramDef.default !== undefined) {
             value = paramDef.default;
         }
 
-        // Skip if still undefined
         if (value === undefined) {
             continue;
         }
@@ -296,7 +291,6 @@ function separateParams(
         }
     }
 
-    // Build body data from collected body parameters
     let bodyData: string | undefined;
     const bodyKeys = Object.keys(bodyParams);
     if (bodyKeys.length === 1) {
@@ -319,7 +313,6 @@ function resolveJqFilter(
     endpoint: EndpointDefinition,
     params: Record<string, unknown>
 ): string | undefined {
-    // Check for filter preset selection
     const presetName = params.filter_preset as string | undefined;
     if (presetName && endpoint.response?.filterPresets) {
         const preset = endpoint.response.filterPresets.find(
@@ -337,7 +330,6 @@ function resolveJqFilter(
         );
     }
 
-    // Fall back to default filter
     return endpoint.response?.jqFilter;
 }
 
@@ -361,13 +353,11 @@ function createToolHandler(
 
     return async (params: Record<string, unknown>, extra?: CurlExecuteExtra): Promise<CurlExecuteResult> => {
         try {
-            // Separate parameters by location
             const { pathParams, queryParams, headerParams, bodyData } = separateParams(
                 endpoint,
                 params
             );
 
-            // Get auth configuration
             const auth = getAuthConfig(schema.auth, config?.authOverride);
 
             // Build URL with path params and query params (including auth query params)
@@ -392,14 +382,12 @@ function createToolHandler(
             const headers = defaults.headers;
             if (defaults.userAgent !== undefined) headers["User-Agent"] = defaults.userAgent;
 
-            // Determine jq filter
             const jqFilter = resolveJqFilter(endpoint, params);
 
-            // Determine timeout
             const timeout = config?.timeout ?? schema.defaults?.timeout;
 
-            // Execute the request using the existing curl executor
-            // Merge allowLocalhost from config with extra context
+            // The generator config's allowLocalhost wins; the caller's extra applies only
+            // where the config leaves it unset.
             const execExtra: CurlExecuteExtra = {
                 ...extra,
                 allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost,
@@ -422,18 +410,15 @@ function createToolHandler(
                 },
                 execExtra
             );
-            // Run the full response-side defence on the YAML-tool result.
-            // The wrap applies `defendText` under the strictest grammar, not
-            // just sanitise+detect — `executeCurlRequest` already defended the
-            // body under the origin's real Content-Type, so this is a second,
-            // less-informed pass over the same text and is deliberate
-            // defence-in-depth rather than the only defence. The wrap is
+            // Run the response-side defence on the YAML-tool result: the full
+            // `defendText` pipeline on non-JSON text and detection alone on a
+            // JSON document, which is returned unchanged. The wrap is
             // idempotent on already-wrapped results, and the request hostname
             // is the right per-call label here (rather than "custom" if the
             // result then flows through the registerToolsOnServer adapter).
             return wrap(result, safeHostname(url));
         } catch (error) {
-            // Handle authentication errors gracefully
+            // A missing required credential is configuration the model can report back, so it returns as an error result; anything unrecognised is rethrown.
             if (error instanceof AuthenticationError) {
                 return {
                     content: [
@@ -446,7 +431,8 @@ function createToolHandler(
                 };
             }
 
-            // Handle filter preset errors gracefully
+            // Matched by message prefix, because `resolveJqFilter` throws a plain Error:
+            // its "Unknown filter preset" wording is what this check depends on.
             if (error instanceof Error && error.message.startsWith("Unknown filter preset")) {
                 return {
                     content: [
@@ -459,7 +445,6 @@ function createToolHandler(
                 };
             }
 
-            // Re-throw other errors
             throw error;
         }
     };

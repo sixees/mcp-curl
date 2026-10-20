@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-10-20
+
+### Changed
+
+- **BREAKING: a JSON payload is detected on, never rewritten, at every layer.**
+  The server is middleware: the payload is the calling agent's to interpret. Unicode
+  attack codepoints (zero-width, bidi overrides and the rest of the sanitiser's
+  class) are no longer removed from a JSON body by `curl_execute`, from
+  `jq_query`'s or `curl_execute --jq_filter`'s output, or from a JSON text part the
+  wrap returns — which includes the results of YAML-schema tools and custom tools
+  registered on `McpCurlServer`. The `[injection-defense]` detection log still
+  fires on all of them. A custom tool that wants those codepoints removed from its
+  JSON result removes them itself. Non-JSON text — headers, stderr, a non-JSON
+  custom-tool result — keeps the full pipeline.
+
+- **A JSON body is the origin's octets, inline and saved, BOM included.** The
+  body is classified as it arrived, the same question the wrap asks of every text
+  part, so a body led by a U+FEFF or a Unicode space (NBSP, U+3000 and the rest of
+  the class `String.prototype.trim` removes) is JSON on every path and is never
+  replaced by its sanitised form. `jq_query` trims before it parses, so it opens
+  such a file. A body that parses only once an invisible character between tokens
+  is removed now classifies as not JSON, and is saved and reported as such. The
+  sanitised form is written only for a saved non-JSON body Step 2 changed, and the
+  message now names the whitespace and newline collapse as well as the codepoint
+  removal.
+
+- **Injection detection reads the sanitised form as well as the original, and a
+  JSON document's decoded strings.** A phrase split by a zero-width or bidi
+  character (`Ig\u200bnore previous instructions`) is now logged on every path,
+  the published `sanitizeAndDetect` and `defendText` included; on a JSON arm, so
+  is a phrase spelled with string escapes (`\u0049gnore`, as six ASCII bytes),
+  which no text form showed. Each escaped string token is decoded on its own, so
+  a duplicate member or an escaped newline or control character cannot hide one.
+  Nothing more is rewritten; the `[injection-defense]`
+  log is the only effect.
+
+- **`curl_execute`'s description states the contract it keeps.** It said attack
+  codepoints are removed from a JSON body first; it now says nothing in one is
+  removed or rewritten, and names every transform a saved non-JSON artefact can
+  carry. It also no longer says a `jq_filter` on a body that is not JSON returns an
+  error with a preview: the filter is skipped and the body saved and reported. The
+  over-cap message quotes the decoded size beside the on-disk size when a lossy
+  decode grew the body; saved-file messages name the U+FFFD substitution on a
+  sanitised artefact, and no longer tell the model `jq_query` cannot read a non-JSON
+  body's file.
+
+- **The over-cap notice leads with the saved file.** It says the file is valid to
+  analyse with `jq_query` at no further request, and offers narrowing the next
+  request (fewer fields, a limit, pagination) second — on a rate-limited API a
+  re-request spends quota the bytes on disk do not. It no longer claims an "inline
+  defence pass" that does not run on JSON.
+
+### Removed
+
+- **Internal:** `exceedsInlineCap`, `MAX_INLINE_GROWTH_RATIO` and
+  `SHORTEST_REPLACED_BEACON`. Both size gates weigh JSON only, and the wrap
+  returns JSON unchanged, so the gate is a byte comparison. None was on a
+  published entry point.
+
 ## [4.0.2] - 2026-09-10
 
 ### Notes

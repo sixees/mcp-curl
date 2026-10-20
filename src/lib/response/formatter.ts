@@ -84,13 +84,12 @@ function applyOutOfBandFields(
  * `defendForInline` keys its verbatim-JSON arm on the whole text part parsing,
  * so notices carried as a prefix would demote a JSON body to the undivided
  * scan, where `<!--` in one field and `-->` in a later one pair across the join
- * and delete what lies between. Measured:
- * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` returns
- * `{"a":"open ","d":"kept"}` on any non-darwin host with `include_headers`.
+ * and delete what lies between:
+ * `{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}` would come back
+ * as `{"a":"open ","d":"kept"}` on any non-darwin host with `include_headers`.
  *
  * A separate content entry is a STRONGER boundary than an unoccupiable
- * position, so the original argument survives the move intact. ARCHITECTURE.md
- * invariants 13 and 16; `LESSONS.md` RC-37.
+ * position. ARCHITECTURE.md invariants 13 and 16; `LESSONS.md` RC-37.
  */
 export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bodyInfo?: BodyInfo): string {
     return [
@@ -123,11 +122,6 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
         headerInfo?.unsupported
             ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent"
             : null,
-        // The reassurance is claimed only on a CLEAN exit. Keyed on
-        // `undetermined` alone it asserts the body is sound on every cURL
-        // failure after connect — exit 23, 35, 56, 63 — where the body is empty
-        // precisely BECAUSE the request failed. This flag's domain cannot answer
-        // a question about the body; `exitCode` can.
         // A fidelity fact about the body, so it is stated whatever the exit
         // code was and whatever the headers did. A caller comparing what it got
         // against the origin needs to know a re-encode happened, because U+FFFD
@@ -137,17 +131,22 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
         // **Two wordings, because the decode and the artefact are different
         // subjects.** Inline, the body IS returned — its JSON structure intact
         // and only character values moved — so the notice speaks about the text
-        // beside it. On a saved branch there is no inline body, and
-        // `sanitiseWasNoOp` may have sent the origin's own octets to disk, so
+        // beside it. On a saved branch there is no inline body, and the
+        // origin's own octets may be what went to disk, so
         // claiming "the text above is not byte-identical" would name text that
         // is absent and contradict `savedMessage`, which reports the file's form
         // itself. The decode is still worth stating: it is what the byte count
-        // and any inline preview were derived from.
+        // was derived from.
         bodyInfo?.decodeWasLossy
             ? bodyInfo.savedToFile
                 ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD when it was decoded. The saved file's own message states which bytes it holds"
                 : "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent"
             : null,
+        // The reassurance is claimed only on a CLEAN exit. Keyed on
+        // `undetermined` alone it would assert the body is sound on every cURL
+        // failure after connect — exit 23, 35, 56, 63 — where the body is empty
+        // precisely BECAUSE the request failed. This flag's domain cannot answer
+        // a question about the body; `exitCode` can.
         headerInfo?.undetermined
             ? exitCode === 0
                 ? "[mcp-curl] response headers were requested but none were received; the body is unaffected"
@@ -187,14 +186,17 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
  * - body_decode_lossy: boolean (only when the wire octets were not valid UTF-8,
  *   so the body was re-encoded and is not byte-identical to what the origin
  *   sent. Its JSON structure is intact; one or more character values are not.
- *   A saved artefact still holds the origin's octets where Step 2 was a no-op)
+ *   An unfiltered saved JSON artefact holds the origin's octets, a non-JSON one
+ *   does where Step 2 was a no-op, and a jq_filter's output never does)
  * - headers_unsupported: boolean (this host cannot capture headers at all; a
  *   fact about the host, deliberately distinct from headers_undetermined, which
  *   is a fact about the origin)
  *
  * When includeMetadata is false:
  * - If file was saved: returns the message or filepath
- * - Otherwise: returns the server-authored notices, then stdout
+ * - Otherwise: returns stdout alone; the server-authored notices are
+ *   `tools/curl-execute.ts`'s to emit as their own content entry (see
+ *   {@link plainBranchNotices})
  *
  * **This function never composes header text with body text, on either branch,
  * and that is a defence rather than a formatting choice.** Under
@@ -246,17 +248,16 @@ export function formatResponse(
     // "no field available" must not become "no signal". A truncated header
     // block is byte-identical to a complete one, so a caller reading it
     // concludes a security header is absent when it was merely cut off.
-    // Written by us and placed BEFORE the remote text, which is a position an
-    // origin cannot occupy — so this is a server-authored prefix rather than
-    // the forgeable in-band marker the out-of-band fields exist to avoid.
     // **This function never emits the notices at all.** They are
     // `tools/curl-execute.ts`'s to append as their own MCP content entry — see
-    // {@link plainBranchNotices}.
+    // {@link plainBranchNotices} — which is a server-authored region rather than
+    // the forgeable in-band marker the out-of-band fields exist to avoid.
     //
-    // Notices travel as their own MCP content entry on every branch, including
-    // the saved-to-file arm where both sides are server-authored:
-    // `tools/curl-execute.ts` appends that entry unconditionally, so a join here
-    // would double it. `LESSONS.md` RC-46.
+    // On the plain branch, notices travel as their own MCP content entry on both
+    // arms, including saved-to-file where both sides are server-authored:
+    // `tools/curl-execute.ts` appends that entry whenever there is a notice, so a
+    // join here would double it. Under metadata they are fields, not notices.
+    // `LESSONS.md` RC-46.
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
         if (includeMetadata) {
@@ -286,7 +287,7 @@ export function formatResponse(
         applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
         return JSON.stringify(output, null, 2);
     }
-    // No `withNotice` — see above. `stdout` is remote bytes and nothing
-    // server-authored may share this string with them.
+    // `stdout` alone: it is remote bytes and nothing server-authored may
+    // share this string with them — the notices travel as their own entry.
     return stdout;
 }

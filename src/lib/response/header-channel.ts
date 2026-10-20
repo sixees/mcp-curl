@@ -101,9 +101,9 @@ export function extractHeaderChannel(
         return { undetermined: true, truncated: false };
     }
 
-    // The SAME pipeline as the body, never a shorter one (ARCHITECTURE.md
-    // invariant 1a). Markdown is the strictest grammar, so every strip stage
-    // runs. `decodeEntities: false` because that stage is ADDITIVE and its
+    // The full pipeline, never a shorter one (ARCHITECTURE.md invariant 1a):
+    // header text is not a JSON payload, so it takes every strip stage the body
+    // is exempt from. Markdown is the strictest grammar, so every stage runs. `decodeEntities: false` because that stage is ADDITIVE and its
     // result is what gets returned — decoding would hand the model a live
     // instruction the origin only ever sent as inert text (LESSONS.md RC-3).
     const defended = defendText(raw, {

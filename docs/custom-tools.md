@@ -203,7 +203,7 @@ here are for a pipeline that runs outside the MCP handler boundary.
 
 | Helper | Use when... | Notes |
 |--------|-------------|-------|
-| `defendText(text, options)` | You want the defence the built-in tools apply. | **This is the whole pipeline.** Everything below it is one stage of it. |
+| `defendText(text, options)` | You want the defence the built-in tools apply to non-JSON text. | **This is the whole pipeline.** Everything below it is one stage of it. |
 | `applySpotlighting(text, requestId)` | You're emitting external content and want the LLM to treat it as data, not instructions. | Idempotent — pre-wrapped content is returned unchanged. Pass `randomUUID()`. |
 | `sanitizeAndDetect(text, label)` | You want Step 2 alone — the Unicode strip plus the detection log. | Locks the detect-on-original ordering. **Not the full defence:** see the warning below. |
 | `sanitizeResponse(text)` | You need only the Unicode/whitespace strip without the detection signal. | Lower-level still. |
@@ -227,10 +227,11 @@ import { randomUUID } from "node:crypto";
 const defended = defendText(externalContent, {
     hostname,                       // label for the throttled injection log
     contentType,                    // the origin's Content-Type, when you know it
-    contentTypeUndetermined: false, // REQUIRED — no default. `false` says you
+    contentTypeUndetermined: false, // REQUIRED by the type. `false` says you
                                     // know the type (including knowing the
                                     // origin sent none); `true` says you could
-                                    // not determine it. See below.
+                                    // not determine it. Omitted at runtime, it
+                                    // resolves to `true`. See below.
     // decodeEntities: false,       // when your consumer does not decode
 });
 const wrapped = config.enableSpotlighting
@@ -263,16 +264,19 @@ your custom tool already wrapped, the outer call is a no-op.
 > responses.** Pattern detection is unreliable as an enforcement boundary:
 > it has false positives, is trivially bypassed (paraphrase, encoding, novel
 > jailbreak phrasing), and gating on it leaks the rule-set to whoever can
-> probe the behaviour. The defence layer is `sanitizeResponse` (which always
-> runs) plus `applySpotlighting` (the trust-boundary sentinel). Detection is
+> probe the behaviour. The defence layer is `defendText` on non-JSON text plus
+> `applySpotlighting` (the trust-boundary sentinel). Detection is
 > a logging signal, never a gate. If you find yourself reaching for the
 > primitive to make a refusal decision, prefer `defendText` instead — it is
 > the safe alternative because it cannot be misused this way (it always
 > returns the defended text).
 
-`defendText` is the same function the built-in tools call, not a parallel
-implementation of it. That is deliberate: a second implementation is the weaker
-one, and nobody knows which surface they are on.
+`defendText` is the same function the built-in tools call on non-JSON text,
+not a parallel implementation of it. That is deliberate: a second implementation
+is the weaker one, and nobody knows which surface they are on. **It does not
+reproduce the server's JSON arm**: given a JSON document it still runs Step 2,
+where the server detects and returns the document unchanged — see *Composing the
+Full Defence* below.
 
 ## Composing the Full Defence
 
@@ -283,12 +287,15 @@ routed through the same internal post-processor wrap that defends
 `curl_execute`, `jq_query`, and YAML-driven endpoints. On each text content
 part the wrap runs:
 
-1. **The full `defendText` pipeline**, with `contentTypeUndetermined: true` and
-   `decodeEntities: false`. The Content-Type is genuinely unknown at this
-   boundary — a handler return is bare text — so the strictest grammar applies
-   and every strip stage runs, except on text that parses as a JSON document.
-   Detection runs on the **original** text and emits the throttled
-   `[injection-defense] [host]` log on a match.
+1. **On non-JSON text, the full `defendText` pipeline**, with
+   `contentTypeUndetermined: true` and `decodeEntities: false`. The
+   Content-Type is genuinely unknown at this boundary — a handler return is bare
+   text — so the strictest grammar applies and every strip stage runs.
+   **On text that parses as a JSON document, detection only** — the text is
+   returned unchanged. Either way detection reads the original text and its
+   sanitised form — on a JSON document, each escaped string token decoded on its
+   own as well — and emits the throttled `[injection-defense] [host]` log on a
+   match.
 2. If `config.enableSpotlighting === true` and the result is not an error, the
    defended text is wrapped in a per-message UUID-keyed sentinel envelope.
 
@@ -306,12 +313,14 @@ idempotent and the sanitiser is idempotent on already-sanitised text.
 layer does differs by tool — a uniform "defended twice" is not true of any of
 them:
 
-- **`curl_execute`** applies Step 2 alone before classifying. A non-JSON body is
-  never returned inline, so it does not reach the wrap at all; it is saved, and
-  the wrap sees only the server-authored report. An inline JSON body is
-  sanitised again at the wrap, with no strip stage.
-- **`jq_query`** runs `defendText` over the filter's output under the JSON
-  grammar, then the wrap takes its verbatim-JSON arm on the same text.
+- **`curl_execute`** detects on the body before classifying it, and rewrites
+  no JSON body. A non-JSON body is never returned inline, so it does not reach
+  the wrap at all; it is saved — sanitised where it carried attack codepoints
+  or long whitespace runs — and the wrap sees only the server-authored report.
+  An inline JSON body is returned as the origin sent it, and the wrap detects on
+  it again without rewriting it.
+- **`jq_query`** detects on the filter's output and returns it unchanged, and
+  the wrap takes its verbatim-JSON arm on the same text.
 - **A custom tool's result** reaches the wrap with no tool-local body defence at
   all, which is why the wrap exists.
 
@@ -319,11 +328,14 @@ Where two passes do land on one text, the second is additive rather than
 corrective: every strip stage is idempotent, and the wrap's pass is the
 less-informed one.
 
-**Where a result parses as JSON, no strip stage runs at any layer.** `curl_execute`
-returns a JSON body as the origin sent it, and the wrap's `defendForInline` takes
-its verbatim arm for any text that parses — a JSON string leaf from `jq_query`
-included. The parse is a validity check, not a transform: what comes back is the
-payload, not a re-serialisation of it.
+**Where a result parses as JSON, nothing rewrites it at any layer** — no strip
+stage and no Unicode sanitise. `curl_execute` returns a JSON body as the origin
+sent it, and the wrap's `defendForInline` takes its verbatim arm for any text that
+parses — a JSON string leaf from `jq_query`, and a custom tool's JSON result,
+included. Injection detection still runs and still logs. The parse is a validity
+check, not a transform: what comes back is the payload, not a re-serialisation of
+it. **If your handler returns JSON and you want invisible or bidirectional
+codepoints removed, remove them yourself**: the wrap no longer does.
 
 **Why the stages come off rather than being narrowed.** Running them on a JSON
 document requires walking it, and a walk requires a round trip that is not
@@ -336,16 +348,15 @@ is not free and it is not hidden:** a markdown beacon or a `javascript:` link
 inside a JSON string value now reaches the model, and a client that renders tool
 text as markdown will act on it.
 
-Sanitise-and-detect (invisible characters, bidirectional overrides, padding
-collapse) still runs on every layer including JSON, and a non-JSON body is not
-returned inline at all — it is saved, and its path reported.
+A non-JSON body from `curl_execute` is not returned inline at all — it is
+saved, and its path reported.
 
-**So byte identity holds only where every applicable pass was a no-op**, and the
-response tells you when one was not: `savedMessage` says whether an artefact is
-the origin's octets or the sanitised text, and a body whose UTF-8 decode did not
-round-trip is reported as `body_decode_lossy` (or an appended notice on the plain
-branch). See `ARCHITECTURE.md` invariants 1a and 14, and `LESSONS.md` RC-47,
-RC-48.
+**So a JSON body is byte-identical to what the origin sent, inline and saved**,
+and the response tells you about the two cases where a byte can still differ:
+`savedMessage` says when a saved non-JSON artefact is the sanitised text rather
+than the origin's octets, and a body whose UTF-8 decode did not round-trip is
+reported as `body_decode_lossy` (or an appended notice on the plain branch). See
+`ARCHITECTURE.md` invariants 1a and 14, and `LESSONS.md` RC-47, RC-49.
 
 Idempotence for the wrap as a whole is enforced via a module-private symbol tag,
 so a result passing through two wraps is not processed twice. The wrap is

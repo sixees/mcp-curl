@@ -57,12 +57,13 @@ interface CurlExecuteResult {
      * One entry per remote-controlled region, never one entry spanning two.
      *
      * `content[0]` is the body (or the server-authored saved-to-file message) on
-     * every branch. A SECOND entry carries the response header text and a THIRD
-     * carries server-authored notices — truncation, undetermined or unsupported
-     * headers, a non-zero exit code. Both are plain-branch only: under
-     * `include_metadata` the headers travel in the envelope's `headers` key and
-     * the notices in its own fields. ARCHITECTURE.md invariant 13; the wrap
-     * defends each entry independently, which is what keeps invariant 16 true.
+     * every branch. After it, in this order and each only when present, come the
+     * response header text and the server-authored notices — header truncation,
+     * undetermined or unsupported headers, a lossy UTF-8 decode, a non-zero exit
+     * code. Both are plain-branch only: under `include_metadata` the headers
+     * travel in the envelope's `headers` key and the notices in its own fields.
+     * ARCHITECTURE.md invariant 13; the wrap defends each entry independently,
+     * which is what keeps invariant 16 true.
      */
     content: Array<{
         type: "text";
@@ -252,10 +253,12 @@ interface GeneratorConfig {
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
     /**
-     * Wrap YAML-driven tool responses in spotlighting sentinels (PR-6b).
+     * Wrap YAML-driven tool responses in spotlighting sentinels.
      *
-     * Sanitise + detect always run on text responses regardless of this flag;
-     * the flag only controls the additional `applySpotlighting` step. Mirrors
+     * The response-side defence runs on every text part regardless of this flag —
+     * the full `defendText` pipeline on non-JSON text, detection alone on a JSON
+     * document, which is returned unchanged — and the flag only adds the
+     * `applySpotlighting` step, never on an error result. Mirrors
      * `McpCurlConfig.enableSpotlighting` so the YAML path inherits the same
      * setting from `createApiServer({ config })` callers without a separate
      * knob.

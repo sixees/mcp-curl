@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { readFile, rm } from "fs/promises";
+import { applyJqFilter } from "../jq/index.js";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import {
@@ -98,12 +99,12 @@ describe("curl_execute size ceiling — both representations are checked", () =>
 
         expect(text).toContain("exceeds maximum allowed");
         expect(text).toContain(`${body.length} bytes`);
-        // **The teeth, and the first version of this case had none.** A decode
-        // only ever inflates, so the decoded-length gate strictly subsumes the
-        // wire-length one and removing the wire check failed nothing. What the
-        // wire check uniquely provides is a TRUE message: this body is ASCII,
-        // so it is perfectly valid UTF-8 and merely too big, and the decoded
-        // arm's wording would tell the caller otherwise.
+        // **The teeth.** A decode only ever inflates, so the decoded-length gate
+        // strictly subsumes the wire-length one and a size assertion alone cannot
+        // fail when the wire check is removed. What the wire check uniquely
+        // provides is a TRUE message: this body is ASCII, so it is perfectly valid
+        // UTF-8 and merely too big, and the decoded arm's wording would tell the
+        // caller otherwise.
         expect(text).not.toContain("not valid UTF-8");
         expect(text).not.toContain("on the wire");
     });
@@ -159,9 +160,9 @@ describe("curl_execute saved artefact — defended, and honestly measured", () =
         // diagnostics they opened it for — `stripHtmlComments` deletes the
         // `<!-- trace-id -->` a framework puts its trace in.
         //
-        // `text/markdown` because it is the declaration that used to select BOTH
-        // stage sets, so it is the strongest available test that no declared type
-        // reaches a stage from here.
+        // `text/markdown` because it is the declaration that selects BOTH stage
+        // sets in `defendText`, so it is the strongest available test that no
+        // declared type reaches a stage from here.
         const body = Buffer.from(
             "# ok\n\n<script>alert(1)</script> and ![x](https://evil.test/?d=1)",
             "utf8"
@@ -247,16 +248,14 @@ describe("curl_execute saved artefact — 'did a filter run' has one answer", ()
 
 describe("curl_execute — a jq_filter never discards an unparseable body", () => {
     it("saves and reports an HTML error page fetched with a jq_filter", async () => {
-        // **At `executeCurlRequest` because the defect is the composition, not
-        // either link.** The filter gate refused correctly and the saver saved
-        // correctly; the fault was only that the refusal threw about a hundred
-        // lines ABOVE `shouldSave`, so the diagnostic body was discarded
-        // outright — no path, no byte count, nothing to open — while the same
-        // page fetched without a filter was persisted and reported.
-        // `docs/todos/018` → *Bad JSON: report, save, do not inline* and
-        // `curl_execute`'s own description both promise that save with no
-        // filter exception. A unit test beside the gate cannot see this: the
-        // gate's own behaviour is unchanged.
+        // **At `executeCurlRequest` because the property is the composition, not
+        // either link.** The filter gate and the saver can each be correct while a
+        // refusal raised above `shouldSave` discards the diagnostic body outright —
+        // no path, no byte count, nothing to open — where the same page fetched
+        // without a filter is persisted and reported. `docs/todos/018` → *Bad JSON:
+        // report, save, do not inline* and `curl_execute`'s own description both
+        // promise that save with no filter exception, and a unit test beside the
+        // gate cannot see a throw placed above the save.
         const body = Buffer.from(
             "<html><body><h1>502 Bad Gateway</h1><!-- trace-id: abc123 --></body></html>",
             "utf8"
@@ -289,25 +288,16 @@ describe("curl_execute — a jq_filter never discards an unparseable body", () =
 });
 
 describe("curl_execute — a saved JSON body says which bytes reached disk", () => {
-    it("reports a sanitised over-cap JSON document as NOT byte-identical", async () => {
-        // `originBytesExact` was computed for every saved artefact and then read
-        // only inside the non-JSON arm, so a valid JSON document saved from the
-        // sanitised text — over the cap, with a codepoint removed — was reported
-        // as a plain `jq_query` path with nothing saying the file differs from
-        // what the origin sent. The non-JSON arm said so; this arm did not.
+    it("reports an over-cap JSON document saved from the origin's octets as exact, BOM and all", async () => {
+        // A JSON document always goes to disk as the origin sent it, whatever
+        // Step 2 would have changed: the reader is `jq_query`, which trims as
+        // the classifier does. So the exactness claim holds on this arm even
+        // for a leading U+FEFF, which Step 2 would remove. `LESSONS.md` RC-64.
         //
-        // The escape, never a literal invisible character: a bare U+200B in this
+        // The escape, never a literal invisible character: a bare U+FEFF in this
         // source is invisible in review and survives an editor round-trip badly.
-        const zwsp = "\u200b";
-        const body = Buffer.from(
-            `{"note":"${zwsp}${"padding-".repeat(200)}"}`,
-            "utf8"
-        );
-        // Fixture guards: the premise is a body that PARSES, is over the cap,
-        // and is changed by the sanitise. If any fails the case proves nothing.
-        expect(() => JSON.parse(body.toString("utf8"))).not.toThrow();
+        const body = Buffer.from(`\ufeff{"note":"${"padding-".repeat(200)}"}`, "utf8");
         expect(body.length).toBeGreaterThan(1000);
-        expect(body.toString("utf8")).toContain(zwsp);
 
         mockedExecuteCommand.mockResolvedValue(
             curlOutputFor({ body, contentType: "application/json" })
@@ -319,11 +309,68 @@ describe("curl_execute — a saved JSON body says which bytes reached disk", () 
             )
         ).content[0].text;
 
-        savedPathFrom(text);
-        // Still routed to jq_query — the body IS JSON and the tool can read it.
+        expect(Buffer.from(await readFile(savedPathFrom(text))).equals(body)).toBe(true);
         expect(text).toContain("jq_query");
-        // And now says what the file actually holds.
+        expect(text).toContain("The file holds the origin's exact bytes.");
+    });
+
+    it("names every transform when a non-JSON body is saved sanitised", async () => {
+        // The one arm that writes sanitised text: a non-JSON body Step 2
+        // changed, read with the host's own tooling. The sanitiser collapses a
+        // 20+ newline run as well as removing codepoints, and a reader diffing
+        // or counting lines against the origin needs both named.
+        const body = Buffer.from(`line one\u200b${"\n".repeat(25)}line two`, "utf8");
+
+        mockedExecuteCommand.mockResolvedValue(
+            curlOutputFor({ body, contentType: "text/plain" })
+        );
+
+        const text = (
+            await executeCurlRequest(params({ url: "https://example.test/log" }))
+        ).content[0].text;
+
+        savedPathFrom(text);
         expect(text).toContain("attack codepoints removed");
+        expect(text).toContain("newline runs collapsed");
         expect(text).not.toContain("The file holds the origin's exact bytes.");
+    });
+
+    it("quotes the decoded size the cap was measured on, when a lossy decode grew the body", async () => {
+        // 400 Latin-1 0xE9 bytes decode to 400 three-byte U+FFFD: the file is
+        // 408 bytes and the gate measured 1208, so quoting the file size alone
+        // reports a count below the limit it says was exceeded.
+        const body = Buffer.concat([Buffer.from('{"p":"'), Buffer.alloc(400, 0xe9), Buffer.from('"}')]);
+        mockedExecuteCommand.mockResolvedValue(curlOutputFor({ body, contentType: "application/json" }));
+
+        const text = (
+            await executeCurlRequest(params({ url: "https://example.test/latin1", max_result_size: 1000 }))
+        ).content[0].text;
+
+        expect(text).toContain("408 bytes on disk, 1208 once decoded");
+        expect(text).toContain("exceeds the 1000-byte inline limit");
+    });
+
+    it("names the U+FFFD substitution when a lossy non-JSON body is saved sanitised", async () => {
+        const body = Buffer.concat([Buffer.from("caf"), Buffer.from([0xe9]), Buffer.from(" a\u200bb", "utf8")]);
+        mockedExecuteCommand.mockResolvedValue(curlOutputFor({ body, contentType: "text/plain" }));
+
+        const text = (await executeCurlRequest(params({ url: "https://example.test/log2" }))).content[0].text;
+
+        expect(text).toContain("each undecodable sequence replaced with U+FFFD");
+    });
+
+    it("does not tell the model jq_query cannot read a non-JSON body's sanitised artefact", async () => {
+        // An invisible character between tokens: not JSON as sent, JSON once
+        // Step 2 removed it — and the sanitised text is what was written. So
+        // the message claims nothing about jq_query, and the file does parse.
+        const body = Buffer.from('{"a":1,\u200b"b":2}', "utf8");
+        mockedExecuteCommand.mockResolvedValue(curlOutputFor({ body, contentType: "application/json" }));
+
+        const text = (await executeCurlRequest(params({ url: "https://example.test/zw" }))).content[0].text;
+
+        expect(text).toContain("it is not JSON (invalid-syntax)");
+        expect(text).not.toContain("cannot parse");
+        expect(text).toContain("read the path with your own tooling");
+        expect(applyJqFilter(await readFile(savedPathFrom(text), "utf-8"), ".b")).toBe("2");
     });
 });
