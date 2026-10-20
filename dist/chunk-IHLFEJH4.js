@@ -504,14 +504,36 @@ function matchesEitherForm(text, sanitised) {
   return detectInjectionPattern(text) || detectInjectionPattern(sanitised ?? sanitizeResponse(text));
 }
 function matchesDecodedForm(text) {
-  if (!text.includes("\\u")) return false;
-  let decoded;
-  try {
-    decoded = JSON.stringify(JSON.parse(text.trim()));
-  } catch {
-    return false;
+  if (!text.includes("\\")) return false;
+  for (const token of escapedStringTokens(text)) {
+    let decoded;
+    try {
+      decoded = JSON.parse(token);
+    } catch {
+      continue;
+    }
+    if (typeof decoded === "string" && matchesEitherForm(decoded)) return true;
   }
-  return matchesEitherForm(decoded);
+  return false;
+}
+function* escapedStringTokens(text) {
+  let start = -1;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (start < 0) {
+      if (c === 34) {
+        start = i;
+        escaped = false;
+      }
+    } else if (c === 92) {
+      escaped = true;
+      i++;
+    } else if (c === 34) {
+      if (escaped) yield text.slice(start, i + 1);
+      start = -1;
+    }
+  }
 }
 function sanitizeAndDetect(text, label) {
   const sanitised = sanitizeResponse(text);
@@ -1770,7 +1792,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "4.1.0" : "0.0.0"
+  VERSION: true ? "5.0.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts

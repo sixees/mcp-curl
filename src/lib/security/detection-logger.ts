@@ -68,14 +68,20 @@ export function detectAndLog(text: string, label: string, sanitised?: string): v
  * document returned unchanged: `defendForInline` calls it on its JSON arm, and
  * `processResponse` calls it on every body above its JSON/non-JSON fork.
  *
- * **A document can spell a phrase with string escapes** — `Ig\u200bnore` or
- * `\u0049gnore`, six ASCII bytes per character — which neither text form
- * shows and the model decodes on reading. So where an escape is present the
- * decoded rendering is tested too, and discarded: this rewrites nothing
- * (`LESSONS.md` RC-49). `JSON.stringify` writes every non-control character
- * literally, which is what lets the sanitised read join a split phrase. The
- * parse is attempted only when the text carries a `\u` escape, and text that
- * does not parse adds nothing beyond the two text forms.
+ * **A document can spell a phrase with string escapes** — `Ig\u200bnore`,
+ * `\u0049gnore`, `system\nprompt` — which neither text form shows and the
+ * model decodes on reading. So each string token carrying an escape is
+ * decoded on its own, and its decoded value tested in both forms, then
+ * discarded: this rewrites nothing (`LESSONS.md` RC-49).
+ *
+ * **Token by token, never by re-serialising the parsed document.** A parse
+ * keeps only the last of two duplicate members, so a re-serialised
+ * `{"x":"\u0049gnore …","x":"ok"}` holds `ok` alone, and `JSON.stringify`
+ * re-escapes a decoded control character, so `system\u000aprompt` comes back
+ * with a backslash and an `n` where `\s` needed a newline — the
+ * parse-and-reserialise loss `LESSONS.md` RC-24 records.
+ * Decoding each token alone also keeps a match from spanning two values.
+ * Text with no backslash has nothing to decode and costs one `includes`.
  *
  * @param text - The text as returned
  * @param label - Hostname or filename used as the log label
@@ -90,14 +96,48 @@ function matchesEitherForm(text: string, sanitised?: string): boolean {
 }
 
 function matchesDecodedForm(text: string): boolean {
-    if (!text.includes("\\u")) return false;
-    let decoded: string;
-    try {
-        decoded = JSON.stringify(JSON.parse(text.trim()));
-    } catch {
-        return false;
+    if (!text.includes("\\")) return false;
+    for (const token of escapedStringTokens(text)) {
+        let decoded: unknown;
+        try {
+            decoded = JSON.parse(token);
+        } catch {
+            continue;
+        }
+        if (typeof decoded === "string" && matchesEitherForm(decoded)) return true;
     }
-    return matchesEitherForm(decoded);
+    return false;
+}
+
+/**
+ * Each `"…"` token in `text` that carries a backslash, found the way a JSON
+ * lexer finds them: a quote opens a token outside one, a backslash skips the
+ * character after it, and the next unescaped quote closes it.
+ *
+ * A single linear pass rather than a regex, because `/"(?:[^"\\]|\\.)*"/g`
+ * re-scans from every quote when the closing one never comes — quadratic on a
+ * body of escaped quotes, at sizes up to the 10 MB response cap. On text that
+ * is not JSON the tokens are whatever the quotes delimit, and a token that does
+ * not parse is skipped.
+ */
+function* escapedStringTokens(text: string): Generator<string> {
+    let start = -1;
+    let escaped = false;
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        if (start < 0) {
+            if (c === 0x22) {
+                start = i;
+                escaped = false;
+            }
+        } else if (c === 0x5c) {
+            escaped = true;
+            i++;
+        } else if (c === 0x22) {
+            if (escaped) yield text.slice(start, i + 1);
+            start = -1;
+        }
+    }
 }
 
 /**

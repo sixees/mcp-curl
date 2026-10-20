@@ -627,8 +627,8 @@ function savedMessage(facts: SavedMessageFacts): string {
  * 1. Size guard against {@link LIMITS.MAX_RESPONSE_SIZE}, on the wire octets and
  *    again on the decode — a body that is not valid UTF-8 decodes LARGER,
  *    because each bad sequence becomes a three-byte replacement character.
- * 2. **Detect**, always, on the origin's decode, on its sanitised form and —
- *    where the text carries a `\u` escape — on its decoded rendering.
+ * 2. **Detect**, always, on the origin's decode, on its sanitised form and on
+ *    each string token that carries an escape, decoded on its own.
  *    Nothing on this path rewrites a JSON payload.
  * 3. Classify, once, with {@link classifyBody}, over the origin's decode — the
  *    same question the wrap asks of every text part. The sanitised form is
@@ -734,10 +734,10 @@ export async function processResponse(
     // asks the same function the same question, and `jq_query` trims the same
     // way before it parses. One verdict per body, whichever tool carried it.
     //
-    // **Detection sits above the fork, and it reads the sanitised form and any
-    // `\u`-escaped rendering as well as the original**: a zero-width space
-    // inside a phrase hides it from the first, and `\u0049gnore` hides it from
-    // both text forms until decoded (`detectJsonAndLog`). Nothing is rewritten —
+    // **Detection sits above the fork, and it reads the sanitised form and each
+    // escaped string token, decoded, as well as the original**: a zero-width
+    // space inside a phrase hides it from the first, and `\u0049gnore` hides it
+    // from both text forms until decoded (`detectJsonAndLog`). Nothing is rewritten —
     // the payload is the agent's, not this server's (`LESSONS.md` RC-49) — while
     // the `[injection-defense]` line is an operator signal invariant 7 forbids
     // suppressing.
@@ -819,10 +819,10 @@ export async function processResponse(
         // content" rather than "a filter was requested".
         filterApplied = true;
 
-        // Re-detect after the filter, because jq can assemble a phrase no single
-        // value holds — `.a + " " + .b` joins two halves the whole-document check
-        // above never saw together. Escapes such as `\u0049gnore` are already
-        // caught there, on the decoded rendering `detectJsonAndLog` tests. **Detect,
+        // Re-detect after the filter, because a multi-path filter can place two
+        // values side by side — `.a,.b` puts halves the origin kept apart within
+        // the pattern's proximity window. Escapes such as `\u0049gnore` are
+        // already caught above, on the decoded tokens `detectJsonAndLog` tests. **Detect,
         // never rewrite** — the filter's output is the origin's data, selected, and
         // the same middleware contract as the unfiltered body applies (`LESSONS.md`
         // RC-49).

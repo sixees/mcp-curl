@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.1.0] - 2026-10-20
+## [5.0.0] - 2026-10-20
 
 ### Changed
 
@@ -36,7 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   character (`Ig\u200bnore previous instructions`) is now logged on every path,
   the published `sanitizeAndDetect` and `defendText` included; on a JSON arm, so
   is a phrase spelled with string escapes (`\u0049gnore`, as six ASCII bytes),
-  which no text form showed. Nothing more is rewritten; the `[injection-defense]`
+  which no text form showed. Each escaped string token is decoded on its own, so
+  a duplicate member or an escaped newline or control character cannot hide one.
+  Nothing more is rewritten; the `[injection-defense]`
   log is the only effect.
 
 - **`curl_execute`'s description states the contract it keeps.** It said attack

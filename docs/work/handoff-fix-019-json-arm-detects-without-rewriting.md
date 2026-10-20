@@ -137,7 +137,7 @@ The fixes in 1d26924 were not themselves re-reviewed. Surface 3 has not run.
 ## Follow-up work
 
 - [x] Approve, amend or refuse the two drafted RC entries — approved as drafted and flushed as **RC-63** (over-cap reversal of RC-49) and **RC-64** (reader/classifier reversal of RC-44's remedy), 2026-10-20
-- [ ] Set the MAJOR version and rename `[Unreleased]` before merge (likely shipped together with 018 slice 2)
+- [x] Set the MAJOR version and rename `[Unreleased]` before merge — 5.0.0, set during PR #43 review, 2026-10-20 (not waiting for 018 slice 2)
 - [ ] Open the PR and run `/sixees-workflow:review-pr-comments` for Surface 3
 
 ### Outstanding Todos
@@ -158,3 +158,39 @@ The fixes in 1d26924 were not themselves re-reviewed. Surface 3 has not run.
 | 025 | The "wrap ran" witness is set on fail-open | `expectWrapCompleted`: tag plus no `[wrap-error]` | Claude Code | 2026-10-20 |
 | 026 | The not-byte-identical notice omits whitespace collapse | every transform named, U+FFFD included | Claude Code | 2026-10-20 |
 | 027 | Size-gate growth arms and alias left for a removed rewrite | `exceedsInlineCap` and ratio machinery deleted | Claude Code | 2026-10-20 |
+
+## Review Comments Addressed — 2026-10-20
+
+**PR:** #43 · Surface 3, round 1 (requested: CodeRabbit, Codex, Copilot; 15 min wait). Copilot reviewed `bb5030d` (grade "Changes recommended", 2 issues).
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Release the BREAKING change as a major version, not 4.1.0 | coderabbitai, chatgpt-codex-connector (P1), copilot-pull-request-reviewer | Decision conflict, settled by the operator | Version 5.0.0 in `package.json`, the lockfile, the CHANGELOG heading and `dist/` |
+| Decoded detection re-serialises the document: duplicate members dropped, `\u000a` re-escaped, `\n` skipped by the `\u` gate | coderabbitai, chatgpt-codex-connector, copilot-pull-request-reviewer | Fix needed (P2, in scope) | `detection-logger.ts::matchesDecodedForm` decodes each escaped string token on its own, found by a linear lexer (`escapedStringTokens`), gated on any backslash. Four new body-path and wrap-path cases plus a linearity case; probes: the old decoder fails 4, a regex lexer does not finish in 100 s |
+| Architecture doc says the LLM receives attack text in full | coderabbitai | Documentation (P3, in scope) | `docs/architecture/architecture.md` › Prompt Injection Defense: sanitisation is not a boundary, and a non-JSON body is saved, not returned; the stale `sanitize.ts:26-58` anchor is now `INJECTION_PATTERNS` |
+| The same JSON is parsed more than once on the escaped and filtered path | coderabbitai | Fix needed (P3), resolved by the fix above | Detection no longer parses the whole document, so the filtered path parses it twice (classify, filter) instead of three times |
+
+### Declined Findings
+
+None this round: every finding was fixed.
+
+### Decisions Revised
+
+| Original decision | New approach | Reason | Reviewer |
+|---|---|---|---|
+| Release as 4.1.0 (operator instruction) | Release as 5.0.0 | The CHANGELOG marks the JSON-sanitisation removal BREAKING for library consumers, and a minor version reaches every `^4` range unasked; the operator chose 5.0.0 | coderabbitai, chatgpt-codex-connector, copilot-pull-request-reviewer |
+| Decoded detection re-serialises the parsed document | Per-token decode | Re-serialising loses duplicate members and re-escapes control characters (`LESSONS.md` RC-24, recurring) | all three |
+
+### Resolved Todos
+
+None: no todo is linked to #43.
+
+### Outstanding Todos
+
+None.
+
+### Files Modified
+
+`src/lib/security/detection-logger.ts`, `src/lib/response/processor.ts` (comments), `src/lib/response/processor.test.ts`, `docs/architecture/architecture.md`, `README.md`, `CHANGELOG.md`, `package.json`, `package-lock.json`, `dist/`.
