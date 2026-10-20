@@ -136,7 +136,7 @@ The fixes in 1d26924 were not themselves re-reviewed. Surface 3 has not run.
 
 ## Follow-up work
 
-- [ ] Approve, amend or refuse the two drafted RC entries (RC-49 over-cap reversal; RC-44 reader/classifier reversal), then `/sixees-workflow:file-lessons --flush`
+- [x] Approve, amend or refuse the two drafted RC entries — approved as drafted and flushed as **RC-63** (over-cap reversal of RC-49) and **RC-64** (reader/classifier reversal of RC-44's remedy), 2026-10-20
 - [ ] Set the MAJOR version and rename `[Unreleased]` before merge (likely shipped together with 018 slice 2)
 - [ ] Open the PR and run `/sixees-workflow:review-pr-comments` for Surface 3
 

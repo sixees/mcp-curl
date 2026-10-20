@@ -152,6 +152,7 @@ export function applyJqFilter(jsonString: string, filter: string): string {
         // space that `JSON.parse` rejects, and the classifier that called it
         // JSON — and told the model this tool can read it — tolerates both. A
         // reader stricter than that classifier turns a true claim false.
+        // `LESSONS.md` RC-64.
         data = JSON.parse(jsonString.trim(), keepNumberLexeme);
     } catch (error) {
         // SyntaxError indicates invalid JSON

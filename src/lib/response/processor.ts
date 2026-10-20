@@ -599,7 +599,7 @@ function savedMessage(facts: SavedMessageFacts): string {
     // nothing, where a re-request spends quota on a rate-limited API — so the
     // file is offered as the answer and narrowing is offered for next time,
     // never as a retry. That is why RC-49's "ask the API for less data" is not
-    // the advice here: it reads as free and is not.
+    // the advice here: it reads as free and is not. `LESSONS.md` RC-63.
     const narrowing = overCap
         ? ` To get the body inline instead, narrow the next request — fewer fields, a limit, or` +
           ` pagination${filtered ? ", or a tighter jq_filter" : ""}.`
