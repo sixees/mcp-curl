@@ -263,16 +263,19 @@ your custom tool already wrapped, the outer call is a no-op.
 > responses.** Pattern detection is unreliable as an enforcement boundary:
 > it has false positives, is trivially bypassed (paraphrase, encoding, novel
 > jailbreak phrasing), and gating on it leaks the rule-set to whoever can
-> probe the behaviour. The defence layer is `sanitizeResponse` (which always
-> runs) plus `applySpotlighting` (the trust-boundary sentinel). Detection is
+> probe the behaviour. The defence layer is `defendText` on non-JSON text plus
+> `applySpotlighting` (the trust-boundary sentinel). Detection is
 > a logging signal, never a gate. If you find yourself reaching for the
 > primitive to make a refusal decision, prefer `defendText` instead — it is
 > the safe alternative because it cannot be misused this way (it always
 > returns the defended text).
 
-`defendText` is the same function the built-in tools call, not a parallel
-implementation of it. That is deliberate: a second implementation is the weaker
-one, and nobody knows which surface they are on.
+`defendText` is the same function the built-in tools call on non-JSON text,
+not a parallel implementation of it. That is deliberate: a second implementation
+is the weaker one, and nobody knows which surface they are on. **It does not
+reproduce the server's JSON arm**: given a JSON document it still runs Step 2,
+where the server detects and returns the document unchanged — see *Composing the
+Full Defence* below.
 
 ## Composing the Full Defence
 
@@ -283,12 +286,14 @@ routed through the same internal post-processor wrap that defends
 `curl_execute`, `jq_query`, and YAML-driven endpoints. On each text content
 part the wrap runs:
 
-1. **The full `defendText` pipeline**, with `contentTypeUndetermined: true` and
-   `decodeEntities: false`. The Content-Type is genuinely unknown at this
-   boundary — a handler return is bare text — so the strictest grammar applies
-   and every strip stage runs, except on text that parses as a JSON document.
-   Detection runs on the **original** text and emits the throttled
-   `[injection-defense] [host]` log on a match.
+1. **On non-JSON text, the full `defendText` pipeline**, with
+   `contentTypeUndetermined: true` and `decodeEntities: false`. The
+   Content-Type is genuinely unknown at this boundary — a handler return is bare
+   text — so the strictest grammar applies and every strip stage runs.
+   **On text that parses as a JSON document, detection only** — the text is
+   returned unchanged. Either way detection reads the original text and its
+   sanitised form, and emits the throttled `[injection-defense] [host]` log on a
+   match.
 2. If `config.enableSpotlighting === true` and the result is not an error, the
    defended text is wrapped in a per-message UUID-keyed sentinel envelope.
 
@@ -340,16 +345,15 @@ is not free and it is not hidden:** a markdown beacon or a `javascript:` link
 inside a JSON string value now reaches the model, and a client that renders tool
 text as markdown will act on it.
 
-Sanitise-and-detect (invisible characters, bidirectional overrides, padding
-collapse) still runs on every layer including JSON, and a non-JSON body is not
-returned inline at all — it is saved, and its path reported.
+A non-JSON body from `curl_execute` is not returned inline at all — it is
+saved, and its path reported.
 
-**So byte identity holds only where every applicable pass was a no-op**, and the
-response tells you when one was not: `savedMessage` says whether an artefact is
-the origin's octets or the sanitised text, and a body whose UTF-8 decode did not
-round-trip is reported as `body_decode_lossy` (or an appended notice on the plain
-branch). See `ARCHITECTURE.md` invariants 1a and 14, and `LESSONS.md` RC-47,
-RC-48.
+**So a JSON body is byte-identical to what the origin sent, inline and saved**,
+and the response tells you about the two cases where a byte can still differ:
+`savedMessage` says when a saved non-JSON artefact is the sanitised text rather
+than the origin's octets, and a body whose UTF-8 decode did not round-trip is
+reported as `body_decode_lossy` (or an appended notice on the plain branch). See
+`ARCHITECTURE.md` invariants 1a and 14, and `LESSONS.md` RC-47, RC-49.
 
 Idempotence for the wrap as a whole is enforced via a module-private symbol tag,
 so a result passing through two wraps is not processed twice. The wrap is

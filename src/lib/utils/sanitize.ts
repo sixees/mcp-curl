@@ -305,15 +305,12 @@ function isWhitespacePaddingMatch(match: string): boolean {
  * callers must continue to honour the "observability only" rule
  * regardless of which patterns are in play.
  *
- * @param input - Content to scan. When called via `sanitizeAndDetect`
- *   (the canonical production path), detection runs on the **original**
- *   text before sanitisation — preserving signals like Unicode-attack
- *   payloads that the sanitiser would otherwise strip. When called
- *   directly, passing content already through `sanitizeResponse` improves
- *   coverage of invisible-char-split phrases (e.g. `Ig`+ZWSP+`nore` →
- *   `Ignore`), at the cost of the pre-sanitise signal class. Both shapes
- *   are valid; pick based on which class you care about. See
- *   `detection-logger.ts → sanitizeAndDetect` for the ordering rationale.
+ * @param input - Content to scan. The production path,
+ *   `detection-logger.ts → detectAndLog`, calls this on the original text
+ *   AND on its `sanitizeResponse` form, because each representation hides a
+ *   class from the other: a later strip stage would erase a phrase from the
+ *   first, and an invisible character splits one (`Ig`+ZWSP+`nore`) in the
+ *   second. A direct caller wanting both classes does the same.
  * @returns true if any injection pattern matched
  */
 export function detectInjectionPattern(input: string): boolean {

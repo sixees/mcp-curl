@@ -432,12 +432,8 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
     const ZWSP = "\u200b";
 
     it("persists a 600 KB OBJECT body as the origin's exact octets", async () => {
-        // **No ZWSP here any more**, and the reason is the point: Step 2 now runs
-        // before the classification, so a body carrying an attack codepoint is
-        // deliberately NOT byte-exact — the sanitised form is persisted instead,
-        // because raw octets carrying a BOM would be a file `jq_query` cannot
-        // open. Byte-exactness is conditional on the sanitise being a no-op,
-        // which is true of every legitimate document.
+        // A JSON document is persisted as the origin's octets whatever Step 2
+        // would change — the 600 KB bare-string case below carries a ZWSP to show it.
         //
         // Teeth for the artefact gate itself live in the non-UTF-8 case below —
         // for a valid-UTF-8 body the two arms produce identical bytes, so no

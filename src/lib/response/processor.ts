@@ -173,20 +173,14 @@ function isDefinitelyJson(text: string): boolean {
  * and `"ok"` parse, so {@link classifyBody} returns `{ json: true }` for them
  * and no reason is issued — a filter runs on a scalar perfectly well, and
  * routing them through a rejection is what `LESSONS.md` RC-45 removed.
- *
- * Why a body was not handed back as JSON.
- *
- * A closed vocabulary this repo owns, so no response byte can reach the message
- * that reports it — V8's parse error embeds up to ten bytes of the body, and the
- * whole body when it is short, so its text is never interpolated.
  */
 export type JsonRejectionReason = "empty-body" | "looks-like-markup" | "invalid-syntax";
 
 /**
  * What the body path decided about a response body.
  *
- * `json: true` is the only arm whose bytes are returned to the model and
- * persisted as the origin sent them.
+ * `json: true` is the only arm whose bytes are returned to the model, and it
+ * is always returned — and, unfiltered, persisted — as the origin sent them.
  */
 export type BodyClassification =
     | { readonly json: true }
@@ -562,12 +556,10 @@ function savedMessage(facts: SavedMessageFacts): string {
           `${maxSize}-byte inline limit, so no body is returned here.`
         : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
 
-    // **Which form reached disk is stated on BOTH arms.** `originBytesExact` is
-    // computed for every saved artefact, and a JSON document saved from
-    // `sanitised` differs from the origin exactly as a non-JSON one does — so
-    // reading it only under `rejection` left an over-cap JSON body with a
-    // removed codepoint reported as a plain `jq_query` path, with nothing saying
-    // the file is not what the origin sent.
+    // **Which form reached disk is stated on BOTH arms**, because both arms
+    // can hold the origin's octets and the reader diffing the file against the
+    // origin needs to know which one they have. Only a non-JSON body Step 2
+    // changed is written sanitised.
     //
     // Withheld for a filter's output alone: there `scope` below already says the
     // file is not the response body, which is the stronger statement.
@@ -617,9 +609,11 @@ function savedMessage(facts: SavedMessageFacts): string {
  * 1. Size guard against {@link LIMITS.MAX_RESPONSE_SIZE}, on the wire octets and
  *    again on the decode — a body that is not valid UTF-8 decodes LARGER,
  *    because each bad sequence becomes a three-byte replacement character.
- * 2. **Detect**, always, on the origin's decode. Nothing on this path rewrites
- *    the payload; a sanitised copy exists only for step 3.
- * 3. Classify, once, with {@link classifyBody}, over that sanitised copy.
+ * 2. **Detect**, always, on the origin's decode and on its sanitised form.
+ *    Nothing on this path rewrites a JSON payload.
+ * 3. Classify, once, with {@link classifyBody}, over the origin's decode — the
+ *    same question the wrap asks of every text part. The sanitised form is
+ *    persisted only for a non-JSON body it differs from.
  * 4. A `jq_filter` runs only on a JSON body, and its output is re-detected
  *    because `JSON.parse` can decode an escape into a real injection phrase.
  * 5. A JSON body inside `maxResultSize` is returned as the origin's decode;
@@ -704,8 +698,8 @@ export async function processResponse(
         );
     }
 
-    // Resolve hostname once for injection-detection logging; the defence
-    // pipeline and the post-jq re-sanitise below both label with it.
+    // Resolve hostname once for injection-detection logging; detection on the
+    // body and the post-jq re-detect below both label with it.
     const hostname = safeHostname(options.url);
 
     // **The gate, once, for both the body and the artefact.** Everything below
@@ -750,17 +744,14 @@ export async function processResponse(
     // model to expect a subset. One flag set where the transform happens is what
     // makes the wrong answer unavailable rather than merely unused.
     //
-    // Its one reader is `savedMessage`'s `filtered`. The disk decision does not
-    // consult it; the save arm below says why.
+    // Read by the save decision, by the artefact's form and by `savedMessage`'s
+    // `filtered`.
     let filterApplied = false;
     // **A filter is skipped on an unparseable body, never fatal to it.** The
-    // gate is the parse alone, not the artefact gate: `classified.json` answers
-    // *may these bytes be handed over unmodified* — composite only, because a
-    // bare scalar's artefact has no in-process reader — where a filter asks the
-    // weaker *does this parse at all*, and runs perfectly well on a top-level
-    // scalar. Collapsing the two lost data: `curl_execute({ url, jq_filter })`
-    // threw on an endpoint returning `null` for "no record", `42` for a count or
-    // `"ok"` for a health check. `LESSONS.md` RC-45.
+    // gate is the same parse `classifyBody` runs, scalars included, so a
+    // filter runs on an endpoint returning `null` for "no record", `42` for a
+    // count or `"ok"` for a health check rather than throwing on it.
+    // `LESSONS.md` RC-45.
     //
     // **Skipping rather than throwing is what keeps the non-JSON contract
     // whole.** `shouldSave` and `saveResponseToFile` sit ~100 lines below, so a
@@ -784,8 +775,7 @@ export async function processResponse(
         let parsedData: unknown;
 
         try {
-            // Same reviver as the defence walk above and as `jq_query`: this
-            // branch re-serialises through `applyJqFilterToParsed`, so without
+            // Same reviver as `jq_query`: this branch re-serialises through `applyJqFilterToParsed`, so without
             // it a 64-bit id returned by `curl_execute` with a `jq_filter` is
             // silently rounded while the SAME body returned without one is
             // exact (RC-27).
@@ -835,29 +825,24 @@ export async function processResponse(
     // 14, `LESSONS.md` RC-15).
     const overCap = classified.json && Buffer.byteLength(content, "utf8") > maxSize;
 
-    // **A non-JSON body is always saved and never returned inline.** An agent
-    // can often recover from a body that nearly parses — a PHP warning
-    // prepended, a BOM, an HTML error page from a proxy — so the bytes are kept
-    // and the path reported; what is not returned is arbitrary remote text
-    // inline.
-    //
-    // **`empty-body` is excluded, because the save rule was never argued for
-    // it.** A `204`, a `HEAD` or a `304` from an ordinary REST endpoint was
-    // writing a ZERO-BYTE file and telling the model to read it. An empty body
-    // is returned as empty, unless the caller asked for a file.
-    // **`filterApplied` is in this condition because the classification above
-    // describes the ORIGINAL body, and a filter has replaced it.** Once
-    // `applyJqFilterToParsed` has run, the content is our own serialiser's
-    // output and therefore valid JSON by construction — so keying the save on
-    // the original body's verdict forced a 4-byte filter result to disk and
-    // reported it as an unreturnable non-JSON body. Found by the case that
-    // exercises a scalar body with a filter. `LESSONS.md` RC-45.
-    // An empty body is a legitimate response — 204, 304, a HEAD request — so it
-    // is returned as the empty string rather than reported as a failed parse.
-    // Still saved where the caller explicitly asked for a file.
+    // **An empty body is a legitimate response, not a failed parse.** A `204`,
+    // a `HEAD` or a `304` from an ordinary REST endpoint is returned as the
+    // empty string rather than written as a zero-byte file the model is told to
+    // read. Still saved where the caller explicitly asked for a file.
     const emptyBody = !classified.json && classified.reason === "empty-body";
     if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false, ...lossy };
 
+    // **Any other non-JSON body is always saved and never returned inline.** An
+    // agent can often recover from a body that nearly parses — a PHP warning
+    // prepended, an HTML error page from a proxy — so the bytes are kept and
+    // the path reported; what is not returned is arbitrary remote text inline.
+    //
+    // **`filterApplied` is in this condition because the classification above
+    // describes the ORIGINAL body, and a filter has replaced it.** The content
+    // is then our own serialiser's output and valid JSON by construction, so
+    // keying the save on the original body's verdict forced a 4-byte filter
+    // result to disk and reported it as an unreturnable non-JSON body.
+    // `LESSONS.md` RC-45.
     const shouldSave = options.saveToFile || overCap || (!classified.json && !filterApplied);
 
     if (shouldSave) {

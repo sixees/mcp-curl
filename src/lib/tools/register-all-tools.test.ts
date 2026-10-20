@@ -754,9 +754,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
             expect(text).not.toContain(marker);
             // Names the limit it crossed, so the model can tell this apart from
-            // a file it asked for. Phrased as "exceeds ... once the inline
-            // defence pass is applied" because the gate weighs the DEFENDED
-            // bytes, which are not the count reported here.
+            // a file it asked for.
             expect(text).toContain("inline limit");
         });
 
@@ -841,13 +839,9 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
 
         it("does not report a byte count below the limit it says was exceeded", async () => {
-            // `exceedsInlineCap` weighs the DEFENDED form, which the defence can
-            // make longer, so a body under the cap can still be over it. The
-            // message must therefore label the count as on-disk and the limit as
-            // applying after the defence pass: a bare "Response (990 bytes)
-            // exceeded the 1000-byte inline limit" is a sentence no reader can
-            // reconcile, and a model that answers it by raising max_result_size
-            // gets the same file back.
+            // A count below the limit it says was exceeded is a sentence no
+            // reader can reconcile, and a model that answers it by raising
+            // max_result_size gets the same file back.
             // **A JSON body over the cap, because that is the only arm that
             // produces the limit sentence.** A non-JSON body is saved whether or
             // not it crossed the cap, so it reports no limit to reconcile.

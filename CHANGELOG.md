@@ -20,16 +20,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON result removes them itself. Non-JSON text — headers, stderr, a non-JSON
   custom-tool result — keeps the full pipeline.
 
-- **A saved JSON body is the origin's octets whenever they parse as they are.** A
-  body that parses only once a leading U+FEFF is removed is still saved and
-  returned in that sanitised form, since `jq_query` cannot open the raw octets;
-  the message says which form the file holds.
+- **A JSON body is the origin's octets, inline and saved, BOM included.** The
+  body is classified as it arrived, the same question the wrap asks of every text
+  part, so a body led by a U+FEFF or a Unicode space (NBSP, U+3000 and the rest of
+  the class `String.prototype.trim` removes) is JSON on every path and is never
+  replaced by its sanitised form. `jq_query` trims before it parses, so it opens
+  such a file. A body that parses only once an invisible character between tokens
+  is removed now classifies as not JSON, and is saved and reported as such. The
+  sanitised form is written only for a saved non-JSON body Step 2 changed, and the
+  message now names the whitespace and newline collapse as well as the codepoint
+  removal.
+
+- **Injection detection reads the sanitised form as well as the original.** A
+  phrase split by a zero-width or bidi character (`Ig\u200bnore previous
+  instructions`) is now logged on every path, the published `sanitizeAndDetect`
+  and `defendText` included. Nothing more is rewritten; the `[injection-defense]`
+  log is the only effect.
 
 - **The over-cap notice leads with the saved file.** It says the file is valid to
   analyse with `jq_query` at no further request, and offers narrowing the next
   request (fewer fields, a limit, pagination) second — on a rate-limited API a
   re-request spends quota the bytes on disk do not. It no longer claims an "inline
   defence pass" that does not run on JSON.
+
+### Removed
+
+- **Internal:** `exceedsInlineCap`, `MAX_INLINE_GROWTH_RATIO` and
+  `SHORTEST_REPLACED_BEACON`. Both size gates weigh JSON only, and the wrap
+  returns JSON unchanged, so the gate is a byte comparison. None was on a
+  published entry point.
 
 ## [4.0.2] - 2026-09-10
 

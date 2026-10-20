@@ -203,7 +203,7 @@ describe("executeJqQuery — file save behavior", () => {
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toMatch(SAVED_TO_PREFIX);
         expect(result.content[0].text).toContain(allowedDir);
-        // Saved-bytes count reflects the (sanitized) filtered output, not the source file size.
+        // Saved-bytes count reflects the filtered output, not the source file size.
         const match = result.content[0].text.match(/^Result \((\d+) bytes\)/);
         expect(match).not.toBeNull();
         expect(Number(match![1])).toBeGreaterThan(1000);
@@ -370,9 +370,8 @@ describe("executeJqQuery — input boundary errors", () => {
 // returned text, on the reading that `jq_query` took a shorter defence path than
 // `defendText`. It does not: `applyJqFilter` parses its input as JSON and
 // returns `JSON.stringify(...)`, so this text is a JSON document, and
-// `defendText` on a JSON document IS sanitise-and-detect — the markup and
-// markdown stages are excluded by `isSniffableContentType`, deliberately,
-// because `<script>` and `[a](b)` are legitimate inside JSON string values.
+// a JSON document takes no strip stage on any path, deliberately, because
+// `<script>` and `[a](b)` are legitimate inside JSON string values.
 //
 // So the asymmetry the todo named was not `jq_query`-vs-`curl_execute`; it was
 // JSON-vs-everything, and it holds identically for `curl_execute --jq_filter`
@@ -461,11 +460,10 @@ describe("executeJqQuery — JSON grammar (RC-8: markup/markdown stages excluded
 });
 
 describe("executeJqQuery — invariant 14: the gate weighs what the model receives (RC-15)", () => {
-    // Same class as `processResponse`'s, one channel over. `executeJqQuery`
-    // returns JSON, and the post-processor wrap does NOT exempt JSON — so a
-    // beacon inside a string value is replaced with a longer placeholder AFTER
-    // this function's size gate has run. Weighing the pre-defence bytes let an
-    // over-cap result stay inline while the gate reported compliance.
+    // Same class as `processResponse`'s, one channel over: the gate here must
+    // weigh what the model receives after the wrap. `executeJqQuery` returns
+    // JSON and the wrap returns JSON unchanged, so the two are the same bytes —
+    // and these cases fail if either stops being true.
     //
     // **The cap is taken from a real uncapped call, never re-derived.** The
     // first version of this guard computed it with `JSON.stringify` and was
@@ -473,16 +471,10 @@ describe("executeJqQuery — invariant 14: the gate weighs what the model receiv
     // bytes were really 642, the result was already over the cap on its own
     // size, and it saved to file with the fix reverted just as it did with the
     // fix in. It passed for the wrong reason and proved nothing.
-    // **A bare STRING result, not an array of them.** A composite JSON document
-    // is returned verbatim, so the defence cannot grow one: an array of beacons
-    // is at-cap in and at-cap out, and the growth this block is about is
-    // unreachable through it. A filter yielding a scalar takes the undivided
-    // arm, where the beacon substitution applies, so that is the shape that
-    // exercises the gate.
-    //
-    // The property under test is unchanged: `exceedsInlineCap` must weigh the
-    // DEFENDED form, because a body compliant before the pass can exceed the cap
-    // after it (`LESSONS.md` RC-15).
+    // **A string of beacons**, because it is the shape the strip arm would
+    // grow — `[link removed]` is longer than `[a](file:)` — so an at-cap result
+    // that stays at-cap is evidence the wrap took the JSON arm and the gate's
+    // byte count is honest (`LESSONS.md` RC-15).
     const beaconDoc = JSON.stringify({ v: "[a](file:)".repeat(40) });
 
     /** The exact inline bytes this query returns with no cap in play. */

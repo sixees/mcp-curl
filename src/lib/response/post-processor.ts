@@ -286,7 +286,8 @@ function processTextPart(
  *
  * Returns a closure that takes a tool result and the hostname the request was
  * directed at, and returns a new wrapped result whose text parts have been
- * sanitised, detected, and (optionally) spotlighted. The closure is safe to
+ * defended — the full pipeline on non-JSON text, detection alone on a JSON
+ * document — and (optionally) spotlighted. The closure is safe to
  * call repeatedly on the same result thanks to symbol-tag idempotence.
  *
  * The hostname is passed per call (rather than bound into the closure) so a

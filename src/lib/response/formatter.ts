@@ -137,8 +137,8 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
         // **Two wordings, because the decode and the artefact are different
         // subjects.** Inline, the body IS returned — its JSON structure intact
         // and only character values moved — so the notice speaks about the text
-        // beside it. On a saved branch there is no inline body, and
-        // `sanitiseWasNoOp` may have sent the origin's own octets to disk, so
+        // beside it. On a saved branch there is no inline body, and the
+        // origin's own octets may be what went to disk, so
         // claiming "the text above is not byte-identical" would name text that
         // is absent and contradict `savedMessage`, which reports the file's form
         // itself. The decode is still worth stating: it is what the byte count
