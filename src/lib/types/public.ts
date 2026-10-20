@@ -8,7 +8,11 @@ import type { CurlExecuteInput, JqQueryInput } from "../server/schemas.js";
  * These settings affect how all tool calls are processed.
  */
 export interface McpCurlConfig {
-    /** Base URL prepended to relative URLs in curl_execute */
+    /**
+     * Base URL that a `url` starting with a single `/` is resolved against, in
+     * `curl_execute` and `utilities().executeRequest`. An absolute URL passes
+     * through unchanged, so this is a convenience, not a host restriction.
+     */
     baseUrl?: string;
     /** Default headers added to all curl_execute requests */
     defaultHeaders?: Record<string, string>;
