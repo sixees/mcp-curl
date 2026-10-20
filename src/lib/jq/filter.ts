@@ -146,7 +146,13 @@ export function applyJqFilter(jsonString: string, filter: string): string {
         // large-body numbers actually travel, and it is a SEPARATE parse from
         // the inline one — so an assertion there says nothing about here
         // (RC-27).
-        data = JSON.parse(jsonString, keepNumberLexeme);
+        //
+        // **Trimmed, exactly as `processor.ts::classifyBody` trims.** A file
+        // saved as the origin's octets may lead with a U+FEFF or a Unicode
+        // space that `JSON.parse` rejects, and the classifier that called it
+        // JSON — and told the model this tool can read it — tolerates both. A
+        // reader stricter than that classifier turns a true claim false.
+        data = JSON.parse(jsonString.trim(), keepNumberLexeme);
     } catch (error) {
         // SyntaxError indicates invalid JSON
         if (error instanceof SyntaxError) {

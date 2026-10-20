@@ -41,38 +41,37 @@ export function logInjectionDetected(hostname: string): void {
 }
 
 /**
- * Detect injection patterns in raw text and log a hit, leaving the text alone.
+ * Detect injection patterns and log a hit, leaving the text alone.
  *
- * The detection half of {@link sanitizeAndDetect}, for callers that return a
- * payload as the origin wrote it: a JSON body is not this server's to rewrite
- * (`LESSONS.md` RC-49), but the per-host log is an operator signal that
- * ARCHITECTURE.md invariant 7 forbids suppressing.
+ * **Two representations, because each hides a class from the other.** The
+ * original is what a later strip stage would erase a phrase from, so detecting
+ * there keeps the signal for that class; the sanitised form is what a
+ * zero-width or bidi split hides from, so `Ig\u200bnore previous instructions`
+ * matches only there. Testing both rewrites nothing — this is the detection a
+ * caller returning the origin's payload still owes (`LESSONS.md` RC-49): the
+ * per-host log is an operator signal ARCHITECTURE.md invariant 7 forbids
+ * suppressing.
  *
- * @param text - Raw text to inspect
+ * @param text - The original text
  * @param label - Hostname or filename used as the log label
+ * @param sanitised - `sanitizeResponse(text)`, where the caller already holds
+ *   it; computed here otherwise
  */
-export function detectAndLog(text: string, label: string): void {
-    if (detectInjectionPattern(text)) {
+export function detectAndLog(text: string, label: string, sanitised?: string): void {
+    if (detectInjectionPattern(text) || detectInjectionPattern(sanitised ?? sanitizeResponse(text))) {
         logInjectionDetected(label);
     }
 }
 
 /**
- * Detect injection patterns in raw text, then sanitize for output.
+ * Detect injection patterns, then sanitize for output.
  *
- * Order is load-bearing: detection runs against the **original** text, before
- * any sanitisation. `defendText`'s later stages strip markup comments,
- * `<script>`/`<style>` blocks and markdown beacons, and a stage that erased a
- * malicious phrase before detection saw it would silence the per-host log
- * signal. Detecting on the original keeps that signal alive for any class of
- * injection a stripping stage would wholesale-remove.
- *
- * **Acknowledged trade-off.** The reverse case (a phrase whose detection
- * needs sanitisation to *succeed* — e.g. invisible-char-split phrases like
- * `Ig\u200bnore previous instructions` where the zero-width breaks the regex
- * match) is not logged. The returned text is still sanitised so
- * nothing leaks downstream; only the observability log is lost for that
- * specific class. UTS #39 skeleton folding (deferred) would close it.
+ * Detection runs against the **original** text as well as the sanitised form
+ * — {@link detectAndLog} owns why both. `defendText`'s later stages strip markup
+ * comments, `<script>`/`<style>` blocks and markdown beacons, and a stage that
+ * erased a malicious phrase before detection saw it would silence the per-host
+ * log signal; the sanitised form is what catches a phrase split by an
+ * invisible character.
  *
  * Detection-only: the sanitized text is returned regardless of whether
  * an injection pattern was matched. Logging is throttled per label by
@@ -83,8 +82,9 @@ export function detectAndLog(text: string, label: string): void {
  * @returns Sanitized text
  */
 export function sanitizeAndDetect(text: string, label: string): string {
-    detectAndLog(text, label);
-    return sanitizeResponse(text);
+    const sanitised = sanitizeResponse(text);
+    detectAndLog(text, label, sanitised);
+    return sanitised;
 }
 
 /**

@@ -5,8 +5,6 @@ import { LIMITS } from "../config/limits.js";
 import { applyJqFilterToParsed } from "../jq/index.js";
 import { saveResponseToFile } from "./file-saver.js";
 import {
-    IMAGE_REMOVED_PLACEHOLDER,
-    LINK_REMOVED_PLACEHOLDER,
     STRIP_PATH_MAX_BYTES,
     looksLikeMarkupShape,
     stripBlocksFixedPoint,
@@ -193,20 +191,6 @@ export type JsonRejectionReason = "empty-body" | "looks-like-markup" | "invalid-
 export type BodyClassification =
     | { readonly json: true }
     | { readonly json: false; readonly reason: JsonRejectionReason };
-
-/**
- * Whether `JSON.parse` accepts `text` exactly as given — no trim. This is the
- * question `jq_query` and any downstream parser asks of saved or returned
- * bytes, and it differs from {@link classifyBody}'s on a leading U+FEFF.
- */
-function parsesUntrimmed(text: string): boolean {
-    try {
-        JSON.parse(text);
-        return true;
-    } catch {
-        return false;
-    }
-}
 
 /**
  * **The gate: parse to validate, never to transform.**
@@ -487,69 +471,6 @@ function defendInlineString(text: string, hostname: string): string {
 }
 
 /**
- * Shortest markdown form {@link defendForInline} can replace with a longer
- * placeholder: `[](file:)`, nine bytes, matched by the dangerous-scheme link
- * pattern. Every other replaced form is longer, and every other stage of the
- * pipeline only deletes — the sanitiser strips attack codepoints and collapses
- * padding, the markup stages remove tags and comments, and the entity decode is
- * off on this path. So the beacon substitution is the ONLY way the defence can
- * add bytes, and this is its worst case.
- *
- * **Pinned by a test rather than asserted here.** A pattern change that admits
- * a shorter form would raise the real ratio while this constant stayed put, and
- * nothing would error.
- */
-const SHORTEST_REPLACED_BEACON = "[](file:)".length;
-
-/**
- * Most {@link defendForInline} can multiply a body's length by. Derived from
- * the placeholders themselves so a longer one cannot silently invalidate it.
- */
-const MAX_INLINE_GROWTH_RATIO =
-    Math.max(IMAGE_REMOVED_PLACEHOLDER.length, LINK_REMOVED_PLACEHOLDER.length) /
-    SHORTEST_REPLACED_BEACON;
-
-/**
- * Whether `text` will still exceed `maxBytes` AFTER the defence the model-facing
- * boundary applies to it.
- *
- * **This is the question a size gate has to ask, and asking it of the raw bytes
- * is what invariant 14 was violated by.** `defendForInline` can make text
- * longer, so a body that measures 1000 bytes under a 1000-byte cap can reach the
- * model as 1400 — inside the limit by the gate's reckoning and over it in fact
- * (`LESSONS.md` RC-15).
- *
- * **The defence pass is a measurement here, so it must not run when it cannot
- * change the answer.** It is neither free nor side-effect-free — it calls
- * `sanitizeAndDetect`, which logs. Two cheap arms answer first: already-over
- * needs no pass, and growth bounded by {@link MAX_INLINE_GROWTH_RATIO} cannot
- * cross a cap this far away.
- *
- * **The third arm is dead at every live call site**, and is kept rather than
- * deleted because `defendText`'s growing arm is still reachable by a direct
- * caller of the published API. Only JSON reaches this function now — from the
- * body path, and from `jq_query`, whose input its own serialiser produced — and
- * `defendForInline`'s verbatim arm cannot grow text. `LESSONS.md` RC-47.
- *
- * **Two costs recorded so a later round does not rediscover them.** The
- * double-compute is declined rather than unnoticed — threading the defended
- * string back out re-creates the two-shapes-of-content hazard that removing
- * `content` from `ProcessedResponse`'s saved arm eliminated. And the obvious
- * shortcut is unsound: you cannot skip the expensive arm above
- * `STRIP_PATH_MAX_BYTES` on the reasoning that the defence cannot grow a body
- * past the strip cap, because `defendText` sanitises before it checks that cap.
- * `LESSONS.md` RC-15, RC-30.
- *
- * @param hostname - label for the detection log, on the rare arm that runs it
- */
-export function exceedsInlineCap(text: string, hostname: string, maxBytes: number): boolean {
-    const bytes = Buffer.byteLength(text, "utf8");
-    if (bytes > maxBytes) return true;
-    if (bytes * MAX_INLINE_GROWTH_RATIO <= maxBytes) return false;
-    return Buffer.byteLength(defendForInline(text, hostname), "utf8") > maxBytes;
-}
-
-/**
  * The server-authored sentence a saved response comes back as.
  *
  * **Every clause is a claim an LLM will act on, so each is gated on something
@@ -560,11 +481,10 @@ export function exceedsInlineCap(text: string, hostname: string, maxBytes: numbe
  *   anything else, so pointing a 1 MB `text/html` page at it offers no route at
  *   all. Where the grammar is not JSON, the path is named and the client's own
  *   file tooling is left to it.
- * - **The byte count and the limit claim must be about the same bytes.**
- *   `exceedsInlineCap` weighs the DEFENDED form, which the defence can make
- *   longer, so a 990-byte body can exceed a 1000-byte cap. Both numbers are
- *   labelled — on-disk size, and a limit that applies after the pass — so they
- *   are true together.
+ * - **The byte count and the limit claim must be about the same bytes.** The
+ *   gate weighs the body as the model would receive it and the count is
+ *   measured on the buffer written; for an unfiltered JSON document those are
+ *   the same octets, so the two numbers are true together.
  * - **The noun names what is on disk.** With a `jq_filter` the artefact is the
  *   FILTER's output, so a model querying it for a sibling field gets `null` and
  *   reports the origin never sent it.
@@ -655,8 +575,8 @@ function savedMessage(facts: SavedMessageFacts): string {
         ? ""
         : originBytesExact
         ? " The file holds the origin's exact bytes."
-        : " The file holds the body with attack codepoints removed, so it is not" +
-          " byte-identical to what the origin sent.";
+        : " The file holds the body with attack codepoints removed and long whitespace" +
+          " or newline runs collapsed, so it is not byte-identical to what the origin sent.";
 
     // Two arms, and neither reads the declared content type. `rejection` is
     // present exactly when `classifyBody` said the body is not JSON, so the
@@ -793,41 +713,32 @@ export async function processResponse(
     // two decisions be the same rule spelled once, because they are the same
     // question: may these bytes be handed over unmodified?
     //
-    // **Sanitise before classifying, because both must answer for the same
-    // bytes.** A BOM-prefixed body does not parse and Step 2 removes the BOM, so
-    // classifying the raw decode sends valid JSON from a .NET or Java origin —
-    // which both emit routinely — down the non-JSON arm, where the artefact is
-    // the only copy: `\uFEFF{"a":"see <!-- x -->","b":"y"}` reaches disk as
-    // `{"a":"see ","b":"y"}`, a field short.
+    // **It classifies the origin's decode, and so does every other reader.**
+    // `classifyBody` trims, which is what lets a BOM-prefixed document from a
+    // .NET or Java origin read as the JSON it is; the wrap's `defendForInline`
+    // asks the same function the same question, and `jq_query` trims the same
+    // way before it parses. One verdict per body, whichever tool carried it.
     //
-    // **Detection sits above the fork and reads the origin's decode.** The
-    // sanitised copy is a classification input and nothing more: the payload is
-    // the agent's, not this server's to rewrite (`LESSONS.md` RC-49), while the
-    // per-host `[injection-defense]` line is an operator signal invariant 7
-    // forbids suppressing. `LESSONS.md` RC-32, RC-44.
-    detectAndLog(response, hostname);
+    // **Detection sits above the fork, and it reads the sanitised form as well
+    // as the original**: a zero-width space inside a phrase hides it from the
+    // first and not the second (`detectAndLog`). Nothing is rewritten — the
+    // payload is the agent's, not this server's (`LESSONS.md` RC-49) — while the
+    // `[injection-defense]` line is an operator signal invariant 7 forbids
+    // suppressing.
     const sanitised = sanitizeResponse(response);
-    const classified = classifyBody(sanitised);
-    // **One predicate decides what is handed over, inline and on disk: the
-    // origin's decode, wherever it is usable as it is.** Where Step 2 changed
-    // nothing, it trivially is. Where Step 2 changed something but the decode
-    // still parses — a zero-width space inside a string value — it is too, and
-    // returning the sanitised copy would be the rewrite this path no longer does.
-    // Only a body that parses *because of* Step 2 (the BOM case above) takes
-    // the sanitised form, since the raw octets are then JSON nobody downstream
-    // can read: `jq_query`'s `JSON.parse` rejects a leading U+FEFF. The test is
-    // therefore that untrimmed parse, never `classifyBody`, whose `trim()`
-    // removes the BOM and would call these octets usable. The second parse runs
-    // only where Step 2 changed something. On the non-JSON arm this reduces to
-    // "Step 2 was a no-op".
-    const originIsUsable =
-        sanitised === response || (classified.json && parsesUntrimmed(response));
+    detectAndLog(response, hostname, sanitised);
+    const classified = classifyBody(response);
+    // **What reaches disk, unfiltered: the origin's octets, unless a non-JSON
+    // body was changed by Step 2.** A JSON document always goes down as sent.
+    // A non-JSON body is read with the host's own tooling, outside every
+    // defence, so where Step 2 found something to remove the file holds the
+    // sanitised text instead, and `savedMessage` says so.
+    const originOnDisk = classified.json || sanitised === response;
 
     // **No defence pass on the body path.** A JSON body is returned as it
     // arrived. A non-JSON body is not returned inline at all — only reported —
-    // so there is no model-facing text to defend, and the artefact keeps the
-    // origin's bytes so an HTML error page stays readable to whoever opens it.
-    let content = originIsUsable ? response : sanitised;
+    // so there is no model-facing text to defend.
+    let content = response;
 
     // Step 6: Apply jq filter if provided AND response is JSON.
     //
@@ -911,36 +822,18 @@ export async function processResponse(
 
     // Step 7: Determine max size and decide save-to-file.
     //
-    // **The gate weighs the DEFENDED bytes and returns the undefended ones, and
-    // the asymmetry is the point.** Downstream of here the post-processor wrap
-    // applies `defendForInline` to whatever goes inline, and that pass can make
-    // text longer — `[link removed]` is 14 bytes and the shortest form it
-    // replaces is 9. Measuring `content` would therefore report a size the
-    // model never receives and let an over-cap result stay inline, which is the
-    // invariant-14 violation this closes (`LESSONS.md` RC-15).
-    //
-    // What it does NOT do is rewrite the returned value. `processResponse` has
-    // one caller (`tools/curl-execute.ts`) and is exported from none of the four
-    // npm entry points, but its documented behaviour is still the ORIGIN's
-    // grammar — a `text/plain` body keeps its comments, a JSON document keeps
-    // `<script>` inside its string values (RC-10) — and the strict pass belongs
-    // to the model-facing boundary, not to this one. So the defended text is
-    // computed as a measurement and discarded; only the gate consumes it, and on
-    // the over-cap arm below it is not computed at all.
-    //
-    // **This is also why the cap cannot be enforced at the wrap itself**, which
-    // was the other candidate. By then the body is sealed inside
-    // `formatResponse`'s JSON envelope, so there is no discrete body left to
-    // bound, a byte-truncation would cut the envelope mid-JSON, and the wrap has
-    // no file to save to. Measured: a compliant 1000-byte body arrives at the
-    // wrap as a 1057-byte text part under `include_metadata`, so a wrap-side cap
-    // would truncate correct responses.
+    // **The cap is enforced here, not at the wrap**, because by then the body
+    // is sealed inside `formatResponse`'s JSON envelope: there is no discrete
+    // body left to bound, a byte-truncation would cut the envelope mid-JSON,
+    // and the wrap has no file to save to. Measured: a compliant 1000-byte body
+    // arrives at the wrap as a 1057-byte text part under `include_metadata`.
     const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-    // Only a JSON body has an inline representation, so it is the only body
-    // weighed against the inline cap: a non-JSON body is saved for what it IS,
-    // and claiming it "also exceeds the inline limit once the inline defence
-    // pass is applied" would cite a pass that does not run here.
-    const overCap = classified.json && exceedsInlineCap(content, hostname, maxSize);
+    // **Only a JSON body is weighed, and it is weighed as returned, which is
+    // as-is.** A non-JSON body has no inline representation — it is saved for
+    // what it is — and the wrap's JSON arm returns text unchanged, so the bytes
+    // measured here are the bytes the model receives (ARCHITECTURE.md invariant
+    // 14, `LESSONS.md` RC-15).
+    const overCap = classified.json && Buffer.byteLength(content, "utf8") > maxSize;
 
     // **A non-JSON body is always saved and never returned inline.** An agent
     // can often recover from a body that nearly parses — a PHP warning
@@ -973,35 +866,25 @@ export async function processResponse(
         // 1a's named failure shape precisely because a remote writes it.
         //
         // - **A JSON document is persisted as the ORIGIN'S OCTETS**, byte for
-        //   byte, which is what `docs/todos/016` asked for and could not have
-        //   until this todo settled who reads the file. Its reader is
-        //   `jq_query`, which is inside this process and runs the full
-        //   `defendForInline` pass over what it reads — so byte-exactness here
-        //   costs no defence, and it is exactly where RC-33's loss hurt:
-        //   duplicate keys, integers past `Number.MAX_SAFE_INTEGER`, `"1.50"`.
-        //   The filtered arm is our own serialiser's output rather than the
-        //   origin's, so there are no origin octets to preserve.
-        // - **Anything else is persisted as the DEFENDED text.** `jq_query`
-        //   cannot open a non-JSON file, so `savedMessage` routes the model to
-        //   the host's own file tooling — outside every defence. Raw octets
-        //   there would withdraw Step 2 sanitisation from the one
-        //   representation the model is instructed to read, which is the P1 the
-        //   016 revert closed.
+        //   byte, whatever Step 2 would have changed. Its reader is `jq_query`,
+        //   which trims as `classifyBody` does, so a leading U+FEFF or Unicode
+        //   space does not stop it opening the file. This is where RC-33's loss
+        //   hurt: duplicate keys, integers past `Number.MAX_SAFE_INTEGER`,
+        //   `"1.50"`.
+        // - **A non-JSON body is persisted as the origin's octets too, unless
+        //   Step 2 changed it.** `jq_query` cannot open it, so `savedMessage`
+        //   routes the model to the host's own file tooling — outside every
+        //   defence — and the sanitised text is what goes down where there was
+        //   something to remove.
+        // - **A filter's output is our own serialiser's**, so there are no
+        //   origin octets to preserve.
         //
-        // `ARCHITECTURE.md` invariant 14 states both halves.
-        // **One rule, both arms, and it is `originIsUsable`: persist the origin's
-        // octets wherever they are usable as they are.** Where they are not —
-        // a BOM defeats `jq_query`'s parse — the sanitised form goes down
-        // instead and the exactness claim narrows to what is true. A filter is
-        // the third case: then the artefact is the filter's output, not the
-        // response.
-        //
-        // No strip stage runs on either arm, which is what keeps an HTML error
+        // No strip stage runs on any arm, which is what keeps an HTML error
         // page readable: `stripHtmlComments` would delete the `<!-- trace-id -->`
-        // a framework put the diagnostic in.
+        // a framework put the diagnostic in. `ARCHITECTURE.md` invariant 14.
         const diskContent = filterApplied
             ? Buffer.from(content, "utf8")
-            : originIsUsable
+            : originOnDisk
             ? responseBytes
             : Buffer.from(sanitised, "utf8");
         const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
@@ -1030,10 +913,10 @@ export async function processResponse(
                 maxSize,
                 overCap,
                 filtered: filterApplied,
-                // The filter arm writes the filter's output, and the
-                // non-no-op arm writes sanitised text; only the third arm
-                // is the origin's octets.
-                originBytesExact: !filterApplied && originIsUsable,
+                // The filter arm writes the filter's output, and a changed
+                // non-JSON body writes sanitised text; every other arm is the
+                // origin's octets.
+                originBytesExact: !filterApplied && originOnDisk,
                 // Only where the body itself was the reason. An over-cap JSON
                 // document is saved too, and there is nothing wrong with it.
                 ...(classified.json ? {} : { rejection: classified }),

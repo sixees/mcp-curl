@@ -289,27 +289,15 @@ describe("curl_execute — a jq_filter never discards an unparseable body", () =
 });
 
 describe("curl_execute — a saved JSON body says which bytes reached disk", () => {
-    it("reports a sanitised over-cap JSON document as NOT byte-identical", async () => {
-        // `originBytesExact` was computed for every saved artefact and then read
-        // only inside the non-JSON arm, so a valid JSON document saved from the
-        // sanitised text was reported as a plain `jq_query` path with nothing
-        // saying the file differs from what the origin sent.
-        //
-        // **A BOM-prefixed body, because it is the one JSON body still saved
-        // sanitised.** A codepoint inside a string value no longer is: the decode
-        // parses as it is, so its octets go to disk exactly. A leading U+FEFF
-        // does not — `JSON.parse` rejects it, so the raw octets would be a file
-        // `jq_query` cannot open, and the sanitised form is written instead.
+    it("reports an over-cap JSON document saved from the origin's octets as exact, BOM and all", async () => {
+        // A JSON document always goes to disk as the origin sent it, whatever
+        // Step 2 would have changed: the reader is `jq_query`, which trims as
+        // the classifier does. So the exactness claim holds on this arm even
+        // for a leading U+FEFF, the one body that used to be saved sanitised.
         //
         // The escape, never a literal invisible character: a bare U+FEFF in this
         // source is invisible in review and survives an editor round-trip badly.
-        const bom = "\ufeff";
-        const body = Buffer.from(`${bom}{"note":"${"padding-".repeat(200)}"}`, "utf8");
-        // Fixture guards: the premise is a body that parses only once Step 2
-        // has removed the BOM, and is over the cap. If either fails the case
-        // proves nothing.
-        expect(() => JSON.parse(body.toString("utf8"))).toThrow();
-        expect(() => JSON.parse(body.toString("utf8").slice(1))).not.toThrow();
+        const body = Buffer.from(`\ufeff{"note":"${"padding-".repeat(200)}"}`, "utf8");
         expect(body.length).toBeGreaterThan(1000);
 
         mockedExecuteCommand.mockResolvedValue(
@@ -322,11 +310,29 @@ describe("curl_execute — a saved JSON body says which bytes reached disk", () 
             )
         ).content[0].text;
 
-        savedPathFrom(text);
-        // Still routed to jq_query — the body IS JSON and the tool can read it.
+        expect(Buffer.from(await readFile(savedPathFrom(text))).equals(body)).toBe(true);
         expect(text).toContain("jq_query");
-        // And now says what the file actually holds.
+        expect(text).toContain("The file holds the origin's exact bytes.");
+    });
+
+    it("names every transform when a non-JSON body is saved sanitised", async () => {
+        // The one arm that writes sanitised text: a non-JSON body Step 2
+        // changed, read with the host's own tooling. The sanitiser collapses a
+        // 20+ newline run as well as removing codepoints, and a reader diffing
+        // or counting lines against the origin needs both named.
+        const body = Buffer.from(`line one\u200b${"\n".repeat(25)}line two`, "utf8");
+
+        mockedExecuteCommand.mockResolvedValue(
+            curlOutputFor({ body, contentType: "text/plain" })
+        );
+
+        const text = (
+            await executeCurlRequest(params({ url: "https://example.test/log" }))
+        ).content[0].text;
+
+        savedPathFrom(text);
         expect(text).toContain("attack codepoints removed");
+        expect(text).toContain("newline runs collapsed");
         expect(text).not.toContain("The file holds the origin's exact bytes.");
     });
 });

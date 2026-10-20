@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { readFile, rm } from "fs/promises";
+import { applyJqFilter } from "../jq/index.js";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import {
     METADATA_SEPARATOR as SEP,
@@ -365,30 +366,45 @@ describe("018 — the ordinary-response cases round 1 found", () => {
     }
 
     it("does not corrupt a BOM-prefixed JSON body", async () => {
-        // `\uFEFF{...}` is what .NET and Java services emit routinely. The gate
-        // classified the RAW decode, which does not parse, so the body took the
-        // non-JSON arm — and `defendText` then sanitised the BOM away and ran
-        // the full strip over what was by then valid JSON, splicing a field out
-        // of the only copy. Sanitise now precedes the classification.
-        // `LESSONS.md` RC-44.
+        // `\uFEFF{...}` is what .NET and Java services emit routinely. Classified
+        // on the raw decode, which `classifyBody` trims, so it is the JSON
+        // document it is and no strip stage pairs the `<!--` in one field with
+        // the `-->` in a later one. `LESSONS.md` RC-44.
         const body = '\uFEFF{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}';
         const text = await fetchBody(body, "application/json");
-        // Classified as the JSON document it is, so returned inline, BOM gone.
-        expect(Object.keys(JSON.parse(text) as object)).toEqual(["a", "b", "c", "d"]);
-        expect(text).toContain('"b":"secret"');
-        expect(text).not.toContain("\uFEFF");
+        // Returned as the origin sent it — BOM included, every field intact.
+        expect(text).toBe(body);
+        expect(Object.keys(JSON.parse(text.trim()) as object)).toEqual(["a", "b", "c", "d"]);
     });
 
-    it("persists a BOM-prefixed body in a form jq_query can open", async () => {
-        // The trap in the fix: raw octets for this class would put a BOM on disk
-        // and `applyJqFilter` cannot parse one. Byte-exactness is therefore
-        // conditional on Step 2 having been a no-op.
-        const body = '\uFEFF{"pad":"' + "z".repeat(600_000) + '","k":"v"}';
+    it("keeps a BOM-prefixed body's string values intact, emoji and padding included", async () => {
+        // The sanitiser would remove U+FE0F (emoji presentation), U+200D (the
+        // joiner in a family emoji) and collapse a 50-space run — all inside
+        // values. A JSON payload is the agent's, so none of that happens.
+        const value = "\u2764\uFE0F \u{1F468}\u200D\u{1F469} A" + " ".repeat(50) + "B";
+        const body = "\uFEFF" + JSON.stringify({ v: value });
         const text = await fetchBody(body, "application/json");
-        const onDisk = await readFile(savedPathFrom(text), "utf-8");
-        expect(onDisk.startsWith("\uFEFF")).toBe(false);
-        expect(() => JSON.parse(onDisk)).not.toThrow();
+        expect((JSON.parse(text.trim()) as { v: string }).v).toBe(value);
     });
+
+    for (const [name, lead] of [
+        ["a BOM", "\uFEFF"],
+        ["a no-break space", "\u00A0"],
+        ["an ideographic space", "\u3000"],
+    ] as const) {
+        it(`saves a body led by ${name} as the origin's octets, and jq_query's reader opens it`, async () => {
+            // The classifier trims these, so the body is JSON and its octets go
+            // to disk; the message then claims exact bytes and points at
+            // jq_query. That claim holds only because the reader trims as the
+            // classifier does — `JSON.parse` alone rejects every one of them.
+            const body = lead + '{"pad":"' + "z".repeat(600_000) + '","k":"v"}';
+            const text = await fetchBody(body, "application/json");
+            const onDisk = await readFile(savedPathFrom(text), "utf-8");
+            expect(onDisk).toBe(body);
+            expect(text).toContain("The file holds the origin's exact bytes.");
+            expect(applyJqFilter(onDisk, ".k")).toBe('"v"');
+        });
+    }
 });
 
 // ---------------------------------------------------------------------------

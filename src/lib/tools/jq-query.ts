@@ -9,7 +9,7 @@ import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../file
 import { detectAndLog, validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
 import { getErrorMessage, sanitizeDescription } from "../utils/index.js";
-import { exceedsInlineCap, writeUniqueFile } from "../response/index.js";
+import { writeUniqueFile } from "../response/index.js";
 
 /** Tool result type returned by executeJqQuery */
 export interface JqQueryResult {
@@ -102,7 +102,7 @@ export async function executeJqQuery(
         // Read the file using the validated real path
         const content = await readFile(validatedFilePath, { encoding: "utf-8" });
 
-            const filtered = applyJqFilter(content, params.jq_filter);
+        const filtered = applyJqFilter(content, params.jq_filter);
 
         // Detect after filtering — jq may concentrate injection strings from
         // sparse input, and `JSON.parse` decodes escapes into real characters.
@@ -118,24 +118,16 @@ export async function executeJqQuery(
         // under `save_to_file` alike.
         const label = basename(validatedFilePath);
         detectAndLog(filtered, label);
-        const persisted = filtered;
 
         // Handle result size and file saving.
         //
         // **The gate weighs the bytes the model receives, and here they are the
-        // same bytes as the ones on disk.** `persisted` is a JSON document, so
-        // the post-processor wrap's `defendForInline` takes its verbatim arm —
-        // detection only, no rewrite of any kind — which cannot lengthen the
-        // text.
-        //
-        // `exceedsInlineCap` is still the call to make rather than a bare byte
-        // comparison. It owns the rule that a size gate answers about the
-        // POST-defence form (invariant 14, `LESSONS.md` RC-15), and that rule
-        // binds a caller whose text is not JSON and therefore can grow. Reading
-        // the coincidence here as licence to compare bytes directly would move
-        // the rule to the call site, where the next caller has to remember it.
+        // same bytes as the ones on disk.** `filtered` is a JSON document, so the
+        // post-processor wrap's `defendForInline` returns it unchanged
+        // (ARCHITECTURE.md invariant 14, `LESSONS.md` RC-15).
         const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-        const shouldSave = params.save_to_file || exceedsInlineCap(persisted, label, maxSize);
+        const shouldSave =
+            params.save_to_file || Buffer.byteLength(filtered, "utf8") > maxSize;
 
         if (shouldSave) {
             const targetDir = validatedOutputDir ?? await getOrCreateTempDir();
@@ -146,7 +138,7 @@ export async function executeJqQuery(
             // path so neither site can drift from `flag: "wx"` or from the
             // filename sanitiser — two filters over one source file reach the
             // namer identical, and nothing else here would separate them.
-            const bytes = Buffer.from(persisted, "utf8");
+            const bytes = Buffer.from(filtered, "utf8");
             const filepath = await writeUniqueFile(
                 bytes,
                 targetDir,
@@ -157,11 +149,11 @@ export async function executeJqQuery(
             // Server-authored: a byte count and a path this process built from
             // a validated directory and a sanitised basename. No remote text.
             // The count describes the artefact on disk, which is this copy.
-            const persistedBytes = bytes.length;
-            return successResult(`Result (${persistedBytes} bytes) saved to: ${filepath}`);
+            const savedBytes = bytes.length;
+            return successResult(`Result (${savedBytes} bytes) saved to: ${filepath}`);
         }
 
-        return successResult(persisted);
+        return successResult(filtered);
     } catch (error) {
         const errorMessage = getErrorMessage(error);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";
