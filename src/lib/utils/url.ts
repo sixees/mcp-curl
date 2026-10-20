@@ -15,6 +15,51 @@ export function resolveBaseUrl(baseUrl: string, path: string): string {
 }
 
 /**
+ * A path the model may send in place of an absolute URL on a server with a
+ * `baseUrl`: one leading `/`, never `//` or `/\`. A WHATWG parser reads both
+ * of those as scheme-relative — a host, not a path.
+ */
+export const RELATIVE_PATH_PATTERN = /^\/(?![/\\])/;
+
+/** The outcome of {@link resolveRequestUrl}. */
+export type ResolvedRequestUrl =
+    | { ok: true; url: string }
+    | { ok: false; error: string };
+
+/**
+ * Resolve a request `url` against the configured `baseUrl`.
+ *
+ * Only input matching {@link RELATIVE_PATH_PATTERN} is joined; anything else —
+ * an absolute URL, or no `baseUrl` at all — comes back unchanged, so the SSRF
+ * gate in the executor sees exactly what the caller sent.
+ *
+ * The join is {@link resolveBaseUrl}'s concatenation, never `new URL(path,
+ * base)`, which honours `//host`. The origin assert catches a `baseUrl` the
+ * join cannot be trusted on: `"https://"` plus `"/evil.com"` parses with host
+ * `evil.com`. It is not a policy on absolute URLs. The error names the
+ * `baseUrl` key and never its value, which may carry credentials.
+ */
+export function resolveRequestUrl(baseUrl: string | undefined, url: string): ResolvedRequestUrl {
+    if (!baseUrl || !RELATIVE_PATH_PATTERN.test(url)) return { ok: true, url };
+
+    const joined = resolveBaseUrl(baseUrl, url);
+    try {
+        const base = new URL(baseUrl);
+        // An opaque origin serialises as "null" on both sides, so the
+        // comparison alone would pass a non-http(s) base.
+        if (isAllowedUrlScheme(base.protocol) && new URL(joined).origin === base.origin) {
+            return { ok: true, url: joined };
+        }
+    } catch {
+        // Falls through to the refusal below.
+    }
+    return {
+        ok: false,
+        error: "Error: cannot resolve a relative url: the configured baseUrl is not an absolute http(s) URL",
+    };
+}
+
+/**
  * Options for `createHttpOnlyUrlSchema`.
  */
 export interface CreateHttpOnlyUrlSchemaOptions {

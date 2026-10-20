@@ -1,6 +1,12 @@
 import { describe, it, expect, expectTypeOf } from "vitest";
 import { z } from "zod";
-import { createHttpOnlyUrlSchema, resolveBaseUrl, safeHostname } from "./url.js";
+import {
+    createHttpOnlyUrlSchema,
+    RELATIVE_PATH_PATTERN,
+    resolveBaseUrl,
+    resolveRequestUrl,
+    safeHostname,
+} from "./url.js";
 
 describe("resolveBaseUrl", () => {
     describe("slash normalisation", () => {
@@ -46,6 +52,61 @@ describe("resolveBaseUrl", () => {
             expect(resolveBaseUrl("https://api.example.com", "/")).toBe(
                 "https://api.example.com/"
             );
+        });
+    });
+});
+
+describe("RELATIVE_PATH_PATTERN", () => {
+    it.each(["/", "/users/me", "/search?q=a//b", "/a\\b"])("accepts %j", (input) => {
+        expect(RELATIVE_PATH_PATTERN.test(input)).toBe(true);
+    });
+
+    it.each(["//evil.com", "/\\evil.com", "users", "", "https://api.example.com/x", "ftp://x"])(
+        "rejects %j",
+        (input) => {
+            expect(RELATIVE_PATH_PATTERN.test(input)).toBe(false);
+        }
+    );
+});
+
+describe("resolveRequestUrl", () => {
+    const BASE = "https://api.example.com/v1";
+
+    it("joins a relative path onto the base", () => {
+        expect(resolveRequestUrl(BASE, "/users/me")).toEqual({
+            ok: true,
+            url: "https://api.example.com/v1/users/me",
+        });
+    });
+
+    it("passes an absolute URL through unchanged on a baseUrl server", () => {
+        expect(resolveRequestUrl(BASE, "https://other.example/x")).toEqual({
+            ok: true,
+            url: "https://other.example/x",
+        });
+    });
+
+    it("passes a path through unchanged when no baseUrl is configured", () => {
+        expect(resolveRequestUrl(undefined, "/users")).toEqual({ ok: true, url: "/users" });
+    });
+
+    it("never joins a scheme-relative input", () => {
+        expect(resolveRequestUrl(BASE, "//evil.com/x")).toEqual({ ok: true, url: "//evil.com/x" });
+    });
+
+    describe("a malformed baseUrl is refused without echoing it", () => {
+        it.each([
+            ["an empty authority", "https://"],
+            ["a bare scheme", "http:"],
+            ["a non-http(s) scheme", "ftp://files.example.com"],
+            ["an opaque scheme", "mailto:SECRETVALUE"],
+            ["not a URL at all", "SECRETVALUE"],
+        ])("%s", (_label, baseUrl) => {
+            const result = resolveRequestUrl(baseUrl, "/evil.com/x");
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error).toContain("baseUrl");
+            expect(result.error).not.toContain(baseUrl);
         });
     });
 });

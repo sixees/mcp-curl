@@ -11,8 +11,14 @@ export {
 
 // `rawJson` is deliberately absent — see `json-lexeme.ts`.
 export { isRawNumber, keepNumberLexeme } from "./json-lexeme.js";
-export { resolveBaseUrl, createHttpOnlyUrlSchema, safeHostname } from "./url.js";
-export type { CreateHttpOnlyUrlSchemaOptions } from "./url.js";
+export {
+    resolveBaseUrl,
+    resolveRequestUrl,
+    RELATIVE_PATH_PATTERN,
+    createHttpOnlyUrlSchema,
+    safeHostname,
+} from "./url.js";
+export type { CreateHttpOnlyUrlSchemaOptions, ResolvedRequestUrl } from "./url.js";
 
 export {
     isBinaryContentType,
