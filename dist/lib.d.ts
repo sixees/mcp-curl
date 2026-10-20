@@ -1,4 +1,4 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-BuiV2g-J.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-BKSFFltm.js';
 export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-Ben6mKfc.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
@@ -295,7 +295,7 @@ interface DefendTextOptions {
      * determine it.
      *
      * **The type is only half the fix, because a type is not a runtime check.**
-     * 3.4.0 publishes this function, and a JavaScript consumer can omit the
+     * This function is on the published entry point, and a JavaScript consumer can omit the
      * field whatever the declaration says. So omission resolves to the
      * strictest grammar at runtime as well — see the destructuring default in
      * `defendText`. Both halves are needed: the type tells a TypeScript caller
@@ -309,8 +309,9 @@ interface DefendTextOptions {
      * **The exemption is about the artefact, not the model.** A caller of the
      * published function may persist what it defends, and rewriting `<script>`
      * or `[a](b)` inside a JSON string value would silently alter that document.
-     * No in-repo caller persists `defendText`'s output — `processResponse` writes
-     * the origin's octets and runs no strip stage — and `defendForInline` passes
+     * No in-repo caller persists `defendText`'s output — `processResponse` never
+     * calls it, and writes the origin's octets, a filter's output, or the sanitised
+     * text of a non-JSON body Step 2 changed — and `defendForInline` passes
      * `false` because it has already answered the JSON question with
      * {@link classifyBody} and returns a JSON document before reaching here. See
      * `LESSONS.md` RC-10.
