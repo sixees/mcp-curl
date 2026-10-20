@@ -292,22 +292,25 @@ describe("curl_execute — a saved JSON body says which bytes reached disk", () 
     it("reports a sanitised over-cap JSON document as NOT byte-identical", async () => {
         // `originBytesExact` was computed for every saved artefact and then read
         // only inside the non-JSON arm, so a valid JSON document saved from the
-        // sanitised text — over the cap, with a codepoint removed — was reported
-        // as a plain `jq_query` path with nothing saying the file differs from
-        // what the origin sent. The non-JSON arm said so; this arm did not.
+        // sanitised text was reported as a plain `jq_query` path with nothing
+        // saying the file differs from what the origin sent.
         //
-        // The escape, never a literal invisible character: a bare U+200B in this
+        // **A BOM-prefixed body, because it is the one JSON body still saved
+        // sanitised.** A codepoint inside a string value no longer is: the decode
+        // parses as it is, so its octets go to disk exactly. A leading U+FEFF
+        // does not — `JSON.parse` rejects it, so the raw octets would be a file
+        // `jq_query` cannot open, and the sanitised form is written instead.
+        //
+        // The escape, never a literal invisible character: a bare U+FEFF in this
         // source is invisible in review and survives an editor round-trip badly.
-        const zwsp = "\u200b";
-        const body = Buffer.from(
-            `{"note":"${zwsp}${"padding-".repeat(200)}"}`,
-            "utf8"
-        );
-        // Fixture guards: the premise is a body that PARSES, is over the cap,
-        // and is changed by the sanitise. If any fails the case proves nothing.
-        expect(() => JSON.parse(body.toString("utf8"))).not.toThrow();
+        const bom = "\ufeff";
+        const body = Buffer.from(`${bom}{"note":"${"padding-".repeat(200)}"}`, "utf8");
+        // Fixture guards: the premise is a body that parses only once Step 2
+        // has removed the BOM, and is over the cap. If either fails the case
+        // proves nothing.
+        expect(() => JSON.parse(body.toString("utf8"))).toThrow();
+        expect(() => JSON.parse(body.toString("utf8").slice(1))).not.toThrow();
         expect(body.length).toBeGreaterThan(1000);
-        expect(body.toString("utf8")).toContain(zwsp);
 
         mockedExecuteCommand.mockResolvedValue(
             curlOutputFor({ body, contentType: "application/json" })

@@ -29,6 +29,7 @@ export {
 
 export {
     logInjectionDetected,
+    detectAndLog,
     sanitizeAndDetect,
     cleanupInjectionDetectionMap,
     startInjectionCleanup,

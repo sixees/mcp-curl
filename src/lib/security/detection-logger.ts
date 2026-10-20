@@ -41,6 +41,23 @@ export function logInjectionDetected(hostname: string): void {
 }
 
 /**
+ * Detect injection patterns in raw text and log a hit, leaving the text alone.
+ *
+ * The detection half of {@link sanitizeAndDetect}, for callers that return a
+ * payload as the origin wrote it: a JSON body is not this server's to rewrite
+ * (`LESSONS.md` RC-49), but the per-host log is an operator signal that
+ * ARCHITECTURE.md invariant 7 forbids suppressing.
+ *
+ * @param text - Raw text to inspect
+ * @param label - Hostname or filename used as the log label
+ */
+export function detectAndLog(text: string, label: string): void {
+    if (detectInjectionPattern(text)) {
+        logInjectionDetected(label);
+    }
+}
+
+/**
  * Detect injection patterns in raw text, then sanitize for output.
  *
  * Order is load-bearing: detection runs against the **original** text, before
@@ -66,9 +83,7 @@ export function logInjectionDetected(hostname: string): void {
  * @returns Sanitized text
  */
 export function sanitizeAndDetect(text: string, label: string): string {
-    if (detectInjectionPattern(text)) {
-        logInjectionDetected(label);
-    }
+    detectAndLog(text, label);
     return sanitizeResponse(text);
 }
 

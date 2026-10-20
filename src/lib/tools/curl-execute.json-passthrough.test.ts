@@ -465,19 +465,20 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
         expect(onDisk.includes(Buffer.from([0xef, 0xbf, 0xbd]))).toBe(false);
     });
 
-    it("persists a 600 KB bare string on the JSON arm, sanitised because Step 2 fired", async () => {
+    it("persists a 600 KB bare string on the JSON arm as the origin's octets, codepoint included", async () => {
         const filler = "y".repeat(600_000);
         const body = `"${filler}a${ZWSP}b"`;
         const text = await fetchBody(body, "application/json");
         // A scalar is JSON, so there is no rejection to report — only the cap.
         expect(text).not.toContain("is not JSON");
         expect(text).toContain("inline limit");
-        // **The one case where the artefact is NOT the origin's octets.** Step 2
-        // removed the ZWSP, so writing the raw octets would put a byte on disk
-        // that the sanitised inline copy does not have.
+        // Step 2 would change this body, but the decode parses as it is, so it
+        // is usable as it is and goes to disk byte for byte. Only a body that
+        // parses *because of* Step 2 — the BOM case above — takes the sanitised
+        // form. `LESSONS.md` RC-49.
         const onDisk = await readFile(savedPathFrom(text));
-        expect(onDisk.equals(Buffer.from(body, "utf8"))).toBe(false);
-        expect(onDisk.toString("utf8")).not.toContain(ZWSP);
+        expect(onDisk.equals(Buffer.from(body, "utf8"))).toBe(true);
+        expect(text).toContain("The file holds the origin's exact bytes.");
     });
 });
 

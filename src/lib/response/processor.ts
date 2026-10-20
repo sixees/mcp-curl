@@ -18,9 +18,10 @@ import {
     isSniffableContentType,
     keepNumberLexeme,
     safeHostname,
+    sanitizeResponse,
     supportsMarkupComments,
 } from "../utils/index.js";
-import { sanitizeAndDetect } from "../security/index.js";
+import { detectAndLog, sanitizeAndDetect } from "../security/index.js";
 
 // Re-export types from lib/types for convenience
 export type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
@@ -192,6 +193,20 @@ export type JsonRejectionReason = "empty-body" | "looks-like-markup" | "invalid-
 export type BodyClassification =
     | { readonly json: true }
     | { readonly json: false; readonly reason: JsonRejectionReason };
+
+/**
+ * Whether `JSON.parse` accepts `text` exactly as given — no trim. This is the
+ * question `jq_query` and any downstream parser asks of saved or returned
+ * bytes, and it differs from {@link classifyBody}'s on a leading U+FEFF.
+ */
+function parsesUntrimmed(text: string): boolean {
+    try {
+        JSON.parse(text);
+        return true;
+    } catch {
+        return false;
+    }
+}
 
 /**
  * **The gate: parse to validate, never to transform.**
@@ -438,12 +453,13 @@ export function defendText(text: string, options: DefendTextOptions): string {
  * shortest form it replaces is 9 — which is the whole reason it runs before a
  * size gate rather than after one. `LESSONS.md` RC-15.
  *
- * **A JSON document is returned as it arrived, with Step 2 alone.** The strip
- * stages enumerate markup, so on a JSON body they catch the marked-up subset of
- * a class the spotlighting boundary covers in full — and the round trip they
- * needed was not information-preserving: duplicate names collapsed, number
- * lexemes were rewritten, keys reordered. Step 2 is kept because it is not
- * markup-enumerative and is a measured no-op on any realistic JSON body.
+ * **A JSON document is returned exactly as it arrived: detected and logged,
+ * never rewritten.** The payload is the agent's to interpret, not this server's
+ * to sanitise (`LESSONS.md` RC-49) — and the strip stages, which enumerate
+ * markup, only ever caught the marked-up subset of a class the spotlighting
+ * boundary covers in full, at the price of a round trip that was not
+ * information-preserving. Detection stays, because the per-host log is an
+ * operator signal rather than a payload rewrite (ARCHITECTURE.md invariant 7).
  *
  * **Two arms, and no divider is needed, because nothing here rewrites a JSON
  * document** — a pass that does not run cannot span a region. The undivided arm
@@ -453,7 +469,10 @@ export function defendText(text: string, options: DefendTextOptions): string {
  * `LESSONS.md` RC-16, RC-37, RC-47.
  */
 export function defendForInline(text: string, hostname: string): string {
-    if (classifyBody(text).json) return sanitizeAndDetect(text, hostname);
+    if (classifyBody(text).json) {
+        detectAndLog(text, hostname);
+        return text;
+    }
     return defendInlineString(text, hostname);
 }
 
@@ -613,20 +632,14 @@ function savedMessage(facts: SavedMessageFacts): string {
     // count carry zero remote bytes by construction — see
     // {@link JsonRejectionReason}.
     //
-    // The two causes are not exclusive: a body can be non-JSON AND over the
-    // inline cap, and short-circuiting on the rejection left a model told only
-    // that the body was not JSON, with no reason to think raising
-    // `max_result_size` would not help.
-    const capClause = overCap
-        ? ` It also exceeds the ${maxSize}-byte inline limit once the inline defence pass is applied.`
-        : "";
+    // The two causes are exclusive: `overCap` is computed on the JSON arm only,
+    // and `rejection` exists only on the other one.
     const cause = rejection !== undefined
         ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} — it is not JSON ` +
-          `(${rejection.reason}), so no body is returned here.${capClause}`
+          `(${rejection.reason}), so no body is returned here.`
         : overCap
         ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} — it exceeds the ` +
-          `${maxSize}-byte inline limit once the inline defence pass is applied, so no body is ` +
-          `returned here.`
+          `${maxSize}-byte inline limit, so no body is returned here.`
         : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
 
     // **Which form reached disk is stated on BOTH arms.** `originBytesExact` is
@@ -650,11 +663,26 @@ function savedMessage(facts: SavedMessageFacts): string {
     // other arm's body IS — and `jq_query` can always read it. Re-deriving that
     // from the header asked a remote-written field a question already answered,
     // and got it wrong whenever an origin served valid JSON as `text/html`.
+    //
+    // **Over the cap, the saved file comes first and a narrower request second.**
+    // The bytes have already crossed the wire, and analysing them locally costs
+    // nothing, where a re-request spends quota on a rate-limited API — so the
+    // file is offered as the answer and narrowing is offered for next time,
+    // never as a retry. That is why RC-49's "ask the API for less data" is not
+    // the advice here: it reads as free and is not.
+    const narrowing = overCap
+        ? ` To get the body inline instead, narrow the next request — fewer fields, a limit, or` +
+          ` pagination${filtered ? ", or a tighter jq_filter" : ""}.`
+        : "";
     const route =
         rejection !== undefined
             ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
               " your own tooling." + exactness
-            : " Use the jq_query tool on that path to extract fields." + exactness;
+            : (overCap ? " The saved file is valid to analyse." : "") +
+              " Use the jq_query tool on that path to extract fields" +
+              (overCap ? "; that costs no further request." : ".") +
+              exactness +
+              narrowing;
 
     const scope = filtered
         ? " That file holds the FILTER OUTPUT, not the full response body."
@@ -771,23 +799,34 @@ export async function processResponse(
     // the only copy: `\uFEFF{"a":"see <!-- x -->","b":"y"}` reaches disk as
     // `{"a":"see ","b":"y"}`, a field short.
     //
-    // Step 2 also LOGS, and that is the second reason it sits above the fork
-    // rather than inside an arm. Byte-exactness withholds the sanitise and says
-    // nothing about the log, so a JSON body handed straight through would carry
-    // `Ig\u200bnore previous instructions` to disk with no `[injection-defense]`
-    // line anywhere. `LESSONS.md` RC-32, RC-44.
-    const sanitised = sanitizeAndDetect(response, hostname);
+    // **Detection sits above the fork and reads the origin's decode.** The
+    // sanitised copy is a classification input and nothing more: the payload is
+    // the agent's, not this server's to rewrite (`LESSONS.md` RC-49), while the
+    // per-host `[injection-defense]` line is an operator signal invariant 7
+    // forbids suppressing. `LESSONS.md` RC-32, RC-44.
+    detectAndLog(response, hostname);
+    const sanitised = sanitizeResponse(response);
     const classified = classifyBody(sanitised);
-    // Where Step 2 changed nothing, the sanitised text IS the origin's decode,
-    // so the wire octets can go to disk exactly. Where it changed something,
-    // those octets would be a file `jq_query` cannot parse.
-    const sanitiseWasNoOp = sanitised === response;
+    // **One predicate decides what is handed over, inline and on disk: the
+    // origin's decode, wherever it is usable as it is.** Where Step 2 changed
+    // nothing, it trivially is. Where Step 2 changed something but the decode
+    // still parses — a zero-width space inside a string value — it is too, and
+    // returning the sanitised copy would be the rewrite this path no longer does.
+    // Only a body that parses *because of* Step 2 (the BOM case above) takes
+    // the sanitised form, since the raw octets are then JSON nobody downstream
+    // can read: `jq_query`'s `JSON.parse` rejects a leading U+FEFF. The test is
+    // therefore that untrimmed parse, never `classifyBody`, whose `trim()`
+    // removes the BOM and would call these octets usable. The second parse runs
+    // only where Step 2 changed something. On the non-JSON arm this reduces to
+    // "Step 2 was a no-op".
+    const originIsUsable =
+        sanitised === response || (classified.json && parsesUntrimmed(response));
 
     // **No defence pass on the body path.** A JSON body is returned as it
     // arrived. A non-JSON body is not returned inline at all — only reported —
     // so there is no model-facing text to defend, and the artefact keeps the
     // origin's bytes so an HTML error page stays readable to whoever opens it.
-    let content = sanitised;
+    let content = originIsUsable ? response : sanitised;
 
     // Step 6: Apply jq filter if provided AND response is JSON.
     //
@@ -855,16 +894,18 @@ export async function processResponse(
         // content" rather than "a filter was requested".
         filterApplied = true;
 
-        // Re-sanitise and re-detect after the filter, because `JSON.parse`
-        // decodes Unicode escapes inside string values: `{"cmd":"Ig\u200bnore
-        // ..."}` yields a real zero-width space in jq's output, so attack chars
-        // the raw text only described become actual characters here.
+        // Re-detect after the filter, because `JSON.parse` decodes Unicode
+        // escapes inside string values: `{"cmd":"Ig​nore ..."}` yields a
+        // real zero-width space in jq's output, so a phrase the raw text only
+        // described becomes actual characters here. **Detect, never rewrite** —
+        // the filter's output is the origin's data, selected, and the same
+        // middleware contract as the unfiltered body applies (`LESSONS.md` RC-49).
         //
         // **Runs UNCONDITIONALLY, because any content-type gate here is
         // origin-controlled.** Labelling JSON `application/octet-stream` would
         // be enough to skip this pass. Reaching this line means jq produced a
         // textual result, whatever the origin called it.
-        content = sanitizeAndDetect(content, hostname);
+        detectAndLog(content, hostname);
     }
 
     // Step 7: Determine max size and decide save-to-file.
@@ -947,19 +988,19 @@ export async function processResponse(
         //   016 revert closed.
         //
         // `ARCHITECTURE.md` invariant 14 states both halves.
-        // **One rule, both arms: persist the origin's octets unless Step 2 had to
-        // change something.** Where it did, the raw octets are a file whose
-        // reader cannot use them — a BOM defeats `jq_query`'s parse — so the
-        // sanitised form goes down instead and the exactness claim narrows to
-        // what is true. A filter is the third case: then the artefact is the
-        // filter's output, not the response.
+        // **One rule, both arms, and it is `originIsUsable`: persist the origin's
+        // octets wherever they are usable as they are.** Where they are not —
+        // a BOM defeats `jq_query`'s parse — the sanitised form goes down
+        // instead and the exactness claim narrows to what is true. A filter is
+        // the third case: then the artefact is the filter's output, not the
+        // response.
         //
         // No strip stage runs on either arm, which is what keeps an HTML error
         // page readable: `stripHtmlComments` would delete the `<!-- trace-id -->`
         // a framework put the diagnostic in.
         const diskContent = filterApplied
             ? Buffer.from(content, "utf8")
-            : sanitiseWasNoOp
+            : originIsUsable
             ? responseBytes
             : Buffer.from(sanitised, "utf8");
         const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
@@ -991,7 +1032,7 @@ export async function processResponse(
                 // The filter arm writes the filter's output, and the
                 // non-no-op arm writes sanitised text; only the third arm
                 // is the origin's octets.
-                originBytesExact: !filterApplied && sanitiseWasNoOp,
+                originBytesExact: !filterApplied && originIsUsable,
                 // Only where the body itself was the reason. An over-cap JSON
                 // document is saved too, and there is nothing wrong with it.
                 ...(classified.json ? {} : { rejection: classified }),
