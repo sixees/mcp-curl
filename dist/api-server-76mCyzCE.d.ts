@@ -46,8 +46,10 @@ interface McpCurlConfig {
      * under the strictest grammar (this boundary's content type is always
      * undetermined), then optionally spotlights the result:
      *
-     *   1. **Detect** injection patterns against the **original** text and
-     *      emit a throttled `[injection-defense]` log line per hostname.
+     *   1. **Detect** injection patterns against the **original** text and its
+     *      sanitised form, and emit a throttled `[injection-defense]` log
+     *      line per hostname. A JSON part is also tested on each escaped
+     *      string token, decoded on its own.
      *   2. **Sanitise** the text (strip Unicode attack chars, collapse
      *      whitespace runs).
      *   3. **Strip** markup comments, `<script>`/`<style>` blocks and markdown
