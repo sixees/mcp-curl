@@ -58,9 +58,43 @@ export function logInjectionDetected(hostname: string): void {
  *   it; computed here otherwise
  */
 export function detectAndLog(text: string, label: string, sanitised?: string): void {
-    if (detectInjectionPattern(text) || detectInjectionPattern(sanitised ?? sanitizeResponse(text))) {
-        logInjectionDetected(label);
+    if (matchesEitherForm(text, sanitised)) logInjectionDetected(label);
+}
+
+/**
+ * {@link detectAndLog} for a JSON document returned unchanged — which is every
+ * JSON arm, so both of them call this rather than the text form.
+ *
+ * **A document can spell a phrase with string escapes** — `Ig\u200bnore` or
+ * `\u0049gnore`, six ASCII bytes per character — which neither text form
+ * shows and the model decodes on reading. So where an escape is present the
+ * decoded rendering is tested too, and discarded: this rewrites nothing
+ * (`LESSONS.md` RC-49). `JSON.stringify` writes every non-control character
+ * literally, which is what lets the sanitised read join a split phrase. The
+ * parse runs only when the text carries a `\u` escape, and not at all on text
+ * that is not JSON.
+ *
+ * @param text - The text as returned
+ * @param label - Hostname or filename used as the log label
+ * @param sanitised - `sanitizeResponse(text)`, where the caller already holds it
+ */
+export function detectJsonAndLog(text: string, label: string, sanitised?: string): void {
+    if (matchesEitherForm(text, sanitised) || matchesDecodedForm(text)) logInjectionDetected(label);
+}
+
+function matchesEitherForm(text: string, sanitised?: string): boolean {
+    return detectInjectionPattern(text) || detectInjectionPattern(sanitised ?? sanitizeResponse(text));
+}
+
+function matchesDecodedForm(text: string): boolean {
+    if (!text.includes("\\u")) return false;
+    let decoded: string;
+    try {
+        decoded = JSON.stringify(JSON.parse(text.trim()));
+    } catch {
+        return false;
     }
+    return matchesEitherForm(decoded);
 }
 
 /**

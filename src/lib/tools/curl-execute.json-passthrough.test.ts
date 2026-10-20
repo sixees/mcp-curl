@@ -484,10 +484,9 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
         // A scalar is JSON, so there is no rejection to report — only the cap.
         expect(text).not.toContain("is not JSON");
         expect(text).toContain("inline limit");
-        // Step 2 would change this body, but the decode parses as it is, so it
-        // is usable as it is and goes to disk byte for byte. Only a body that
-        // parses *because of* Step 2 — the BOM case above — takes the sanitised
-        // form. `LESSONS.md` RC-49.
+        // Step 2 would change this body, but it is JSON, so it goes to disk byte
+        // for byte. Only a NON-JSON body Step 2 changed is written sanitised —
+        // an invisible character between tokens is that case. `LESSONS.md` RC-49.
         const onDisk = await readFile(savedPathFrom(text));
         expect(onDisk.equals(Buffer.from(body, "utf8"))).toBe(true);
         expect(text).toContain("The file holds the origin's exact bytes.");

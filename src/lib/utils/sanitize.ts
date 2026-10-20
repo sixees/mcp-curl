@@ -309,8 +309,9 @@ function isWhitespacePaddingMatch(match: string): boolean {
  *   `detection-logger.ts → detectAndLog`, calls this on the original text
  *   AND on its `sanitizeResponse` form, because each representation hides a
  *   class from the other: a later strip stage would erase a phrase from the
- *   first, and an invisible character splits one (`Ig`+ZWSP+`nore`) in the
- *   second. A direct caller wanting both classes does the same.
+ *   sanitised text but not the original, and a phrase an invisible character
+ *   splits (`Ig`+ZWSP+`nore`) is whole only in the sanitised form. A direct
+ *   caller wanting both classes does the same.
  * @returns true if any injection pattern matched
  */
 export function detectInjectionPattern(input: string): boolean {

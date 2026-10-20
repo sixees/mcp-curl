@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { readFile, rm } from "fs/promises";
+import { applyJqFilter } from "../jq/index.js";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import {
@@ -334,5 +335,44 @@ describe("curl_execute — a saved JSON body says which bytes reached disk", () 
         expect(text).toContain("attack codepoints removed");
         expect(text).toContain("newline runs collapsed");
         expect(text).not.toContain("The file holds the origin's exact bytes.");
+    });
+
+    it("quotes the decoded size the cap was measured on, when a lossy decode grew the body", async () => {
+        // 400 Latin-1 0xE9 bytes decode to 400 three-byte U+FFFD: the file is
+        // 408 bytes and the gate measured 1208, so quoting the file size alone
+        // reports a count below the limit it says was exceeded.
+        const body = Buffer.concat([Buffer.from('{"p":"'), Buffer.alloc(400, 0xe9), Buffer.from('"}')]);
+        mockedExecuteCommand.mockResolvedValue(curlOutputFor({ body, contentType: "application/json" }));
+
+        const text = (
+            await executeCurlRequest(params({ url: "https://example.test/latin1", max_result_size: 1000 }))
+        ).content[0].text;
+
+        expect(text).toContain("408 bytes on disk, 1208 once decoded");
+        expect(text).toContain("exceeds the 1000-byte inline limit");
+    });
+
+    it("names the U+FFFD substitution when a lossy non-JSON body is saved sanitised", async () => {
+        const body = Buffer.concat([Buffer.from("caf"), Buffer.from([0xe9]), Buffer.from(" a\u200bb", "utf8")]);
+        mockedExecuteCommand.mockResolvedValue(curlOutputFor({ body, contentType: "text/plain" }));
+
+        const text = (await executeCurlRequest(params({ url: "https://example.test/log2" }))).content[0].text;
+
+        expect(text).toContain("each undecodable sequence replaced with U+FFFD");
+    });
+
+    it("does not tell the model jq_query cannot read a non-JSON body's sanitised artefact", async () => {
+        // An invisible character between tokens: not JSON as sent, JSON once
+        // Step 2 removed it — and the sanitised text is what was written. So
+        // the message claims nothing about jq_query, and the file does parse.
+        const body = Buffer.from('{"a":1,\u200b"b":2}', "utf8");
+        mockedExecuteCommand.mockResolvedValue(curlOutputFor({ body, contentType: "application/json" }));
+
+        const text = (await executeCurlRequest(params({ url: "https://example.test/zw" }))).content[0].text;
+
+        expect(text).toContain("it is not JSON (invalid-syntax)");
+        expect(text).not.toContain("cannot parse");
+        expect(text).toContain("read the path with your own tooling");
+        expect(applyJqFilter(await readFile(savedPathFrom(text), "utf-8"), ".b")).toBe("2");
     });
 });

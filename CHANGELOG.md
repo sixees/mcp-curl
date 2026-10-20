@@ -31,11 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message now names the whitespace and newline collapse as well as the codepoint
   removal.
 
-- **Injection detection reads the sanitised form as well as the original.** A
-  phrase split by a zero-width or bidi character (`Ig\u200bnore previous
-  instructions`) is now logged on every path, the published `sanitizeAndDetect`
-  and `defendText` included. Nothing more is rewritten; the `[injection-defense]`
+- **Injection detection reads the sanitised form as well as the original, and a
+  JSON document's decoded strings.** A phrase split by a zero-width or bidi
+  character (`Ig\u200bnore previous instructions`) is now logged on every path,
+  the published `sanitizeAndDetect` and `defendText` included; on a JSON arm, so
+  is a phrase spelled with string escapes (`\u0049gnore`, as six ASCII bytes),
+  which no text form showed. Nothing more is rewritten; the `[injection-defense]`
   log is the only effect.
+
+- **`curl_execute`'s description states the contract it keeps.** It said attack
+  codepoints are removed from a JSON body first; it now says nothing in one is
+  removed or rewritten, and names every transform a saved non-JSON artefact can
+  carry. Saved-file messages quote the decoded size beside the on-disk size when a
+  lossy decode grew the body, name the U+FFFD substitution on a sanitised artefact,
+  and no longer tell the model `jq_query` cannot read a non-JSON body's file.
 
 - **The over-cap notice leads with the saved file.** It says the file is valid to
   analyse with `jq_query` at no further request, and offers narrowing the next

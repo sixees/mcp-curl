@@ -19,7 +19,7 @@ import {
     sanitizeResponse,
     supportsMarkupComments,
 } from "../utils/index.js";
-import { detectAndLog, sanitizeAndDetect } from "../security/index.js";
+import { detectAndLog, detectJsonAndLog, sanitizeAndDetect } from "../security/index.js";
 
 // Re-export types from lib/types for convenience
 export type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
@@ -249,9 +249,9 @@ export function classifyBody(text: string): BodyClassification {
  *
  * The stages, in order, and the order is load-bearing:
  *
- * - **Step 2** — sanitise + detect, ALWAYS, on the ORIGINAL text. Detection
- *   runs before the sanitiser strips anything, so the log signals on what the
- *   attacker actually sent.
+ * - **Step 2** — sanitise + detect, ALWAYS, on the original text and its
+ *   sanitised form: the original keeps the signal for anything a later stage
+ *   erases, the sanitised form joins a phrase an invisible character split.
  * - **Steps 3-4** — markup comments, the `<script>`/`<style>` strip, and (for
  *   declared markdown) beacon removal. Gated on the strip-path cap so the cost
  *   stays bounded on adversarial input.
@@ -407,11 +407,11 @@ export function defendText(text: string, options: DefendTextOptions): string {
 /**
  * The defence every copy that goes INLINE to the model takes.
  *
- * **It exists so the wrap and the size gate cannot disagree about what the
- * model will receive.** The post-processor wrap applies this to every text
- * part; `processResponse` and `executeJqQuery` apply it to the body *before*
- * weighing it, so the gate weighs the bytes that are actually returned. Two
- * callers, one option set, stated here rather than spelled twice.
+ * The post-processor wrap applies this to every text part, and it is the only
+ * production caller. The size gates in `processResponse` and `executeJqQuery`
+ * weigh JSON alone, as-is, and that is sound only because the JSON arm below
+ * returns it unchanged — a change that lengthens a JSON document here breaks
+ * invariant 14 silently, which is what `processor.test.ts`'s premise case pins.
  *
  * The options and their reasons:
  *
@@ -427,9 +427,9 @@ export function defendText(text: string, options: DefendTextOptions): string {
  *   markup from inert bytes (`LESSONS.md` RC-3). Its cost is stated on
  *   `processTextPart` and in ARCHITECTURE.md invariant 1a.
  *
- * **This pass can make text LONGER** — `[link removed]` is 14 bytes and the
- * shortest form it replaces is 9 — which is the whole reason it runs before a
- * size gate rather than after one. `LESSONS.md` RC-15.
+ * **The non-JSON arm can make text LONGER** — `[link removed]` is 14 bytes and
+ * the shortest form it replaces is 9 — which is why no size gate is applied to
+ * non-JSON text as though it were returned as-is. `LESSONS.md` RC-15.
  *
  * **A JSON document is returned exactly as it arrived: detected and logged,
  * never rewritten.** The payload is the agent's to interpret, not this server's
@@ -448,7 +448,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
  */
 export function defendForInline(text: string, hostname: string): string {
     if (classifyBody(text).json) {
-        detectAndLog(text, hostname);
+        detectJsonAndLog(text, hostname);
         return text;
     }
     return defendInlineString(text, hostname);
@@ -525,6 +525,15 @@ interface SavedMessageFacts {
      * against the origin needs to know which one they have.
      */
     originBytesExact: boolean;
+    /**
+     * Byte length of the decoded text the inline gate measured. Differs from
+     * `diskBytes` only on a lossy decode, where each undecodable sequence grew
+     * to three bytes — so the over-cap arm quotes both, or it would report a
+     * count below the limit it says was exceeded.
+     */
+    measuredBytes: number;
+    /** True when the UTF-8 decode replaced something; see `decodeWasLossy`. */
+    decodeWasLossy: boolean;
 }
 
 /**
@@ -537,7 +546,11 @@ interface SavedMessageFacts {
  * The shape is the fix; there is no runtime check to add. `LESSONS.md` RC-31.
  */
 function savedMessage(facts: SavedMessageFacts): string {
-    const { diskBytes, filepath, maxSize, overCap, filtered, rejection, originBytesExact } = facts;
+    const {
+        diskBytes, filepath, maxSize, overCap, filtered, rejection, originBytesExact,
+        measuredBytes, decodeWasLossy,
+    } = facts;
+    const measured = measuredBytes === diskBytes ? "" : `, ${measuredBytes} once decoded`;
     const subject = filtered ? "Result of jq_filter" : "Response";
 
     // The declared content type is not echoed: this string is server-authored
@@ -552,8 +565,8 @@ function savedMessage(facts: SavedMessageFacts): string {
         ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} — it is not JSON ` +
           `(${rejection.reason}), so no body is returned here.`
         : overCap
-        ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} — it exceeds the ` +
-          `${maxSize}-byte inline limit, so no body is returned here.`
+        ? `${subject} (${diskBytes} bytes on disk${measured}) was saved to: ${filepath} — it ` +
+          `exceeds the ${maxSize}-byte inline limit, so no body is returned here.`
         : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
 
     // **Which form reached disk is stated on BOTH arms**, because both arms
@@ -568,11 +581,16 @@ function savedMessage(facts: SavedMessageFacts): string {
         : originBytesExact
         ? " The file holds the origin's exact bytes."
         : " The file holds the body with attack codepoints removed and long whitespace" +
-          " or newline runs collapsed, so it is not byte-identical to what the origin sent.";
+          " or newline runs collapsed" +
+          (decodeWasLossy ? ", and each undecodable sequence replaced with U+FFFD" : "") +
+          ", so it is not byte-identical to what the origin sent.";
 
     // Two arms, and neither reads the declared content type. `rejection` is
     // present exactly when `classifyBody` said the body is not JSON, so the
-    // other arm's body IS — and `jq_query` can always read it. Re-deriving that
+    // other arm's body IS — and `jq_query` can always read it. The rejection arm
+    // claims nothing about `jq_query` either way: its sanitised artefact can
+    // parse where the origin's body did not (an invisible character between
+    // tokens), so "cannot parse it" would be false there. Re-deriving that
     // from the header asked a remote-written field a question already answered,
     // and got it wrong whenever an origin served valid JSON as `text/html`.
     //
@@ -588,8 +606,7 @@ function savedMessage(facts: SavedMessageFacts): string {
         : "";
     const route =
         rejection !== undefined
-            ? " The body is not JSON, so the jq_query tool cannot parse it; read the path with" +
-              " your own tooling." + exactness
+            ? " The body is not JSON; read the path with your own tooling." + exactness
             : (overCap ? " The saved file is valid to analyse." : "") +
               " Use the jq_query tool on that path to extract fields" +
               (overCap ? "; that costs no further request." : ".") +
@@ -678,7 +695,8 @@ export async function processResponse(
     // so classification cannot catch it and the byte-exactness contract would
     // otherwise be asserted over a body that was re-encoded. Reported, not
     // corrected: the origin's octets are unrecoverable from the decode, and
-    // they are on disk untouched wherever this body is saved.
+    // they are on disk untouched wherever the artefact is the origin's octets —
+    // every JSON body, and any non-JSON body Step 2 left unchanged.
     // Reported by chatgpt-codex-connector on PR #39; `LESSONS.md` RC-15.
     const decodeWasLossy = !Buffer.from(response, "utf8").equals(responseBytes);
     const lossy = decodeWasLossy ? ({ decodeWasLossy: true } as const) : {};
@@ -720,7 +738,7 @@ export async function processResponse(
     // `[injection-defense]` line is an operator signal invariant 7 forbids
     // suppressing.
     const sanitised = sanitizeResponse(response);
-    detectAndLog(response, hostname, sanitised);
+    detectJsonAndLog(response, hostname, sanitised);
     const classified = classifyBody(response);
     // **What reaches disk, unfiltered: the origin's octets, unless a non-JSON
     // body was changed by Step 2.** A JSON document always goes down as sent.
@@ -902,6 +920,8 @@ export async function processResponse(
                 // non-JSON body writes sanitised text; every other arm is the
                 // origin's octets.
                 originBytesExact: !filterApplied && originOnDisk,
+                measuredBytes: Buffer.byteLength(content, "utf8"),
+                decodeWasLossy,
                 // Only where the body itself was the reason. An over-cap JSON
                 // document is saved too, and there is nothing wrong with it.
                 ...(classified.json ? {} : { rejection: classified }),
