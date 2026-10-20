@@ -27,8 +27,11 @@ import type { CommandResult } from "../execution/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
 import { isWrappedResult } from "../response/index.js";
-import { STRIP_PATH_MAX_BYTES } from "../response/strip-blocks.js";
-import { sanitizeResponse } from "../utils/sanitize.js";
+import {
+    STRADDLE_BODY,
+    STRADDLE_KEYS,
+    assertStraddlesStripCap,
+} from "../response/strip-cap-straddle.test-fixture.js";
 import { CURL_EXECUTE_TOOL_META } from "./curl-execute.js";
 import { savedPathFrom } from "./curl-output.test-fixture.js";
 
@@ -727,28 +730,19 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
 
         // ---------------------------------------------------------------
-        // A size gate measured before Step 2. The body is above
-        // `STRIP_PATH_MAX_BYTES` as the origin sent it and far below it once
-        // Step 2 collapses the padding, so any JSON decision keyed on the raw
-        // byte count declines the document while the strip cap, measured
-        // after, admits it — and the undivided strip then pairs the `<!--` in
-        // `a` with the `-->` in `c` and deletes `secret`. No `Content-Type` at
-        // all, because a declared `application/json` never reaches the strip
-        // arm at any size and would pass against the defect. `defend-text.test.ts`
-        // pins the same input against `defendText` alone; this pins the
-        // composition, on both copies the model can be handed.
+        // A size gate measured before Step 2: the shared straddle body is above
+        // `STRIP_PATH_MAX_BYTES` as sent and below it after the collapse, so a
+        // JSON decision keyed on the raw byte count declines the document while
+        // the strip cap admits it, and the undivided strip deletes `secret`. No
+        // `Content-Type` at all, because a declared `application/json` never
+        // reaches the strip arm at any size and would pass against the defect.
+        // `defend-text.test.ts` pins the same input against `defendText` alone;
+        // this pins the composition, inline and in the saved artefact
+        // `jq_query` reads.
         // ---------------------------------------------------------------
         describe("a body the sanitiser shrinks under the strip cap", () => {
-            const run = " ".repeat(200); // >= 50 chars, collapses to one
-            const filler = Array.from({ length: 1600 }, (_, i) => `f${i}${run}`).join("");
-            const body = JSON.stringify({
-                a: "open <!--",
-                secret: "SENTINEL",
-                c: "close -->",
-                d: "kept",
-                filler,
-            });
-            const keys = ["a", "secret", "c", "d", "filler"];
+            const body = STRADDLE_BODY;
+            const keys = STRADDLE_KEYS;
             const saved: string[] = [];
             afterEach(async () => {
                 await Promise.all(saved.splice(0).map((f) => rm(f, { force: true })));
@@ -757,10 +751,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             it("crosses the strip cap only before sanitising", () => {
                 // The precondition the two cases below rest on, so a resized
                 // fixture fails here rather than passing them vacuously.
-                expect(Buffer.byteLength(body, "utf8")).toBeGreaterThan(STRIP_PATH_MAX_BYTES);
-                expect(Buffer.byteLength(sanitizeResponse(body), "utf8")).toBeLessThan(
-                    STRIP_PATH_MAX_BYTES
-                );
+                assertStraddlesStripCap();
             });
 
             it("returns every key inline, byte for byte", async () => {
