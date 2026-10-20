@@ -5,7 +5,7 @@ import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/pub
 import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
 import { executeJqQuery, type JqQueryResult } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders } from "../config/index.js";
-import { resolveBaseUrl } from "../utils/index.js";
+import { resolveRequestUrl } from "../utils/index.js";
 
 /**
  * Partial curl_execute input with optional path for baseUrl resolution.
@@ -21,7 +21,8 @@ export interface ExecuteRequestParams extends Partial<CurlExecuteInput> {
 export interface InstanceUtilities {
     /**
      * Execute a cURL request with config defaults applied.
-     * Can use `path` with `baseUrl` or provide a full `url`.
+     * Takes an absolute `url`; with `baseUrl` configured, also a `url` starting
+     * with `/` or a `path`, both resolved by `resolveRequestUrl`.
      *
      * NOTE: This method calls executeCurlRequest directly and bypasses the hook
      * system (beforeRequest, afterResponse, onError). Use MCP tool invocation
@@ -47,10 +48,12 @@ export interface InstanceUtilities {
 export function createInstanceUtilities(config: Readonly<McpCurlConfig>): InstanceUtilities {
     return {
         async executeRequest(params: ExecuteRequestParams): Promise<CurlExecuteResult> {
-            // Build URL from baseUrl + path if url not provided
+            // `url` wins over `path`. `path` tolerates a missing leading slash
+            // ("users" reaches <baseUrl>/users), so it gains one here; both then
+            // take the one resolver the tool path uses.
             let url = params.url;
             if (!url && params.path && config.baseUrl) {
-                url = resolveBaseUrl(config.baseUrl, params.path);
+                url = params.path.startsWith("/") ? params.path : `/${params.path}`;
             }
             if (!url) {
                 return {
@@ -64,13 +67,18 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 };
             }
 
+            const resolved = resolveRequestUrl(config.baseUrl, url);
+            if (!resolved.ok) {
+                return { content: [{ type: "text", text: resolved.error }], isError: true };
+            }
+
             // Merge headers and apply UA/Referer defaults
             const mergedHeaders: Record<string, string> = { ...config.defaultHeaders, ...params.headers };
             const defaults = applyDefaultHeaders(mergedHeaders, params.user_agent, config);
 
             // Build full params with config defaults
             const fullParams: CurlExecuteInput = {
-                url,
+                url: resolved.url,
                 method: params.method,
                 headers: defaults.headers,
                 data: params.data,

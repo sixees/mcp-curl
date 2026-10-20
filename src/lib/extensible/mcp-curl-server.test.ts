@@ -212,15 +212,50 @@ describe("McpCurlServer utilities", () => {
             expect(result.content[0].text).toContain("Must provide url or path");
         });
 
-        it("should combine baseUrl and path correctly", async () => {
-            const server = new McpCurlServer().configure({
-                baseUrl: "https://api.example.com",
-            });
-            const utils = server.utilities();
+        // The join is observed through the real SSRF gate: a resolved
+        // http://127.0.0.1/... is refused as a private address, while an
+        // unresolved "/x" never parses as a URL at all. allowLocalhost is pinned
+        // off so an exported MCP_CURL_ALLOW_LOCALHOST cannot send a request.
+        const JOINED = "internal/private networks are not allowed";
+        const loopback = () =>
+            new McpCurlServer()
+                .configure({ baseUrl: "http://127.0.0.1", allowLocalhost: false })
+                .utilities();
+        const textOf = (result: { content: { type: string; text?: string }[] }) =>
+            result.content[0].text ?? "";
 
-            // We can't actually make the request, but we can verify the utility exists
-            // and accepts the parameters
-            expect(typeof utils.executeRequest).toBe("function");
+        it("resolves a relative url against baseUrl", async () => {
+            const result = await loopback().executeRequest({
+                url: "/users/42",
+                headers: { Accept: "application/json" },
+            });
+            expect(textOf(result)).toContain(JOINED);
+        });
+
+        it("resolves path against baseUrl", async () => {
+            const result = await loopback().executeRequest({ path: "/users" });
+            expect(textOf(result)).toContain(JOINED);
+        });
+
+        it("still accepts a path without its leading slash", async () => {
+            const result = await loopback().executeRequest({ path: "users" });
+            expect(textOf(result)).toContain(JOINED);
+        });
+
+        it("leaves a relative url unresolved without baseUrl", async () => {
+            const result = await new McpCurlServer().utilities().executeRequest({ url: "/users" });
+            expect(result.isError).toBe(true);
+            expect(textOf(result)).toContain("Invalid URL");
+        });
+
+        it("refuses a malformed baseUrl without echoing it", async () => {
+            const utils = new McpCurlServer()
+                .configure({ baseUrl: "https://SECRETHOST:notaport" })
+                .utilities();
+            const result = await utils.executeRequest({ url: "/users" });
+            expect(result.isError).toBe(true);
+            expect(textOf(result)).toContain("baseUrl");
+            expect(textOf(result)).not.toContain("SECRETHOST");
         });
     });
 });

@@ -1,6 +1,7 @@
 // src/lib/extensible/tool-wrapper.test.ts
 // Tests for applyConfigTransformsCurl default User-Agent and Referer behavior,
-// and the post-processor wrap (PR-6b) via registerCurlToolWithHooks.
+// and the post-processor wrap (PR-6b) via registerCurlToolWithHooks. The
+// baseUrl path through the SDK's own input parse is in tool-wrapper.e2e.test.ts.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { applyConfigTransformsCurl, registerCurlToolWithHooks } from "./tool-wrapper.js";
@@ -343,6 +344,31 @@ function makeParams(overrides: Partial<CurlExecuteInput> = {}): CurlExecuteInput
         ...overrides,
     };
 }
+
+describe("registerCurlToolWithHooks — baseUrl resolution error", () => {
+    it("returns the resolver's refusal through the wrap (invariant 1)", async () => {
+        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
+        const fakeServer = {
+            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
+                capturedHandler = handler;
+            },
+        };
+        const mockExecutor = vi.fn();
+
+        registerCurlToolWithHooks(fakeServer as never, {
+            executor: mockExecutor as never,
+            enabled: true,
+            config: { baseUrl: "https://" } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [], onError: [] },
+        });
+
+        const result = await capturedHandler!({ url: "/users" }, { sessionId: undefined });
+
+        expect(mockExecutor).not.toHaveBeenCalled();
+        expect((result as { isError?: boolean }).isError).toBe(true);
+        expect(isWrappedResult(result)).toBe(true);
+    });
+});
 
 describe("applyConfigTransformsCurl — User-Agent defaults", () => {
     afterEach(() => {

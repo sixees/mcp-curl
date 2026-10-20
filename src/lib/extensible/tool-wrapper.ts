@@ -5,7 +5,7 @@ import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/m
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
 import type { CurlRegisterToolOptions, JqRegisterToolOptions, ToolResult } from "./types.js";
 import { executeWithHooks } from "./hook-executor.js";
-import { CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
+import { CurlExecuteBaseUrlSchema, CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
 import {
     CURL_EXECUTE_TOOL_META,
 } from "../tools/curl-execute.js";
@@ -13,7 +13,7 @@ import {
     JQ_QUERY_TOOL_META,
 } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders, JQ_QUERY_HOSTNAME_LABEL } from "../config/index.js";
-import { resolveBaseUrl, safeHostname } from "../utils/index.js";
+import { resolveRequestUrl, safeHostname } from "../utils/index.js";
 import { createWrapper } from "../response/post-processor.js";
 
 interface ConfigDefaultableParams {
@@ -35,7 +35,8 @@ function applySharedConfigDefaults<T extends ConfigDefaultableParams>(
 
 /**
  * Apply configuration transforms to curl_execute parameters.
- * - Prepend baseUrl to relative URLs
+ * `params.url` arrives already resolved — `resolveRequestUrl` is the one join
+ * against `baseUrl`, and the handler calls it first.
  * - Merge defaultHeaders with request headers
  * - Apply default User-Agent and Referer
  * - Apply defaultTimeout if using default
@@ -47,11 +48,6 @@ export function applyConfigTransformsCurl(
     config: Readonly<McpCurlConfig>
 ): CurlExecuteInput {
     const transformed = { ...params };
-
-    // Prepend baseUrl to relative URLs (URLs not starting with http:// or https://)
-    if (config.baseUrl && !params.url.match(/^https?:\/\//i)) {
-        transformed.url = resolveBaseUrl(config.baseUrl, params.url);
-    }
 
     // Merge defaultHeaders (request headers take precedence) then apply UA/Referer defaults
     const mergedHeaders: Record<string, string> = { ...config.defaultHeaders, ...params.headers };
@@ -91,7 +87,14 @@ export function registerCurlToolWithHooks(
                 isError: true,
             };
         }
-        const transformedParams = applyConfigTransformsCurl(params, config);
+        const resolved = resolveRequestUrl(config.baseUrl, params.url);
+        if (!resolved.ok) {
+            return wrap(
+                { content: [{ type: "text" as const, text: resolved.error }], isError: true },
+                safeHostname(params.url)
+            );
+        }
+        const transformedParams = applyConfigTransformsCurl({ ...params, url: resolved.url }, config);
         // hostnameOf reads the final params at the wrap boundary inside the
         // hook-executor — `safeHostname` runs once with the post-hook URL,
         // never the stale pre-hook URL. The wrap itself is idempotent so a
@@ -108,8 +111,12 @@ export function registerCurlToolWithHooks(
         );
     };
 
-    // Register using the canonical meta object to preserve type inference
-    server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, handler);
+    // A relative `url` is advertised only where something resolves it; every
+    // other server keeps the canonical meta object byte for byte.
+    const meta = config.baseUrl
+        ? { ...CURL_EXECUTE_TOOL_META, inputSchema: CurlExecuteBaseUrlSchema }
+        : CURL_EXECUTE_TOOL_META;
+    server.registerTool("curl_execute", meta, handler);
 }
 
 /**

@@ -2,7 +2,7 @@
 // Zod schemas for tool input validation
 
 import { z } from "zod";
-import { createHttpOnlyUrlSchema } from "../utils/index.js";
+import { createHttpOnlyUrlSchema, RELATIVE_PATH_PATTERN } from "../utils/index.js";
 
 /**
  * Schema for structured cURL execution.
@@ -107,6 +107,24 @@ export const CurlExecuteSchema = z.object({
     output_dir: z.string()
         .optional()
         .describe("Directory to save response files (must exist and be writable). Overrides MCP_CURL_OUTPUT_DIR env var. Falls back to system temp directory."),
+});
+
+/**
+ * `CurlExecuteSchema` for a server with a `baseUrl`: `url` also accepts a path
+ * starting with `/`, which the handler resolves against the base.
+ *
+ * Registered only when `baseUrl` is set, so every other server advertises the
+ * strict schema byte for byte. A union rather than `z.preprocess(..., z.url())`:
+ * the union advertises `anyOf: [format uri | pattern]`, where a preprocess
+ * would claim `format: uri` for a value that is a path.
+ */
+export const CurlExecuteBaseUrlSchema = CurlExecuteSchema.extend({
+    url: z.union([
+        createHttpOnlyUrlSchema({ description: "An absolute http(s) URL" }),
+        z.string()
+            .regex(RELATIVE_PATH_PATTERN, "Must be an absolute http(s) URL or a path starting with a single /")
+            .describe("A path starting with /, resolved against the configured base URL"),
+    ]).describe("The URL to request: an absolute http(s) URL, or a path starting with / resolved against the configured base"),
 });
 
 /** Inferred TypeScript type from CurlExecuteSchema */
