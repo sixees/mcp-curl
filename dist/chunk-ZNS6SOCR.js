@@ -16,7 +16,7 @@ import {
   createConfigError,
   createHttpOnlyUrlSchema,
   createWrapper,
-  detectAndLog,
+  detectJsonAndLog,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
@@ -36,7 +36,7 @@ import {
   validateFilePath,
   validateOutputDir,
   writeUniqueFile
-} from "./chunk-IHLFEJH4.js";
+} from "./chunk-RXLJX33S.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -168,7 +168,7 @@ async function executeJqQuery(params, _extra) {
     const content = await readFile(validatedFilePath, { encoding: "utf-8" });
     const filtered = applyJqFilter(content, params.jq_filter);
     const label = basename(validatedFilePath);
-    detectAndLog(filtered, label);
+    detectJsonAndLog(filtered, label);
     const maxSize = params.max_result_size ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
     const shouldSave = params.save_to_file || Buffer.byteLength(filtered, "utf8") > maxSize;
     if (shouldSave) {

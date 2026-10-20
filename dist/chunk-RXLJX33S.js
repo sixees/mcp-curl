@@ -2123,7 +2123,7 @@ async function processResponse(responseBytes, options) {
     }
     content = applyJqFilterToParsed(parsedData, options.jqFilter);
     filterApplied = true;
-    detectAndLog(content, hostname);
+    detectJsonAndLog(content, hostname);
   }
   const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
   const overCap = classified.json && Buffer.byteLength(content, "utf8") > maxSize;
@@ -2911,7 +2911,7 @@ export {
   cleanupTempDir,
   validateFilePath,
   logInjectionDetected,
-  detectAndLog,
+  detectJsonAndLog,
   sanitizeAndDetect,
   startInjectionCleanup,
   stopInjectionCleanup,

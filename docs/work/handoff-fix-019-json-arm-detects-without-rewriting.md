@@ -1,5 +1,5 @@
 # Work Handoff: fix-019-json-arm-detects-without-rewriting
-**Date:** 2026-10-20 | **Branch:** fix/019-json-arm-detects-without-rewriting | **Plan:** none (todo 019) | **Status:** complete — 019 and all seven review classes (021–027) fixed, re-reviewed, pushed; version bump and RC flush still owed before merge
+**Date:** 2026-10-20 | **Branch:** fix/019-json-arm-detects-without-rewriting | **Plan:** none (todo 019) | **Status:** complete — 019 and all seven review classes (021–027) fixed, re-reviewed, pushed; version set to 5.0.0 and RCs flushed as RC-63/RC-64; in review on PR #43
 
 > Created by `/sixees-workflow:review` during `/sixees-workflow:work`'s Step 5, before the work
 > run's own handoff sections were written. The work run is the author of the rest of this
@@ -82,8 +82,8 @@ Todo 019 made this server the middleware RC-49 says it is: a JSON payload is det
 
 ## What to pay attention to during review
 
-- **Two settled decisions are reversed** — RC-49's "ask for less" and RC-44's sanitised BOM artefact. Their RC entries are drafted and await the operator (see Follow-up); until flushed, nothing on the branch cites a number for them.
-- **BREAKING for library consumers**: a JSON text part a custom or YAML tool returns through `McpCurlServer` is no longer stripped of Unicode attack codepoints; `sanitizeAndDetect`/`defendText` now log one more class. CHANGELOG `[Unreleased]` says so.
+- **Two settled decisions are reversed** — RC-49's "ask for less" and RC-44's sanitised BOM artefact. Their RC entries are drafted and await the operator (see Follow-up); until flushed, nothing on the branch cites a number for them. *(Superseded: flushed as RC-63 and RC-64.)*
+- **BREAKING for library consumers**: a JSON text part a custom or YAML tool returns through `McpCurlServer` is no longer stripped of Unicode attack codepoints; `sanitizeAndDetect`/`defendText` now log one more class. CHANGELOG `[Unreleased]` says so. *(Now `[5.0.0]`.)*
 - **`detectJsonAndLog`'s decode** is one extra `JSON.parse` on a body carrying a `\u` escape — up to 10 MB, under the population the director settled (internal staff).
 - **Inline JSON may now carry a leading BOM or NBSP** to the model; those are the origin's bytes.
 
@@ -92,7 +92,7 @@ Todo 019 made this server the middleware RC-49 says it is: a JSON payload is det
 - The model still reads a beacon or `javascript:` link inside a JSON string value (RC-49 closed this with no trigger; spotlighting is the containment, off by default).
 - Confusable folding (UTS #39) remains unimplemented, as before.
 - `defendText` (published) still runs Step 2 on a JSON document, unlike the server's JSON arm; its future is `docs/todos/018` slice 2.
-- `package.json` is still 4.0.2; this branch is MAJOR-bound and the number is set before merge.
+- `package.json` is still 4.0.2; this branch is MAJOR-bound and the number is set before merge. *(Superseded: set to 5.0.0 during PR #43 review; see Follow-up work.)*
 
 ## Testing summary
 
@@ -132,7 +132,7 @@ Read `processor.ts::processResponse` (gate, save arm, `savedMessage`) first, the
 | P3 | Stale comments (both reviewers) | fixed in 1d26924 |
 | P3 | Stale size-gate docstrings | fixed in 1d26924 |
 
-The fixes in 1d26924 were not themselves re-reviewed. Surface 3 has not run.
+The fixes in 1d26924 were not themselves re-reviewed. Surface 3 has not run. *(Superseded: Surface 3 ran on PR #43; see Review Comments Addressed.)*
 
 ## Follow-up work
 
@@ -194,3 +194,34 @@ None.
 ### Files Modified
 
 `src/lib/security/detection-logger.ts`, `src/lib/response/processor.ts` (comments), `src/lib/response/processor.test.ts`, `docs/architecture/architecture.md`, `README.md`, `CHANGELOG.md`, `package.json`, `package-lock.json`, `dist/`.
+
+## Review Comments Addressed — 2026-10-20 (round 2)
+
+**PR:** #43 · Surface 3, round 2 (requested: CodeRabbit, Codex, Copilot; 15 min wait). Codex reviewed `7fb45f4` and found no major issues. Copilot graded it "Needs a closer look" with no open issues and one previously missed issue in its body. The round met the operator's stop condition (five or fewer comments, no P1).
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `jq_query`'s saved arm misses escaped phrases: `filtered` is `JSON.stringify` output and the wrap never sees it | coderabbitai (inline), copilot-pull-request-reviewer (review body) | Fix needed (P2, in scope) | `jq-query.ts::executeJqQuery` uses `detectJsonAndLog`. Its sibling, `processor.ts::processResponse`'s post-filter detection, also does now. Two saved-arm cases added; probe: `detectAndLog` fails 2 |
+| The handoff's release status contradicts itself | coderabbitai | Documentation (P3, in scope) | Stale statements labelled as superseded, and the `Status:` field updated |
+
+### Declined Findings
+
+None this round: every finding was fixed.
+
+### Decisions Revised
+
+None this round.
+
+### Resolved Todos
+
+None.
+
+### Outstanding Todos
+
+None.
+
+### Files Modified
+
+`src/lib/tools/jq-query.ts`, `src/lib/tools/jq-query.test.ts`, `src/lib/response/processor.ts`, `docs/work/handoff-fix-019-json-arm-detects-without-rewriting.md`, `dist/`.

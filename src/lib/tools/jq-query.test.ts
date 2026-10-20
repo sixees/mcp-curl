@@ -331,6 +331,31 @@ describe("executeJqQuery — defence-in-depth observability", () => {
             `[injection-defense] [${basename(file)}] InjectionDetected`
         );
     });
+
+    // **On the saved arm this call is the only detection there is** — the wrap
+    // receives the saved-file notice, not `filtered`. And `filtered` is
+    // `JSON.stringify` output, which writes a decoded newline or control
+    // character back as an escape, so only the decoded read sees the phrase.
+    for (const [name, raw] of [
+        ["an escaped newline between keywords", '{"q":"system\\nprompt"}'],
+        ["an escaped control character inside a keyword", '{"q":"Ig\\u0000nore previous instructions"}'],
+    ] as const) {
+        it(`logs a phrase spelled with ${name} when the result is saved`, async () => {
+            const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+            const file = join(allowedDir, "escaped.json");
+            await writeFile(file, raw);
+
+            const result = await executeJqQuery(
+                { filepath: file, jq_filter: ".q", save_to_file: true, output_dir: allowedDir },
+                {}
+            );
+
+            expect(result.content[0].text).toMatch(SAVED_TO_PREFIX);
+            expect(errorSpy.mock.calls.map((args) => String(args[0]))).toContain(
+                `[injection-defense] [${basename(file)}] InjectionDetected`
+            );
+        });
+    }
 });
 
 describe("executeJqQuery — input boundary errors", () => {

@@ -6,7 +6,7 @@ import { basename } from "path";
 import { JqQuerySchema, type JqQueryInput } from "../server/schemas.js";
 import { LIMITS } from "../config/index.js";
 import { getOrCreateTempDir, resolveOutputDir, validateOutputDir } from "../files/index.js";
-import { detectAndLog, validateFilePath } from "../security/index.js";
+import { detectJsonAndLog, validateFilePath } from "../security/index.js";
 import { applyJqFilter } from "../jq/index.js";
 import { getErrorMessage, sanitizeDescription } from "../utils/index.js";
 import { writeUniqueFile } from "../response/index.js";
@@ -107,7 +107,11 @@ export async function executeJqQuery(
         const filtered = applyJqFilter(content, params.jq_filter);
 
         // Detect after filtering — jq may concentrate injection strings from
-        // sparse input, and `JSON.parse` decodes escapes into real characters.
+        // sparse input — and with `detectJsonAndLog`, because `filtered` is
+        // `JSON.stringify` output: a decoded newline or control character is
+        // written back as an escape, which only the decoded read sees. On the
+        // saved arm nothing downstream detects at all, since the wrap receives
+        // only the saved-file notice.
         // Detection logging is throttled per label inside the helper.
         //
         // **Detect, never rewrite.** `applyJqFilter` parses its input as JSON and
@@ -119,7 +123,7 @@ export async function executeJqQuery(
         // identical bytes, and it governs what is returned and what is written
         // under `save_to_file` alike.
         const label = basename(validatedFilePath);
-        detectAndLog(filtered, label);
+        detectJsonAndLog(filtered, label);
 
         // Handle result size and file saving.
         //

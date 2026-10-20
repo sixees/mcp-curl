@@ -19,7 +19,7 @@ import {
     sanitizeResponse,
     supportsMarkupComments,
 } from "../utils/index.js";
-import { detectAndLog, detectJsonAndLog, sanitizeAndDetect } from "../security/index.js";
+import { detectJsonAndLog, sanitizeAndDetect } from "../security/index.js";
 
 // Re-export types from lib/types for convenience
 export type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
@@ -821,8 +821,9 @@ export async function processResponse(
 
         // Re-detect after the filter, because a multi-path filter can place two
         // values side by side — `.a,.b` puts halves the origin kept apart within
-        // the pattern's proximity window. Escapes such as `\u0049gnore` are
-        // already caught above, on the decoded tokens `detectJsonAndLog` tests. **Detect,
+        // the pattern's proximity window — and with `detectJsonAndLog`, because
+        // the output is `JSON.stringify`'s, which writes a decoded newline or
+        // control character back as an escape. **Detect,
         // never rewrite** — the filter's output is the origin's data, selected, and
         // the same middleware contract as the unfiltered body applies (`LESSONS.md`
         // RC-49).
@@ -831,7 +832,7 @@ export async function processResponse(
         // origin-controlled.** Labelling JSON `application/octet-stream` would
         // be enough to skip this pass. Reaching this line means jq produced a
         // textual result, whatever the origin called it.
-        detectAndLog(content, hostname);
+        detectJsonAndLog(content, hostname);
     }
 
     // Step 5: Determine max size and decide save-to-file.
