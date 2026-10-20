@@ -12,12 +12,26 @@ last_updated: 2026-09-01
 This file instantiates the [Compound Engineering Methodology](compound-engineering-methodology.md) for **mcp-curl** — an MCP server (and embeddable TypeScript library) that lets LLMs execute cURL requests behind an SSRF-hardened, sanitising trust boundary. It supplies the parameters the portable reference deliberately leaves open.
 
 > **How to use.** The reference explains *why*; the core (`compound-engineering-core.md`) is injected per plan/PR; this profile is the *where and what* for this repo. When the core says "roster in profile" or "unit declared in the profile," this is the file it means.
+>
+> **Your answers are yours and are never replaced**, but this note is shipped prose: `/sixees-workflow:refresh-compound` offers its later wording forward, inserting only what you authorise. **It never writes an answer of yours and never the frontmatter.** It may insert guidance *inside* a section you have filled — the paragraphs below marked as not per-project are exactly that — so the promise is about your content, not about which sections it stays out of.
 
 ## 1. RC numbering
 
 - **Counter origin:** RC-1. (RCs are sequential, claimed at the time, durable once assigned.)
 - **Unit of the trail:** **per project** — one continuous RC sequence across the whole mcp-curl repository. This is a single-purpose library; a per-feature counter would fragment a trail that is more useful read end to end.
 - **RCs documented in:** `docs/work/handoff-*.md`, inline beside the work each RC corrected — **and appended to `LESSONS.md` at the repo root**, which is the durable ledger. A handoff is read once by the run that wrote it; `LESSONS.md` is what the next session reads.
+- **Allocating the next number:** one past the highest already in that file. Also not a fill-field — every surface that numbers an RC cites this section for the query, so it has to be here rather than left to each project to invent:
+  ```bash
+  grep -oE 'RC-[0-9]+' .sixees/LESSONS.md | sort -t- -k2 -n | tail -1
+  ```
+  **An empty result means `RC-1`.** A freshly seeded `LESSONS.md` carries no numeric entry — only
+  the fenced `RC-N` format template, which the pattern does not match — so the query prints
+  nothing, and *"one past the highest"* has no highest to be one past. Read the empty answer as
+  the counter origin above rather than as a broken query, and never as licence to guess.
+
+  **It matches any `RC-[0-9]+` anywhere in the file, which is deliberate**: an id recorded outside its own entry heading — in one of the annotations `LESSONS.md` → *RC ledger* defines, or a sibling's cross-reference — still counts as allocated, so the query cannot hand out a number this file has already
+  issued. **Take the annotation set from that section, never from an example written here.** It is the project's file and it pins the exact markers every consumer greps for; a spelling guessed from outside it matches nothing, silently. (Across branches it is not a lock — two that append before either merges both read
+  the same highest number, and the merge conflict is what surfaces it.) **Never maintain the next number by hand in this profile.** A count kept here is a second source for a value that changes on every divergence, and the copy goes stale the first time someone files without updating two files. A stale count invites reusing a number that is already durable, which is the one property the counter has to keep.
 - **POST-AUDIT annotations in:** `docs/plans/*.md`, one line at the diverging section, pointing at the RC. Original plan text stays intact.
 
 ## 2. Path conventions

@@ -57,4 +57,10 @@ docs/compound/*
 # configuration.
 /sixees-workflow.local.md
 /compound-workflow.local.md
+
+# Compound Engineering standards — per-clone, except the RC ledger, which is
+# tracked. This also keeps .sixees/sixees-workflow.local.md (the review roster)
+# out of the index, for the reason above.
+/.sixees/*
+!/.sixees/LESSONS.md
 /docs/work/.scratch/
