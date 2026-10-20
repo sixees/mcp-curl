@@ -226,7 +226,8 @@ runs these steps in fixed order on each text part:
 
 1. **Detect** injection patterns against the original text and its sanitised
    form, and emit a throttled `[injection-defense] [host]` log line on a match.
-   A part that parses as JSON is detected on and never rewritten.
+   A part that parses as JSON is also tested on each escaped string token,
+   decoded on its own, and is never rewritten.
 2. **Defend** every other part with the full `defendText` pipeline: sanitise
    Unicode attack chars and collapse whitespace runs, strip markup comments,
    `<script>`/`<style>` blocks and markdown beacons, then detect again.

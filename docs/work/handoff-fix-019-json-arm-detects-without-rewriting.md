@@ -84,7 +84,7 @@ Todo 019 made this server the middleware RC-49 says it is: a JSON payload is det
 
 - **Two settled decisions are reversed** — RC-49's "ask for less" and RC-44's sanitised BOM artefact. Their RC entries are drafted and await the operator (see Follow-up); until flushed, nothing on the branch cites a number for them. *(Superseded: flushed as RC-63 and RC-64.)*
 - **BREAKING for library consumers**: a JSON text part a custom or YAML tool returns through `McpCurlServer` is no longer stripped of Unicode attack codepoints; `sanitizeAndDetect`/`defendText` now log one more class. CHANGELOG `[Unreleased]` says so. *(Now `[5.0.0]`.)*
-- **`detectJsonAndLog`'s decode** is one extra `JSON.parse` on a body carrying a `\u` escape — up to 10 MB, under the population the director settled (internal staff).
+- **`detectJsonAndLog`'s decode** is one linear scan for string tokens plus a `JSON.parse` per token that carries an escape, on any body containing a backslash — up to 10 MB, under the population the director settled (internal staff).
 - **Inline JSON may now carry a leading BOM or NBSP** to the model; those are the origin's bytes.
 
 ## Known issues and limitations

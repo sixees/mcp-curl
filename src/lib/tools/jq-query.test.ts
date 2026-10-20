@@ -390,11 +390,11 @@ describe("executeJqQuery — input boundary errors", () => {
 // -----------------------------------------------------------------------------
 // jq_query's grammar, and the decision behind it.
 //
-// `jq_query` does not take a shorter defence path than `defendText`:
-// `applyJqFilter` parses its input as JSON and returns `JSON.stringify(...)`,
-// so this text is a JSON document, and a JSON document takes no strip stage
-// on any path, deliberately, because `<script>` and `[a](b)` are legitimate
-// inside JSON string values.
+// `jq_query` runs no strip stage: `applyJqFilter` parses its input as JSON
+// and returns `JSON.stringify(...)`, so this text is a JSON document, and a
+// JSON document takes no strip stage on any path, deliberately, because
+// `<script>` and `[a](b)` are legitimate inside JSON string values. Nor is
+// it sanitised: every JSON arm detects and returns (`LESSONS.md` RC-49).
 //
 // So the asymmetry is JSON-vs-everything, not `jq_query`-vs-`curl_execute`,
 // and it holds identically for `curl_execute --jq_filter` on the same bytes.

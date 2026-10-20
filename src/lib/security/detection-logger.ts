@@ -65,8 +65,8 @@ export function detectAndLog(text: string, label: string, sanitised?: string): v
 
 /**
  * {@link detectAndLog} plus a decoded read, for text that may be a JSON
- * document returned unchanged: `defendForInline` calls it on its JSON arm, and
- * `processResponse` calls it on every body above its JSON/non-JSON fork.
+ * document returned unchanged — every built-in JSON arm calls this in place of
+ * {@link detectAndLog}, because that arm returns the origin's bytes.
  *
  * **A document can spell a phrase with string escapes** — `Ig\u200bnore`,
  * `\u0049gnore`, `system\nprompt` — which neither text form shows and the

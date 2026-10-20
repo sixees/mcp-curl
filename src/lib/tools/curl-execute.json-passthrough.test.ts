@@ -103,9 +103,9 @@ async function fetchBody(
 // ---------------------------------------------------------------------------
 describe("018 AC1 — a JSON body survives byte for byte", () => {
     const cases: Array<[string, string]> = [
-        // RC-31: `JSON.parse` keeps the LAST duplicate name. Unfixable while the
-        // body is re-serialised, and the P1 of this todo: a tool contracted to
-        // return an API's data returned different data.
+        // `JSON.parse` keeps the LAST duplicate name, so this is unfixable while
+        // the body is re-serialised — the P1 of `docs/todos/018`: a tool contracted
+        // to return an API's data would return different data.
         ["duplicate name", '{"total":5,"total":9}'],
         // RC-24, RC-27, RC-29: needed `keepNumberLexeme` to survive at all.
         ["integer past MAX_SAFE_INTEGER", '{"id":9223372036854775807}'],
@@ -135,10 +135,9 @@ describe("018 AC1 — a JSON body survives byte for byte", () => {
 
     // **Both content types, and `text/html` is the one with teeth.**
     // `application/json` is exempt from the strip stages, so `defendText` is a
-    // no-op on it and these cases would pass even if the body were re-defended
-    // — measured by probe, which failed nothing until this loop was widened.
-    // Under `text/html` every stage would run, so any defence pass on the body
-    // shows up as moved bytes. Same false green as `LESSONS.md` RC-33's.
+    // no-op on these bodies and the cases would pass even if the body were
+    // re-defended — a probe confirms it. Under `text/html` every stage would
+    // run, so any defence pass on the body shows up as moved bytes.
     for (const [name, body] of cases) {
         for (const contentType of ["application/json", "text/html"]) {
             it(`returns ${name} unchanged (${contentType})`, async () => {
@@ -167,9 +166,9 @@ describe("018 AC2 — the declared content type selects nothing", () => {
         "image/png",
         "application/octet-stream",
         "text/plain",
-        // Malformed: `MEDIA_TYPE_HEAD` rejects it, so it arrives as `undefined`
-        // with `contentTypeUndetermined` still false — the asymmetry
-        // `LESSONS.md` RC-31 names. The declared type selects nothing regardless.
+        // Malformed tail: `MEDIA_TYPE_HEAD` keeps the head and discards the rest,
+        // so it arrives as `text/markdown` — the head-match `LESSONS.md` RC-32
+        // records. The declared type selects nothing regardless.
         "text/markdown;;",
         // The origin sent none at all.
         "",
@@ -250,7 +249,7 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
     });
 
     it("saves a non-JSON body as the origin's exact bytes, diagnostics intact", async () => {
-        // The reason this arm stopped defending the artefact: `stripHtmlComments`
+        // Why this arm does not defend the artefact: `stripHtmlComments`
         // deletes the `<!-- trace-id -->` a framework puts its diagnostic in, and
         // that comment is the most useful thing on a 500 page.
         const page = "<html><!-- trace-id: 7f3a91c2 --><h1>Application Error</h1></html>";
@@ -268,8 +267,8 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
     // PR #39.
     it("says the file is NOT byte-identical when Step 2 changed the body", async () => {
         // The template literal interprets `\u200b`, so `page` already holds a
-        // real U+200B. A `.replace` for the six-character text `\u200b` found
-        // nothing and only suggested to a reader that the escape had survived.
+        // real U+200B; a `.replace` for the six-character text `\u200b` would
+        // find nothing, so the expected file removes the codepoint itself.
         const page = `<html><h1>Application\u200bError</h1></html>`;
         const text = await fetchBody(page, "text/html");
         expect(text).toContain("attack codepoints removed");
@@ -325,9 +324,9 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
 // ---------------------------------------------------------------------------
 describe("018 — the ordinary-response cases round 1 found", () => {
     it("returns an empty body inline and writes NO file (204 / HEAD / 304)", async () => {
-        // `empty-body` was taking the save arm, so a `204 No Content` wrote a
-        // ZERO-BYTE file and told the model to read it with its own tooling.
-        // 018 justifies that arm on recoverability; there is nothing to recover.
+        // A `204 No Content` on the save arm would be a ZERO-BYTE file the model
+        // is told to read with its own tooling. 018 justifies that arm on
+        // recoverability, and an empty body has nothing to recover.
         // `LESSONS.md` RC-44.
         const text = await fetchBody("", "");
         expect(text).toBe("");
@@ -350,11 +349,10 @@ describe("018 — the ordinary-response cases round 1 found", () => {
         ["a bare string", '"ok"', ".data", "null"],
     ] as Array<[string, string, string, string]>) {
         it(`filters ${name} instead of discarding the response`, async () => {
-            // The filter gate was routed through the ARTEFACT gate, which is
-            // composite-only — so an endpoint returning `null` for "no record"
-            // made `jq_filter` throw, and the throw sits above the save arm, so
-            // the body was discarded outright. A filter only needs the body to
-            // parse. `LESSONS.md` RC-45.
+            // A filter only needs the body to parse, scalars included. Gating it on
+            // anything stricter makes `jq_filter` throw on an endpoint returning
+            // `null` for "no record", and a throw above the save arm discards the
+            // body outright. `LESSONS.md` RC-45.
             const text = await fetchBody(body, "application/json", { jq_filter: filter });
             expect(text).toContain(expected);
         });
@@ -364,7 +362,7 @@ describe("018 — the ordinary-response cases round 1 found", () => {
         // `\uFEFF{...}` is what .NET and Java services emit routinely. Classified
         // on the raw decode, which `classifyBody` trims, so it is the JSON
         // document it is and no strip stage pairs the `<!--` in one field with
-        // the `-->` in a later one. `LESSONS.md` RC-44.
+        // the `-->` in a later one. `LESSONS.md` RC-44, RC-64.
         const body = '\uFEFF{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}';
         const text = await fetchBody(body, "application/json");
         // Returned as the origin sent it — BOM included, every field intact.
@@ -419,8 +417,8 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
     // assertion comparing them would pass whichever form the artefact took.
     // Step 2 removes this codepoint at ANY size, so it is the one discriminator
     // available here: the file keeps it only if the origin's octets were written.
-    // An `application/json` fixture with no such codepoint is the false green
-    // `LESSONS.md` RC-33 records.
+    // An `application/json` fixture with no such codepoint would be a false
+    // green: it passes whichever form the artefact took.
     const ZWSP = "\u200b";
 
     it("persists a 600 KB OBJECT body as the origin's exact octets", async () => {
@@ -449,8 +447,7 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
         //
         // A raw `0xE9` decodes to U+FFFD, so re-encoding the decode gives
         // `EF BF BD` where the origin sent one byte. `docs/todos/016`'s
-        // acceptance criterion 1, finally reachable now that 018 has settled
-        // who reads the file.
+        // acceptance criterion 1; `docs/todos/018` decides who reads the file.
         const wire = Buffer.concat([
             Buffer.from('{"name":"Jos', "utf8"),
             Buffer.from([0xe9]),
@@ -529,9 +526,10 @@ describe("018 — two remote regions, two content entries", () => {
     });
 
     // -----------------------------------------------------------------------
-    // The notice is a THIRD region, and it was the second join in one function.
+    // The notice is a THIRD region, so it is its own content entry.
     // One case per trigger, because each is reached by a different flag — and a
-    // missing platform pin silently neutralises either one's coverage.
+    // missing platform pin silently neutralises the second case: without it the
+    // headers-unsupported notice satisfies the assertion instead.
     // `LESSONS.md` RC-46.
     // -----------------------------------------------------------------------
     for (const [trigger, fixture] of [

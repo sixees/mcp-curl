@@ -201,7 +201,7 @@ describe("createWrapper — idempotence", () => {
 
 describe("createWrapper — error handling", () => {
     it("isError results are sanitised + detected but NOT spotlighted", () => {
-        // PR #29 round-3 hardening: error text from custom tools / YAML
+        // Error text from custom tools / YAML
         // handlers / hook short-circuits can carry attacker-controlled bytes
         // (e.g. `{ isError: true, content: [{ text: "Failed: <attacker>" }] }`),
         // so sanitise + detect must run regardless of the isError flag —
@@ -226,7 +226,7 @@ describe("createWrapper — error handling", () => {
     });
 
     it("logs an injection-detection event on error text containing a malicious phrase", () => {
-        // Closes the round-3 attacker-controlled-error-text bypass.
+        // Error text is attacker-reachable, so it must still reach the detector.
         const wrap = createWrapper({ enableSpotlighting: false });
         wrap(
             {

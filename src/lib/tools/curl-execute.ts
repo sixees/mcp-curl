@@ -1,5 +1,5 @@
 // src/lib/tools/curl-execute.ts
-// Registers the curl_execute tool for making HTTP requests
+// The curl_execute executor and its tool metadata; registration is tools/index.ts::registerAllTools
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS } from "../config/index.js";

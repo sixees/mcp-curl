@@ -321,9 +321,10 @@ export function detectInjectionPattern(input: string): boolean {
 }
 
 /**
- * Sentinel prefix shared by `applySpotlighting` and the idempotence guard
- * in `response/post-processor.ts`. Centralised here so the wrap-detection
- * regex stays in lock-step with the wrap-emission template.
+ * Sentinel prefix `applySpotlighting` emits and `isSpotlightEnvelope`
+ * prefix-checks. `SPOTLIGHT_HEADER_PATTERN` spells the same prefix as its own
+ * literal rather than deriving from this constant, so a change here must be
+ * made there too or the idempotence guard stops recognising its own envelopes.
  */
 export const SPOTLIGHT_SENTINEL_PREFIX = "---EXTERNAL-CONTENT-BEGIN-";
 

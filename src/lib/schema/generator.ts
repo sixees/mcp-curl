@@ -418,7 +418,7 @@ function createToolHandler(
             // result then flows through the registerToolsOnServer adapter).
             return wrap(result, safeHostname(url));
         } catch (error) {
-            // Handle authentication errors gracefully
+            // A missing required credential is configuration the model can report back, so it returns as an error result; anything unrecognised is rethrown.
             if (error instanceof AuthenticationError) {
                 return {
                     content: [

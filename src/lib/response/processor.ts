@@ -50,7 +50,7 @@ export interface DefendTextOptions {
      * determine it.
      *
      * **The type is only half the fix, because a type is not a runtime check.**
-     * 3.4.0 publishes this function, and a JavaScript consumer can omit the
+     * This function is on the published entry point, and a JavaScript consumer can omit the
      * field whatever the declaration says. So omission resolves to the
      * strictest grammar at runtime as well — see the destructuring default in
      * `defendText`. Both halves are needed: the type tells a TypeScript caller
@@ -64,8 +64,9 @@ export interface DefendTextOptions {
      * **The exemption is about the artefact, not the model.** A caller of the
      * published function may persist what it defends, and rewriting `<script>`
      * or `[a](b)` inside a JSON string value would silently alter that document.
-     * No in-repo caller persists `defendText`'s output — `processResponse` writes
-     * the origin's octets and runs no strip stage — and `defendForInline` passes
+     * No in-repo caller persists `defendText`'s output — `processResponse` never
+     * calls it, and writes the origin's octets, a filter's output, or the sanitised
+     * text of a non-JSON body Step 2 changed — and `defendForInline` passes
      * `false` because it has already answered the JSON question with
      * {@link classifyBody} and returns a JSON document before reaching here. See
      * `LESSONS.md` RC-10.
@@ -178,8 +179,9 @@ export type JsonRejectionReason = "empty-body" | "looks-like-markup" | "invalid-
 /**
  * What the body path decided about a response body.
  *
- * `json: true` is the only arm whose bytes are returned to the model, and it
- * is always returned — and, unfiltered, persisted — as the origin sent them.
+ * `json: true` is the only arm whose bytes are returned to the model.
+ * Unfiltered, they are returned and persisted as the origin sent them; a
+ * `jq_filter`'s output replaces them on both.
  */
 export type BodyClassification =
     | { readonly json: true }
@@ -270,7 +272,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
     let content = text;
     // Omission resolves to the STRICTEST grammar, not the permissive one. The
     // type makes this field required, which binds TypeScript callers and does
-    // nothing at runtime — and 3.4.0 publishes this function, so a JavaScript
+    // nothing at runtime — and this function is on the published entry point, so a JavaScript
     // consumer calling `defendText(text, { hostname })` would otherwise get
     // Step 2 alone and a returned beacon, which is the exact behaviour the
     // required field was added to prevent. Failing closed costs a caller who
@@ -336,7 +338,8 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // `isSniffableContentType` covers any type that neither declares a grammar
     // handled either way nor is one we deliberately do not sniff
     // (`application/json`). The scan is over the FULL post-sanitise body,
-    // bounded by `exceedsStripCap` — a fixed leading window was itself a bypass.
+    // bounded by `exceedsStripCap` rather than a fixed leading window, which a
+// remote could pad its markup past.
     //
     // **Unreachable from every in-repo caller.** `defendForInline` passes
     // `contentTypeUndetermined: true` with the JSON exemption off, which forces
@@ -410,7 +413,8 @@ export function defendText(text: string, options: DefendTextOptions): string {
  * production caller. The size gates in `processResponse` and `executeJqQuery`
  * weigh JSON alone, as-is, and that is sound only because the JSON arm below
  * returns it unchanged — a change that lengthens a JSON document here breaks
- * invariant 14 silently, which is what `processor.test.ts`'s premise case pins.
+ * invariant 14 silently, which `processor.test.ts`'s "the JSON arm returns a
+* document unchanged, so the gate measures what the model receives" case pins.
  *
  * The options and their reasons:
  *
@@ -527,10 +531,11 @@ interface SavedMessageFacts {
     originBytesExact: boolean;
     /**
      * Byte length of `content` as the inline gate measures it. On the over-cap
-     * arm — the only one that quotes it — the body is JSON and on disk as the
-     * origin's octets, so the two differ only on a lossy decode, where each
-     * undecodable sequence grew to three bytes; quoting both keeps the count
-     * from reading below the limit it says was exceeded.
+     * arm — the only one that quotes it — the content is JSON, and on disk as
+     * the origin's octets unless a `jq_filter` produced it, in which case both
+     * counts measure the same buffer. They differ only on an unfiltered lossy
+     * decode, where each undecodable sequence grew to three bytes; quoting both
+     * keeps the count from reading below the limit it says was exceeded.
      */
     measuredBytes: number;
     /** True when the UTF-8 decode replaced something; see `decodeWasLossy`. */
@@ -591,9 +596,9 @@ function savedMessage(facts: SavedMessageFacts): string {
     // other arm's body IS — and `jq_query` can always read it. The rejection arm
     // claims nothing about `jq_query` either way: its sanitised artefact can
     // parse where the origin's body did not (an invisible character between
-    // tokens), so "cannot parse it" would be false there. Re-deriving that
-    // from the header asked a remote-written field a question already answered,
-    // and got it wrong whenever an origin served valid JSON as `text/html`.
+    // tokens), so "cannot parse it" would be false there. Deriving that from
+    // the header would ask a remote-written field a question already answered,
+    // and get it wrong whenever an origin serves valid JSON as `text/html`.
     //
     // **Over the cap, the saved file comes first and a narrower request second.**
     // The bytes have already crossed the wire, and analysing them locally costs
@@ -699,8 +704,8 @@ export async function processResponse(
     // otherwise be asserted over a body that was re-encoded. Reported, not
     // corrected: the origin's octets are unrecoverable from the decode, and
     // they are on disk untouched wherever the artefact is the origin's octets —
-    // every JSON body, and any non-JSON body Step 2 left unchanged.
-    // Reported by chatgpt-codex-connector on PR #39; `LESSONS.md` RC-15.
+    // every unfiltered JSON body, and any non-JSON body Step 2 left unchanged.
+    // `ARCHITECTURE.md` invariant 1a; `LESSONS.md` RC-33.
     const decodeWasLossy = !Buffer.from(response, "utf8").equals(responseBytes);
     const lossy = decodeWasLossy ? ({ decodeWasLossy: true } as const) : {};
 

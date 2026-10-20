@@ -1,5 +1,5 @@
 // src/lib/tools/jq-query.ts
-// Registers the jq_query tool for querying JSON files
+// The jq_query executor and its tool metadata; registration is tools/index.ts::registerAllTools
 
 import { readFile } from "fs/promises";
 import { basename } from "path";
@@ -140,7 +140,7 @@ export async function executeJqQuery(
 
             // Encoded here rather than handed over as text: `writeUniqueFile`
             // takes `Buffer` only, so the encoding stays visible at the site that
-            // decides it (`LESSONS.md` RC-33). Shared with `curl_execute`'s save
+            // decides it (`LESSONS.md` RC-33, RC-55). Shared with `curl_execute`'s save
             // path so neither site can drift from `flag: "wx"` or from the
             // filename sanitiser — two filters over one source file reach the
             // namer identical, and nothing else here would separate them.

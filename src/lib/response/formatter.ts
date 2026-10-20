@@ -186,8 +186,8 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
  * - body_decode_lossy: boolean (only when the wire octets were not valid UTF-8,
  *   so the body was re-encoded and is not byte-identical to what the origin
  *   sent. Its JSON structure is intact; one or more character values are not.
- *   A saved JSON artefact always holds the origin's octets, and a non-JSON one
- *   does where Step 2 was a no-op)
+ *   An unfiltered saved JSON artefact holds the origin's octets, a non-JSON one
+ *   does where Step 2 was a no-op, and a jq_filter's output never does)
  * - headers_unsupported: boolean (this host cannot capture headers at all; a
  *   fact about the host, deliberately distinct from headers_undetermined, which
  *   is a fact about the origin)
@@ -253,10 +253,11 @@ export function formatResponse(
     // {@link plainBranchNotices} — which is a server-authored region rather than
     // the forgeable in-band marker the out-of-band fields exist to avoid.
     //
-    // Notices travel as their own MCP content entry on every branch, including
-    // the saved-to-file arm where both sides are server-authored:
-    // `tools/curl-execute.ts` appends that entry unconditionally, so a join here
-    // would double it. `LESSONS.md` RC-46.
+    // On the plain branch, notices travel as their own MCP content entry on both
+    // arms, including saved-to-file where both sides are server-authored:
+    // `tools/curl-execute.ts` appends that entry whenever there is a notice, so a
+    // join here would double it. Under metadata they are fields, not notices.
+    // `LESSONS.md` RC-46.
     // If file was saved, always indicate the filepath (user needs to know where data is)
     if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
         if (includeMetadata) {

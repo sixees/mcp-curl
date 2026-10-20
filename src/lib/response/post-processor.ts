@@ -72,9 +72,11 @@ import { defendForInline } from "./processor.js";
 // module-private symbol means the only way to set the tag is to call `tag()`
 // inside this module, which only happens after the wrap pipeline has run (or
 // after a fail-open catch). The trade-off — that the tag does not survive
-// across module duplication (HMR, dual ESM/CJS resolution) — is acceptable
-// because the tag is a per-process performance optimisation; if it's lost,
-// the wrap re-runs and is semantically idempotent.
+// across module duplication (HMR, dual ESM/CJS resolution) — is accepted
+// because the tag is a per-process optimisation. If it is lost the wrap
+// re-runs: idempotent on a non-JSON part and on an unspotlighted JSON part,
+// but not on a spotlighted JSON part — the sentinel lines stop it parsing,
+// so the re-run takes the undivided strip arm across its fields.
 const WRAPPED = Symbol("mcp-curl.wrapped");
 
 /**
@@ -171,12 +173,11 @@ export function isWrappedResult(result: unknown): boolean {
  * or Proxy-blocked). Defence-in-depth must never propagate exceptions to the
  * handler boundary, so we swallow the defineProperty failure here. The
  * trade-off: a downstream wrap on the same frozen result will re-run the
- * pipeline. That is semantically harmless: `defendForInline` is idempotent on
- * this boundary's options — the entity decode is off, every remaining stage
- * rewrites to a form it no longer matches, and the JSON arm detects without
- * rewriting, which is a fixed point — and `applySpotlighting`
- * short-circuits on already-wrapped envelopes. The worst case is one extra linear pass over the
- * body, never a correctness issue.
+ * pipeline. That is harmless because the frozen object is only ever returned
+ * unprocessed — from the non-array pass-through and the fail-open catch —
+ * while a processed result is the fresh spread `wrap` builds, which is never
+ * frozen and so always takes the tag. The re-run is the first real pass over
+ * that content, never a second pass over defended text.
  *
  * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
  * Proxy whose `getOwnPropertyDescriptor` / `get` trap throws cannot break

@@ -52,14 +52,19 @@ export interface McpCurlConfig {
      *   2. **Sanitise** the text (strip Unicode attack chars, collapse
      *      whitespace runs).
      *   3. **Strip** markup comments, `<script>`/`<style>` blocks and markdown
-     *      beacons (image / link / dangerous-scheme).
-     *   4. **Re-sanitise and re-detect**, because the strip stage's entity
-     *      decode can unmask an injection phrase the first pass could not see.
+     *      beacons (image / link / dangerous-scheme). The wrap does not decode
+     *      HTML entities: its output is what gets returned, and on a channel
+     *      whose consumer does not decode, a decode would manufacture live
+     *      markup from inert bytes. So an entity-encoded beacon or `<script>`
+     *      block survives this stage.
+     *   4. **Re-sanitise and re-detect** the stripped text, so a phrase the
+     *      strip stage joined still reaches the `[injection-defense]` log.
      *   5. **Spotlight** the defended text (only when this flag is `true`)
      *      using a fresh per-message UUID.
      *
-     * Steps 1-4 always run regardless of this flag — only step 5
-     * (spotlighting sentinels) is gated — **except on a text part that parses
+     * Steps 1-4 run regardless of this flag — only step 5
+     * (spotlighting sentinels) is gated — except above `STRIP_PATH_MAX_BYTES`
+     * (256 KB), where a part takes Steps 1-2 alone, **and on a text part that parses
      * as JSON, where the wrap detects but rewrites nothing — no Unicode
      * sanitise and no markup, comment or markdown-beacon strip.** A JSON
      * document is returned to the model as the origin wrote it, because the

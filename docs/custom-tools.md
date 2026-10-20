@@ -293,7 +293,8 @@ part the wrap runs:
    text — so the strictest grammar applies and every strip stage runs.
    **On text that parses as a JSON document, detection only** — the text is
    returned unchanged. Either way detection reads the original text and its
-   sanitised form, and emits the throttled `[injection-defense] [host]` log on a
+   sanitised form — on a JSON document, each escaped string token decoded on its
+   own as well — and emits the throttled `[injection-defense] [host]` log on a
    match.
 2. If `config.enableSpotlighting === true` and the result is not an error, the
    defended text is wrapped in a per-message UUID-keyed sentinel envelope.

@@ -8,9 +8,11 @@
 // indistinguishable, from a unit test's point of view, from no wrap at all.
 // So this path is asserted on its own.
 //
-// The subprocess is the only thing mocked. Everything above it — the real
-// executor, `processResponse`, `defendText`, the post-processor wrap — runs, so
-// these assert the composition rather than any one stage's contract.
+// The subprocess is mocked, along with the DNS/SSRF lookup, the rate limiter,
+// the metadata separator and the host's header-dump capability. Everything
+// else — `executeCurlRequest`, `processResponse`, `defendText`, the
+// post-processor wrap — runs, so these assert the composition rather than any
+// one stage's contract.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -760,11 +762,10 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             // the two arms share a code path and a later edit could collapse them
             // into one message.
             //
-            // **Matched against what production actually emits, not against a
-            // retyped verb.** This read `not.toContain("exceeded")` while the
-            // message said "exceeds", so it could not fail — the arm-collapse it
-            // names would have passed it. A guard that restates the subject's
-            // wording dies the next time the wording moves, silently. RC-32.
+            // **Matched against both tenses of the verb, not a retyped one.** A
+            // guard that restates the subject's wording dies the next time the
+            // wording moves, silently — `not.toContain("exceeded")` cannot fail
+            // against a message that says "exceeds". RC-32.
             expect(text).not.toMatch(/exceed(s|ed)/);
             expect(text).not.toContain("inline limit");
         });
@@ -798,10 +799,9 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             ["over-cap", { max_result_size: 1000 }],
             ["forced", { save_to_file: true }],
         ])("points the model at jq_query on the %s save path", async (_label, extra) => {
-            // Dropping the preview removed the model's only inline view of a
-            // saved body. That is acceptable only because a route to the body
-            // survives, and this is the route — asserted on BOTH arms, since
-            // each composes its own message and one could lose the pointer
+            // A saved body has no inline view, which is acceptable only because a
+            // route to it is named, and this is the route — asserted on BOTH arms,
+            // since each composes its own message and one could lose the pointer
             // while the other kept it.
             const body = JSON.stringify({ secret_marker: "m", filler: "x".repeat(4000) });
             mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
@@ -815,13 +815,12 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
         // **The negative control for the pair above, and it is the reason they
         // are not a false green.** Both those cases pass `application/json`, so
-        // `toContain("jq_query")` could not have failed for ANY content type
-        // while the message named the tool unconditionally — the fixture, not
-        // the assertion, was carrying the claim. `jq_query` parses JSON and
-        // answers "Response is not valid JSON" on anything else, and it is the
-        // only file-reading tool registered, so pointing a 1 MB HTML page at it
-        // sent the model to the one tool that cannot open it, with no other
-        // route offered.
+        // on their own they cannot fail against a message that names the tool
+        // for every content type — the fixture, not the assertion, would carry
+        // the claim. `jq_query` parses JSON and answers "Response is not valid
+        // JSON" on anything else, and it is the only file-reading tool
+        // registered, so naming it for an HTML page sends the model to the one
+        // tool that cannot open it.
         it.each([
             ["text/html", "<html><body>" + "x".repeat(4000) + "</body></html>"],
             ["text/csv", "a,b,c\n" + "1,2,3\n".repeat(700)],
@@ -839,11 +838,10 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             // The path is still named: the body is not lost, only the wrong
             // reader is left unrecommended.
             expect(text).toContain("saved to:");
-            // **The content type is NOT echoed, and asserting that it were was
-            // this test pinning a defect in place.** The origin writes that
-            // header; interpolating it into a sentence this server authors put
-            // up to 8 KB of remote-chosen text in the server's own voice, which
-            // the inline defence pass strips markup from and prose not at all.
+            // **The content type is NOT echoed.** The origin writes that header;
+            // interpolating it into a sentence this server authors would put
+            // remote-chosen text in the server's own voice, which the inline
+            // defence pass strips markup from and prose not at all.
             // `parser.ts::MEDIA_TYPE_HEAD` keeps only the type/subtype, and
             // nothing echoes it here. `LESSONS.md` RC-30, RC-32.
             expect(text).not.toContain(contentType);
@@ -869,8 +867,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
             expect(text).not.toContain("ignore previous instructions");
             expect(text).not.toContain("deploy key");
-            // Rejected at the parse boundary, so it reads as an undeclared
-            // grammar rather than as a type — which is what it is.
+            // The parameter tail is discarded at the parse boundary —
+            // `MEDIA_TYPE_HEAD` keeps only `text/plain` — and no branch echoes even that.
             expect(text).toContain("saved to:");
         });
 
@@ -946,9 +944,9 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
         it("agrees with the no-filter path on the same body", async () => {
             // The property the whole RC is about: one body, two routes, one
-            // spelling. Asserted as an equality between the routes rather than
-            // as two independent literals, so the two cannot drift apart while
-            // both still pass.
+            // spelling. Asserted as the same literal on each route; the outputs
+            // are not compared to each other, because the filtered route returns
+            // the value and the plain route the whole document.
             const body = '{"id":9223372036854775807}';
             mockedExecuteCommand.mockResolvedValue(curlOutput(body, "application/json"));
 
