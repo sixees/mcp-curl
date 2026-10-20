@@ -1,5 +1,5 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-CbaEdl3I.js';
-export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-D1cJjQb0.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-BuiV2g-J.js';
+export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-Ben6mKfc.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
@@ -134,7 +134,8 @@ declare function sanitizeDescription(input: string | null | undefined): string;
  *
  * Whitespace runs collapse to a single ASCII space (rather than a marker like
  * "[WHITESPACE REMOVED]") because callers may JSON.parse the sanitized output
- * (see response/processor.ts → applyJqFilterToParsed). Inserting a non-whitespace
+ * (`response/processor.ts → defendText` re-reads its post-sanitise body with
+ * `isDefinitelyJson`, and a direct caller may persist what it returns). Inserting a non-whitespace
  * marker into the middle of a JSON document — between tokens or inside a deeply
  * pretty-printed value — would break the parse. A single space preserves
  * JSON validity while still neutralising the padding attack (the hidden tail
@@ -164,8 +165,10 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  * trivially bypassed by a motivated attacker (paraphrase, encoding, novel
  * jailbreak phrasing), and gating on it leaks the rule-set to whoever can
  * probe the behaviour. The defence layer is `sanitizeResponse` (Unicode
- * normalisation) plus `applySpotlighting` (trust-boundary sentinel) — both
- * always run regardless of detection state. Examples of misuse:
+ * normalisation), which runs on every non-JSON text part, plus
+ * `applySpotlighting` (trust-boundary sentinel), which runs only where
+ * `enableSpotlighting` is set — neither is gated on detection state, and a
+ * JSON document is returned unchanged with detection alone. Examples of misuse:
  *
  *     // ❌ Never do this — converts a signal into a refusal gate.
  *     if (detectInjectionPattern(externalContent)) {
@@ -180,17 +183,11 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  *     return sanitized;
  *
  * Prefer the `sanitizeAndDetect(text, label)` composer (re-exported from the
- * public barrel) over hand-wiring the primitives — it locks the project's
- * canonical detect-then-sanitise ordering: detection runs on the **original**
- * text (so signals the sanitiser would later strip — e.g. Unicode-attack
- * payloads such as bidi overrides or zero-width characters — still fire the
- * per-host log) and sanitisation produces the bytes the LLM actually sees
- * (see `detection-logger.ts → sanitizeAndDetect`). Calling this
- * matcher directly on **already-sanitised** text trades that signal-
- * preservation for invisible-char-split coverage instead: phrases like
- * "Ig​nore" (zero-width space splitting `ignore`) collapse to `Ignore`
- * after sanitisation and become detectable. Both call shapes are
- * legitimate; pick based on which class you care about preserving.
+ * public barrel) over hand-wiring the primitives — it detects on the
+ * **original** text and on its sanitised form, then returns the sanitised
+ * bytes the LLM actually sees (see `detection-logger.ts → detectAndLog`,
+ * which owns why both). Calling this matcher on one form alone covers only
+ * the class that form shows; `@param input` below names both.
  *
  * **Normalisation.** The matcher normalises its input
  * before testing the pattern set, currently via
@@ -206,13 +203,13 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  * (10 MB) cap and collected immediately after `.test()` returns, so the
  * memory footprint stays well inside `MAX_TOTAL_RESPONSE_MEMORY`
  * (100 MB). UTS #39 confusable folding (Cyrillic/Greek look-alikes like
- * `і`, `а`, `р`) is NOT covered by NFKC and remains a documented gap;
- * see the comment on `INJECTION_PATTERNS` above for the deferral
- * rationale.
+ * `і`, `а`, `р`) is NOT covered by NFKC and remains a documented gap,
+ * pinned by the `documents NFKC's UTS #39 limit` case in
+ * `sanitize.test.ts`.
  *
  * **Stability contract:** the *intent* — return `true` when the
- * provided input (either the original text via `sanitizeAndDetect` or
- * pre-sanitised text via direct call) matches a known prompt-injection
+ * provided input (the original or the sanitised form, both of which
+ * `sanitizeAndDetect` tests) matches a known prompt-injection
  * signal, and never mutate the bytes flowing through `sanitizeResponse`
  * — is stable. The specific pattern set and the specific normalisation
  * algorithm (currently NFKC) are **implementation**: the pattern set
@@ -225,15 +222,14 @@ declare function sanitizeResponse(input: string | null | undefined): string;
  * callers must continue to honour the "observability only" rule
  * regardless of which patterns are in play.
  *
- * @param input - Content to scan. When called via `sanitizeAndDetect`
- *   (the canonical production path), detection runs on the **original**
- *   text before sanitisation — preserving signals like Unicode-attack
- *   payloads that the sanitiser would otherwise strip. When called
- *   directly, passing content already through `sanitizeResponse` improves
- *   coverage of invisible-char-split phrases (e.g. `Ig`+ZWSP+`nore` →
- *   `Ignore`), at the cost of the pre-sanitise signal class. Both shapes
- *   are valid; pick based on which class you care about. See
- *   `detection-logger.ts → sanitizeAndDetect` for the ordering rationale.
+ * @param input - Content to scan. The production path,
+ *   `detection-logger.ts → detectAndLog`, calls this on the original text
+ *   AND on its `sanitizeResponse` form, because each representation hides a
+ *   class from the other: a phrase spaced with a `\s`-matching character the
+ *   sanitiser removes (U+2028, U+2029, U+FEFF) is whole only in the original,
+ *   and a phrase an invisible character
+ *   splits (`Ig`+ZWSP+`nore`) is whole only in the sanitised form. A direct
+ *   caller wanting both classes does the same.
  * @returns true if any injection pattern matched
  */
 declare function detectInjectionPattern(input: string): boolean;
@@ -288,13 +284,13 @@ interface DefendTextOptions {
      *
      * Losing our own metadata must never be a way to switch a defence off. When
      * the content type is unknown the strictest grammar applies, so every strip
-     * stage runs — the opposite of the permissive default, which let a remote
-     * disable beacon stripping by making the metadata unreadable.
+     * stage runs and a remote cannot disable beacon stripping by making the
+     * metadata unreadable.
      *
      * **Required, not optional, and that is the whole point.** Both fields that
-     * select the grammar are absent-able, and absence resolved to the
-     * PERMISSIVE arm — so `defendText(text, { hostname })` compiled, looked
-     * defended, and ran Step 2 alone. Pass `false` when you know the content
+     * select the grammar are absent-able, so an optional flag defaulting
+     * permissive would let `defendText(text, { hostname })` compile, look
+     * defended, and run Step 2 alone. Pass `false` when you know the content
      * type (including knowing the origin sent none), `true` when you could not
      * determine it.
      *
@@ -310,13 +306,14 @@ interface DefendTextOptions {
      * Whether a text that parses as a JSON document is exempt from the markup
      * and markdown strip stages. Defaults true.
      *
-     * **The exemption is about the artefact, not the model.** `processResponse`
-     * writes post-strip content to disk and `jq_query` reads it back, so
-     * rewriting `<script>` or `[a](b)` inside a JSON string value there would
-     * silently alter a persisted document. That argument is the whole basis for
-     * the exemption — and it does not reach the post-processor wrap, whose
-     * channels have no disk artefact: a custom tool's return goes straight to
-     * the model. The wrap therefore passes `false`. See `LESSONS.md` RC-10.
+     * **The exemption is about the artefact, not the model.** A caller of the
+     * published function may persist what it defends, and rewriting `<script>`
+     * or `[a](b)` inside a JSON string value would silently alter that document.
+     * No in-repo caller persists `defendText`'s output — `processResponse` writes
+     * the origin's octets and runs no strip stage — and `defendForInline` passes
+     * `false` because it has already answered the JSON question with
+     * {@link classifyBody} and returns a JSON document before reaching here. See
+     * `LESSONS.md` RC-10.
      */
     excludeJsonDocuments?: boolean;
     /**
@@ -334,19 +331,19 @@ interface DefendTextOptions {
 /**
  * Run the full defensive pipeline over one piece of remote-origin text.
  *
- * **This is the single defence path for anything returned to the LLM, and it
- * exists as a shared function so that no caller can assemble a shorter one.**
- * It was extracted after `include_headers` split header text out of the body:
- * the header path kept only `sanitizeAndDetect` (Step 2) and silently lost
- * Steps 3-5, so markdown beacons, `<script>`/`<style>` blocks and
- * numeric-entity-masked injections reached the model through the header
- * channel after being stripped from the body for years.
+ * **This is the single defence path for remote-origin text that is not a JSON
+ * document, and it exists as a shared function so that no caller can assemble
+ * a shorter one** — a text channel holding only `sanitizeAndDetect` (Step 2)
+ * would pass markdown beacons, `<script>`/`<style>` blocks and
+ * numeric-entity-masked injections to the model. A JSON document is the
+ * deliberate exception: {@link defendForInline} detects on it and returns it
+ * unchanged (`LESSONS.md` RC-49).
  *
  * The stages, in order, and the order is load-bearing:
  *
- * - **Step 2** — sanitise + detect, ALWAYS, on the ORIGINAL text. Detection
- *   runs before the sanitiser strips anything, so the log signals on what the
- *   attacker actually sent.
+ * - **Step 2** — sanitise + detect, ALWAYS, on the original text and its
+ *   sanitised form: the original keeps the signal for anything a later stage
+ *   erases, the sanitised form joins a phrase an invisible character split.
  * - **Steps 3-4** — markup comments, the `<script>`/`<style>` strip, and (for
  *   declared markdown) beacon removal. Gated on the strip-path cap so the cost
  *   stays bounded on adversarial input.
@@ -354,9 +351,10 @@ interface DefendTextOptions {
  *   decoder unmasks `&#x69;gnore previous instructions` into a real injection
  *   phrase that Step 2 could not see.
  *
- * Callers that need size capping or file-saving want {@link processResponse},
- * which wraps this. Call `defendText` directly only for a text channel that
- * genuinely is not the body — response headers being the one such channel.
+ * {@link processResponse} does not call this — the body path rewrites nothing
+ * and returns only JSON inline. The in-repo callers are `defendForInline`'s
+ * non-JSON arm, the header channel and cURL stderr in `curl-execute.ts`; a
+ * published consumer calls it for any other text channel it builds.
  *
  * @param text - Remote-origin text to defend
  * @param options - Content-type (selects strip stages) and hostname (logging)
@@ -373,21 +371,14 @@ declare function defendText(text: string, options: DefendTextOptions): string;
  */
 declare function logInjectionDetected(hostname: string): void;
 /**
- * Detect injection patterns in raw text, then sanitize for output.
+ * Detect injection patterns, then sanitize for output.
  *
- * Order is load-bearing: detection runs against the **original** text, before
- * any sanitisation. `defendText`'s later stages strip markup comments,
- * `<script>`/`<style>` blocks and markdown beacons, and a stage that erased a
- * malicious phrase before detection saw it would silence the per-host log
- * signal. Detecting on the original keeps that signal alive for any class of
- * injection a stripping stage would wholesale-remove.
- *
- * **Acknowledged trade-off.** The reverse case (a phrase whose detection
- * needs sanitisation to *succeed* — e.g. invisible-char-split phrases like
- * `Ig\u200bnore previous instructions` where the zero-width breaks the regex
- * match) is not logged. The returned text is still sanitised so
- * nothing leaks downstream; only the observability log is lost for that
- * specific class. UTS #39 skeleton folding (deferred) would close it.
+ * Detection runs against the **original** text as well as the sanitised form
+ * — {@link detectAndLog} owns why both. `defendText`'s later stages strip markup
+ * comments, `<script>`/`<style>` blocks and markdown beacons, and a stage that
+ * erased a malicious phrase before detection saw it would silence the per-host
+ * log signal; the sanitised form is what catches a phrase split by an
+ * invisible character.
  *
  * Detection-only: the sanitized text is returned regardless of whether
  * an injection pattern was matched. Logging is throttled per label by
