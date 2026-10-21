@@ -106,3 +106,14 @@ The builder's rewrite of todo 022's "exactly one copy" criterion was the builder
 **Open without a todo:** none.
 
 **Blockers:** none (no P1). Todo 021 needs one operator decision: Option 2 there would reverse round 1's seam copy (rule 03).
+
+### Operator disposition — 2026-10-21 (round 2)
+
+| Todo | Disposition |
+|---|---|
+| 021 | Fixed, Option 1 (`parseHostRateLimit`), chosen by the operator |
+| 022 | Fixed, Option 1 (`canonicalHost` inside `checkRateLimits`) |
+| 023 | Fixed, Option 1 (logs kept across release; dropped only on a different `windowMs`) |
+| 024 | Fixed, Option 1 (`readonly` fields) |
+
+Fixes are in 1202643. The todos were deleted after completion, at the operator's request.
