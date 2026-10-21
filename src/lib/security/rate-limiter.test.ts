@@ -1,6 +1,13 @@
 // src/lib/security/rate-limiter.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { checkRateLimits, clearRateLimitMaps, rateLimitMapSizes } from "./rate-limiter.js";
+import {
+    checkRateLimits,
+    clearRateLimitMaps,
+    rateLimitMapSizes,
+    setHostRateLimit,
+    startRateLimitCleanup,
+    stopRateLimitCleanup,
+} from "./rate-limiter.js";
 import { RATE_LIMIT } from "../config/session.js";
 
 const CAP = RATE_LIMIT.MAX_TRACKED_KEYS;
@@ -19,6 +26,7 @@ beforeEach(() => {
 
 afterEach(() => {
     vi.useRealTimers();
+    setHostRateLimit(undefined);
     clearRateLimitMaps();
 });
 
@@ -140,3 +148,123 @@ describe("checkRateLimits — check order", () => {
         expect(rateLimitMapSizes().hosts).toBe(before);
     });
 });
+
+describe("checkRateLimits — default error text", () => {
+    it("is byte-identical to the fixed-window message", () => {
+        for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) {
+            checkRateLimits("target.example.test", `client-${i}`);
+        }
+        expect(() => checkRateLimits("target.example.test", "client-final")).toThrow(
+            new Error('Rate limit exceeded for host "target.example.test". Maximum 60 requests per minute.')
+        );
+    });
+});
+
+describe("checkRateLimits — configured sliding window", () => {
+    const HOUR = 3_600_000;
+    const HOST = "api.example.test";
+
+    beforeEach(() => {
+        setHostRateLimit({ max: 2, windowMs: HOUR });
+    });
+
+    it("admits max back to back and refuses the next", () => {
+        checkRateLimits(HOST, "c1");
+        checkRateLimits(HOST, "c2");
+        expect(() => checkRateLimits(HOST, "c3")).toThrow(/Rate limit exceeded for host/);
+    });
+
+    it("keeps its state across a cleanup sweep", () => {
+        const interval = startRateLimitCleanup();
+        try {
+            checkRateLimits(HOST, "c1");
+            checkRateLimits(HOST, "c2");
+            // Six sweeps, and past the fixed window's 60 s: neither may reset a log.
+            vi.advanceTimersByTime(61_000);
+            expect(rateLimitMapSizes().slidingHosts).toBe(1);
+            expect(() => checkRateLimits(HOST, "c3")).toThrow(/Rate limit exceeded for host/);
+        } finally {
+            stopRateLimitCleanup(interval);
+        }
+    });
+
+    it("slides: admits one more as the oldest request leaves, not a fresh quota", () => {
+        checkRateLimits(HOST, "c1");
+        vi.advanceTimersByTime(HOUR / 2);
+        checkRateLimits(HOST, "c2");
+
+        vi.advanceTimersByTime(HOUR / 2 + 1);
+        // The first request has left the window; the second has not.
+        expect(() => checkRateLimits(HOST, "c3")).not.toThrow();
+        expect(() => checkRateLimits(HOST, "c4")).toThrow(/Rate limit exceeded for host/);
+    });
+
+    it("names max, the window, and the time until the oldest request leaves", () => {
+        checkRateLimits(HOST, "c1");
+        vi.advanceTimersByTime(600_000);
+        checkRateLimits(HOST, "c2");
+        expect(() => checkRateLimits(HOST, "c3")).toThrow(
+            new Error(
+                `Rate limit exceeded for host "${HOST}". Maximum 2 requests per 3600 s; ` +
+                "the oldest leaves the window in 3000 s."
+            )
+        );
+    });
+
+    it("counts each host separately and leaves the fixed host map untouched", () => {
+        checkRateLimits(HOST, "c1");
+        checkRateLimits(HOST, "c2");
+        expect(() => checkRateLimits("other.example.test", "c3")).not.toThrow();
+        expect(rateLimitMapSizes()).toMatchObject({ hosts: 0, slidingHosts: 2 });
+    });
+
+    it("still enforces the per-client gate", () => {
+        setHostRateLimit({ max: 10_000, windowMs: HOUR });
+        for (let i = 0; i < RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE; i++) {
+            checkRateLimits(`host-${i}.example.test`, "one-client");
+        }
+        expect(() => checkRateLimits("another.example.test", "one-client"))
+            .toThrow(/Client rate limit exceeded/);
+    });
+
+    it("refuses an untracked host at the tracking cap, and the sweep frees it once the window passes", () => {
+        setHostRateLimit({ max: 1, windowMs: 120_000 });
+        fillHostSlidingLogToCap();
+        expect(() => checkRateLimits("one-too-many.example.test", "fresh-client"))
+            .toThrow(/tracking is at capacity .* Refusing an untracked host/);
+
+        // Past the fixed 60 s window but inside the configured one: still full.
+        vi.advanceTimersByTime(61_000);
+        expect(() => checkRateLimits("still-full.example.test", "fresh-client-2"))
+            .toThrow(/tracking is at capacity/);
+
+        vi.advanceTimersByTime(60_000);
+        expect(() => checkRateLimits("fresh.example.test", "fresh-client-3")).not.toThrow();
+    });
+
+    it("restores the fixed default when cleared", () => {
+        checkRateLimits(HOST, "c1");
+        checkRateLimits(HOST, "c2");
+        setHostRateLimit(undefined);
+        expect(rateLimitMapSizes().slidingHosts).toBe(0);
+        for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) {
+            checkRateLimits(HOST, `client-${i}`);
+        }
+        expect(() => checkRateLimits(HOST, "client-final"))
+            .toThrow(/Maximum 60 requests per minute\.$/);
+    });
+
+    it("copies the limit, so mutating the caller's object changes nothing", () => {
+        const limit = { max: 1, windowMs: HOUR };
+        setHostRateLimit(limit);
+        limit.max = 100;
+        checkRateLimits(HOST, "c1");
+        expect(() => checkRateLimits(HOST, "c2")).toThrow(/Maximum 1 requests/);
+    });
+});
+
+/** Fill the sliding host log to exactly CAP with distinct hosts. */
+function fillHostSlidingLogToCap(): void {
+    for (let i = 0; i < CAP; i++) admitHost(i);
+    expect(rateLimitMapSizes().slidingHosts).toBe(CAP);
+}
