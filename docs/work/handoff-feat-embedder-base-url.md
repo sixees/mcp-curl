@@ -44,6 +44,7 @@ This file was first created by `/sixees-workflow:review`, and its review record 
 |---|---|---|
 | `path` keeps tolerating a missing leading `/` | Operator, at the audit: `"users"` worked in 5.0.x | Reject anything not `^/` (stricter break) |
 | `path`/`url` values starting `//`, `\` or `/\`, or holding control characters, are refused (BREAKING) | Operator, after review P1 021: "consumers will have to comply and adjust"; make it as robust as possible | Split the join from the gate so `path` skips it (restores 5.0.x, MINOR) |
+| Release stays **5.1.0** (MINOR) despite the BREAKING change | Operator, 2026-10-21: one internal consumer, told directly. Recorded in the CHANGELOG entry. `0823c54`'s `!` marker is pushed and stays; it disagrees with the version on purpose | 6.0.0 under invariant 11 |
 | Control characters refused in any relative input | The SSRF gate's WHATWG parse strips tab/CR/LF while cURL gets them raw | Refuse only `//` and `\` |
 | Origin comparison removed (022) | Cannot fail once the base parses as http(s); a single-`/` suffix cannot move the authority | Keep it as a documented backstop |
 | `schema/generator.ts::buildUrl` untouched | Plan: its paths are operator YAML, not model input | Route it through the resolver |
@@ -51,10 +52,8 @@ This file was first created by `/sixees-workflow:review`, and its review record 
 
 ## What to pay attention to during review
 
-- **Version**: the change is now MAJOR under invariant 11.
-  - The plan's PR-4 bumps to 5.1.0; it must become **6.0.0**.
-  - The CHANGELOG entry is under `[Unreleased]`.
-  - The commit `0823c54` carries the `!` marker.
+- **Version**: the change is BREAKING, but the release stays **5.1.0** by operator decision (see *Key decisions*).
+  - Do not re-raise the MAJOR pricing in review. Cite this decision instead.
   - `package.json` is still 5.0.1. The bump is PR-4's, so this branch does not change it.
 - **The fix commits `0823c54` and `c8a725b` have not been through a Surface 2 review.** Point the next review at them (K-16).
 - **`RELATIVE_PATH_PATTERN` is shared by the schema and the resolver.** Widening it changes the advertised tool schema too.
@@ -114,7 +113,8 @@ Plus the commit carrying this handoff and the todo removals.
 
 ## Follow-up work
 
-- [ ] PR-4: bump to **6.0.0** rather than 5.1.0, and rename `[Unreleased]`.
+- [ ] PR-4: bump to 5.1.0 as planned, and rename `[Unreleased]`.
+- [ ] Tell the internal consumer about the `executeRequest` change.
 - [ ] Optional: the stale "prepended to relative URLs/paths" comments in `docs/getting-started.md` and `examples/basic/src/index.ts`. These were declined in review as out of scope.
 - [ ] Run Surface 3 (`/sixees-workflow:review-pr-comments`) once a PR is open.
 

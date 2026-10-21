@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rule, and no request is made. So does a tab, CR, LF, NUL or DEL anywhere in it,
   which the SSRF check's URL parser strips while cURL sends it as-is. **To adjust:**
   collapse leading slashes, and percent-encode segments built from data.
+  **Shipped in a MINOR release by decision**, not by oversight: mcp-curl has one
+  consumer, internal, and that consumer is told about this change directly.
 
 ### Fixed
 
