@@ -7,6 +7,7 @@ export {
     createAccessError,
     createFileError,
     createConfigError,
+    assertPositiveInteger,
 } from "./error.js";
 
 // `rawJson` is deliberately absent — see `json-lexeme.ts`.
