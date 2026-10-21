@@ -24,7 +24,7 @@ import type {
     HttpMethod,
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
-import { resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
+import { hasDotSegment, resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
 import { applyDefaultHeaders } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";
 
@@ -152,6 +152,12 @@ function createParamSchema(param: EndpointParameter): z.ZodTypeAny {
 }
 
 /**
+ * A path parameter that would make a `.` or `..` path segment. Module-private:
+ * `createToolHandler` turns it into an error result.
+ */
+class DotSegmentError extends Error {}
+
+/**
  * Build the full URL with path parameter substitution and query params.
  *
  * @param baseUrl - API base URL
@@ -159,6 +165,9 @@ function createParamSchema(param: EndpointParameter): z.ZodTypeAny {
  * @param pathParams - Values for path parameters
  * @param queryParams - Query parameters to append
  * @returns Fully constructed URL
+ * @throws Error if a path parameter makes a `.` or `..` path segment.
+ *   `encodeURIComponent` keeps a value inside one segment but leaves `.`
+ *   alone, so `{id}` set to `..` would request the endpoint's parent.
  */
 export function buildUrl(
     baseUrl: string,
@@ -172,6 +181,10 @@ export function buildUrl(
             `{${key}}`,
             encodeURIComponent(String(value))
         );
+    }
+
+    if (hasDotSegment(resolvedPath)) {
+        throw new DotSegmentError("Error: a path parameter must not be . or ..; it would resolve outside the endpoint's path");
     }
 
     const url = resolveBaseUrl(baseUrl, resolvedPath);
@@ -427,6 +440,13 @@ function createToolHandler(
                             text: `Authentication error: ${error.message}`,
                         },
                     ],
+                    isError: true,
+                };
+            }
+
+            if (error instanceof DotSegmentError) {
+                return {
+                    content: [{ type: "text", text: error.message }],
                     isError: true,
                 };
             }

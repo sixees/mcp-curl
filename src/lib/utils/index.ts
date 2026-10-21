@@ -14,6 +14,7 @@ export { isRawNumber, keepNumberLexeme } from "./json-lexeme.js";
 export {
     resolveBaseUrl,
     resolveRequestUrl,
+    hasDotSegment,
     RELATIVE_PATH_PATTERN,
     createHttpOnlyUrlSchema,
     safeHostname,

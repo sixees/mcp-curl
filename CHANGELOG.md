@@ -18,7 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anywhere in it: the SSRF check's URL parser strips a tab, CR or LF and
   percent-encodes the rest, so the URL it checks is not the value handed to cURL. **To adjust:**
   collapse leading slashes, and percent-encode segments built from data.
-  **Shipped in a MINOR release by decision**, not by oversight: mcp-curl has one
+- **BREAKING: a `.` or `..` path segment is refused, not resolved.** A relative `url`
+  or `path` (on `executeRequest` and on `curl_execute`) and a YAML endpoint's path
+  parameter return an error result when a whole path segment is `.` or `..`, literal
+  or `%2e`-encoded in any case. Both the SSRF check and cURL resolve such a segment,
+  so `/users/..` requested the parent of the path it was built under, and
+  `encodeURIComponent` does not prevent it. Only the path is checked: a dot in the
+  query or fragment, or a dot that is not the whole segment (`/v1.2/`,
+  `/.well-known/`), still passes. An absolute `curl_execute` url is not checked,
+  because it names its own path. **To adjust:** do not build a path segment from a
+  bare `.` or `..`.
+  **Both changes shipped in a MINOR release by decision**, not by oversight: mcp-curl has one
   consumer, internal, and that consumer is told about this change directly.
 
 ### Fixed

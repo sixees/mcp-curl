@@ -90,6 +90,17 @@ describe("curl_execute with baseUrl, through a real MCP client", () => {
         }
     );
 
+    it("refuses a relative url with a dot-segment before the executor runs", async () => {
+        const executor = okExecutor();
+        const client = await connectCurl({ baseUrl: BASE }, executor);
+
+        const result = await client.callTool({ name: "curl_execute", arguments: { url: "/users/../admin" } });
+
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toContain(". or .. path segment");
+        expect(executor).not.toHaveBeenCalled();
+    });
+
     it("refuses a malformed baseUrl with an error naming the key, not the value", async () => {
         const executor = okExecutor();
         const client = await connectCurl({ baseUrl: "https://SECRETHOST:notaport" }, executor);

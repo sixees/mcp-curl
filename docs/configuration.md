@@ -66,6 +66,11 @@ Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/use
   `curl_execute`'s `url` and to
   `executeRequest`'s `url` and `path` alike, and the refusal is an error result that
   states the rule.
+- A relative value must not contain a `.` or `..` path segment, literal or
+  `%2e`-encoded: the URL parser and cURL both resolve one, so `/users/..` would
+  request the parent of `/users/`. Only whole segments of the path count; a dot in
+  `/v1.2/`, `/.well-known/` or the query string is fine. An absolute URL is not
+  checked, because it names its own path.
 - The joined URL still goes through the SSRF check, like every other request.
 - If `baseUrl` is not an absolute http(s) URL, a relative call fails with an error
   that names the `baseUrl` key without echoing its value.

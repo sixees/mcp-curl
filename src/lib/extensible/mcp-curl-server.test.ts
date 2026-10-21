@@ -256,6 +256,17 @@ describe("McpCurlServer utilities", () => {
             expect(textOf(result)).not.toContain(JOINED);
         });
 
+        it.each([
+            ["path", { path: "/users/.." }],
+            ["path", { path: "users/%2e%2e/admin" }],
+            ["url", { url: "/users/./me" }],
+        ])("refuses a %s with a dot-segment, naming the rule", async (_field, params) => {
+            const result = await loopback().executeRequest(params);
+            expect(result.isError).toBe(true);
+            expect(textOf(result)).toContain(". or .. path segment");
+            expect(textOf(result)).not.toContain(JOINED);
+        });
+
         it("leaves a relative url unresolved without baseUrl", async () => {
             const result = await new McpCurlServer().utilities().executeRequest({ url: "/users" });
             expect(result.isError).toBe(true);

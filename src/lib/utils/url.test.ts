@@ -2,6 +2,7 @@ import { describe, it, expect, expectTypeOf } from "vitest";
 import { z } from "zod";
 import {
     createHttpOnlyUrlSchema,
+    hasDotSegment,
     RELATIVE_PATH_PATTERN,
     resolveBaseUrl,
     resolveRequestUrl,
@@ -80,6 +81,42 @@ describe("RELATIVE_PATH_PATTERN", () => {
     );
 });
 
+describe("hasDotSegment", () => {
+    it.each([
+        "/users/..",
+        "/users/../admin",
+        "/./x",
+        "/..",
+        "/users/%2e%2e",
+        "/users/%2E%2e/x",
+        "/users/.%2e",
+        "/users/%2e",
+        "/users\\..\\admin",
+        "/users/..?q=1",
+    ])("finds one in %j", (path) => {
+        expect(hasDotSegment(path)).toBe(true);
+    });
+
+    it.each([
+        "/",
+        "/users/me",
+        "/file.json",
+        "/v1.2/x",
+        "/.well-known/openid-configuration",
+        "/a..b",
+        "/a./b",
+        "/...",
+        "/users/%2e%2e%2e",
+        "/users/%252e%252e",
+        "/users?filter=user.name",
+        "/users?next=../x",
+        "/search?path=/a/../b",
+        "/users#/../x",
+    ])("finds none in %j", (path) => {
+        expect(hasDotSegment(path)).toBe(false);
+    });
+});
+
 describe("resolveRequestUrl", () => {
     const BASE = "https://api.example.com/v1";
 
@@ -114,6 +151,13 @@ describe("resolveRequestUrl", () => {
             if (result.ok) return;
             expect(result.error).toContain("single /");
             expect(result.error).not.toContain("evil.com");
+        });
+
+        it("a dot-segment", () => {
+            const result = resolveRequestUrl(BASE, "/users/%2e%2e/admin");
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error).toContain(". or .. path segment");
         });
 
         it("still passes them through when no baseUrl is configured", () => {

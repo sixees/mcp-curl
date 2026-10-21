@@ -443,10 +443,11 @@ instead of a request. Build it from encoded segments, as above, so a value from 
 model cannot produce one. See [`baseUrl`](./configuration.md#baseurl).
 
 **Encoding alone does not keep a segment in place.** `encodeURIComponent` turns `/`
-into `%2F`, so a value cannot add segments, but it leaves `.` and `..` unchanged. A
-`..` segment is resolved before the request is sent, so `userId: ".."` would request
-`/users/..`, which is the API root, with the configured `defaultHeaders`. Constrain
-any segment the model chooses in the tool's `inputSchema`, as the example does.
+into `%2F`, so a value cannot add segments, but it leaves `.` and `..` unchanged.
+`executeRequest` refuses a relative value with a `.` or `..` segment, so
+`userId: ".."` returns an error result rather than requesting the API root.
+Constraining the id in the tool's `inputSchema`, as the example does, rejects it
+earlier, with a schema error the model can act on.
 
 ## Input Schema Patterns
 

@@ -717,6 +717,17 @@ describe("buildUrl", () => {
         );
         expect(url).toBe("https://api.example.com/users/42/posts/99");
     });
+
+    it.each([".", ".."])("refuses a path parameter of %j, which would climb out of the endpoint", (id) => {
+        expect(() => buildUrl("https://api.example.com", "/users/{id}", { id }, {})).toThrow(
+            /must not be \. or \.\./
+        );
+    });
+
+    it("keeps dots that do not form a whole segment", () => {
+        const url = buildUrl("https://api.example.com", "/users/{id}.json", { id: "a..b" }, { q: "../x" });
+        expect(url).toBe("https://api.example.com/users/a..b.json?q=..%2Fx");
+    });
 });
 
 // --- Auth Config Tests ---
@@ -1082,6 +1093,30 @@ describe("generateToolDefinitions", () => {
             }),
             expect.objectContaining({ allowLocalhost: undefined })
         );
+    });
+
+    it("returns an error result for a dot-segment path parameter, without a request", async () => {
+        const schema: ApiSchema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "get_user",
+                    path: "/users/{id}",
+                    method: "GET",
+                    title: "Get User",
+                    description: "Fetch a user by ID",
+                    parameters: [
+                        { name: "id", in: "path", type: "string", required: true },
+                    ],
+                },
+            ],
+        };
+
+        const result = await generateToolDefinitions(schema)[0].handler({ id: ".." });
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("must not be . or ..");
+        expect(mockedExecuteCurlRequest).not.toHaveBeenCalled();
     });
 
     it("returns error result for AuthenticationError", async () => {

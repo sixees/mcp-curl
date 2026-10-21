@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: m
 tags: [url-resolution, utils, extensible, instance-utilities, custom-tools, docs]
@@ -73,7 +73,18 @@ each embedder's schema.
 
 ## Recommended Action
 
-_Unfilled — needs the operator's call._
+Option 1, extended to YAML path parameters (operator, 2026-10-21: "fail loudly if the
+path contains those"). One rule, `src/lib/utils/url.ts::hasDotSegment`: split the
+part before `?`/`#` on `/` and `\`, and refuse any segment matching
+`/^(?:\.|%2e){1,2}$/i`. It is called from `resolveRequestUrl`, which covers
+`executeRequest` and the `curl_execute` tool path, and from
+`schema/generator.ts::buildUrl`, which covers YAML path params.
+
+Not covered, by decision:
+- An absolute `curl_execute` url: it names its own path, so it has no prefix to climb
+  out of.
+- `%252e`, `..;` and similar: these depend on how the server decodes the path, which
+  mcp-curl cannot see.
 
 ## Technical Details
 
@@ -84,11 +95,12 @@ _Unfilled — needs the operator's call._
 
 ## Acceptance Criteria
 
-- [ ] `executeRequest({ path: "/users/.." })`, `"/users/%2e%2e"` and `"/users/%2E."`
+- [x] `executeRequest({ path: "/users/.." })`, `"/users/%2e%2e"` and `"/users/%2E."`
       on a `baseUrl` server do not reach the parent path (or the decision not to fix is
       recorded here)
-- [ ] `"/users/a..b"` and `"/users/.hidden"` still resolve (positive control)
-- [ ] Teeth: removing the rule fails the named test
+- [x] `"/users/a..b"` and `"/users/.hidden"` still resolve (positive control: `/a..b`,
+      `/.well-known/…`, `/v1.2/x`, and dots in the query or fragment)
+- [x] Teeth: removing the rule fails the named test (probed per arm and per call site)
 
 ## Work Log
 
@@ -100,3 +112,16 @@ finds nothing. Fixed the `get_user_profile` example in `docs/custom-tools.md` (i
 constrained by `inputSchema` regex, warning paragraph added).
 **Learnings:** WHATWG treats `%2e%2e` as `..`, so a check that matches only literal dots
 misses it.
+
+### 2026-10-21 - Resolved
+
+**By:** Claude Code
+**Actions:** Added `utils/url.ts::hasDotSegment`. It is called from `resolveRequestUrl`
+and from `schema/generator.ts::buildUrl`, where a module-private `DotSegmentError` is
+turned into an error result by `createToolHandler`. Tests cover `url.test.ts`, the
+`utilities()` cases, the e2e tool path, and `schema.test.ts` (`buildUrl` and the
+handler). Updated docs: `CHANGELOG.md` (BREAKING), `docs/configuration.md`,
+`docs/custom-tools.md`, `docs/api-schema.md`.
+**Learnings:** the first set of query/fragment negatives (`?next=../x`, `#..`) never
+formed a `/`-delimited segment, so they passed with the exclusion deleted. Negatives
+need a `/../` inside the query to test it.

@@ -171,7 +171,7 @@ parameters:
 | Field         | Type                                                   | Required | Description                     |
 |---------------|--------------------------------------------------------|----------|---------------------------------|
 | `name`        | string                                                 | Yes      | Parameter name                  |
-| `in`          | `"path"` \| `"query"` \| `"header"` \| `"body"`        | Yes      | Where to place                  |
+| `in`          | `"path"` \| `"query"` \| `"header"` \| `"body"`        | Yes      | Where to place. A `path` value is URL-encoded, and a value of `.` or `..` is refused with an error result |
 | `type`        | `"string"` \| `"number"` \| `"boolean"` \| `"integer"` | Yes      | Data type                       |
 | `required`    | boolean                                                | No       | Required field (default: false) |
 | `description` | string                                                 | No       | Description for LLM             |
