@@ -138,7 +138,7 @@ describe("McpCurlServer", () => {
             server.configure({ baseUrl: "https://api.example.com" });
             const utils = server.utilities();
 
-            // The utilities should have access to the config
+            // Shape only: the baseUrl join itself is witnessed in "executeRequest with path and baseUrl" below.
             expect(typeof utils.executeRequest).toBe("function");
             expect(typeof utils.queryFile).toBe("function");
         });
@@ -465,9 +465,8 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
     const PWN = `${ATTACK}pwn`;
 
     let server: McpCurlServer;
-    // Stateless mock — re-using across tests is safe (the suite asserts on
-    // schema mutation, not on handler call counts). Mirrors the pattern used
-    // by the rest of this file.
+    // One mock shared across the block: the suite asserts on schema mutation,
+    // never on handler call counts, so the calls it accumulates are harmless.
     const handler = vi.fn().mockResolvedValue({ content: [] });
 
     beforeEach(() => {
@@ -513,7 +512,7 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         const sanitised = lastTool(server).meta.inputSchema;
         const field = sanitised.shape.q as z.ZodOptional<z.ZodString>;
         expect(field.description).toBe("pwn");
-        // Wrapper still optional — `.parse(undefined)` is the canonical check
+        // Wrapper still optional — `safeParse(undefined)` is the canonical check
         // (per Zod v4's deprecated `isOptional()` JSDoc).
         expect(field.safeParse(undefined).success).toBe(true);
     });
@@ -623,9 +622,9 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
         const refined = z
             .object({ a: z.number(), b: z.number().describe(PWN) })
             .refine((v) => v.a < v.b, "a must be < b");
-        // ZodObject<...>.refine() returns ZodObject in v4 — but the public
-        // typings widen to `ZodType`. We cast through unknown to keep the
-        // test focused on the runtime parse contract.
+        // `.refine()` is typed to return `this` in v4, so `refined` is still a
+        // ZodObject in the types as well as at runtime. The cast through unknown
+        // keeps the test focused on the runtime parse contract.
         const inputSchema = refined as unknown as z.ZodObject<z.ZodRawShape>;
         server.registerCustomTool("t", { title: "T", description: "D", inputSchema }, handler);
         // Refinement still fires after sanitisation — proves we did not
@@ -892,8 +891,9 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
 // `createServer` from `server/server-factory.ts` with a fake McpServer that
 // captures the registered handler so we can invoke it directly.
 //
-// We also stub `StdioServerTransport.connect` (mocked at module level below)
-// so `start("stdio")` does not block on stdin.
+// The fake server's own `connect` is a no-op mock, so `start("stdio")` hands
+// it a real `StdioServerTransport` that is never started and does not block
+// on stdin.
 
 describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
     let server: McpCurlServer;
@@ -1048,7 +1048,7 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
     // The full defence pipeline at the outermost boundary a custom-tool
     // return reaches. For `registerCustomTool()` this wrap is the ONLY
     // defence — there is no `processResponse` upstream of it — so a channel
-    // running Step 2 alone reached the model with beacons and script blocks
+    // running Step 2 alone would hand the model beacons and script blocks
     // intact. Asserted here rather than only at `createWrapper` because the
     // wiring is half the claim: a correct wrap that `registerToolsOnServer`
     // stopped calling would keep every unit test green.
@@ -1116,11 +1116,10 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         expect(result.content[0].text).toBe(legit);
     });
 
-    // Second positive control: structured output is what the strictest grammar
-    // could most easily mangle, and custom tools commonly return it. Dropping
-    // the JSON exemption at this boundary (RC-10) must still leave ordinary
-    // values alone — only markdown link/image syntax and script/style tags are
-    // rewritten, so a bare URL in a field survives.
+    // Second positive control: custom tools commonly return structured output,
+    // and a part that parses as JSON takes `defendForInline`'s verbatim arm —
+    // detected and logged, never rewritten (`LESSONS.md` RC-49). So the
+    // document must come back byte for byte, a bare URL in a field included.
     it("leaves ordinary JSON values from a custom tool byte-identical", async () => {
         const json = '{"name":"alpha","count":3,"url":"https://example.test/x"}';
         const wrapped = await startWithCustomTool("jsonout", async () => ({

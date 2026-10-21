@@ -8,7 +8,7 @@
 // A real MCP client over a linked in-memory transport. A test that fakes
 // `registerTool` and calls the captured handler skips the SDK's own input
 // parse, so a schema that rejects what the handler expects passes every such
-// test — `baseUrl` shipped broken on the tool path exactly that way.
+// test.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

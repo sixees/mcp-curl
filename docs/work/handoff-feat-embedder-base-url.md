@@ -97,7 +97,7 @@ aee3ed5 docs(config): describe baseUrl resolution and its limits
 ffae802 feat(extensible): resolve a relative url against baseUrl on the tool path
 37d5860 feat(utils): add resolveRequestUrl and RELATIVE_PATH_PATTERN
 ```
-Plus the commit carrying this handoff and the todo removals.
+Plus `ce1d6f6`, which carries this handoff and the todo removals, and `21af2e3`, which records the 5.1.0 decision in the CHANGELOG.
 
 ## Review context
 

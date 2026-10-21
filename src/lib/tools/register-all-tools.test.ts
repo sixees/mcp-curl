@@ -119,7 +119,7 @@ const HEADER_BLOCK = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n"
  * invariant 16's stated violation, and the one that deleted a field between a
  * body's `<!--` and a later `-->`.
  *
- * So this now checks the SHAPE that keeps the class closed: the body is entry
+ * So this checks the SHAPE that keeps the class closed: the body is entry
  * 0 and parses on its own, and the header text is a second entry rather than
  * being mixed into it.
  */
@@ -383,8 +383,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
     // ---------------------------------------------------------------------
     // Invariant 16 one nesting level down: the defence must not delete a
-    // field. RC-16 closed this at the envelope; a string leaf that is itself
-    // a serialised document is the next level, and it was open.
+    // field. RC-16 is this at the envelope; a string leaf that is itself
+    // a serialised document is the next level.
     //
     // The assertion is "are all the parts still there", not "does the result
     // parse" — RC-16's own closing lesson. A spliced document parses fine,
@@ -586,11 +586,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
 
         // ---------------------------------------------------------------
-        // A remote picks these keys, and `__proto__` is the one that is not a
-        // key at all on a `{}` accumulator — assignment reaches
-        // `Object.prototype`'s inherited setter, the field never becomes an own
-        // property, and `JSON.stringify` omits it. Measured before the fix:
-        // two fields in, one out, silently, leaving valid JSON.
+        // A remote picks these keys, and `__proto__` is the one a rebuilding pass
+        // loses: assigned onto a `{}` accumulator it reaches `Object.prototype`'s
+        // inherited setter, never becomes an own property, and `JSON.stringify`
+        // omits it — two fields in, one out, silently, leaving valid JSON. Nothing
+        // on the body path rebuilds the document, so the field must come back.
         // ---------------------------------------------------------------
         it("keeps a __proto__ field the origin sent", async () => {
             const body = '{"__proto__":{"value":"kept"},"ok":"also kept"}';
@@ -972,9 +972,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
     describe("curl_execute's jq_filter branch keeps number spelling (RC-27)", () => {
         // A SEPARATE parse from the one `jq_query` uses — `processResponse`'s
-        // own, in its Step 4 branch. Both were missing the reviver, and an
-        // assertion on either says nothing about the other, which is how the
-        // class kept one uncorrected site through its first fix.
+        // own, in its Step 4 branch. Both need the number-preserving reviver, and
+        // an assertion on either says nothing about the other (`LESSONS.md` RC-27).
         it.each([
             [".id", "9223372036854775807"],
             [".exp", "1e400"],

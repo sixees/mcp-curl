@@ -24,7 +24,7 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     it("wraps text content in sentinel tags when enableSpotlighting is true", async () => {
         const { server: fakeServer, tools } = captureTools();
 
-        // Mock executeWithHooks to return a simple text result
+        // Stands in for the executor executeWithHooks calls, so the wrap receives a fixed text result
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [{ type: "text", text: "hello from api" }],
             isError: false,
@@ -114,11 +114,9 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("non-text content parts are passed through unchanged (multi-part safe)", async () => {
-        // Pre-PR-6b semantics: a non-text content[0] under spotlighting failed
-        // closed with a synthesised error result, which broke any custom tool
-        // returning images. The new wrap processes text parts and leaves
-        // non-text parts alone; this matches the SDK's CallToolResult shape
-        // and keeps image-returning tools usable with spotlighting on.
+        // The wrap processes text parts and leaves non-text parts alone: this
+        // matches the SDK's multi-part CallToolResult shape and keeps
+        // image-returning tools usable with spotlighting on.
         const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
@@ -150,9 +148,9 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("sanitises bidi/zero-width characters even when spotlighting is OFF (4th asymmetry, PR-6b)", async () => {
-        // Pre-PR-6b: with spotlighting off, the wrapper passed text through
-        // unchanged. PR-6b's wrap runs sanitise+detect regardless of the
-        // spotlighting flag — closing the 4th trust-boundary asymmetry.
+        // The wrap runs sanitise + detect whatever the spotlighting flag says,
+        // so turning spotlighting off never turns the defence off — the 4th
+        // trust-boundary asymmetry.
         const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
@@ -246,9 +244,10 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("hook short-circuit return value is sanitised (S2 closure regression)", async () => {
-        // Pre-PR-6b: a beforeRequest hook returning { shortCircuit, response }
-        // bypassed the wrap entirely. The hook-executor now routes the
-        // synthesised CallToolResult through the wrap before returning.
+        // A beforeRequest hook returning { shortCircuit, response } never reaches
+        // the executor, so the hook-executor routes the synthesised CallToolResult
+        // through the wrap itself — otherwise hook-authored text would skip the
+        // defence entirely.
         const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({

@@ -41,7 +41,7 @@ export interface McpCurlConfig {
      * (spotlighting). Independent of the always-on defence pass — see the
      * **defence-in-depth wrap** below.
      *
-     * **Defence-in-depth wrap (PR-6b).** Every tool result returned by this
+     * **Defence-in-depth wrap.** Every tool result returned by this
      * server — `curl_execute`, `jq_query`, YAML-driven endpoints registered
      * via `createApiServer()`, custom tools registered via
      * `registerCustomTool()`, and synthesised results returned by a

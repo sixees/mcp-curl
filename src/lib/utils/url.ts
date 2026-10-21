@@ -120,16 +120,17 @@ export interface CreateHttpOnlyUrlSchemaOptions {
  * to hold the line.
  *
  * Return type is pinned to `z.ZodType<string>` rather than the inferred
- * `ZodEffects<ZodURL>` so a future Zod minor that reshapes `.refine()` (or the
+ * `ZodURL` so a future Zod minor that reshapes `.refine()` (or the
  * Standard Schema migration in MCP SDK 2.0, which rewrites `.refine()` to a
  * `validate()` callback) can't silently flip the public type. Callers needing
  * `.optional()` / `.default()` chainability should compose with `z.optional()`
  * at the call site.
  *
- * **Intended for module-level use only.** Each invocation registers the
- * resulting schema with Zod's `globalRegistry` (via `.describe()`); calling
- * this per-request would accumulate entries that the registry never reclaims.
- * Build the schema once at module load and reuse the reference.
+ * **Build the schema once at module load and reuse the reference.** Each
+ * invocation constructs a new schema and registers it with Zod's
+ * `globalRegistry` (via `.describe()`). That registry holds schemas weakly, so
+ * a per-request call does not leak, but it repeats the construction on every
+ * request for an identical result.
  *
  * @param options - Optional configuration for the schema's caller-visible text.
  * @param options.description - Forwarded to Zod's `.describe()`. Becomes the

@@ -399,7 +399,7 @@ server.registerCustomTool(
 
         // Make request using instance utilities (applies config)
         const result = await utils.executeRequest({
-            url: `/users/${encodeURIComponent(userId)}`,  // Encode to prevent path traversal
+            url: `/users/${encodeURIComponent(userId)}`,  // Encode so the id stays one path segment; a bare "." or ".." is still a dot-segment
             headers: {"Accept": "application/json"},
         });
 

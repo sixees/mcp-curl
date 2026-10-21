@@ -59,9 +59,11 @@ Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/use
   rejected at the schema.
 - An absolute URL passes through unchanged, to any host.
 - A relative value must start with a single `/` and contain no control characters
-  (tab, CR, LF, NUL, DEL). One starting `//`, `/\` or `\` is refused, because a URL
-  parser reads it as a host; a control character is refused because the URL parser
-  strips it while cURL sends it as-is. This applies to `curl_execute`'s `url` and to
+  (any C0 control, such as tab, CR, LF or NUL, or DEL). One starting `//`, `/\` or `\`
+  is refused, because a URL parser reads it as a host; a control character is refused
+  because the URL parser strips a tab, CR or LF and percent-encodes the rest, so the
+  URL the SSRF check validates is not the value cURL is handed. This applies to
+  `curl_execute`'s `url` and to
   `executeRequest`'s `url` and `path` alike, and the refusal is an error result that
   states the rule.
 - The joined URL still goes through the SSRF check, like every other request.

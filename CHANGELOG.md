@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is added) or a relative `url` must start with a single `/` and contain no control
   characters. A value starting `//`, `/\` or `\` — for example `path: "//users"`,
   which 5.0.x joined to `<baseUrl>//users` — now returns an error result that states
-  the rule, and no request is made. So does a tab, CR, LF, NUL or DEL anywhere in it,
-  which the SSRF check's URL parser strips while cURL sends it as-is. **To adjust:**
+  the rule, and no request is made. So does any control character (C0 or DEL)
+  anywhere in it: the SSRF check's URL parser strips a tab, CR or LF and
+  percent-encodes the rest, so the URL it checks is not the value handed to cURL. **To adjust:**
   collapse leading slashes, and percent-encode segments built from data.
   **Shipped in a MINOR release by decision**, not by oversight: mcp-curl has one
   consumer, internal, and that consumer is told about this change directly.

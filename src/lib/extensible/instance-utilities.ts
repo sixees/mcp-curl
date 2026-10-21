@@ -79,11 +79,11 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 return { content: [{ type: "text", text: resolved.error }], isError: true };
             }
 
-            // Merge headers and apply UA/Referer defaults
+            // Request headers take precedence over config.defaultHeaders.
             const mergedHeaders: Record<string, string> = { ...config.defaultHeaders, ...params.headers };
             const defaults = applyDefaultHeaders(mergedHeaders, params.user_agent, config);
 
-            // Build full params with config defaults
+            // executeCurlRequest runs no schema parse, so the schema's .default() values (follow_redirects, insecure, verbose, include_headers, compressed, include_metadata) are restated here.
             const fullParams: CurlExecuteInput = {
                 url: resolved.url,
                 method: params.method,

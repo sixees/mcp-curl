@@ -5,9 +5,10 @@ import { z } from "zod";
 import { createHttpOnlyUrlSchema, RELATIVE_PATH_PATTERN } from "../utils/index.js";
 
 /**
- * Schema for structured cURL execution.
- * Validates all parameters for the curl_execute tool.
- */
+* Input schema for the curl_execute tool on a server with no `baseUrl`.
+* `CurlExecuteBaseUrlSchema` extends it for a server with one, so a relative
+* `url` is accepted only where something resolves it.
+*/
 export const CurlExecuteSchema = z.object({
     url: createHttpOnlyUrlSchema({ description: "The URL to request (http or https)" }),
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
@@ -141,8 +142,8 @@ export const JqQuerySchema = z.object({
         // narrows nothing: `splitJqFilters("")` is `[]`, so
         // `applyJqFilterToParsed` already throws *"filter must specify a path"*
         // and only the error's site and wording change. That asymmetry is why
-        // this `.min(1)` stays while `CurlExecuteSchema`'s went — there
-        // `jq_filter` is optional and `""` meant "no filter".
+        // this `.min(1)` is here and `CurlExecuteSchema`'s `jq_filter` has none —
+        // there it is optional and `""` means "no filter".
         .min(1, "jq_filter must not be empty")
         .describe("JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported."),
     max_result_size: z.number()
