@@ -1,5 +1,136 @@
 # Work Handoff: feat/embedder-base-url
-**Status:** in-review — created during `/sixees-workflow:review` (run inside `/sixees-workflow:work`, PR-1 slice) before the work run's own handoff was written. The work-run schema is added to this file by Step 6 of that command.
+**Date:** 2026-10-21 | **Branch:** `feat/embedder-base-url` | **Plan:** `docs/plans/2026-10-20-feat-embedder-persona-gaps-plan.md` | **Status:** complete — PR-1 slice done; review todos 021–023 fixed on the operator's instruction. The fix commits came after the Surface 2 review below and have not been reviewed by it (K-16).
+**Plan slice:** PR-1 (tasks 1–6)
+
+This file was first created by `/sixees-workflow:review`, and its review record is kept below. The work-run sections follow here.
+
+## Summary
+
+`baseUrl` was dead on the `curl_execute` tool path, because the strict `url` schema rejected every relative url before the handler ran.
+- A server with `baseUrl` now registers `CurlExecuteBaseUrlSchema`, which advertises `url` as `anyOf [format uri | pattern]`.
+- The handler resolves a single-`/` path against the base with `utils/url.ts::resolveRequestUrl`. That one join also serves `utilities().executeRequest` for both `url` and `path`.
+- Review found that routing `path` through the resolver narrowed a published input.
+- The operator chose to keep the narrowing as a **breaking change**, documented, and to make it robust: any relative input a parser would read as a host, or that holds a control character, is now refused with an error that states the rule.
+
+## What was implemented
+
+- **Resolver**: `src/lib/utils/url.ts::resolveRequestUrl` and `::RELATIVE_PATH_PATTERN`.
+  - Without `baseUrl`, the input passes through unchanged.
+  - With `baseUrl`:
+    - input beginning `/` or `\` is joined if it matches the pattern (single leading `/`, no C0 control or DEL), and refused otherwise;
+    - an absolute URL passes through unchanged.
+  - The join is `resolveBaseUrl`'s concatenation, guarded by the base parsing as an absolute http(s) URL.
+  - Nothing in it throws: the join sits inside the `try`.
+- **Tool path**:
+  - `src/lib/server/schemas.ts::CurlExecuteBaseUrlSchema` is a union of `createHttpOnlyUrlSchema` and the same pattern.
+  - `src/lib/extensible/tool-wrapper.ts::registerCurlToolWithHooks` selects the schema on `config.baseUrl`, resolves before `applyConfigTransformsCurl`, and returns a refusal through `wrap` (invariant 1).
+  - The prepend in `applyConfigTransformsCurl` is gone.
+- **Library path**: `src/lib/extensible/instance-utilities.ts::createInstanceUtilities` → `executeRequest`.
+  - `url` wins over `path`.
+  - `path` gets a missing leading `/` added, then both go through the resolver.
+- **Test fixtures**:
+  - `in-memory-client.test-fixture.ts::connectInMemory` is a real MCP client over `InMemoryTransport`, so the SDK's input parse is in the loop.
+  - `tool-capture.test-fixture.ts::captureTools` records `registerTool` meta and handler. It replaces 11 hand-rolled copies.
+- **Docs**:
+  - `docs/configuration.md` → *baseUrl*
+  - `docs/custom-tools.md` (the `executeRequest` rule)
+  - the `McpCurlConfig.baseUrl`, `executeRequest` and `ExecuteRequestParams.path` docblocks
+  - the `url` field description
+  - `CHANGELOG.md` `[Unreleased]`, with a BREAKING entry and a Fixed entry
+
+## Key decisions
+
+| Decision | Reasoning | Alternatives considered |
+|---|---|---|
+| `path` keeps tolerating a missing leading `/` | Operator, at the audit: `"users"` worked in 5.0.x | Reject anything not `^/` (stricter break) |
+| `path`/`url` values starting `//`, `\` or `/\`, or holding control characters, are refused (BREAKING) | Operator, after review P1 021: "consumers will have to comply and adjust"; make it as robust as possible | Split the join from the gate so `path` skips it (restores 5.0.x, MINOR) |
+| Control characters refused in any relative input | The SSRF gate's WHATWG parse strips tab/CR/LF while cURL gets them raw | Refuse only `//` and `\` |
+| Origin comparison removed (022) | Cannot fail once the base parses as http(s); a single-`/` suffix cannot move the authority | Keep it as a documented backstop |
+| `schema/generator.ts::buildUrl` untouched | Plan: its paths are operator YAML, not model input | Route it through the resolver |
+| No lesson filed for the `path` divergence | Gate 2: RC-45 (state each caller's question before consolidating) and RC-37 (sweep a deleted mechanism for what it incidentally satisfied) already state the rule. **Recurrence of both.** | A new entry |
+
+## What to pay attention to during review
+
+- **Version**: the change is now MAJOR under invariant 11.
+  - The plan's PR-4 bumps to 5.1.0; it must become **6.0.0**.
+  - The CHANGELOG entry is under `[Unreleased]`.
+  - The commit `0823c54` carries the `!` marker.
+  - `package.json` is still 5.0.1. The bump is PR-4's, so this branch does not change it.
+- **The fix commits `0823c54` and `c8a725b` have not been through a Surface 2 review.** Point the next review at them (K-16).
+- **`RELATIVE_PATH_PATTERN` is shared by the schema and the resolver.** Widening it changes the advertised tool schema too.
+- The refusal text names the rule, not the value. Keep it that way, because the input is attacker-chosen on the tool path.
+
+## Known issues and limitations
+
+- Every YAML `api-server` sets `baseUrl`, so every YAML-driven server now advertises the union schema (architecture-strategist). That is intended, but it changes the `tools/list` bytes for those servers.
+- An absolute URL to any host still passes on a `baseUrl` server. This was declined in the plan, operator Q1.
+- Pre-existing, not filed here:
+  - `buildCurlArgs` never checks an absolute URL for CR/LF (security-sentinel note).
+  - The `!enabled` early returns are unwrapped (todo 015).
+
+## Testing summary
+
+- **Added**:
+  - resolver units: the pattern, the joins, the refusals, a malformed base, a non-string base;
+  - e2e through `connectInMemory`: relative join, `anyOf` advertisement, absolute pass-through, six schema rejections, malformed base, the real SSRF gate, the no-`baseUrl` static listing;
+  - `utilities()` cases: `url`, `path`, slash-less `path`, five refusals, no base, malformed base;
+  - schema selection via `captureTools`;
+  - the wrap on the resolver refusal.
+- **Teeth**: each guard was mutated and its named test seen to fail:
+  - the tool-path join, the schema switch and the wrap on the refusal;
+  - the utilities join and the `path` slash normalisation;
+  - the scheme check, the throw guard and the explicit refusal;
+  - the control-character class, the backslash-led gate and schema selection.
+- **Last run**: `npx vitest run` gives 1432 passed, 7 skipped, 42 files.
+  - Run with `MCP_CURL_ALLOW_LOCALHOST=true` to confirm the loopback tests stay offline.
+  - `npx tsc --noEmit` shows only the 12 errors that already exist on `main`, in untouched test files.
+  - There is no lint script.
+- **Verdict source**: vitest, whose structured output the work command does not trust. **This run therefore applied no formal test verification**; the counts above are the console summary.
+
+## Commit history
+
+```
+c8a725b test(extensible): one fixture for capturing registerTool calls
+0823c54 feat(extensible)!: refuse a relative url or path a parser would read as a host
+4230d4d docs(review): record the Surface 2 review of feat/embedder-base-url
+aee3ed5 docs(config): describe baseUrl resolution and its limits
+6c28c36 fix(utils): keep resolveRequestUrl from throwing on untyped config
+ffae802 feat(extensible): resolve a relative url against baseUrl on the tool path
+37d5860 feat(utils): add resolveRequestUrl and RELATIVE_PATH_PATTERN
+```
+Plus the commit carrying this handoff and the todo removals.
+
+## Review context
+
+- **Suggested order**:
+  1. `utils/url.ts` (the whole rule)
+  2. `server/schemas.ts`
+  3. `extensible/tool-wrapper.ts`
+  4. `extensible/instance-utilities.ts`
+  5. the e2e test
+  6. the CHANGELOG
+- **Invariants touched**: 1 (resolver refusal wrapped), 2/3/12 (the SSRF gate stays downstream of the join), 10 (`utils/` → `config/security/` is an existing edge), 11 (breaking).
+- **Related lessons**: RC-36, RC-21, RC-20, RC-55, RC-45, RC-37.
+
+## Follow-up work
+
+- [ ] PR-4: bump to **6.0.0** rather than 5.1.0, and rename `[Unreleased]`.
+- [ ] Optional: the stale "prepended to relative URLs/paths" comments in `docs/getting-started.md` and `examples/basic/src/index.ts`. These were declined in review as out of scope.
+- [ ] Run Surface 3 (`/sixees-workflow:review-pr-comments`) once a PR is open.
+
+### Outstanding Todos
+
+None from this run.
+
+### Resolved Todos
+
+| id | title | summary | by | date |
+|---|---|---|---|---|
+| 021 | `executeRequest` `path` gated as if it were a model url | Kept as a documented BREAKING narrowing, made explicit and extended to control characters | `0823c54` | 2026-10-21 |
+| 022 | Resolver origin compare cannot fail | Comparison removed; the base parse is the documented guard | `0823c54` | 2026-10-21 |
+| 023 | Fake-`registerTool` capture copied per test | `captureTools` fixture, 11 copies routed through it, schema-selection test added | `c8a725b` | 2026-10-21 |
+
+All three todo files were removed at the operator's instruction.
 
 ## Code Review — 2026-10-20
 
