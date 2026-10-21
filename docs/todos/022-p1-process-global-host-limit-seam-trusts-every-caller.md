@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: high
 effort: s
 tags: [code-review, correctness, rate-limiter, security, extensible, mcp-curl-server, lifecycle]
@@ -96,15 +96,25 @@ copy. `docs/configuration.md` and the setter docblock say that any instance's
 
 ## Recommended Action
 
-_Pending the operator's call._
+**Option 1**, chosen by the operator on 2026-10-21. Their reasons: effect 2 is not
+hypothetical, because the consumer's own quota guard already fails open on
+`NaN` from a mistyped environment variable. And "one server per process" is a
+convention nothing enforces, so declining on it (Option 3) or documenting it
+(Option 2) leaves a silent reset in place.
+
+**Two servers setting a limit:** first holder wins, and a second `start()` with
+any `rateLimit`, even an equal one, throws. Replacing it would trade a silent
+reset for a silent override. A server without `rateLimit` installs nothing,
+releases nothing, and its requests count under the held limit, which is the
+tightening direction.
 
 ## Acceptance Criteria
 
-- [ ] `configure({ rateLimit: rl })`, then `rl.max = NaN`, then `start()`: either `start()` throws or the per-host limit is still enforced at the original `max`.
-- [ ] `setHostRateLimit({ max: NaN, windowMs: 1 })` throws (if Option 1 or 2 is chosen).
-- [ ] Start A with `{ max: 1, windowMs: 3_600_000 }` and spend its one request. Then B with no `rateLimit`, through each of: `start()` success, `start("http")` failing on a bad `authToken`, and `shutdown()`. A's second request is still refused (Option 1), or the docs state the reset (Options 2 and 3).
-- [ ] Exactly one copy of `{ max, windowMs }` between `configure()` and the limiter.
-- [ ] Teeth: removing each guard fails a named test.
+- [x] `configure({ rateLimit: rl })`, then `rl.max = NaN`, then `start()`: either `start()` throws or the per-host limit is still enforced at the original `max`.
+- [x] `setHostRateLimit({ max: NaN, windowMs: 1 })` throws (if Option 1 or 2 is chosen).
+- [x] Start A with `{ max: 1, windowMs: 3_600_000 }` and spend its one request. Then B with no `rateLimit`, through each of: `start()` success, `start("http")` failing on a bad `authToken`, and `shutdown()`. A's second request is still refused (Option 1), or the docs state the reset (Options 2 and 3).
+- [x] ~~Exactly one copy of `{ max, windowMs }` between `configure()` and the limiter.~~ Replaced, because there are now two copies, each at its own boundary. `configure()` copies the caller's object into the server, and that copy is what fixes effect 2. `installHostRateLimit` copies the server's value into process state, so the seam does not trust its caller. `freezeConfig`'s third copy is gone.
+- [x] Teeth: removing each guard fails a named test.
 
 ## Work Log
 
@@ -115,3 +125,18 @@ _Pending the operator's call._
 `setHostRateLimit` sweep (3 call sites), and escalated P2 to P1 on the RC-19 `Class` join.
 **Learnings:** The setter's `undefined` arm cannot say "clear only if mine", so every
 teardown has to choose between clearing blindly and never clearing.
+
+### 2026-10-21 - Resolved (Option 1)
+
+**By:** Claude Code
+**Actions:**
+- `rate-limiter.ts::installHostRateLimit` validates (`assertHostRateLimit`), refuses a second install, copies the limit, and returns a handle.
+- `rate-limiter.ts::releaseHostRateLimit` is a no-op for any handle that does not hold the limit.
+- `rate-limiter.ts::assertHostRateLimit` replaces `mcp-curl-server.ts::validateRateLimit`, so `configure()` and the seam share one rule.
+- `McpCurlServer.configure` stores a frozen copy.
+- `McpCurlServer.start` claims the limit before any other side effect, and only when `rateLimit` is set.
+- `McpCurlServer.releaseProcessState` is the one teardown used by both the rollback and `shutdown()`.
+- `setHostRateLimit` is removed.
+- Tests: an ownership suite in `rate-limiter.test.ts`, plus a mutate-before-start test and four second-server tests in `mcp-curl-server.test.ts`.
+- Six mutation probes each fail a named test, and the files were restored with `cmp`.
+- Full suite: 1499 passed, 7 skipped.

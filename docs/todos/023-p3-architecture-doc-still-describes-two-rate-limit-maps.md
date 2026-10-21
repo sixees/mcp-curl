@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: s
 tags: [code-review, docs, rate-limiter, architecture-doc]
@@ -45,12 +45,12 @@ That command catches the code-comment instance and the two touched doc sections.
 
 ## Recommended Action
 
-_Pending._
+**Option 1.** Correct all three sites in place.
 
 ## Acceptance Criteria
 
-- [ ] No sentence in `docs/architecture/architecture.md` says the rate limiter holds two maps, or that the cap is enforced only in `checkRateLimitInternal`.
-- [ ] `bounded-throttle.ts` cites `rate-limiter.ts::ensureCapacity`.
+- [x] No sentence in `docs/architecture/architecture.md` says the rate limiter holds two maps, or that the cap is enforced only in `checkRateLimitInternal`.
+- [x] `bounded-throttle.ts` cites `rate-limiter.ts::ensureCapacity`.
 
 ## Work Log
 
@@ -60,3 +60,12 @@ _Pending._
 **Actions:** Reproduced the sweep (3 sites).
 **Learnings:** The doc edit updated the sentences that state "60/min". It missed the
 sentences that state the structure.
+
+### 2026-10-21 - Resolved
+
+**By:** Claude Code
+**Actions:**
+- The Data Stores row now lists three maps.
+- The cap paragraph names `rate-limiter.ts::ensureCapacity`.
+- `bounded-throttle.ts`'s header and the `setBounded` docblock now cite `ensureCapacity`.
+- The Rate Limiting paragraph now describes the install/release seam.

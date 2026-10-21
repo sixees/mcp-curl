@@ -44,4 +44,15 @@
 
 **Open without a todo:** none.
 
-**Blockers:** P1 todo 022, escalated to the operator by `/sixees-workflow:work` Step 5 (a P1 escalates whatever row it lands in).
+**Blockers (at review time):** P1 todo 022, escalated to the operator by `/sixees-workflow:work` Step 5 (a P1 escalates whatever row it lands in).
+
+### Operator disposition — 2026-10-21
+
+| Todo | Disposition |
+|---|---|
+| 022 | **Fixed, Option 1.** The operator settled the scope: "one server per process" is a convention, not structure, so neither a decline nor a doc note closes it. Two servers setting a limit: first holder wins, and a second `start()` with any `rateLimit` throws. |
+| 023 | Fixed |
+| 024 | Fixed |
+| 025 | Fixed |
+
+**Blockers:** none. Fixes are in the commit after `a717332`. No re-review has run on them yet (K-16): the newest text on the branch is the install/release seam and `McpCurlServer.releaseProcessState`.

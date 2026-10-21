@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: s
 tags: [code-review, public-api, types, rate-limiter]
@@ -43,11 +43,11 @@ Inline `{ max: number; windowMs: number }`, and have the limiter take
 
 ## Recommended Action
 
-_Pending._
+**Option 1.** Export the type.
 
 ## Acceptance Criteria
 
-- [ ] `import type { HostRateLimit } from "mcp-curl"` compiles.
+- [x] `import type { HostRateLimit } from "mcp-curl"` compiles.
 
 ## Work Log
 
@@ -55,3 +55,11 @@ _Pending._
 
 **By:** Claude Code
 **Actions:** Reproduced the sweep.
+
+### 2026-10-21 - Resolved
+
+**By:** Claude Code
+**Actions:**
+- `types/public.ts` re-exports `HostRateLimit`, and `src/lib.ts` exports it.
+- It is pinned in the `src/lib.test.ts` type list.
+- Probe: dropping the re-export makes `tsc` report TS2459 at `src/lib.ts`.

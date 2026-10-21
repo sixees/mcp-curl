@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: s
 tags: [code-review, duplication, rate-limiter, security]
@@ -49,12 +49,12 @@ pinned by the slide test. The drift is possible, but nobody is editing either si
 
 ## Recommended Action
 
-_Pending._
+**Option 1.** `leftWindow` sits beside `windowClosed`, and `windowClosed` is expressed through it.
 
 ## Acceptance Criteria
 
-- [ ] The two sites share one comparison.
-- [ ] A boundary test at exactly `windowMs` shows the check and the sweep agree.
+- [x] The two sites share one comparison.
+- [x] A boundary test at exactly `windowMs` shows the check and the sweep agree.
 
 ## Work Log
 
@@ -62,3 +62,11 @@ _Pending._
 
 **By:** Claude Code
 **Actions:** Reproduced the sweep.
+
+### 2026-10-21 - Resolved
+
+**By:** Claude Code
+**Actions:**
+- `rate-limiter.ts::leftWindow` is now used by `pruneLog`, `cleanupExpiredLogs` and `windowClosed`.
+- New test: "check and sweep agree at exactly windowMs".
+- Probe: changing the sweep's comparison to `>` fails that test.
