@@ -3,10 +3,11 @@ import {
   createHttpOnlyUrlSchema,
   createWrapper,
   executeCurlRequest,
+  hasDotSegment,
   resolveBaseUrl,
   safeHostname,
   sanitizeDescription
-} from "./chunk-RXLJX33S.js";
+} from "./chunk-HIRTGAB4.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -320,6 +321,8 @@ function createParamSchema(param) {
       return z2.string();
   }
 }
+var DotSegmentError = class extends Error {
+};
 function buildUrl(baseUrl, path, pathParams, queryParams) {
   let resolvedPath = path;
   for (const [key, value] of Object.entries(pathParams)) {
@@ -327,6 +330,9 @@ function buildUrl(baseUrl, path, pathParams, queryParams) {
       `{${key}}`,
       encodeURIComponent(String(value))
     );
+  }
+  if (hasDotSegment(resolvedPath)) {
+    throw new DotSegmentError("Error: a path parameter must not be . or ..; it would resolve outside the endpoint's path");
   }
   const url = resolveBaseUrl(baseUrl, resolvedPath);
   const queryEntries = Object.entries(queryParams);
@@ -485,6 +491,12 @@ function createToolHandler(schema, endpoint, config) {
               text: `Authentication error: ${error.message}`
             }
           ],
+          isError: true
+        };
+      }
+      if (error instanceof DotSegmentError) {
+        return {
+          content: [{ type: "text", text: error.message }],
           isError: true
         };
       }

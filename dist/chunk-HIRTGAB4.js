@@ -14,6 +14,36 @@ function resolveBaseUrl(baseUrl, path) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${base}${normalizedPath}`;
 }
+var RELATIVE_PATH_PATTERN = /^\/(?![/\\])[^\x00-\x1f\x7f]*$/;
+function hasDotSegment(path) {
+  const pathPart = path.split(/[?#]/, 1)[0];
+  return pathPart.split(/[/\\]/).some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment));
+}
+function resolveRequestUrl(baseUrl, url) {
+  if (!baseUrl || !/^[/\\]/.test(url)) return { ok: true, url };
+  if (!RELATIVE_PATH_PATTERN.test(url)) {
+    return {
+      ok: false,
+      error: "Error: a relative url must start with a single / and contain no control characters; a leading // or \\ names a host, not a path"
+    };
+  }
+  if (hasDotSegment(url)) {
+    return {
+      ok: false,
+      error: "Error: a relative url must not contain a . or .. path segment (literal or %2e-encoded); it would resolve outside the path it was built from"
+    };
+  }
+  try {
+    if (isAllowedUrlScheme(new URL(baseUrl).protocol)) {
+      return { ok: true, url: resolveBaseUrl(baseUrl, url) };
+    }
+  } catch {
+  }
+  return {
+    ok: false,
+    error: "Error: cannot resolve a relative url: the configured baseUrl is not an absolute http(s) URL"
+  };
+}
 function createHttpOnlyUrlSchema(options = {}) {
   const { description = "URL (http or https)", message = "URL must use http or https scheme" } = options;
   return z.url("Must be a valid URL").refine(
@@ -304,6 +334,11 @@ function createConfigError(configName, value, reason) {
   const safeValue = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\0/g, "\\0");
   return new Error(`Invalid ${configName} value "${safeValue}": ${reason}.`);
 }
+function assertPositiveInteger(name, value) {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer, got: ${String(value)}`);
+  }
+}
 
 // src/lib/utils/json-lexeme.ts
 var { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON;
@@ -437,6 +472,14 @@ var RATE_LIMIT = {
    * (`tools/curl-execute.ts`) — and the map drains one window later, so the
    * failure is a bounded refusal rather than a wedge. Raising this number
    * buys nothing that the window does not already give back.
+   *
+   * **A configured `rateLimit` stretches that drain to its own `windowMs`.**
+   * The sliding host map shares this ceiling and the reject-when-full rule,
+   * and a host stays tracked until its newest request leaves the configured
+   * window, so the sizing above is per minute while the drain may be per
+   * hour. Filling it then refuses new hosts for up to one configured window.
+   * That is accepted, not overlooked: an embedder that sets `rateLimit`
+   * fronts one API and reaches a handful of hosts.
    *
    * Deliberately not {@link THROTTLE.MAX_TRACKED_KEYS}: that one bounds log
    * throttles, where overflow costs a line of stderr. Sharing a value would
@@ -591,6 +634,12 @@ var CurlExecuteSchema = z2.object({
   max_result_size: z2.number().int().min(1e3).max(1e6).optional().describe("Max bytes to return inline (default: 500KB, max: 1MB). Larger responses auto-save to temp file"),
   save_to_file: z2.boolean().optional().describe("Force save response to temp file. Returns filepath instead of content"),
   output_dir: z2.string().optional().describe("Directory to save response files (must exist and be writable). Overrides MCP_CURL_OUTPUT_DIR env var. Falls back to system temp directory.")
+});
+var CurlExecuteBaseUrlSchema = CurlExecuteSchema.extend({
+  url: z2.union([
+    createHttpOnlyUrlSchema({ description: "An absolute http(s) URL" }),
+    z2.string().regex(RELATIVE_PATH_PATTERN, "Must be an absolute http(s) URL, or a path starting with a single / with no control characters").describe("A path starting with /, resolved against the configured base URL")
+  ]).describe("The URL to request: an absolute http(s) URL, or a path starting with a single / (no control characters) resolved against the configured base")
 });
 var JqQuerySchema = z2.object({
   filepath: z2.string().describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
@@ -1697,11 +1746,44 @@ async function validateUrlAndResolveDns(url, options) {
 // src/lib/security/rate-limiter.ts
 var hostRateLimitMap = /* @__PURE__ */ new Map();
 var clientRateLimitMap = /* @__PURE__ */ new Map();
+var hostSlidingLog = /* @__PURE__ */ new Map();
+var hostLimit;
+var logWindowMs;
+var hostLimitOwner;
 function elapsedNow() {
   return performance.now();
 }
 function windowClosed(entry, now) {
-  return now - entry.windowStart >= RATE_LIMIT.WINDOW_MS;
+  return leftWindow(entry.windowStart, now, RATE_LIMIT.WINDOW_MS);
+}
+function leftWindow(timestamp, now, windowMs) {
+  return now - timestamp >= windowMs;
+}
+function pruneLog(log, now, windowMs) {
+  let expired = 0;
+  while (expired < log.length && leftWindow(log[expired], now, windowMs)) expired++;
+  if (expired > 0) log.splice(0, expired);
+}
+function cleanupExpiredLogs() {
+  if (logWindowMs === void 0) return;
+  const now = elapsedNow();
+  for (const [key, log] of hostSlidingLog) {
+    if (log.length === 0 || leftWindow(log[log.length - 1], now, logWindowMs)) {
+      hostSlidingLog.delete(key);
+    }
+  }
+}
+function ensureCapacity(map, sweep, keyKind) {
+  if (map.size < RATE_LIMIT.MAX_TRACKED_KEYS) return;
+  sweep();
+  if (map.size >= RATE_LIMIT.MAX_TRACKED_KEYS) {
+    throw new Error(
+      `Rate-limit tracking is at capacity (${RATE_LIMIT.MAX_TRACKED_KEYS} distinct keys). Refusing an untracked ${keyKind}.`
+    );
+  }
+}
+function formatWindow(ms) {
+  return ms % 1e3 === 0 ? `${ms / 1e3} s` : `${ms} ms`;
 }
 function cleanupExpiredEntries(map) {
   const now = elapsedNow();
@@ -1715,14 +1797,7 @@ function checkRateLimitInternal(map, key, maxRequests, errorPrefix, keyKind) {
   const now = elapsedNow();
   const entry = map.get(key);
   if (!entry || windowClosed(entry, now)) {
-    if (!entry && map.size >= RATE_LIMIT.MAX_TRACKED_KEYS) {
-      cleanupExpiredEntries(map);
-      if (map.size >= RATE_LIMIT.MAX_TRACKED_KEYS) {
-        throw new Error(
-          `Rate-limit tracking is at capacity (${RATE_LIMIT.MAX_TRACKED_KEYS} distinct keys). Refusing an untracked ${keyKind}.`
-        );
-      }
-    }
+    if (!entry) ensureCapacity(map, () => cleanupExpiredEntries(map), keyKind);
     map.set(key, { count: 1, windowStart: now });
     return;
   }
@@ -1730,6 +1805,24 @@ function checkRateLimitInternal(map, key, maxRequests, errorPrefix, keyKind) {
     throw new Error(`${errorPrefix}. Maximum ${maxRequests} requests per minute.`);
   }
   entry.count++;
+}
+function checkSlidingHostLimit(hostname, limit, errorPrefix) {
+  const now = elapsedNow();
+  let log = hostSlidingLog.get(hostname);
+  if (log) {
+    pruneLog(log, now, limit.windowMs);
+  } else {
+    ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
+    log = [];
+    hostSlidingLog.set(hostname, log);
+  }
+  if (log.length >= limit.max) {
+    const retryMs = limit.windowMs - (now - log[0]);
+    throw new Error(
+      `${errorPrefix}. Maximum ${limit.max} requests per ${formatWindow(limit.windowMs)}; the oldest leaves the window in ${Math.ceil(retryMs / 1e3)} s.`
+    );
+  }
+  log.push(now);
 }
 function checkRateLimits(hostname, clientId = RATE_LIMIT.STDIO_CLIENT_ID) {
   checkRateLimitInternal(
@@ -1739,18 +1832,57 @@ function checkRateLimits(hostname, clientId = RATE_LIMIT.STDIO_CLIENT_ID) {
     "Client rate limit exceeded",
     "client"
   );
+  const hostPrefix = `Rate limit exceeded for host "${hostname}"`;
+  const hostKey = canonicalHost(hostname);
+  if (hostLimit) {
+    checkSlidingHostLimit(hostKey, hostLimit, hostPrefix);
+    return;
+  }
   checkRateLimitInternal(
     hostRateLimitMap,
-    hostname,
+    hostKey,
     RATE_LIMIT.MAX_PER_HOST_PER_MINUTE,
-    `Rate limit exceeded for host "${hostname}"`,
+    hostPrefix,
     "host"
   );
+}
+function canonicalHost(hostname) {
+  let end = hostname.length;
+  while (end > 0 && hostname[end - 1] === ".") end--;
+  return hostname.slice(0, end);
+}
+function parseHostRateLimit(limit) {
+  if (typeof limit !== "object" || limit === null) {
+    throw new Error(`rateLimit must be an object { max, windowMs }, got: ${String(limit)}`);
+  }
+  const { max, windowMs } = limit;
+  assertPositiveInteger("rateLimit.max", max);
+  assertPositiveInteger("rateLimit.windowMs", windowMs);
+  return Object.freeze({ max, windowMs });
+}
+function installHostRateLimit(limit) {
+  const parsed = parseHostRateLimit(limit);
+  if (hostLimitOwner !== void 0) {
+    throw new Error(
+      "rateLimit is already installed by another McpCurlServer in this process. The per-host limit is process-wide, so only one server may set it at a time."
+    );
+  }
+  if (logWindowMs !== parsed.windowMs) hostSlidingLog.clear();
+  hostLimit = parsed;
+  logWindowMs = parsed.windowMs;
+  hostLimitOwner = /* @__PURE__ */ Symbol("hostRateLimit");
+  return hostLimitOwner;
+}
+function releaseHostRateLimit(handle) {
+  if (handle !== hostLimitOwner) return;
+  hostLimit = void 0;
+  hostLimitOwner = void 0;
 }
 function startRateLimitCleanup() {
   const interval = setInterval(() => {
     cleanupExpiredEntries(hostRateLimitMap);
     cleanupExpiredEntries(clientRateLimitMap);
+    cleanupExpiredLogs();
   }, RATE_LIMIT.CLEANUP_INTERVAL_MS);
   interval.unref();
   return interval;
@@ -1792,7 +1924,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "5.0.0" : "0.0.0"
+  VERSION: true ? "5.0.1" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -2886,7 +3018,10 @@ export {
   ENV,
   getErrorMessage,
   createConfigError,
+  assertPositiveInteger,
   resolveBaseUrl,
+  hasDotSegment,
+  resolveRequestUrl,
   createHttpOnlyUrlSchema,
   safeHostname,
   LIMITS,
@@ -2897,6 +3032,9 @@ export {
   detectInjectionPattern,
   applySpotlighting,
   SESSION,
+  parseHostRateLimit,
+  installHostRateLimit,
+  releaseHostRateLimit,
   startRateLimitCleanup,
   stopRateLimitCleanup,
   PRINTABLE_ASCII,
@@ -2920,6 +3058,7 @@ export {
   resolveOutputDir,
   validateOutputDir,
   CurlExecuteSchema,
+  CurlExecuteBaseUrlSchema,
   JqQuerySchema,
   applyJqFilter,
   writeUniqueFile,

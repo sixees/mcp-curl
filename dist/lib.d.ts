@@ -1,5 +1,5 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-76mCyzCE.js';
-export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-Ben6mKfc.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, h as HostRateLimit, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-D3GHA0iM.js';
+export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-Do0M6C0q.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
@@ -53,16 +53,17 @@ interface CreateHttpOnlyUrlSchemaOptions {
  * to hold the line.
  *
  * Return type is pinned to `z.ZodType<string>` rather than the inferred
- * `ZodEffects<ZodURL>` so a future Zod minor that reshapes `.refine()` (or the
+ * `ZodURL` so a future Zod minor that reshapes `.refine()` (or the
  * Standard Schema migration in MCP SDK 2.0, which rewrites `.refine()` to a
  * `validate()` callback) can't silently flip the public type. Callers needing
  * `.optional()` / `.default()` chainability should compose with `z.optional()`
  * at the call site.
  *
- * **Intended for module-level use only.** Each invocation registers the
- * resulting schema with Zod's `globalRegistry` (via `.describe()`); calling
- * this per-request would accumulate entries that the registry never reclaims.
- * Build the schema once at module load and reuse the reference.
+ * **Build the schema once at module load and reuse the reference.** Each
+ * invocation constructs a new schema and registers it with Zod's
+ * `globalRegistry` (via `.describe()`). That registry holds schemas weakly, so
+ * a per-request call does not leak, but it repeats the construction on every
+ * request for an identical result.
  *
  * @param options - Optional configuration for the schema's caller-visible text.
  * @param options.description - Forwarded to Zod's `.describe()`. Becomes the

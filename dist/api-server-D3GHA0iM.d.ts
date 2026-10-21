@@ -1,13 +1,29 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, d as ApiSchema } from './generator-Ben6mKfc.js';
+import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, d as ApiSchema } from './generator-Do0M6C0q.js';
+
+/**
+ * An embedder-configured per-host limit: at most `max` requests to one host in
+ * any `windowMs` span. Enforced as a sliding log, so it cannot be reset by the
+ * fixed window's boundary or by the cleanup sweep.
+ */
+interface HostRateLimit {
+    /** Requests admitted per host in any one window (positive integer) */
+    readonly max: number;
+    /** Window length in milliseconds (positive integer) */
+    readonly windowMs: number;
+}
 
 /**
  * Configuration options for McpCurlServer.
  * These settings affect how all tool calls are processed.
  */
 interface McpCurlConfig {
-    /** Base URL prepended to relative URLs in curl_execute */
+    /**
+     * Base URL that a `url` starting with a single `/` is resolved against, in
+     * `curl_execute` and `utilities().executeRequest`. An absolute URL passes
+     * through unchanged, so this is a convenience, not a host restriction.
+     */
     baseUrl?: string;
     /** Default headers added to all curl_execute requests */
     defaultHeaders?: Record<string, string>;
@@ -32,11 +48,25 @@ interface McpCurlConfig {
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
     /**
+     * Per-host limit as a sliding window: at most `max` requests to any one
+     * host in any `windowMs` span. Unset, each host gets the fixed default of
+     * 60 per minute. Both fields must be positive integers, or `configure()`
+     * throws. The per-client limit is not affected.
+     *
+     * Applied process-wide by `start()` and released only by this server's
+     * `shutdown()` or failed `start()`, so it also counts `utilities()` calls,
+     * YAML endpoint tools and any other server in the process. While one server
+     * holds it, another's `start()` with a `rateLimit` throws. It is local
+     * throttling, not quota accounting: the count starts again with the
+     * process, and requests made elsewhere on the same credential are not seen.
+     */
+    rateLimit?: HostRateLimit;
+    /**
      * Wrap responses in per-request sentinel tags to resist prompt injection
      * (spotlighting). Independent of the always-on defence pass — see the
      * **defence-in-depth wrap** below.
      *
-     * **Defence-in-depth wrap (PR-6b).** Every tool result returned by this
+     * **Defence-in-depth wrap.** Every tool result returned by this
      * server — `curl_execute`, `jq_query`, YAML-driven endpoints registered
      * via `createApiServer()`, custom tools registered via
      * `registerCustomTool()`, and synthesised results returned by a
@@ -176,7 +206,13 @@ declare function executeJqQuery(params: JqQueryInput, _extra: JqQueryExtra): Pro
  * Partial curl_execute input with optional path for baseUrl resolution.
  */
 interface ExecuteRequestParams extends Partial<CurlExecuteInput> {
-    /** Path to append to baseUrl (alternative to url) */
+    /**
+     * Path to append to `baseUrl` (alternative to `url`). A missing leading `/`
+     * is added; after that it must start with a single `/`, contain no control
+     * characters, and hold no `.` or `..` segment (literal or `%2e`-encoded), or
+     * the call returns an error result. A leading `//`, `\` or `/\` is refused,
+     * never joined.
+     */
     path?: string;
 }
 /**
@@ -185,7 +221,11 @@ interface ExecuteRequestParams extends Partial<CurlExecuteInput> {
 interface InstanceUtilities {
     /**
      * Execute a cURL request with config defaults applied.
-     * Can use `path` with `baseUrl` or provide a full `url`.
+     * Takes an absolute `url`; with `baseUrl` configured, also a `url` starting
+     * with `/` or a `path`, both resolved by `resolveRequestUrl`. A relative
+     * value that starts `//`, `\` or `/\`, holds a control character, or holds
+     * a `.` or `..` segment (literal or `%2e`-encoded) is refused with an error
+     * result rather than requested.
      *
      * NOTE: This method calls executeCurlRequest directly and bypasses the hook
      * system (beforeRequest, afterResponse, onError). Use MCP tool invocation
@@ -237,6 +277,7 @@ declare class McpCurlServer {
     private _httpServer;
     private _sessionManager;
     private _rateLimitInterval;
+    private _hostLimitHandle;
     private _injectionCleanupInterval;
     private _wrapErrorCleanupInterval;
     private _utilities;
@@ -246,7 +287,7 @@ declare class McpCurlServer {
      *
      * @param config - Configuration options to merge
      * @returns this for chaining
-     * @throws Error if called after start()
+     * @throws Error if called after start(), or if `rateLimit` is not two positive integers
      */
     configure(config: Partial<McpCurlConfig>): this;
     /**
@@ -447,6 +488,12 @@ declare class McpCurlServer {
      */
     private freezeConfig;
     /**
+     * Undo `start()`'s process-wide effects: the three cleanup intervals and
+     * this server's host limit. Shared by the start rollback and `shutdown()`,
+     * and safe to call when any of them was never set up.
+     */
+    private releaseProcessState;
+    /**
      * Ensure server has not been started.
      * @throws Error if started
      */
@@ -552,4 +599,4 @@ declare function createApiServer(options: CreateApiServerOptions): Promise<McpCu
  */
 declare function createApiServerSync(schema: ApiSchema, options?: ApiServerOptionsBase): McpCurlServer;
 
-export { type AfterResponseHook as A, type BeforeRequestHook as B, type CreateApiServerOptions as C, type ExecuteRequestParams as E, type HookContext as H, type InstanceUtilities as I, type McpCurlConfig as M, type OnErrorHook as O, type TransportMode as T, type BeforeRequestResult as a, type CustomToolMeta as b, McpCurlServer as c, createApiServer as d, createApiServerSync as e, createInstanceUtilities as f, executeJqQuery as g };
+export { type AfterResponseHook as A, type BeforeRequestHook as B, type CreateApiServerOptions as C, type ExecuteRequestParams as E, type HookContext as H, type InstanceUtilities as I, type McpCurlConfig as M, type OnErrorHook as O, type TransportMode as T, type BeforeRequestResult as a, type CustomToolMeta as b, McpCurlServer as c, createApiServer as d, createApiServerSync as e, createInstanceUtilities as f, executeJqQuery as g, type HostRateLimit as h };
