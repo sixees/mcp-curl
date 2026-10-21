@@ -242,6 +242,19 @@ describe("McpCurlServer utilities", () => {
             expect(textOf(result)).toContain(JOINED);
         });
 
+        it.each([
+            ["path", { path: "//users" }],
+            ["path", { path: "\\users" }],
+            ["path", { path: "/\\users" }],
+            ["path", { path: "/users\r\nX-Injected: 1" }],
+            ["url", { url: "//users" }],
+        ])("refuses a %s a parser would read as a host, naming the rule", async (_field, params) => {
+            const result = await loopback().executeRequest(params);
+            expect(result.isError).toBe(true);
+            expect(textOf(result)).toContain("must start with a single /");
+            expect(textOf(result)).not.toContain(JOINED);
+        });
+
         it("leaves a relative url unresolved without baseUrl", async () => {
             const result = await new McpCurlServer().utilities().executeRequest({ url: "/users" });
             expect(result.isError).toBe(true);

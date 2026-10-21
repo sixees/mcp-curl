@@ -122,9 +122,9 @@ export const CurlExecuteBaseUrlSchema = CurlExecuteSchema.extend({
     url: z.union([
         createHttpOnlyUrlSchema({ description: "An absolute http(s) URL" }),
         z.string()
-            .regex(RELATIVE_PATH_PATTERN, "Must be an absolute http(s) URL or a path starting with a single /")
+            .regex(RELATIVE_PATH_PATTERN, "Must be an absolute http(s) URL, or a path starting with a single / with no control characters")
             .describe("A path starting with /, resolved against the configured base URL"),
-    ]).describe("The URL to request: an absolute http(s) URL, or a path starting with / resolved against the configured base"),
+    ]).describe("The URL to request: an absolute http(s) URL, or a path starting with a single / (no control characters) resolved against the configured base"),
 });
 
 /** Inferred TypeScript type from CurlExecuteSchema */

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: `utilities().executeRequest` refuses a relative value a URL parser would
+  read as a host.** With `baseUrl` configured, a `path` (after its missing leading `/`
+  is added) or a relative `url` must start with a single `/` and contain no control
+  characters. A value starting `//`, `/\` or `\` — for example `path: "//users"`,
+  which 5.0.x joined to `<baseUrl>//users` — now returns an error result that states
+  the rule, and no request is made. So does a tab, CR, LF, NUL or DEL anywhere in it,
+  which the SSRF check's URL parser strips while cURL sends it as-is. **To adjust:**
+  collapse leading slashes, and percent-encode segments built from data.
+
+### Fixed
+
+- **`baseUrl` works on the `curl_execute` tool path.** The strict `url` schema
+  rejected every relative url before the handler ran, so the prepend never fired.
+  A server with `baseUrl` now advertises `url` as an absolute http(s) URL or a
+  single-`/` path (`anyOf`), and resolves the path against the base before the SSRF
+  check. A server without `baseUrl`, the standalone binary included, advertises the
+  same schema as before. `executeRequest` resolves a relative `url` the same way, so
+  the `docs/custom-tools.md` examples now work as written. `baseUrl` is a
+  convenience, not a host restriction: an absolute URL to any host still passes.
+
 ## [5.0.1] - 2026-10-20
 
 ### Notes

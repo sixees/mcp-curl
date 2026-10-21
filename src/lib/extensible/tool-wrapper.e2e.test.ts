@@ -77,15 +77,18 @@ describe("curl_execute with baseUrl, through a real MCP client", () => {
         expect(executor.mock.calls[0][0].url).toBe("https://other.example/x");
     });
 
-    it.each(["//evil.com", "/\\evil.com", "ftp://x"])("rejects %j at the schema", async (url) => {
-        const executor = okExecutor();
-        const client = await connectCurl({ baseUrl: BASE }, executor);
+    it.each(["//evil.com", "/\\evil.com", "\\\\evil.com", "/a\tb", "/a\r\nHost: evil.com", "ftp://x"])(
+        "rejects %j at the schema",
+        async (url) => {
+            const executor = okExecutor();
+            const client = await connectCurl({ baseUrl: BASE }, executor);
 
-        const result = await client.callTool({ name: "curl_execute", arguments: { url } });
+            const result = await client.callTool({ name: "curl_execute", arguments: { url } });
 
-        expect(result.isError).toBe(true);
-        expect(executor).not.toHaveBeenCalled();
-    });
+            expect(result.isError).toBe(true);
+            expect(executor).not.toHaveBeenCalled();
+        }
+    );
 
     it("refuses a malformed baseUrl with an error naming the key, not the value", async () => {
         const executor = okExecutor();

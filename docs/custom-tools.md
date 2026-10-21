@@ -436,6 +436,11 @@ User Profile:
 );
 ```
 
+A relative `url` or `path` passed to `executeRequest` must start with a single `/` and
+contain no control characters. One starting `//`, `/\` or `\` returns an error result
+instead of a request. Build it from encoded segments, as above, so a value from the
+model cannot produce one. See [`baseUrl`](./configuration.md#baseurl).
+
 ## Input Schema Patterns
 
 ### Required and Optional Fields

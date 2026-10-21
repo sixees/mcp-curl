@@ -61,7 +61,18 @@ describe("RELATIVE_PATH_PATTERN", () => {
         expect(RELATIVE_PATH_PATTERN.test(input)).toBe(true);
     });
 
-    it.each(["//evil.com", "/\\evil.com", "users", "", "https://api.example.com/x", "ftp://x"])(
+    it.each([
+        "//evil.com",
+        "/\\evil.com",
+        "/a\tb",
+        "/a\r\nHost: evil.com",
+        "/a\u0000b",
+        "/a\u007fb",
+        "users",
+        "",
+        "https://api.example.com/x",
+        "ftp://x",
+    ])(
         "rejects %j",
         (input) => {
             expect(RELATIVE_PATH_PATTERN.test(input)).toBe(false);
@@ -90,13 +101,29 @@ describe("resolveRequestUrl", () => {
         expect(resolveRequestUrl(undefined, "/users")).toEqual({ ok: true, url: "/users" });
     });
 
-    it("never joins a scheme-relative input", () => {
-        expect(resolveRequestUrl(BASE, "//evil.com/x")).toEqual({ ok: true, url: "//evil.com/x" });
+    describe("refuses, rather than passes on, a relative input a parser would misread", () => {
+        it.each([
+            ["a scheme-relative host", "//evil.com/x"],
+            ["a slash-backslash host", "/\\evil.com/x"],
+            ["a backslash-led host", "\\\\evil.com/x"],
+            ["a tab WHATWG would strip", "/a\t/b"],
+            ["CR/LF", "/a\r\nHost: evil.com"],
+        ])("%s", (_label, url) => {
+            const result = resolveRequestUrl(BASE, url);
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error).toContain("single /");
+            expect(result.error).not.toContain("evil.com");
+        });
+
+        it("still passes them through when no baseUrl is configured", () => {
+            expect(resolveRequestUrl(undefined, "//evil.com/x")).toEqual({ ok: true, url: "//evil.com/x" });
+        });
     });
 
     describe("a malformed baseUrl is refused without echoing it", () => {
         it.each([
-            ["an empty authority", "https://"],
+            ["an unparseable authority", "https://"],
             ["a bare scheme", "http:"],
             ["a non-http(s) scheme", "ftp://files.example.com"],
             ["an opaque scheme", "mailto:SECRETVALUE"],
