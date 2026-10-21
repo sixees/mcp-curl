@@ -157,7 +157,7 @@ Files can only be read from:
 - **Localhost**: Blocked by default (set MCP_CURL_ALLOW_LOCALHOST=true with port restrictions)
 
 ### Rate Limits
-- Per-hostname: 60 requests/minute
+- Per-hostname: by default 60 requests/minute; the embedder may configure a different per-host window
 - Per-client: 300 requests/minute total (HTTP: per session; stdio: shared single bucket)
 
 ### Resource Limits

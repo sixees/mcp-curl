@@ -49,7 +49,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 | `SavedFile` | `response/file-saver.ts` | `mode 0o600`, filename `safeBase_<ms>_<8 hex>.txt`. **`flag "wx"` is the guarantee** — no naming scheme guarantees uniqueness, and `wx` is what makes a residual collision an `EEXIST` rather than a silent overwrite. The 8 hex characters of a `randomUUID` make that collision improbable; the timestamp only sorts the directory |
 | `JqFilter` | `jq/parser.ts`, `jq/filter.ts` | Bounded subset — ≤20 paths, 100 ms parse timeout |
 | `Session` | `session/session-manager.ts` | HTTP only; UUID-keyed; 1 h idle timeout |
-| `RateLimitEntry` | `security/rate-limiter.ts` | Two `Map`s — per-host + per-client |
+| `RateLimitEntry` | `security/rate-limiter.ts` | Two `Map`s — per-host + per-client — plus a per-host timestamp log `Map` used only when `rateLimit` is configured |
 | `Hook` | `extensible/hook-executor.ts` | `beforeRequest` / `afterResponse` / `onError` |
 | `ApiSchema` / `EndpointTool` | `schema/loader.ts`, `generator.ts` | YAML → Zod input schema → curl-delegating handler |
 
@@ -88,7 +88,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
   returned normally and the result reports `headers_unsupported`: a fact about the
   host, distinct from `headers_undetermined`, which says the origin sent no header
   block. See `ARCHITECTURE.md` invariants 1a, 13 and 14.
-- Both per-host (60/min) **and** per-client (300/min) rate limits apply.
+- Both per-host (60/min by default) **and** per-client (300/min) rate limits apply.
 - `jq_query` reads are confined to `{ tempDir, MCP_CURL_OUTPUT_DIR, cwd-subtree }` after `realpath()` resolution.
 - Responses larger than `max_result_size` (default 500 KB, max 1 MB) auto-save to a `0o600` file.
 - Custom tool names match `^[a-z][a-z0-9_]*$`; `curl_execute` and `jq_query` are reserved.
@@ -174,7 +174,7 @@ For exact blocklists — CIDRs, hostnames, TLDs, rebinding services — see `src
 
 ### Rate Limiting
 
-Two fixed-window counters (per-host, per-client) — `security/rate-limiter.ts`. Limits: 60/min per host, 300/min per client; both must pass. The client gate runs first, so a request it refuses adds no host key. Cleanup `setInterval` runs every 10 s (`unref`'d). For stdio, client id is the constant `__stdio_client__`; for HTTP, it is the validated session id.
+Two fixed-window counters (per-host, per-client) — `security/rate-limiter.ts`. Limits: 60/min per host, 300/min per client; both must pass. An embedder's `rateLimit { max, windowMs }` replaces the per-host counter with a sliding log of timestamps (at most `max` per host), applied process-wide by `McpCurlServer.start()` through `setHostRateLimit` and reset by `shutdown()`. It shares `MAX_TRACKED_KEYS` and the refuse-when-full rule, and the sweep drops a host once its newest timestamp leaves `windowMs`. The client gate runs first, so a request it refuses adds no host key. Cleanup `setInterval` runs every 10 s (`unref`'d). For stdio, client id is the constant `__stdio_client__`; for HTTP, it is the validated session id.
 
 Each map also refuses keys beyond `RATE_LIMIT.MAX_TRACKED_KEYS` (`config/session.ts`), enforced at the write in `rate-limiter.ts::checkRateLimitInternal`. **It refuses rather than evicting**: evicting a counter would reset it and bypass the limit. The ceiling is derived from `SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE`, the cardinality every concurrent session spending its whole quota on distinct hosts would produce. **That is what it is sized against, not a proven upper bound** — `MAX_SESSIONS` caps sessions held at once, not sessions opened during a window, so churn past it is possible and costs a refusal that expires one window later. Windows are measured on a monotonic clock (`rate-limiter.ts::elapsedNow`), so a backward wall-clock step neither wedges the ceiling nor resets an active counter. The cap matters because the cleanup interval is started by the transports and `McpCurlServer` only — an embedder calling `executeCurlRequest` directly starts none of them.
 

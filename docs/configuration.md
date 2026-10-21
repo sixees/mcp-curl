@@ -19,6 +19,7 @@ interface McpCurlConfig {
     defaultUserAgent?: string;
     defaultReferer?: string;
     enableSpotlighting?: boolean;
+    rateLimit?: { max: number; windowMs: number };
 }
 ```
 
@@ -39,6 +40,7 @@ interface McpCurlConfig {
 | `defaultUserAgent`   | `string`                 | none        | User-Agent for all requests; empty string disables                       |
 | `defaultReferer`     | `string`                 | none        | Referer for all requests; empty string disables                          |
 | `enableSpotlighting` | `boolean`                | false       | Wrap response text in per-message sentinel envelopes (defence-in-depth)  |
+| `rateLimit`          | `{ max, windowMs }`      | 60/min      | Per-host limit as a sliding window; see [rateLimit](#ratelimit)          |
 
 ## Detailed Options
 
@@ -264,6 +266,39 @@ Steps 1 and 2 run regardless of this flag. The wrap is idempotent (same
 result wrapped twice is a no-op) and fail-open (an internal exception returns
 the original result and logs `[wrap-error] [host]`), so defence-in-depth never
 breaks the handler boundary.
+
+### rateLimit
+
+Replace the per-host limit with a sliding window: at most `max` requests to any
+one host in any `windowMs` span. Use it when the API you front has a quota the
+default (60 requests per host per minute, fixed window) does not fit.
+
+```typescript
+configure({rateLimit: {max: 200, windowMs: 3_600_000}}) // 200 per rolling hour
+```
+
+- **Per host, every host.** The limit applies to each hostname separately and
+  to every host the server calls. The per-client limit (300/min per HTTP
+  session, or for the stdio process) is not configurable and still applies.
+- **Sliding, not fixed.** A request is admitted when fewer than `max` were made
+  to that host in the last `windowMs`. A burst of `max` is allowed; the next
+  request waits until the oldest leaves the window. The refusal names `max`,
+  the window, and how long until the oldest request leaves it. Without
+  `rateLimit` the fixed 60/min window and its message are unchanged.
+- **Validated at `configure()`.** Both fields must be positive integers, or
+  `configure()` throws. There is no "off" value, so a typo or an unset
+  environment variable cannot disable the limiter.
+- **Applied by `start()`, process-wide.** It counts `curl_execute`,
+  `utilities().executeRequest` and YAML endpoint tools alike. `shutdown()`
+  restores the default. Two servers in one process share one setting, and the
+  last `start()` wins.
+
+**This is local throttling, not quota accounting.** The counter lives in this
+process: a restart, or an HTTP client reconnecting to a restarted server,
+starts it from zero while the upstream's window keeps running. It cannot see
+requests made by other processes, apps or clients on the same credential. For
+a hard upstream quota, set `max` below it and leave headroom for what this
+process cannot see (for example, 200 of a 240/hour quota).
 
 ## Environment Variables
 
