@@ -8,6 +8,7 @@ import { MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
 import { isWrappedResult } from "../response/post-processor.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import * as serverFactory from "../server/server-factory.js";
+import { captureTools, type CapturedTool } from "./tool-capture.test-fixture.js";
 
 describe("McpCurlServer", () => {
     let server: McpCurlServer;
@@ -896,31 +897,22 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
 
 describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
     let server: McpCurlServer;
-    const handlerMap = new Map<string, (...args: unknown[]) => Promise<unknown>>();
+    let tools: Map<string, CapturedTool>;
 
     beforeEach(() => {
         clearInjectionDetectionMap();
-        handlerMap.clear();
 
-        // Fake McpServer captures every registerTool call so the test can
-        // invoke the wrapped handler synchronously.
-        const fakeMcpServer = {
-            registerTool: (
-                name: string,
-                _meta: unknown,
-                handler: (...args: unknown[]) => Promise<unknown>
-            ) => {
-                handlerMap.set(name, handler);
-            },
-            // The lifecycle methods touched by start("stdio") — kept as no-ops.
+        // Captures every registerTool call so the test can invoke the wrapped
+        // handler synchronously. The lifecycle methods touched by
+        // start("stdio") are no-ops.
+        const capture = captureTools({
             connect: vi.fn().mockResolvedValue(undefined),
             close: vi.fn().mockResolvedValue(undefined),
             registerResource: vi.fn(),
             registerPrompt: vi.fn(),
-        };
-        vi.spyOn(serverFactory, "createServer").mockReturnValue(
-            fakeMcpServer as unknown as ReturnType<typeof serverFactory.createServer>
-        );
+        });
+        tools = capture.tools;
+        vi.spyOn(serverFactory, "createServer").mockReturnValue(capture.server);
         // Avoid noisy stderr in tests.
         vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -947,7 +939,7 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
             handler as never
         );
         await server.start("stdio");
-        const wrapped = handlerMap.get(name);
+        const wrapped = tools.get(name)?.handler;
         if (!wrapped) throw new Error(`expected handler for ${name} to be registered`);
         return wrapped;
     }

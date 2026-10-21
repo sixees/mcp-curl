@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
+import { captureTools } from "../extensible/tool-capture.test-fixture.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
 // Explicit return type on the local builder below: one line that makes a
 // `CommandResult` change a compile error at the builder rather than at each of
@@ -144,20 +145,9 @@ function bodyAfterHeaders(result: unknown): unknown {
  * a future edit would most plausibly reintroduce a bare registration.
  */
 function registerViaShippedPath() {
-    const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>();
-    const fakeServer = {
-        registerTool: (
-            name: string,
-            _meta: unknown,
-            handler: (...args: unknown[]) => Promise<unknown>
-        ) => {
-            handlers.set(name, handler);
-        },
-        registerResource: vi.fn(),
-        registerPrompt: vi.fn(),
-    };
-    registerAllCapabilities(fakeServer as never);
-    return handlers;
+    const { server, tools } = captureTools({ registerResource: vi.fn(), registerPrompt: vi.fn() });
+    registerAllCapabilities(server);
+    return new Map([...tools].map(([name, tool]) => [name, tool.handler]));
 }
 
 /** Parse through the real schema so tests exercise the true input shape. */
