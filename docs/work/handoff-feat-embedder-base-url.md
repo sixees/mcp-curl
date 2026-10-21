@@ -17,7 +17,7 @@ This file was first created by `/sixees-workflow:review`, and its review record 
 - **Resolver**: `src/lib/utils/url.ts::resolveRequestUrl` and `::RELATIVE_PATH_PATTERN`.
   - Without `baseUrl`, the input passes through unchanged.
   - With `baseUrl`:
-    - input beginning `/` or `\` is joined if it matches the pattern (single leading `/`, no C0 control or DEL), and refused otherwise;
+    - input beginning `/` or `\` is joined if it matches the pattern (single leading `/`, no C0 control or DEL) and has no `.` or `..` segment (`::hasDotSegment`, literal or `%2e`-encoded), and refused otherwise;
     - an absolute URL passes through unchanged.
   - The join is `resolveBaseUrl`'s concatenation, guarded by the base parsing as an absolute http(s) URL.
   - Nothing in it throws: the join sits inside the `try`.
@@ -47,7 +47,7 @@ This file was first created by `/sixees-workflow:review`, and its review record 
 | Release stays **5.1.0** (MINOR) despite the BREAKING change | Operator, 2026-10-21: one internal consumer, told directly. Recorded in the CHANGELOG entry. `0823c54`'s `!` marker is pushed and stays; it disagrees with the version on purpose | 6.0.0 under invariant 11 |
 | Control characters refused in any relative input | The SSRF gate's WHATWG parse strips tab/CR/LF while cURL gets them raw | Refuse only `//` and `\` |
 | Origin comparison removed (022) | Cannot fail once the base parses as http(s); a single-`/` suffix cannot move the authority | Keep it as a documented backstop |
-| `schema/generator.ts::buildUrl` untouched | Plan: its paths are operator YAML, not model input | Route it through the resolver |
+| `schema/generator.ts::buildUrl` stays off the resolver, but refuses a `.` or `..` path segment via `hasDotSegment` | Plan: its paths are operator YAML, not model input. The operator then extended the dot-segment rule to YAML path parameters (todo `021-p3-dot-segment…`, 2026-10-21: "fail loudly") | Route it through the resolver |
 | No lesson filed for the `path` divergence | Gate 2: RC-45 (state each caller's question before consolidating) and RC-37 (sweep a deleted mechanism for what it incidentally satisfied) already state the rule. **Recurrence of both.** | A new entry |
 
 ## What to pay attention to during review
@@ -55,7 +55,7 @@ This file was first created by `/sixees-workflow:review`, and its review record 
 - **Version**: the change is BREAKING, but the release stays **5.1.0** by operator decision (see *Key decisions*).
   - Do not re-raise the MAJOR pricing in review. Cite this decision instead.
   - `package.json` is still 5.0.1. The bump is PR-4's, so this branch does not change it.
-- **The fix commits `0823c54` and `c8a725b` have not been through a Surface 2 review.** Point the next review at them (K-16).
+- **The fix commits `0823c54` and `c8a725b`, and the later `317080f`, `418cf0d` and `35d3dcb`, have not been through a Surface 2 review.** Point the next review at them (K-16). `35d3dcb` is a second BREAKING change (dot-segment refusal), and it reaches `buildUrl` as well.
 - **`RELATIVE_PATH_PATTERN` is shared by the schema and the resolver.** Widening it changes the advertised tool schema too.
 - The refusal text names the rule, not the value. Keep it that way, because the input is attacker-chosen on the tool path.
 
@@ -97,7 +97,7 @@ aee3ed5 docs(config): describe baseUrl resolution and its limits
 ffae802 feat(extensible): resolve a relative url against baseUrl on the tool path
 37d5860 feat(utils): add resolveRequestUrl and RELATIVE_PATH_PATTERN
 ```
-Plus `ce1d6f6`, which carries this handoff and the todo removals, and `21af2e3`, which records the 5.1.0 decision in the CHANGELOG.
+Plus `ce1d6f6`, which carries this handoff and the todo removals; `21af2e3`, which records the 5.1.0 decision in the CHANGELOG; `317080f`, the comment sync; `418cf0d`, which keeps the `get_user_profile` id out of dot-segments; and `35d3dcb`, which refuses a `.` or `..` path segment instead of resolving it.
 
 ## Review context
 

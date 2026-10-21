@@ -952,7 +952,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(Number.isFinite(reported)).toBe(true);
             expect(limit).toBe(1000);
             // **The relation is `reported >= limit`, not the reverse.** Both
-            // numbers are now the same quantity: the artefact is the origin's
+            // numbers are the same quantity: the artefact is the origin's
             // octets and no defence pass grows a JSON body, so a reported count
             // below the limit it says was exceeded is not constructible.
             expect(reported).toBeGreaterThanOrEqual(limit);
@@ -1038,7 +1038,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         // The load-bearing half of the RC-27 fix. The unit cases in
         // `jq/filter.test.ts` feed `applyJqFilter` directly; these drive the
         // registered tool, which is the boundary a real response reaches — and
-        // the one `processResponse`'s save message now points the model at.
+        // the one `processResponse`'s save message points the model at.
         it.each([
             [".id", "9223372036854775807"],
             [".exp", "1e400"],

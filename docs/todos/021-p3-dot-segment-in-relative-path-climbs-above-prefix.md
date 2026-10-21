@@ -90,8 +90,9 @@ Not covered, by decision:
 
 - `src/lib/utils/url.ts::resolveRequestUrl`, `::RELATIVE_PATH_PATTERN`, `::resolveBaseUrl`
 - `src/lib/extensible/instance-utilities.ts::createInstanceUtilities`
-- `src/lib/server/schemas.ts::CurlExecuteBaseUrlSchema` shares the pattern, so Option 1
-  also changes the advertised tool schema.
+- `src/lib/server/schemas.ts::CurlExecuteBaseUrlSchema` shares the pattern, so extending
+  `RELATIVE_PATH_PATTERN` would change the advertised tool schema; the check chosen
+  (`hasDotSegment`, called from `resolveRequestUrl`) leaves the schema unchanged.
 
 ## Acceptance Criteria
 

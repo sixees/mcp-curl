@@ -1,7 +1,7 @@
 // src/lib/extensible/tool-wrapper.e2e.test.ts
 // curl_execute through a real MCP client, so the SDK's own input parse runs.
-// A fake `registerTool` skips that parse, and `baseUrl` shipped broken on the
-// tool path behind exactly such tests.
+// A fake `registerTool` skips that parse, so a schema that rejects what the
+// handler expects — a relative `url` under `baseUrl` — passes every such test.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

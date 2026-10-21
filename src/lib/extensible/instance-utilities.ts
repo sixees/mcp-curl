@@ -13,9 +13,10 @@ import { resolveRequestUrl } from "../utils/index.js";
 export interface ExecuteRequestParams extends Partial<CurlExecuteInput> {
     /**
      * Path to append to `baseUrl` (alternative to `url`). A missing leading `/`
-     * is added; after that it must start with a single `/` and contain no
-     * control characters, or the call returns an error result. A leading `//`,
-     * `\` or `/\` is refused, never joined.
+     * is added; after that it must start with a single `/`, contain no control
+     * characters, and hold no `.` or `..` segment (literal or `%2e`-encoded), or
+     * the call returns an error result. A leading `//`, `\` or `/\` is refused,
+     * never joined.
      */
     path?: string;
 }
@@ -28,8 +29,9 @@ export interface InstanceUtilities {
      * Execute a cURL request with config defaults applied.
      * Takes an absolute `url`; with `baseUrl` configured, also a `url` starting
      * with `/` or a `path`, both resolved by `resolveRequestUrl`. A relative
-     * value that starts `//`, `\` or `/\`, or holds a control character, is
-     * refused with an error result rather than requested.
+     * value that starts `//`, `\` or `/\`, holds a control character, or holds
+     * a `.` or `..` segment (literal or `%2e`-encoded) is refused with an error
+     * result rather than requested.
      *
      * NOTE: This method calls executeCurlRequest directly and bypasses the hook
      * system (beforeRequest, afterResponse, onError). Use MCP tool invocation
