@@ -56,3 +56,53 @@
 | 025 | Fixed |
 
 **Blockers:** none. Fixes are in the commit after `a717332`. No re-review has run on them yet (K-16): the newest text on the branch is the install/release seam and `McpCurlServer.releaseProcessState`.
+
+## Code Review — 2026-10-21 (round 2)
+
+**Certification:** complete
+**Roster closure:** closed unresolved: pattern-recognition-specialist → "The correctness of any single instance → whichever reviewer owns that lane."
+
+**Scope:** `400715fc25c8e96b7fd0631dc1b4da4a0b0d24fa..1135885` (`git merge-base --fork-point origin/HEAD HEAD`), 20 files, 8 commits. Focused on `308d53e`, the round-1 fixes (K-16).
+
+**Agents used (8, all returned):**
+- Floor: learnings-researcher, code-simplicity-reviewer, security-sentinel, data-integrity-guardian.
+- Optional: typescript-reviewer, performance-oracle, architecture-strategist, pattern-recognition-specialist.
+
+**Findings:** 4 classes after merge — P1 0 | P2 2 | P3 2. Filed 4, declined 0, investigate-first 0, rejected 0.
+
+**Handoff assessment:** The round-1 disposition table is accurate. The ownership seam does what it claims: atomic install and release, a no-op for a foreign handle, refusal before any side effect. security-sentinel, data-integrity-guardian, architecture-strategist and simplicity each confirmed that independently.
+
+The builder's rewrite of todo 022's "exactly one copy" criterion was the builder's own call and was never put to the operator. Two reviewers read it as operator-settled, and it was not.
+
+**Ids 021–024 are reissued.** The completed todos 021–025 were deleted, so the earlier sections of this handoff refer to different todos under those numbers.
+
+### Key findings
+
+| Severity | Class | Todo |
+|---|---|---|
+| P2 (P3 + RC-31 noun join) | fail-open-default — the host-limit key treats a trailing dot as a different host | 022 |
+| P2 (P3 + RC-31 noun join) | fail-open-default — the sliding log is discarded on an ownership change, so a restart gets a fresh quota | 023 |
+| P3 | stale-observation (alias repeated-computation) — rateLimit is validated on one read and copied from another, at two sites | 021 |
+| P3 | convention-drift — HostRateLimit is frozen at runtime but typed as mutable | 024 |
+
+### Verified claims
+
+| Claim | Checked | Result |
+|---|---|---|
+| Tests pass | `npx vitest run` | 42 files, 1499 passed, 7 skipped |
+| `tsc` unchanged | `npx tsc --noEmit` | 12 errors, all in test files, same as `main` |
+| No stale `setHostRateLimit`/`validateRateLimit` | `rg` over src, docs and README (excluding work/plans) | none |
+| Reviewer sweeps | re-ran the `checkRateLimits(`, `.clear()` and `assertHostRateLimit` sweeps | reproduced |
+
+### Outstanding todos
+
+| Todo | Priority | Description | Source |
+|---|---|---|---|
+| 022 | P2 | trailing-dot host key | Surface 2 round 2 |
+| 023 | P2 | sliding log lost on ownership change | Surface 2 round 2 |
+| 021 | P3 | validate-on-one-read / two copies | Surface 2 round 2 |
+| 024 | P3 | readonly HostRateLimit | Surface 2 round 2 |
+
+**Open without a todo:** none.
+
+**Blockers:** none (no P1). Todo 021 needs one operator decision: Option 2 there would reverse round 1's seam copy (rule 03).
