@@ -387,7 +387,9 @@ server.registerCustomTool(
         title: "Get User Profile",
         description: "Fetch user profile with formatted output",
         inputSchema: z.object({
-            userId: z.string().describe("User ID"),
+            // The model chooses this value. Allowing only id characters keeps
+            // "." and "..", which encoding leaves alone, out of the path.
+            userId: z.string().regex(/^[A-Za-z0-9_-]+$/).describe("User ID"),
         }),
         annotations: {
             readOnlyHint: true,
@@ -399,7 +401,7 @@ server.registerCustomTool(
 
         // Make request using instance utilities (applies config)
         const result = await utils.executeRequest({
-            url: `/users/${encodeURIComponent(userId)}`,  // Encode so the id stays one path segment; a bare "." or ".." is still a dot-segment
+            url: `/users/${encodeURIComponent(userId)}`,  // Encode so the id stays one path segment
             headers: {"Accept": "application/json"},
         });
 
@@ -410,7 +412,6 @@ server.registerCustomTool(
             };
         }
 
-        // Format the response
         try {
             const user = JSON.parse(result.content[0].text);
             const formatted = `
@@ -440,6 +441,12 @@ A relative `url` or `path` passed to `executeRequest` must start with a single `
 contain no control characters. One starting `//`, `/\` or `\` returns an error result
 instead of a request. Build it from encoded segments, as above, so a value from the
 model cannot produce one. See [`baseUrl`](./configuration.md#baseurl).
+
+**Encoding alone does not keep a segment in place.** `encodeURIComponent` turns `/`
+into `%2F`, so a value cannot add segments, but it leaves `.` and `..` unchanged. A
+`..` segment is resolved before the request is sent, so `userId: ".."` would request
+`/users/..`, which is the API root, with the configured `defaultHeaders`. Constrain
+any segment the model chooses in the tool's `inputSchema`, as the example does.
 
 ## Input Schema Patterns
 
