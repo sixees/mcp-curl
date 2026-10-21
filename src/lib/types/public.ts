@@ -4,6 +4,8 @@
 import type { CurlExecuteInput, JqQueryInput } from "../server/schemas.js";
 import type { HostRateLimit } from "./rate-limit.js";
 
+export type { HostRateLimit };
+
 /**
  * Configuration options for McpCurlServer.
  * These settings affect how all tool calls are processed.
@@ -43,8 +45,10 @@ export interface McpCurlConfig {
      * 60 per minute. Both fields must be positive integers, or `configure()`
      * throws. The per-client limit is not affected.
      *
-     * Applied process-wide by `start()` and reset by `shutdown()`, so it also
-     * counts `utilities()` calls and YAML endpoint tools. It is local
+     * Applied process-wide by `start()` and released only by this server's
+     * `shutdown()` or failed `start()`, so it also counts `utilities()` calls,
+     * YAML endpoint tools and any other server in the process. While one server
+     * holds it, another's `start()` with a `rateLimit` throws. It is local
      * throttling, not quota accounting: the count starts again with the
      * process, and requests made elsewhere on the same credential are not seen.
      */

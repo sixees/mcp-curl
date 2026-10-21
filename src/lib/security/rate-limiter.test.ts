@@ -3,8 +3,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
     checkRateLimits,
     clearRateLimitMaps,
+    installHostRateLimit,
     rateLimitMapSizes,
-    setHostRateLimit,
+    releaseHostRateLimit,
+    type HostRateLimitHandle,
     startRateLimitCleanup,
     stopRateLimitCleanup,
 } from "./rate-limiter.js";
@@ -26,7 +28,6 @@ beforeEach(() => {
 
 afterEach(() => {
     vi.useRealTimers();
-    setHostRateLimit(undefined);
     clearRateLimitMaps();
 });
 
@@ -164,9 +165,16 @@ describe("checkRateLimits — configured sliding window", () => {
     const HOUR = 3_600_000;
     const HOST = "api.example.test";
 
+    let handle: HostRateLimitHandle;
+
     beforeEach(() => {
-        setHostRateLimit({ max: 2, windowMs: HOUR });
+        handle = installHostRateLimit({ max: 2, windowMs: HOUR });
     });
+
+    function reinstall(limit: { max: number; windowMs: number }): void {
+        releaseHostRateLimit(handle);
+        handle = installHostRateLimit(limit);
+    }
 
     it("admits max back to back and refuses the next", () => {
         checkRateLimits(HOST, "c1");
@@ -219,7 +227,7 @@ describe("checkRateLimits — configured sliding window", () => {
     });
 
     it("still enforces the per-client gate", () => {
-        setHostRateLimit({ max: 10_000, windowMs: HOUR });
+        reinstall({ max: 10_000, windowMs: HOUR });
         for (let i = 0; i < RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE; i++) {
             checkRateLimits(`host-${i}.example.test`, "one-client");
         }
@@ -228,7 +236,7 @@ describe("checkRateLimits — configured sliding window", () => {
     });
 
     it("refuses an untracked host at the tracking cap, and the sweep frees it once the window passes", () => {
-        setHostRateLimit({ max: 1, windowMs: 120_000 });
+        reinstall({ max: 1, windowMs: 120_000 });
         fillHostSlidingLogToCap();
         expect(() => checkRateLimits("one-too-many.example.test", "fresh-client"))
             .toThrow(/tracking is at capacity .* Refusing an untracked host/);
@@ -242,10 +250,28 @@ describe("checkRateLimits — configured sliding window", () => {
         expect(() => checkRateLimits("fresh.example.test", "fresh-client-3")).not.toThrow();
     });
 
-    it("restores the fixed default when cleared", () => {
+    it("check and sweep agree at exactly windowMs", () => {
+        reinstall({ max: 1, windowMs: 120_000 });
+        const interval = startRateLimitCleanup();
+        try {
+            checkRateLimits(HOST, "c1");
+            vi.advanceTimersByTime(119_999);
+            expect(rateLimitMapSizes().slidingHosts).toBe(1);
+            expect(() => checkRateLimits(HOST, "c2")).toThrow(/Rate limit exceeded for host/);
+
+            // The sweep at 120 000 ms deletes the log, and the check would admit too.
+            vi.advanceTimersByTime(1);
+            expect(rateLimitMapSizes().slidingHosts).toBe(0);
+            expect(() => checkRateLimits(HOST, "c3")).not.toThrow();
+        } finally {
+            stopRateLimitCleanup(interval);
+        }
+    });
+
+    it("restores the fixed default when released", () => {
         checkRateLimits(HOST, "c1");
         checkRateLimits(HOST, "c2");
-        setHostRateLimit(undefined);
+        releaseHostRateLimit(handle);
         expect(rateLimitMapSizes().slidingHosts).toBe(0);
         for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) {
             checkRateLimits(HOST, `client-${i}`);
@@ -256,10 +282,50 @@ describe("checkRateLimits — configured sliding window", () => {
 
     it("copies the limit, so mutating the caller's object changes nothing", () => {
         const limit = { max: 1, windowMs: HOUR };
-        setHostRateLimit(limit);
+        reinstall(limit);
         limit.max = 100;
         checkRateLimits(HOST, "c1");
         expect(() => checkRateLimits(HOST, "c2")).toThrow(/Maximum 1 requests/);
+    });
+});
+
+describe("installHostRateLimit — ownership", () => {
+    const HOUR = 3_600_000;
+    const HOST = "api.example.test";
+
+    /** Spend the one request a `max: 1` limit admits, then prove it still holds. */
+    function expectLimitOfOneHeld(): void {
+        expect(() => checkRateLimits(HOST, "probe")).toThrow(/Maximum 1 requests per 3600 s/);
+    }
+
+    it.each([
+        [{ max: NaN, windowMs: 1 }, "rateLimit.max must be a positive integer, got: NaN"],
+        [{ max: 1, windowMs: 0 }, "rateLimit.windowMs must be a positive integer, got: 0"],
+        [null, "rateLimit must be an object { max, windowMs }, got: null"],
+    ])("refuses %o and installs nothing", (limit, message) => {
+        expect(() => installHostRateLimit(limit as never)).toThrow(new Error(message));
+        for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) checkRateLimits(HOST, `c-${i}`);
+        expect(() => checkRateLimits(HOST, "c-final")).toThrow(/Maximum 60 requests per minute\.$/);
+    });
+
+    it("refuses a second install while the first is held, and keeps the first", () => {
+        installHostRateLimit({ max: 1, windowMs: HOUR });
+        checkRateLimits(HOST, "c1");
+        expect(() => installHostRateLimit({ max: 100, windowMs: HOUR }))
+            .toThrow(/already installed by another McpCurlServer/);
+        expectLimitOfOneHeld();
+    });
+
+    it("ignores a release by a handle that does not hold the limit", () => {
+        const first = installHostRateLimit({ max: 5, windowMs: HOUR });
+        releaseHostRateLimit(first);
+        releaseHostRateLimit(first);
+        installHostRateLimit({ max: 1, windowMs: HOUR });
+        checkRateLimits(HOST, "c1");
+
+        releaseHostRateLimit(first);
+        releaseHostRateLimit(Symbol("stranger"));
+        expectLimitOfOneHeld();
     });
 });
 

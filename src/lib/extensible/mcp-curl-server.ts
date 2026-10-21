@@ -27,13 +27,16 @@ import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import {
     startRateLimitCleanup,
     stopRateLimitCleanup,
-    setHostRateLimit,
+    assertHostRateLimit,
+    installHostRateLimit,
+    releaseHostRateLimit,
+    type HostRateLimitHandle,
     startInjectionCleanup,
     stopInjectionCleanup,
     startWrapErrorCleanup,
     stopWrapErrorCleanup,
 } from "../security/index.js";
-import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, assertPositiveInteger } from "../utils/index.js";
+import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
 import { createWrapper } from "../response/post-processor.js";
 import {
     createHttpApp,
@@ -121,6 +124,7 @@ export class McpCurlServer {
     private _httpServer: Server | null = null;
     private _sessionManager: SessionManager | null = null;
     private _rateLimitInterval: NodeJS.Timeout | null = null;
+    private _hostLimitHandle: HostRateLimitHandle | null = null;
     private _injectionCleanupInterval: NodeJS.Timeout | null = null;
     private _wrapErrorCleanupInterval: NodeJS.Timeout | null = null;
     private _utilities: InstanceUtilities | null = null;
@@ -135,9 +139,14 @@ export class McpCurlServer {
      */
     configure(config: Partial<McpCurlConfig>): this {
         this.ensureNotStarted("configure()");
-        // Validated before anything is merged, so a throw leaves the config as it was.
+        // Validated before anything is merged, so a throw leaves the config as it
+        // was, and stored as a frozen copy, so the value validated is the value used.
         if (config.rateLimit !== undefined) {
-            validateRateLimit(config.rateLimit);
+            assertHostRateLimit(config.rateLimit);
+            config = {
+                ...config,
+                rateLimit: Object.freeze({ max: config.rateLimit.max, windowMs: config.rateLimit.windowMs }),
+            };
         }
         const picked: Partial<McpCurlConfig> = {};
         const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
@@ -447,13 +456,19 @@ export class McpCurlServer {
                 validateAuthToken(httpAuthToken);
             }
 
+            // Claimed before any other side effect, so a refusal (another
+            // server holds the limit) leaves nothing to undo. Left unclaimed
+            // without `rateLimit`, so this server cannot release another's.
+            if (this._frozenConfig.rateLimit) {
+                this._hostLimitHandle = installHostRateLimit(this._frozenConfig.rateLimit);
+            }
+
             // Clean up orphaned temp directories from previous runs
             await cleanupOrphanedTempDirs();
 
             // Start rate limit cleanup, injection detection cleanup, and the
             // PR-6b defence-in-depth wrap-error throttle cleanup.
             this._rateLimitInterval = startRateLimitCleanup();
-            setHostRateLimit(this._frozenConfig.rateLimit);
             this._injectionCleanupInterval = startInjectionCleanup();
             this._wrapErrorCleanupInterval = startWrapErrorCleanup();
 
@@ -485,19 +500,7 @@ export class McpCurlServer {
                 this._sessionManager.stopCleanup();
                 this._sessionManager = null;
             }
-            if (this._rateLimitInterval) {
-                stopRateLimitCleanup(this._rateLimitInterval);
-                this._rateLimitInterval = null;
-            }
-            setHostRateLimit(undefined);
-            if (this._injectionCleanupInterval) {
-                stopInjectionCleanup(this._injectionCleanupInterval);
-                this._injectionCleanupInterval = null;
-            }
-            if (this._wrapErrorCleanupInterval) {
-                stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
-                this._wrapErrorCleanupInterval = null;
-            }
+            this.releaseProcessState();
             this._server = null;
             this._started = false;
             this._frozenConfig = null;
@@ -568,18 +571,7 @@ export class McpCurlServer {
             }
         }
 
-        // Stop rate limit cleanup, injection detection cleanup, and the
-        // wrap-error throttle cleanup (PR-6b).
-        if (this._rateLimitInterval) {
-            stopRateLimitCleanup(this._rateLimitInterval);
-        }
-        setHostRateLimit(undefined);
-        if (this._injectionCleanupInterval) {
-            stopInjectionCleanup(this._injectionCleanupInterval);
-        }
-        if (this._wrapErrorCleanupInterval) {
-            stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
-        }
+        this.releaseProcessState();
 
         // Clean up temp directory (wrapped in try/finally to always reset state)
         try {
@@ -591,9 +583,6 @@ export class McpCurlServer {
             this._started = false;
             this._frozenConfig = null;
             this._utilities = null;
-            this._rateLimitInterval = null;
-            this._injectionCleanupInterval = null;
-            this._wrapErrorCleanupInterval = null;
             this._sessionManager = null;
         }
     }
@@ -716,10 +705,31 @@ export class McpCurlServer {
             allowedOrigins: this._config.allowedOrigins
                 ? Object.freeze([...this._config.allowedOrigins]) as readonly string[]
                 : undefined,
-            rateLimit: this._config.rateLimit
-                ? Object.freeze({ max: this._config.rateLimit.max, windowMs: this._config.rateLimit.windowMs })
-                : undefined,
         });
+    }
+
+    /**
+     * Undo `start()`'s process-wide effects: the three cleanup intervals and
+     * this server's host limit. Shared by the start rollback and `shutdown()`,
+     * and safe to call when any of them was never set up.
+     */
+    private releaseProcessState(): void {
+        if (this._rateLimitInterval) {
+            stopRateLimitCleanup(this._rateLimitInterval);
+            this._rateLimitInterval = null;
+        }
+        if (this._hostLimitHandle) {
+            releaseHostRateLimit(this._hostLimitHandle);
+            this._hostLimitHandle = null;
+        }
+        if (this._injectionCleanupInterval) {
+            stopInjectionCleanup(this._injectionCleanupInterval);
+            this._injectionCleanupInterval = null;
+        }
+        if (this._wrapErrorCleanupInterval) {
+            stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
+            this._wrapErrorCleanupInterval = null;
+        }
     }
 
     /**
@@ -731,20 +741,6 @@ export class McpCurlServer {
             throw new Error(`Cannot call ${method} after server has started`);
         }
     }
-}
-
-/**
- * Reject a `rateLimit` that is not `{ max, windowMs }` with both positive
- * integers. There is no "off" value, so a typo or an unset variable cannot
- * disable the per-host limit.
- */
-function validateRateLimit(rateLimit: unknown): void {
-    if (typeof rateLimit !== "object" || rateLimit === null) {
-        throw new Error(`rateLimit must be an object { max, windowMs }, got: ${String(rateLimit)}`);
-    }
-    const { max, windowMs } = rateLimit as Record<string, unknown>;
-    assertPositiveInteger("rateLimit.max", max);
-    assertPositiveInteger("rateLimit.windowMs", windowMs);
 }
 
 /**

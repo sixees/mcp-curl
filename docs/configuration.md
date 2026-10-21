@@ -287,11 +287,16 @@ configure({rateLimit: {max: 200, windowMs: 3_600_000}}) // 200 per rolling hour
   `rateLimit` the fixed 60/min window and its message are unchanged.
 - **Validated at `configure()`.** Both fields must be positive integers, or
   `configure()` throws. There is no "off" value, so a typo or an unset
-  environment variable cannot disable the limiter.
+  environment variable cannot disable the limiter. `configure()` keeps its own
+  copy, so changing your object afterwards changes nothing.
 - **Applied by `start()`, process-wide.** It counts `curl_execute`,
-  `utilities().executeRequest` and YAML endpoint tools alike. `shutdown()`
-  restores the default. Two servers in one process share one setting, and the
-  last `start()` wins.
+  `utilities().executeRequest` and YAML endpoint tools alike — including those
+  of any other server in the same process. That server's `shutdown()`, or a
+  `start()` of its that fails, leaves your limit in place: only the server that
+  set it restores the default, at its own `shutdown()` or failed `start()`.
+- **One server sets it at a time.** While one server holds a `rateLimit`, a
+  second server's `start()` with a `rateLimit` of its own throws, even an equal
+  one, rather than replacing the first. Shut the first down to change it.
 
 **This is local throttling, not quota accounting.** The counter lives in this
 process: a restart, or an HTTP client reconnecting to a restarted server,

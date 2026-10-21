@@ -1228,6 +1228,64 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         expect(textOf(after)).toMatch(REACHED_CURL);
     });
 
+    it("uses the limit as configured when the caller mutates its object before start()", async () => {
+        const limit = { max: 1, windowMs: 3_600_000 };
+        const mutated = new McpCurlServer().configure({ allowLocalhost: true, rateLimit: limit });
+        limit.max = Number(process.env.MCP_CURL_TEST_UNSET_VARIABLE);
+        expect(limit.max).toBeNaN();
+        await server.shutdown();
+        try {
+            await mutated.start("stdio");
+            expect(textOf(await mutated.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+            const second = await mutated.utilities().executeRequest({ url: URL });
+            expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        } finally {
+            await mutated.shutdown();
+        }
+    });
+
+    describe("with a second server in the process", () => {
+        let other: McpCurlServer;
+
+        beforeEach(async () => {
+            await server.start("stdio");
+            expect(textOf(await server.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+            other = new McpCurlServer().configure({ allowLocalhost: true });
+        });
+
+        afterEach(async () => {
+            await other.shutdown();
+        });
+
+        async function expectFirstLimitHeld(): Promise<void> {
+            const again = await server.utilities().executeRequest({ url: URL });
+            expect(textOf(again)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        }
+
+        it("keeps the first server's limit when one without rateLimit starts", async () => {
+            await other.start("stdio");
+            await expectFirstLimitHeld();
+        });
+
+        it("keeps the first server's limit when one without rateLimit fails to start", async () => {
+            other.configure({ authToken: "\u0001" });
+            await expect(other.start("http")).rejects.toThrow(/printable ASCII/);
+            await expectFirstLimitHeld();
+        });
+
+        it("keeps the first server's limit when one without rateLimit shuts down", async () => {
+            await other.start("stdio");
+            await other.shutdown();
+            await expectFirstLimitHeld();
+        });
+
+        it("refuses a second rateLimit, and keeps the first", async () => {
+            other.configure({ rateLimit: { max: 100, windowMs: 3_600_000 } });
+            await expect(other.start("stdio")).rejects.toThrow(/already installed by another McpCurlServer/);
+            await expectFirstLimitHeld();
+        });
+    });
+
     it("restores the default limit when start() fails", async () => {
         vi.spyOn(serverFactory, "createServer").mockImplementation(() => {
             throw new Error("boom");

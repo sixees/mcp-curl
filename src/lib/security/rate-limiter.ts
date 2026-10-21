@@ -3,6 +3,7 @@
 
 import { RATE_LIMIT } from "../config/session.js";
 import type { HostRateLimit, RateLimitEntry } from "../types/index.js";
+import { assertPositiveInteger } from "../utils/index.js";
 
 /**
  * Rate limiting with fixed time windows and periodic cleanup.
@@ -15,7 +16,7 @@ import type { HostRateLimit, RateLimitEntry } from "../types/index.js";
  * spreading requests across many different hostnames.
  *
  * The per-host gate is a fixed 60/min window by default. An embedder's
- * `rateLimit` (applied through {@link setHostRateLimit}) replaces it with a
+ * `rateLimit` (installed through {@link installHostRateLimit}) replaces it with a
  * sliding log of timestamps. A long fixed window cannot serve that case: the
  * 10 s sweep deletes any entry whose window has closed, and a fixed window
  * admits `2 × max` across its boundary — a burst the upstream quota it is meant
@@ -35,6 +36,12 @@ const hostSlidingLog = new Map<string, number[]>();
 
 /** The configured per-host limit; `undefined` selects the fixed default. */
 let hostLimit: HostRateLimit | undefined;
+
+/** Returned by {@link installHostRateLimit}; only its holder can release the limit. */
+export type HostRateLimitHandle = symbol;
+
+/** The handle of whoever installed `hostLimit`. */
+let hostLimitOwner: HostRateLimitHandle | undefined;
 
 /**
  * Elapsed-time source for rate-limit windows.
@@ -57,7 +64,16 @@ function elapsedNow(): number {
  * Whether an entry's window has closed.
  */
 function windowClosed(entry: RateLimitEntry, now: number): boolean {
-    return now - entry.windowStart >= RATE_LIMIT.WINDOW_MS;
+    return leftWindow(entry.windowStart, now, RATE_LIMIT.WINDOW_MS);
+}
+
+/**
+ * Whether a timestamp has left a window. The request check and the sweep both
+ * ask this, so they cannot disagree about the boundary: a sweep that deleted
+ * what the check still counted would admit more than `max` in one window.
+ */
+function leftWindow(timestamp: number, now: number, windowMs: number): boolean {
+    return now - timestamp >= windowMs;
 }
 
 /**
@@ -66,7 +82,7 @@ function windowClosed(entry: RateLimitEntry, now: number): boolean {
  */
 function pruneLog(log: number[], now: number, windowMs: number): void {
     let expired = 0;
-    while (expired < log.length && now - log[expired] >= windowMs) expired++;
+    while (expired < log.length && leftWindow(log[expired], now, windowMs)) expired++;
     if (expired > 0) log.splice(0, expired);
 }
 
@@ -80,7 +96,7 @@ function cleanupExpiredLogs(): void {
     }
     const now = elapsedNow();
     for (const [key, log] of hostSlidingLog) {
-        if (log.length === 0 || now - log[log.length - 1] >= hostLimit.windowMs) {
+        if (log.length === 0 || leftWindow(log[log.length - 1], now, hostLimit.windowMs)) {
             hostSlidingLog.delete(key);
         }
     }
@@ -218,20 +234,59 @@ export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.
 }
 
 /**
- * Set the per-host limit for the whole process, or restore the fixed 60/min
- * default with `undefined`.
+ * Reject a limit that is not `{ max, windowMs }` with both positive integers.
+ * There is no "off" value, so a typo or an unset variable (`Number(undefined)`
+ * is `NaN`, and `length >= NaN` is always false) cannot disable the limit.
+ */
+export function assertHostRateLimit(limit: unknown): asserts limit is HostRateLimit {
+    if (typeof limit !== "object" || limit === null) {
+        throw new Error(`rateLimit must be an object { max, windowMs }, got: ${String(limit)}`);
+    }
+    const { max, windowMs } = limit as Record<string, unknown>;
+    assertPositiveInteger("rateLimit.max", max);
+    assertPositiveInteger("rateLimit.windowMs", windowMs);
+}
+
+/**
+ * Install the per-host limit for the whole process, and return the handle
+ * that releases it.
  *
  * **Process-global, like the maps.** Every caller of `checkRateLimits` —
  * `curl_execute`, `utilities().executeRequest`, YAML endpoint tools — is
- * counted against it with nothing threaded through, and two servers in one
- * process share it: the last call wins. The caller validates `limit`; this
- * stores a copy so a later mutation of the caller's object changes nothing.
+ * counted against it with nothing threaded through, including a second server
+ * in the process that set no `rateLimit` of its own.
  *
- * Sliding logs are dropped on every call: a log recorded under one window
- * says nothing about another.
+ * **First holder wins; a second install throws** rather than replacing it.
+ * Replacing would silently loosen or reset a limit another server is relying
+ * on — the failure this limit exists to prevent. The limit is validated and
+ * copied here, so no caller can install `NaN` or change it afterwards.
+ *
+ * Sliding logs start empty: a log recorded under one window says nothing
+ * about another.
  */
-export function setHostRateLimit(limit: HostRateLimit | undefined): void {
-    hostLimit = limit ? { max: limit.max, windowMs: limit.windowMs } : undefined;
+export function installHostRateLimit(limit: HostRateLimit): HostRateLimitHandle {
+    assertHostRateLimit(limit);
+    if (hostLimitOwner !== undefined) {
+        throw new Error(
+            "rateLimit is already installed by another McpCurlServer in this process. " +
+            "The per-host limit is process-wide, so only one server may set it at a time."
+        );
+    }
+    hostLimit = { max: limit.max, windowMs: limit.windowMs };
+    hostLimitOwner = Symbol("hostRateLimit");
+    hostSlidingLog.clear();
+    return hostLimitOwner;
+}
+
+/**
+ * Restore the fixed 60/min default, if `handle` still holds the limit. Any
+ * other handle is a no-op, so one server's shutdown or failed start cannot
+ * reset a limit another server installed, and releasing twice is harmless.
+ */
+export function releaseHostRateLimit(handle: HostRateLimitHandle): void {
+    if (handle !== hostLimitOwner) return;
+    hostLimit = undefined;
+    hostLimitOwner = undefined;
     hostSlidingLog.clear();
 }
 
@@ -262,7 +317,7 @@ export function stopRateLimitCleanup(interval: NodeJS.Timeout): void {
 }
 
 /**
- * Clear all rate limit maps.
+ * Clear all rate limit maps, and drop an installed host limit whoever holds it.
  *
  * **WARNING: For testing purposes only.** Do not call in production code.
  * This bypasses rate limiting protections and should only be used in test
@@ -271,6 +326,8 @@ export function stopRateLimitCleanup(interval: NodeJS.Timeout): void {
  * @internal
  */
 export function clearRateLimitMaps(): void {
+    hostLimit = undefined;
+    hostLimitOwner = undefined;
     hostRateLimitMap.clear();
     clientRateLimitMap.clear();
     hostSlidingLog.clear();
