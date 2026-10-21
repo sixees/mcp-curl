@@ -43,6 +43,14 @@ export const RATE_LIMIT = {
      * failure is a bounded refusal rather than a wedge. Raising this number
      * buys nothing that the window does not already give back.
      *
+     * **A configured `rateLimit` stretches that drain to its own `windowMs`.**
+     * The sliding host map shares this ceiling and the reject-when-full rule,
+     * and a host stays tracked until its newest request leaves the configured
+     * window, so the sizing above is per minute while the drain may be per
+     * hour. Filling it then refuses new hosts for up to one configured window.
+     * That is accepted, not overlooked: an embedder that sets `rateLimit`
+     * fronts one API and reaches a handful of hosts.
+     *
      * Deliberately not {@link THROTTLE.MAX_TRACKED_KEYS}: that one bounds log
      * throttles, where overflow costs a line of stderr. Sharing a value would
      * couple an availability threshold to a memory one.

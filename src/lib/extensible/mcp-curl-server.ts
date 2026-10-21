@@ -27,12 +27,13 @@ import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import {
     startRateLimitCleanup,
     stopRateLimitCleanup,
+    setHostRateLimit,
     startInjectionCleanup,
     stopInjectionCleanup,
     startWrapErrorCleanup,
     stopWrapErrorCleanup,
 } from "../security/index.js";
-import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
+import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, assertPositiveInteger } from "../utils/index.js";
 import { createWrapper } from "../response/post-processor.js";
 import {
     createHttpApp,
@@ -93,7 +94,7 @@ const KNOWN_CONFIG_KEYS_ARRAY = [
     "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
     "maxResultSize", "allowLocalhost", "port", "host",
     "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
-    "enableSpotlighting",
+    "enableSpotlighting", "rateLimit",
 ] as const satisfies readonly (keyof McpCurlConfig)[];
 
 // Compile-time check: fails if any McpCurlConfig key is missing from the array
@@ -130,10 +131,14 @@ export class McpCurlServer {
      *
      * @param config - Configuration options to merge
      * @returns this for chaining
-     * @throws Error if called after start()
+     * @throws Error if called after start(), or if `rateLimit` is not two positive integers
      */
     configure(config: Partial<McpCurlConfig>): this {
         this.ensureNotStarted("configure()");
+        // Validated before anything is merged, so a throw leaves the config as it was.
+        if (config.rateLimit !== undefined) {
+            validateRateLimit(config.rateLimit);
+        }
         const picked: Partial<McpCurlConfig> = {};
         const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
         for (const key of Object.keys(config)) {
@@ -448,6 +453,7 @@ export class McpCurlServer {
             // Start rate limit cleanup, injection detection cleanup, and the
             // PR-6b defence-in-depth wrap-error throttle cleanup.
             this._rateLimitInterval = startRateLimitCleanup();
+            setHostRateLimit(this._frozenConfig.rateLimit);
             this._injectionCleanupInterval = startInjectionCleanup();
             this._wrapErrorCleanupInterval = startWrapErrorCleanup();
 
@@ -483,6 +489,7 @@ export class McpCurlServer {
                 stopRateLimitCleanup(this._rateLimitInterval);
                 this._rateLimitInterval = null;
             }
+            setHostRateLimit(undefined);
             if (this._injectionCleanupInterval) {
                 stopInjectionCleanup(this._injectionCleanupInterval);
                 this._injectionCleanupInterval = null;
@@ -566,6 +573,7 @@ export class McpCurlServer {
         if (this._rateLimitInterval) {
             stopRateLimitCleanup(this._rateLimitInterval);
         }
+        setHostRateLimit(undefined);
         if (this._injectionCleanupInterval) {
             stopInjectionCleanup(this._injectionCleanupInterval);
         }
@@ -708,6 +716,9 @@ export class McpCurlServer {
             allowedOrigins: this._config.allowedOrigins
                 ? Object.freeze([...this._config.allowedOrigins]) as readonly string[]
                 : undefined,
+            rateLimit: this._config.rateLimit
+                ? Object.freeze({ max: this._config.rateLimit.max, windowMs: this._config.rateLimit.windowMs })
+                : undefined,
         });
     }
 
@@ -720,6 +731,20 @@ export class McpCurlServer {
             throw new Error(`Cannot call ${method} after server has started`);
         }
     }
+}
+
+/**
+ * Reject a `rateLimit` that is not `{ max, windowMs }` with both positive
+ * integers. There is no "off" value, so a typo or an unset variable cannot
+ * disable the per-host limit.
+ */
+function validateRateLimit(rateLimit: unknown): void {
+    if (typeof rateLimit !== "object" || rateLimit === null) {
+        throw new Error(`rateLimit must be an object { max, windowMs }, got: ${String(rateLimit)}`);
+    }
+    const { max, windowMs } = rateLimit as Record<string, unknown>;
+    assertPositiveInteger("rateLimit.max", max);
+    assertPositiveInteger("rateLimit.windowMs", windowMs);
 }
 
 /**
