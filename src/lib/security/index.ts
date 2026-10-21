@@ -11,7 +11,7 @@ export {
     checkRateLimits,
     startRateLimitCleanup,
     stopRateLimitCleanup,
-    assertHostRateLimit,
+    parseHostRateLimit,
     installHostRateLimit,
     releaseHostRateLimit,
     type HostRateLimitHandle,

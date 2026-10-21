@@ -87,6 +87,11 @@ type _PinnedPublicTypes = [
     CreateHttpOnlyUrlSchemaOptions,
 ];
 
+// The limit is frozen at runtime, so the type must refuse the write the
+// runtime would throw on.
+// @ts-expect-error HostRateLimit fields are readonly
+((): void => { ({} as HostRateLimit).max = 1; });
+
 import { McpCurlServer, createInstanceUtilities } from "./lib/extensible/index.js";
 import { createApiServer, createApiServerSync } from "./lib/api-server.js";
 import {

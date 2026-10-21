@@ -268,11 +268,47 @@ describe("checkRateLimits — configured sliding window", () => {
         }
     });
 
+    it("counts a trailing-dot spelling of a host against the same budget", () => {
+        checkRateLimits(HOST, "c1");
+        checkRateLimits(`${HOST}.`, "c2");
+        expect(() => checkRateLimits(`${HOST}..`, "c3")).toThrow(/Rate limit exceeded for host/);
+        expect(rateLimitMapSizes().slidingHosts).toBe(1);
+    });
+
+    it("keeps the log across a release and a re-install with the same window", () => {
+        checkRateLimits(HOST, "c1");
+        checkRateLimits(HOST, "c2");
+        reinstall({ max: 2, windowMs: HOUR });
+        expect(() => checkRateLimits(HOST, "c3")).toThrow(/Rate limit exceeded for host/);
+    });
+
+    it("drops the log on a re-install with a different window", () => {
+        checkRateLimits(HOST, "c1");
+        checkRateLimits(HOST, "c2");
+        reinstall({ max: 2, windowMs: 2 * HOUR });
+        expect(rateLimitMapSizes().slidingHosts).toBe(0);
+        expect(() => checkRateLimits(HOST, "c3")).not.toThrow();
+    });
+
+    it("sweeps a released log once its window passes", () => {
+        reinstall({ max: 1, windowMs: 120_000 });
+        const interval = startRateLimitCleanup();
+        try {
+            checkRateLimits(HOST, "c1");
+            releaseHostRateLimit(handle);
+            vi.advanceTimersByTime(110_000);
+            expect(rateLimitMapSizes().slidingHosts).toBe(1);
+            vi.advanceTimersByTime(10_000);
+            expect(rateLimitMapSizes().slidingHosts).toBe(0);
+        } finally {
+            stopRateLimitCleanup(interval);
+        }
+    });
+
     it("restores the fixed default when released", () => {
         checkRateLimits(HOST, "c1");
         checkRateLimits(HOST, "c2");
         releaseHostRateLimit(handle);
-        expect(rateLimitMapSizes().slidingHosts).toBe(0);
         for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) {
             checkRateLimits(HOST, `client-${i}`);
         }
@@ -286,6 +322,17 @@ describe("checkRateLimits — configured sliding window", () => {
         limit.max = 100;
         checkRateLimits(HOST, "c1");
         expect(() => checkRateLimits(HOST, "c2")).toThrow(/Maximum 1 requests/);
+    });
+});
+
+describe("checkRateLimits — host key", () => {
+    it("counts a trailing-dot spelling against the fixed per-host budget", () => {
+        for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) {
+            checkRateLimits(i % 2 ? "api.example.test." : "api.example.test", `c-${i}`);
+        }
+        expect(() => checkRateLimits("api.example.test.", "c-final"))
+            .toThrow('Rate limit exceeded for host "api.example.test.". Maximum 60 requests per minute.');
+        expect(rateLimitMapSizes().hosts).toBe(1);
     });
 });
 

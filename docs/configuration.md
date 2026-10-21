@@ -297,9 +297,15 @@ configure({rateLimit: {max: 200, windowMs: 3_600_000}}) // 200 per rolling hour
 - **One server sets it at a time.** While one server holds a `rateLimit`, a
   second server's `start()` with a `rateLimit` of its own throws, even an equal
   one, rather than replacing the first. Shut the first down to change it.
+- **The count survives an in-process restart.** `shutdown()` keeps the
+  requests already counted, so a server that starts again — or another that
+  takes over — with the same `windowMs` does not get a fresh quota inside the
+  window. A different `windowMs` starts the count from zero.
+- **One host, one count.** `api.example.com.` (with a trailing dot) counts
+  against the same budget as `api.example.com`.
 
 **This is local throttling, not quota accounting.** The counter lives in this
-process: a restart, or an HTTP client reconnecting to a restarted server,
+process: a process restart, or an HTTP client reconnecting to a restarted process,
 starts it from zero while the upstream's window keeps running. It cannot see
 requests made by other processes, apps or clients on the same credential. For
 a hard upstream quota, set `max` below it and leave headroom for what this

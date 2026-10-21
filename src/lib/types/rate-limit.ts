@@ -27,7 +27,7 @@ export interface RateLimitEntry {
  */
 export interface HostRateLimit {
     /** Requests admitted per host in any one window (positive integer) */
-    max: number;
+    readonly max: number;
     /** Window length in milliseconds (positive integer) */
-    windowMs: number;
+    readonly windowMs: number;
 }

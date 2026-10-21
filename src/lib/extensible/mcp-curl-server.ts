@@ -27,7 +27,7 @@ import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import {
     startRateLimitCleanup,
     stopRateLimitCleanup,
-    assertHostRateLimit,
+    parseHostRateLimit,
     installHostRateLimit,
     releaseHostRateLimit,
     type HostRateLimitHandle,
@@ -139,14 +139,9 @@ export class McpCurlServer {
      */
     configure(config: Partial<McpCurlConfig>): this {
         this.ensureNotStarted("configure()");
-        // Validated before anything is merged, so a throw leaves the config as it
-        // was, and stored as a frozen copy, so the value validated is the value used.
+        // Parsed before anything is merged, so a throw leaves the config as it was.
         if (config.rateLimit !== undefined) {
-            assertHostRateLimit(config.rateLimit);
-            config = {
-                ...config,
-                rateLimit: Object.freeze({ max: config.rateLimit.max, windowMs: config.rateLimit.windowMs }),
-            };
+            config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
         }
         const picked: Partial<McpCurlConfig> = {};
         const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");

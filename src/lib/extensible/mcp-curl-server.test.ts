@@ -1244,6 +1244,30 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         }
     });
 
+    it("parses each field once, so an accessor cannot pass with one value and store another", async () => {
+        let reads = 0;
+        const shifty = { get max() { return reads++ === 0 ? 1 : NaN; }, windowMs: 3_600_000 };
+        const parsed = new McpCurlServer().configure({ allowLocalhost: true, rateLimit: shifty });
+        await server.shutdown();
+        try {
+            await parsed.start("stdio");
+            expect(textOf(await parsed.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+            const second = await parsed.utilities().executeRequest({ url: URL });
+            expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        } finally {
+            await parsed.shutdown();
+        }
+    });
+
+    it("keeps the quota spent when the same server restarts inside the window", async () => {
+        await server.start("stdio");
+        expect(textOf(await server.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+        await server.shutdown();
+        await server.start("stdio");
+        const again = await server.utilities().executeRequest({ url: URL });
+        expect(textOf(again)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+    });
+
     describe("with a second server in the process", () => {
         let other: McpCurlServer;
 
