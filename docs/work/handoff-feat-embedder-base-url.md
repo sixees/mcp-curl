@@ -197,3 +197,35 @@ None.
 - pattern-recognition-specialist noted two things:
   - a stray `.` line inside the code fence in `docs/configuration.md` → *baseUrl*. The line predates this branch; the diff edited the same section.
   - the `!enabled` early returns are unwrapped. That is pre-existing and already todo 015.
+
+## Review Comments Addressed — 2026-10-21
+
+PR #46, Surface 3, round 1 (CodeRabbit full review, Codex review). Codex: no findings on `600634b`.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `docs/api-schema.md` `in` row overstates the dot rule: only a whole `.`/`..` segment is refused | coderabbitai | Documentation (fixed) | Row now says a value that leaves a whole path segment `.` or `..` is refused, with the `{id}.json` example |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Refuse a `baseUrl` with a query or fragment before joining (two threads, `url.ts::resolveRequestUrl`) | coderabbitai | P3 (bot: Minor) | In scope (resolver is new) | `baseUrl` is the embedder's own trusted config, and the one internal consumer sets a plain base. The concatenation join is unchanged from `main` (the old `path` join and tool-path prepend behaved identically), so no input that worked before breaks. A further refusal on config would be another behaviour change with no population behind it (K-14) |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None.
+
+### Outstanding Todos
+
+None filed this round.
+
+### Files Modified
+
+- `docs/api-schema.md`
