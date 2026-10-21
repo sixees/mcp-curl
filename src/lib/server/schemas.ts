@@ -2,12 +2,13 @@
 // Zod schemas for tool input validation
 
 import { z } from "zod";
-import { createHttpOnlyUrlSchema } from "../utils/index.js";
+import { createHttpOnlyUrlSchema, RELATIVE_PATH_PATTERN } from "../utils/index.js";
 
 /**
- * Schema for structured cURL execution.
- * Validates all parameters for the curl_execute tool.
- */
+* Input schema for the curl_execute tool on a server with no `baseUrl`.
+* `CurlExecuteBaseUrlSchema` extends it for a server with one, so a relative
+* `url` is accepted only where something resolves it.
+*/
 export const CurlExecuteSchema = z.object({
     url: createHttpOnlyUrlSchema({ description: "The URL to request (http or https)" }),
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
@@ -109,6 +110,24 @@ export const CurlExecuteSchema = z.object({
         .describe("Directory to save response files (must exist and be writable). Overrides MCP_CURL_OUTPUT_DIR env var. Falls back to system temp directory."),
 });
 
+/**
+ * `CurlExecuteSchema` for a server with a `baseUrl`: `url` also accepts a path
+ * starting with `/`, which the handler resolves against the base.
+ *
+ * Registered only when `baseUrl` is set, so every other server advertises the
+ * strict schema byte for byte. A union rather than `z.preprocess(..., z.url())`:
+ * the union advertises `anyOf: [format uri | pattern]`, where a preprocess
+ * would claim `format: uri` for a value that is a path.
+ */
+export const CurlExecuteBaseUrlSchema = CurlExecuteSchema.extend({
+    url: z.union([
+        createHttpOnlyUrlSchema({ description: "An absolute http(s) URL" }),
+        z.string()
+            .regex(RELATIVE_PATH_PATTERN, "Must be an absolute http(s) URL, or a path starting with a single / with no control characters")
+            .describe("A path starting with /, resolved against the configured base URL"),
+    ]).describe("The URL to request: an absolute http(s) URL, or a path starting with a single / (no control characters) resolved against the configured base"),
+});
+
 /** Inferred TypeScript type from CurlExecuteSchema */
 export type CurlExecuteInput = z.infer<typeof CurlExecuteSchema>;
 
@@ -123,8 +142,8 @@ export const JqQuerySchema = z.object({
         // narrows nothing: `splitJqFilters("")` is `[]`, so
         // `applyJqFilterToParsed` already throws *"filter must specify a path"*
         // and only the error's site and wording change. That asymmetry is why
-        // this `.min(1)` stays while `CurlExecuteSchema`'s went — there
-        // `jq_filter` is optional and `""` meant "no filter".
+        // this `.min(1)` is here and `CurlExecuteSchema`'s `jq_filter` has none —
+        // there it is optional and `""` means "no filter".
         .min(1, "jq_filter must not be empty")
         .describe("JSON path filter expression. Supports: .key, .[n] or .n (non-negative array index), .[n:m] (slice), .[\"key\"] (bracket notation), .a,.b (multiple comma-separated paths return array, max 20). Negative indices not supported."),
     max_result_size: z.number()

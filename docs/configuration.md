@@ -26,7 +26,7 @@ interface McpCurlConfig {
 
 | Option               | Type                     | Default     | Description                                                              |
 |----------------------|--------------------------|-------------|--------------------------------------------------------------------------|
-| `baseUrl`            | `string`                 | none        | Base URL prepended to relative URLs in `curl_execute`                    |
+| `baseUrl`            | `string`                 | none        | Base URL that a `/`-path in `curl_execute` is resolved against           |
 | `defaultHeaders`     | `Record<string, string>` | none        | Headers added to all `curl_execute` requests                             |
 | `defaultTimeout`     | `number`                 | 30          | Default timeout in seconds (1-300)                                       |
 | `outputDir`          | `string`                 | system temp | Directory for saved responses                                            |
@@ -44,7 +44,7 @@ interface McpCurlConfig {
 
 ### baseUrl
 
-Prepended to relative URLs. Useful for API-specific servers:
+A `url` starting with a single `/` is resolved against it. Useful for API-specific servers:
 
 ```typescript
 .
@@ -52,6 +52,32 @@ configure({baseUrl: "https://api.example.com/v1"})
 ```
 
 Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/users`.
+`utilities().executeRequest` resolves a `/`-`url` the same way, and also takes `path`.
+
+- On a server with `baseUrl`, the `curl_execute` input schema advertises `url` as an
+  absolute http(s) URL **or** a path starting with `/`. Without `baseUrl`, a path is
+  rejected at the schema.
+- An absolute URL passes through unchanged, to any host.
+- A relative value must start with a single `/` and contain no control characters
+  (any C0 control, such as tab, CR, LF or NUL, or DEL). One starting `//`, `/\` or `\`
+  is refused, because a URL parser reads it as a host; a control character is refused
+  because the URL parser strips a tab, CR or LF and percent-encodes the rest, so the
+  URL the SSRF check validates is not the value cURL is handed. This applies to
+  `curl_execute`'s `url` and to
+  `executeRequest`'s `url` and `path` alike, and the refusal is an error result that
+  states the rule.
+- A relative value must not contain a `.` or `..` path segment, literal or
+  `%2e`-encoded: the URL parser and cURL both resolve one, so `/users/..` would
+  request the parent of `/users/`. Only whole segments of the path count; a dot in
+  `/v1.2/`, `/.well-known/` or the query string is fine. An absolute URL is not
+  checked, because it names its own path.
+- The joined URL still goes through the SSRF check, like every other request.
+- If `baseUrl` is not an absolute http(s) URL, a relative call fails with an error
+  that names the `baseUrl` key without echoing its value.
+
+**`baseUrl` is a convenience, not a security boundary.** The model can still send an
+absolute URL to another host. Keep an API key in `defaultHeaders`, never in tool-call
+arguments, so it stays out of the transcript.
 
 ### defaultHeaders
 

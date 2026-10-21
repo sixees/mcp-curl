@@ -15,6 +15,86 @@ export function resolveBaseUrl(baseUrl: string, path: string): string {
 }
 
 /**
+ * A path that may stand in for an absolute URL on a server with a `baseUrl`:
+ * one leading `/`, never `//` or `/\`, and no C0 control character or DEL
+ * anywhere.
+ *
+ * A WHATWG parser reads a leading `//` or `/\` as scheme-relative — a host, not
+ * a path. It also silently strips tab, CR and LF, which cURL is handed raw, so
+ * the URL the SSRF gate checks and the one cURL requests could differ.
+ */
+export const RELATIVE_PATH_PATTERN = /^\/(?![/\\])[^\x00-\x1f\x7f]*$/;
+
+/**
+ * Whether the path part of `path` — everything before the first `?` or `#` —
+ * holds a `.` or `..` segment, literal or percent-encoded in any case.
+ *
+ * The SSRF gate's WHATWG parse and cURL both resolve such a segment, so
+ * `/users/..` requests the parent of `/users/`, and so does `/users/%2e%2e`.
+ * Segments split on `\` as well, which WHATWG reads as `/` in an http(s) URL. A
+ * dot that is not a whole segment — `/v1.2/`, `/.well-known/`, `/a..b`,
+ * `?filter=user.name` — cannot traverse and passes.
+ */
+export function hasDotSegment(path: string): boolean {
+    const pathPart = path.split(/[?#]/, 1)[0];
+    return pathPart.split(/[/\\]/).some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment));
+}
+
+/** The outcome of {@link resolveRequestUrl}. */
+export type ResolvedRequestUrl =
+    | { ok: true; url: string }
+    | { ok: false; error: string };
+
+/**
+ * Resolve a request `url` against the configured `baseUrl`.
+ *
+ * Without a `baseUrl`, everything comes back unchanged. With one:
+ * - input beginning `/` or `\` is a relative path. It is joined if it matches
+ *   {@link RELATIVE_PATH_PATTERN} and has no {@link hasDotSegment} segment, and
+ *   refused otherwise, never passed on: a parser would read it as a host, or
+ *   resolve it outside the path a caller built it under;
+ * - anything else — an absolute URL — comes back unchanged. `baseUrl` is not a
+ *   host restriction, and the executor's SSRF gate checks what it receives. Nor
+ *   is its path checked for dot-segments: it names its own path, so it has no
+ *   prefix to climb out of.
+ *
+ * The join is {@link resolveBaseUrl}'s concatenation, never `new URL(path,
+ * base)`, which honours `//host`. Once the base parses as an absolute http(s)
+ * URL, appending a single-slash path cannot move its authority, so that parse
+ * is the whole guard on the join. No error echoes a value: the input is
+ * attacker-chosen on the tool path, and the base may carry credentials.
+ */
+export function resolveRequestUrl(baseUrl: string | undefined, url: string): ResolvedRequestUrl {
+    if (!baseUrl || !/^[/\\]/.test(url)) return { ok: true, url };
+    if (!RELATIVE_PATH_PATTERN.test(url)) {
+        return {
+            ok: false,
+            error: "Error: a relative url must start with a single / and contain no control characters; a leading // or \\ names a host, not a path",
+        };
+    }
+    if (hasDotSegment(url)) {
+        return {
+            ok: false,
+            error: "Error: a relative url must not contain a . or .. path segment (literal or %2e-encoded); it would resolve outside the path it was built from",
+        };
+    }
+
+    // Everything that can throw is inside the try: the caller runs this before
+    // the wrap, so a throw would reach the model unwrapped (invariant 1).
+    try {
+        if (isAllowedUrlScheme(new URL(baseUrl).protocol)) {
+            return { ok: true, url: resolveBaseUrl(baseUrl, url) };
+        }
+    } catch {
+        // Falls through to the refusal below.
+    }
+    return {
+        ok: false,
+        error: "Error: cannot resolve a relative url: the configured baseUrl is not an absolute http(s) URL",
+    };
+}
+
+/**
  * Options for `createHttpOnlyUrlSchema`.
  */
 export interface CreateHttpOnlyUrlSchemaOptions {
@@ -64,16 +144,17 @@ export interface CreateHttpOnlyUrlSchemaOptions {
  * to hold the line.
  *
  * Return type is pinned to `z.ZodType<string>` rather than the inferred
- * `ZodEffects<ZodURL>` so a future Zod minor that reshapes `.refine()` (or the
+ * `ZodURL` so a future Zod minor that reshapes `.refine()` (or the
  * Standard Schema migration in MCP SDK 2.0, which rewrites `.refine()` to a
  * `validate()` callback) can't silently flip the public type. Callers needing
  * `.optional()` / `.default()` chainability should compose with `z.optional()`
  * at the call site.
  *
- * **Intended for module-level use only.** Each invocation registers the
- * resulting schema with Zod's `globalRegistry` (via `.describe()`); calling
- * this per-request would accumulate entries that the registry never reclaims.
- * Build the schema once at module load and reuse the reference.
+ * **Build the schema once at module load and reuse the reference.** Each
+ * invocation constructs a new schema and registers it with Zod's
+ * `globalRegistry` (via `.describe()`). That registry holds schemas weakly, so
+ * a per-request call does not leak, but it repeats the construction on every
+ * request for an identical result.
  *
  * @param options - Optional configuration for the schema's caller-visible text.
  * @param options.description - Forwarded to Zod's `.describe()`. Becomes the

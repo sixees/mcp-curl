@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
+import { captureTools } from "../extensible/tool-capture.test-fixture.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
 // Explicit return type on the local builder below: one line that makes a
 // `CommandResult` change a compile error at the builder rather than at each of
@@ -118,7 +119,7 @@ const HEADER_BLOCK = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n"
  * invariant 16's stated violation, and the one that deleted a field between a
  * body's `<!--` and a later `-->`.
  *
- * So this now checks the SHAPE that keeps the class closed: the body is entry
+ * So this checks the SHAPE that keeps the class closed: the body is entry
  * 0 and parses on its own, and the header text is a second entry rather than
  * being mixed into it.
  */
@@ -144,20 +145,9 @@ function bodyAfterHeaders(result: unknown): unknown {
  * a future edit would most plausibly reintroduce a bare registration.
  */
 function registerViaShippedPath() {
-    const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>();
-    const fakeServer = {
-        registerTool: (
-            name: string,
-            _meta: unknown,
-            handler: (...args: unknown[]) => Promise<unknown>
-        ) => {
-            handlers.set(name, handler);
-        },
-        registerResource: vi.fn(),
-        registerPrompt: vi.fn(),
-    };
-    registerAllCapabilities(fakeServer as never);
-    return handlers;
+    const { server, tools } = captureTools({ registerResource: vi.fn(), registerPrompt: vi.fn() });
+    registerAllCapabilities(server);
+    return new Map([...tools].map(([name, tool]) => [name, tool.handler]));
 }
 
 /** Parse through the real schema so tests exercise the true input shape. */
@@ -393,8 +383,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
     // ---------------------------------------------------------------------
     // Invariant 16 one nesting level down: the defence must not delete a
-    // field. RC-16 closed this at the envelope; a string leaf that is itself
-    // a serialised document is the next level, and it was open.
+    // field. RC-16 is this at the envelope; a string leaf that is itself
+    // a serialised document is the next level.
     //
     // The assertion is "are all the parts still there", not "does the result
     // parse" — RC-16's own closing lesson. A spliced document parses fine,
@@ -596,11 +586,11 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         });
 
         // ---------------------------------------------------------------
-        // A remote picks these keys, and `__proto__` is the one that is not a
-        // key at all on a `{}` accumulator — assignment reaches
-        // `Object.prototype`'s inherited setter, the field never becomes an own
-        // property, and `JSON.stringify` omits it. Measured before the fix:
-        // two fields in, one out, silently, leaving valid JSON.
+        // A remote picks these keys, and `__proto__` is the one a rebuilding pass
+        // loses: assigned onto a `{}` accumulator it reaches `Object.prototype`'s
+        // inherited setter, never becomes an own property, and `JSON.stringify`
+        // omits it — two fields in, one out, silently, leaving valid JSON. Nothing
+        // on the body path rebuilds the document, so the field must come back.
         // ---------------------------------------------------------------
         it("keeps a __proto__ field the origin sent", async () => {
             const body = '{"__proto__":{"value":"kept"},"ok":"also kept"}';
@@ -962,7 +952,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
             expect(Number.isFinite(reported)).toBe(true);
             expect(limit).toBe(1000);
             // **The relation is `reported >= limit`, not the reverse.** Both
-            // numbers are now the same quantity: the artefact is the origin's
+            // numbers are the same quantity: the artefact is the origin's
             // octets and no defence pass grows a JSON body, so a reported count
             // below the limit it says was exceeded is not constructible.
             expect(reported).toBeGreaterThanOrEqual(limit);
@@ -982,9 +972,8 @@ describe("registerAllTools — the shipped binary's registration path", () => {
 
     describe("curl_execute's jq_filter branch keeps number spelling (RC-27)", () => {
         // A SEPARATE parse from the one `jq_query` uses — `processResponse`'s
-        // own, in its Step 4 branch. Both were missing the reviver, and an
-        // assertion on either says nothing about the other, which is how the
-        // class kept one uncorrected site through its first fix.
+        // own, in its Step 4 branch. Both need the number-preserving reviver, and
+        // an assertion on either says nothing about the other (`LESSONS.md` RC-27).
         it.each([
             [".id", "9223372036854775807"],
             [".exp", "1e400"],
@@ -1049,7 +1038,7 @@ describe("registerAllTools — the shipped binary's registration path", () => {
         // The load-bearing half of the RC-27 fix. The unit cases in
         // `jq/filter.test.ts` feed `applyJqFilter` directly; these drive the
         // registered tool, which is the boundary a real response reaches — and
-        // the one `processResponse`'s save message now points the model at.
+        // the one `processResponse`'s save message points the model at.
         it.each([
             [".id", "9223372036854775807"],
             [".exp", "1e400"],

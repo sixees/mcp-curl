@@ -1,6 +1,7 @@
 // src/lib/extensible/tool-wrapper.test.ts
 // Tests for applyConfigTransformsCurl default User-Agent and Referer behavior,
-// and the post-processor wrap (PR-6b) via registerCurlToolWithHooks.
+// and the post-processor wrap (PR-6b) via registerCurlToolWithHooks. The
+// baseUrl path through the SDK's own input parse is in tool-wrapper.e2e.test.ts.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { applyConfigTransformsCurl, registerCurlToolWithHooks } from "./tool-wrapper.js";
@@ -8,6 +9,8 @@ import type { McpCurlConfig, CurlExecuteInput } from "../types/public.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { isWrappedResult } from "../response/post-processor.js";
+import { CurlExecuteBaseUrlSchema, CurlExecuteSchema } from "../server/schemas.js";
+import { captureTools } from "./tool-capture.test-fixture.js";
 
 beforeEach(() => {
     clearInjectionDetectionMap();
@@ -19,29 +22,23 @@ beforeEach(() => {
 
 describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     it("wraps text content in sentinel tags when enableSpotlighting is true", async () => {
-        // Build a minimal fake McpServer that captures the registered handler
-        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
-        const fakeServer = {
-            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
-                capturedHandler = handler;
-            },
-        };
+        const { server: fakeServer, tools } = captureTools();
 
-        // Mock executeWithHooks to return a simple text result
+        // Stands in for the executor executeWithHooks calls, so the wrap receives a fixed text result
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [{ type: "text", text: "hello from api" }],
             isError: false,
         });
 
-        registerCurlToolWithHooks(fakeServer as never, {
+        registerCurlToolWithHooks(fakeServer, {
             executor: mockExecutor as never,
             enabled: true,
             config: { enableSpotlighting: true } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        expect(capturedHandler).not.toBeNull();
-        const result = await capturedHandler!({
+        expect(tools.has("curl_execute")).toBe(true);
+        const result = await tools.get("curl_execute")!.handler({
             url: "https://example.com",
             follow_redirects: true,
             insecure: false,
@@ -58,26 +55,21 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("does not wrap content when enableSpotlighting is false", async () => {
-        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
-        const fakeServer = {
-            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
-                capturedHandler = handler;
-            },
-        };
+        const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [{ type: "text", text: "hello from api" }],
             isError: false,
         });
 
-        registerCurlToolWithHooks(fakeServer as never, {
+        registerCurlToolWithHooks(fakeServer, {
             executor: mockExecutor as never,
             enabled: true,
             config: { enableSpotlighting: false } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        const result = await capturedHandler!({
+        const result = await tools.get("curl_execute")!.handler({
             url: "https://example.com",
             follow_redirects: true,
             insecure: false,
@@ -92,26 +84,21 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("does not wrap error results", async () => {
-        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
-        const fakeServer = {
-            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
-                capturedHandler = handler;
-            },
-        };
+        const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [{ type: "text", text: "Error: something went wrong" }],
             isError: true,
         });
 
-        registerCurlToolWithHooks(fakeServer as never, {
+        registerCurlToolWithHooks(fakeServer, {
             executor: mockExecutor as never,
             enabled: true,
             config: { enableSpotlighting: true } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        const result = await capturedHandler!({
+        const result = await tools.get("curl_execute")!.handler({
             url: "https://example.com",
             follow_redirects: true,
             insecure: false,
@@ -127,31 +114,24 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("non-text content parts are passed through unchanged (multi-part safe)", async () => {
-        // Pre-PR-6b semantics: a non-text content[0] under spotlighting failed
-        // closed with a synthesised error result, which broke any custom tool
-        // returning images. The new wrap processes text parts and leaves
-        // non-text parts alone; this matches the SDK's CallToolResult shape
-        // and keeps image-returning tools usable with spotlighting on.
-        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
-        const fakeServer = {
-            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
-                capturedHandler = handler;
-            },
-        };
+        // The wrap processes text parts and leaves non-text parts alone: this
+        // matches the SDK's multi-part CallToolResult shape and keeps
+        // image-returning tools usable with spotlighting on.
+        const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [{ type: "image", data: "AAAA" }],
             isError: false,
         });
 
-        registerCurlToolWithHooks(fakeServer as never, {
+        registerCurlToolWithHooks(fakeServer, {
             executor: mockExecutor as never,
             enabled: true,
             config: { enableSpotlighting: true } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        const result = await capturedHandler!({
+        const result = await tools.get("curl_execute")!.handler({
             url: "https://example.com",
             follow_redirects: true,
             insecure: false,
@@ -168,29 +148,24 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("sanitises bidi/zero-width characters even when spotlighting is OFF (4th asymmetry, PR-6b)", async () => {
-        // Pre-PR-6b: with spotlighting off, the wrapper passed text through
-        // unchanged. PR-6b's wrap runs sanitise+detect regardless of the
-        // spotlighting flag — closing the 4th trust-boundary asymmetry.
-        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
-        const fakeServer = {
-            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
-                capturedHandler = handler;
-            },
-        };
+        // The wrap runs sanitise + detect whatever the spotlighting flag says,
+        // so turning spotlighting off never turns the defence off — the 4th
+        // trust-boundary asymmetry.
+        const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [{ type: "text", text: "Bidi attack: ‮evil​" }],
             isError: false,
         });
 
-        registerCurlToolWithHooks(fakeServer as never, {
+        registerCurlToolWithHooks(fakeServer, {
             executor: mockExecutor as never,
             enabled: true,
             config: { enableSpotlighting: false } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        const result = await capturedHandler!({
+        const result = await tools.get("curl_execute")!.handler({
             url: "https://example.com",
             follow_redirects: true,
             insecure: false,
@@ -207,12 +182,7 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     it("logs an injection-detection event for malicious response text", async () => {
         const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
-        const fakeServer = {
-            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
-                capturedHandler = handler;
-            },
-        };
+        const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [
@@ -221,14 +191,14 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
             isError: false,
         });
 
-        registerCurlToolWithHooks(fakeServer as never, {
+        registerCurlToolWithHooks(fakeServer, {
             executor: mockExecutor as never,
             enabled: true,
             config: { enableSpotlighting: false } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        await capturedHandler!({
+        await tools.get("curl_execute")!.handler({
             url: "https://api.evil.com/leak",
             follow_redirects: true,
             insecure: false,
@@ -246,26 +216,21 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("wrapped results carry the idempotence tag", async () => {
-        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
-        const fakeServer = {
-            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
-                capturedHandler = handler;
-            },
-        };
+        const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [{ type: "text", text: "hello" }],
             isError: false,
         });
 
-        registerCurlToolWithHooks(fakeServer as never, {
+        registerCurlToolWithHooks(fakeServer, {
             executor: mockExecutor as never,
             enabled: true,
             config: { enableSpotlighting: false } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        const result = await capturedHandler!({
+        const result = await tools.get("curl_execute")!.handler({
             url: "https://example.com",
             follow_redirects: true,
             insecure: false,
@@ -279,15 +244,11 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
     });
 
     it("hook short-circuit return value is sanitised (S2 closure regression)", async () => {
-        // Pre-PR-6b: a beforeRequest hook returning { shortCircuit, response }
-        // bypassed the wrap entirely. The hook-executor now routes the
-        // synthesised CallToolResult through the wrap before returning.
-        let capturedHandler: ((...args: unknown[]) => Promise<unknown>) | null = null;
-        const fakeServer = {
-            registerTool: (_name: string, _meta: unknown, handler: (...args: unknown[]) => Promise<unknown>) => {
-                capturedHandler = handler;
-            },
-        };
+        // A beforeRequest hook returning { shortCircuit, response } never reaches
+        // the executor, so the hook-executor routes the synthesised CallToolResult
+        // through the wrap itself — otherwise hook-authored text would skip the
+        // defence entirely.
+        const { server: fakeServer, tools } = captureTools();
 
         const mockExecutor = vi.fn().mockResolvedValue({
             content: [{ type: "text", text: "should not be called" }],
@@ -300,7 +261,7 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
             isError: false,
         });
 
-        registerCurlToolWithHooks(fakeServer as never, {
+        registerCurlToolWithHooks(fakeServer, {
             executor: mockExecutor as never,
             enabled: true,
             config: { enableSpotlighting: false } as McpCurlConfig,
@@ -311,7 +272,7 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
             },
         });
 
-        const result = await capturedHandler!({
+        const result = await tools.get("curl_execute")!.handler({
             url: "https://example.com",
             follow_redirects: true,
             insecure: false,
@@ -343,6 +304,47 @@ function makeParams(overrides: Partial<CurlExecuteInput> = {}): CurlExecuteInput
         ...overrides,
     };
 }
+
+describe("registerCurlToolWithHooks — schema selection", () => {
+    const register = (config: McpCurlConfig) => {
+        const { server, tools } = captureTools();
+        registerCurlToolWithHooks(server, {
+            executor: vi.fn() as never,
+            enabled: true,
+            config,
+            hooks: { beforeRequest: [], afterResponse: [], onError: [] },
+        });
+        return tools.get("curl_execute")!.meta.inputSchema;
+    };
+
+    it("registers the relative-path schema when baseUrl is set", () => {
+        expect(register({ baseUrl: "https://api.example.com" })).toBe(CurlExecuteBaseUrlSchema);
+    });
+
+    it("registers the strict schema without baseUrl", () => {
+        expect(register({})).toBe(CurlExecuteSchema);
+    });
+});
+
+describe("registerCurlToolWithHooks — baseUrl resolution error", () => {
+    it("returns the resolver's refusal through the wrap (invariant 1)", async () => {
+        const { server: fakeServer, tools } = captureTools();
+        const mockExecutor = vi.fn();
+
+        registerCurlToolWithHooks(fakeServer, {
+            executor: mockExecutor as never,
+            enabled: true,
+            config: { baseUrl: "https://" } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [], onError: [] },
+        });
+
+        const result = await tools.get("curl_execute")!.handler({ url: "/users" }, { sessionId: undefined });
+
+        expect(mockExecutor).not.toHaveBeenCalled();
+        expect((result as { isError?: boolean }).isError).toBe(true);
+        expect(isWrappedResult(result)).toBe(true);
+    });
+});
 
 describe("applyConfigTransformsCurl — User-Agent defaults", () => {
     afterEach(() => {

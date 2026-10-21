@@ -1,6 +1,13 @@
 import { describe, it, expect, expectTypeOf } from "vitest";
 import { z } from "zod";
-import { createHttpOnlyUrlSchema, resolveBaseUrl, safeHostname } from "./url.js";
+import {
+    createHttpOnlyUrlSchema,
+    hasDotSegment,
+    RELATIVE_PATH_PATTERN,
+    resolveBaseUrl,
+    resolveRequestUrl,
+    safeHostname,
+} from "./url.js";
 
 describe("resolveBaseUrl", () => {
     describe("slash normalisation", () => {
@@ -46,6 +53,136 @@ describe("resolveBaseUrl", () => {
             expect(resolveBaseUrl("https://api.example.com", "/")).toBe(
                 "https://api.example.com/"
             );
+        });
+    });
+});
+
+describe("RELATIVE_PATH_PATTERN", () => {
+    it.each(["/", "/users/me", "/search?q=a//b", "/a\\b"])("accepts %j", (input) => {
+        expect(RELATIVE_PATH_PATTERN.test(input)).toBe(true);
+    });
+
+    it.each([
+        "//evil.com",
+        "/\\evil.com",
+        "/a\tb",
+        "/a\r\nHost: evil.com",
+        "/a\u0000b",
+        "/a\u007fb",
+        "users",
+        "",
+        "https://api.example.com/x",
+        "ftp://x",
+    ])(
+        "rejects %j",
+        (input) => {
+            expect(RELATIVE_PATH_PATTERN.test(input)).toBe(false);
+        }
+    );
+});
+
+describe("hasDotSegment", () => {
+    it.each([
+        "/users/..",
+        "/users/../admin",
+        "/./x",
+        "/..",
+        "/users/%2e%2e",
+        "/users/%2E%2e/x",
+        "/users/.%2e",
+        "/users/%2e",
+        "/users\\..\\admin",
+        "/users/..?q=1",
+    ])("finds one in %j", (path) => {
+        expect(hasDotSegment(path)).toBe(true);
+    });
+
+    it.each([
+        "/",
+        "/users/me",
+        "/file.json",
+        "/v1.2/x",
+        "/.well-known/openid-configuration",
+        "/a..b",
+        "/a./b",
+        "/...",
+        "/users/%2e%2e%2e",
+        "/users/%252e%252e",
+        "/users?filter=user.name",
+        "/users?next=../x",
+        "/search?path=/a/../b",
+        "/users#/../x",
+    ])("finds none in %j", (path) => {
+        expect(hasDotSegment(path)).toBe(false);
+    });
+});
+
+describe("resolveRequestUrl", () => {
+    const BASE = "https://api.example.com/v1";
+
+    it("joins a relative path onto the base", () => {
+        expect(resolveRequestUrl(BASE, "/users/me")).toEqual({
+            ok: true,
+            url: "https://api.example.com/v1/users/me",
+        });
+    });
+
+    it("passes an absolute URL through unchanged on a baseUrl server", () => {
+        expect(resolveRequestUrl(BASE, "https://other.example/x")).toEqual({
+            ok: true,
+            url: "https://other.example/x",
+        });
+    });
+
+    it("passes a path through unchanged when no baseUrl is configured", () => {
+        expect(resolveRequestUrl(undefined, "/users")).toEqual({ ok: true, url: "/users" });
+    });
+
+    describe("refuses, rather than passes on, a relative input a parser would misread", () => {
+        it.each([
+            ["a scheme-relative host", "//evil.com/x"],
+            ["a slash-backslash host", "/\\evil.com/x"],
+            ["a backslash-led host", "\\\\evil.com/x"],
+            ["a tab WHATWG would strip", "/a\t/b"],
+            ["CR/LF", "/a\r\nHost: evil.com"],
+        ])("%s", (_label, url) => {
+            const result = resolveRequestUrl(BASE, url);
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error).toContain("single /");
+            expect(result.error).not.toContain("evil.com");
+        });
+
+        it("a dot-segment", () => {
+            const result = resolveRequestUrl(BASE, "/users/%2e%2e/admin");
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error).toContain(". or .. path segment");
+        });
+
+        it("still passes them through when no baseUrl is configured", () => {
+            expect(resolveRequestUrl(undefined, "//evil.com/x")).toEqual({ ok: true, url: "//evil.com/x" });
+        });
+    });
+
+    describe("a malformed baseUrl is refused without echoing it", () => {
+        it.each([
+            ["an unparseable authority", "https://"],
+            ["a bare scheme", "http:"],
+            ["a non-http(s) scheme", "ftp://files.example.com"],
+            ["an opaque scheme", "mailto:SECRETVALUE"],
+            ["not a URL at all", "SECRETVALUE"],
+        ])("%s", (_label, baseUrl) => {
+            const result = resolveRequestUrl(baseUrl, "/evil.com/x");
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error).toContain("baseUrl");
+            expect(result.error).not.toContain(baseUrl);
+        });
+
+        it("refuses rather than throws on a non-string baseUrl from untyped config", () => {
+            const result = resolveRequestUrl(42 as unknown as string, "/users");
+            expect(result.ok).toBe(false);
         });
     });
 });

@@ -546,12 +546,12 @@ describe("generateInputSchema", () => {
     });
 
     it("preserves manually-constructed (validator-bypassed) preset names verbatim", () => {
-        // PR-6a boundary contract: schemas reaching the generator are
-        // assumed pre-sanitised by ApiSchemaValidator, so the generator does
-        // not re-sanitise. When a consumer bypasses the validator and feeds
-        // raw values directly, the generator preserves them as-is. Duplicate-
-        // after-sanitisation detection is now a validator-level concern — see
-        // the validator-side test
+        // Boundary contract: schemas reaching the generator are assumed
+        // pre-sanitised by ApiSchemaValidator, so the generator does not
+        // re-sanitise. When a consumer bypasses the validator and feeds raw
+        // values directly, the generator preserves them as-is. Duplicate-
+        // after-sanitisation detection is a validator-level concern — see the
+        // validator-side test
         // "rejects duplicate filter preset names after sanitisation".
         const endpoint: EndpointDefinition = {
             id: "test",
@@ -566,7 +566,7 @@ describe("generateInputSchema", () => {
                 ],
             },
         };
-        // Does NOT throw — generator now trusts pre-sanitised input.
+        // Does NOT throw — the generator trusts pre-sanitised input.
         const schema = generateInputSchema(endpoint);
         // The raw (unsanitised) values reach the enum unchanged.
         expect(schema.safeParse({ filter_preset: "​Summary" }).success).toBe(true);
@@ -716,6 +716,17 @@ describe("buildUrl", () => {
             {}
         );
         expect(url).toBe("https://api.example.com/users/42/posts/99");
+    });
+
+    it.each([".", ".."])("refuses a path parameter of %j, which would climb out of the endpoint", (id) => {
+        expect(() => buildUrl("https://api.example.com", "/users/{id}", { id }, {})).toThrow(
+            /must not be \. or \.\./
+        );
+    });
+
+    it("keeps dots that do not form a whole segment", () => {
+        const url = buildUrl("https://api.example.com", "/users/{id}.json", { id: "a..b" }, { q: "../x" });
+        expect(url).toBe("https://api.example.com/users/a..b.json?q=..%2Fx");
     });
 });
 
@@ -1084,6 +1095,30 @@ describe("generateToolDefinitions", () => {
         );
     });
 
+    it("returns an error result for a dot-segment path parameter, without a request", async () => {
+        const schema: ApiSchema = {
+            ...baseSchema,
+            endpoints: [
+                {
+                    id: "get_user",
+                    path: "/users/{id}",
+                    method: "GET",
+                    title: "Get User",
+                    description: "Fetch a user by ID",
+                    parameters: [
+                        { name: "id", in: "path", type: "string", required: true },
+                    ],
+                },
+            ],
+        };
+
+        const result = await generateToolDefinitions(schema)[0].handler({ id: ".." });
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("must not be . or ..");
+        expect(mockedExecuteCurlRequest).not.toHaveBeenCalled();
+    });
+
     it("returns error result for AuthenticationError", async () => {
         const schema: ApiSchema = {
             ...baseSchema,
@@ -1252,11 +1287,11 @@ describe("generateToolDefinitions", () => {
     });
 
     it("preserves bidi/zero-width chars when generator is called with validator-bypassed schema", () => {
-        // PR-6a boundary: the generator no longer re-sanitises. When a
-        // consumer constructs an ApiSchema by hand and skips ApiSchemaValidator,
-        // the unsafe characters survive — documenting in code that sanitisation
-        // is the validator's job, not the generator's. The validator-side path
-        // is covered by the "ApiSchemaValidator sanitisation" suite.
+        // The generator does not re-sanitise. When a consumer constructs an
+        // ApiSchema by hand and skips ApiSchemaValidator, the unsafe characters
+        // survive — documenting in code that sanitisation is the validator's
+        // job, not the generator's. The validator-side path is covered by the
+        // "PR-6a sanitisation invariant" suite.
         const schema: ApiSchema = {
             ...baseSchema,
             endpoints: [
@@ -1353,12 +1388,13 @@ describe("generateToolDefinitions", () => {
 //
 // These tests cover the YAML-tool side of the PR-6b wrap. createToolHandler
 // builds a wrap closure with the GeneratorConfig.enableSpotlighting flag and
-// runs every executeCurlRequest result through sanitise + detect + optional
-// spotlight. The mocked executor lets us exercise the wrap behaviour in
-// isolation from the real cURL pipeline (which already runs its own
-// sanitiser pass via processor.ts — but YAML tools registered without
-// going through processor.ts, e.g. by a future custom executor, still need
-// the wrap as a chokepoint).
+// runs every executeCurlRequest result through it: the full defendText
+// pipeline on non-JSON text, detection alone on a JSON document (returned
+// unchanged), and spotlighting only when the flag is set and never on an
+// error result. The mocked executor lets us exercise the wrap in isolation
+// from the real cURL pipeline, which runs its own defence pass in
+// processor.ts; the wrap is the chokepoint for a result that did not come
+// through it.
 
 describe("PR-6b wrap on YAML-tool output", () => {
     const mockedExecuteCurlRequest = curlExecuteModule.executeCurlRequest as Mock;
@@ -1474,7 +1510,7 @@ describe("PR-6b wrap on YAML-tool output", () => {
 
 // --- PR-6a sanitisation invariant ---
 //
-// These tests cover the trust-boundary contract introduced in PR-6a:
+// These tests cover the trust-boundary contract:
 //   ApiSchemaValidator runs sanitizeDescription() on every user-facing string
 //   field via a z.preprocess() step that fires before Zod validates structure,
 //   so every public entry point that produces a parsed ApiSchema (loadApiSchema,
@@ -1839,7 +1875,9 @@ describe("PR-6a sanitisation invariant", () => {
                 path.resolve(here, "generator.ts"),
                 "utf-8"
             );
-            // Strip comments so the rule is enforced on real code, not docs.
+            // Drop `//` line comments so the rule counts code rather than the
+            // header prose that names the function; a `/** */` doc-block line
+            // is still counted.
             const codeOnly = generatorSource
                 .split("\n")
                 .filter((line) => !line.trim().startsWith("//"))

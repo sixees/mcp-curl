@@ -5,13 +5,19 @@ import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/pub
 import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
 import { executeJqQuery, type JqQueryResult } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders } from "../config/index.js";
-import { resolveBaseUrl } from "../utils/index.js";
+import { resolveRequestUrl } from "../utils/index.js";
 
 /**
  * Partial curl_execute input with optional path for baseUrl resolution.
  */
 export interface ExecuteRequestParams extends Partial<CurlExecuteInput> {
-    /** Path to append to baseUrl (alternative to url) */
+    /**
+     * Path to append to `baseUrl` (alternative to `url`). A missing leading `/`
+     * is added; after that it must start with a single `/`, contain no control
+     * characters, and hold no `.` or `..` segment (literal or `%2e`-encoded), or
+     * the call returns an error result. A leading `//`, `\` or `/\` is refused,
+     * never joined.
+     */
     path?: string;
 }
 
@@ -21,7 +27,11 @@ export interface ExecuteRequestParams extends Partial<CurlExecuteInput> {
 export interface InstanceUtilities {
     /**
      * Execute a cURL request with config defaults applied.
-     * Can use `path` with `baseUrl` or provide a full `url`.
+     * Takes an absolute `url`; with `baseUrl` configured, also a `url` starting
+     * with `/` or a `path`, both resolved by `resolveRequestUrl`. A relative
+     * value that starts `//`, `\` or `/\`, holds a control character, or holds
+     * a `.` or `..` segment (literal or `%2e`-encoded) is refused with an error
+     * result rather than requested.
      *
      * NOTE: This method calls executeCurlRequest directly and bypasses the hook
      * system (beforeRequest, afterResponse, onError). Use MCP tool invocation
@@ -47,10 +57,12 @@ export interface InstanceUtilities {
 export function createInstanceUtilities(config: Readonly<McpCurlConfig>): InstanceUtilities {
     return {
         async executeRequest(params: ExecuteRequestParams): Promise<CurlExecuteResult> {
-            // Build URL from baseUrl + path if url not provided
+            // `url` wins over `path`. `path` tolerates a missing leading slash
+            // ("users" reaches <baseUrl>/users), so it gains one here; both then
+            // take the one resolver the tool path uses.
             let url = params.url;
             if (!url && params.path && config.baseUrl) {
-                url = resolveBaseUrl(config.baseUrl, params.path);
+                url = params.path.startsWith("/") ? params.path : `/${params.path}`;
             }
             if (!url) {
                 return {
@@ -64,13 +76,18 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 };
             }
 
-            // Merge headers and apply UA/Referer defaults
+            const resolved = resolveRequestUrl(config.baseUrl, url);
+            if (!resolved.ok) {
+                return { content: [{ type: "text", text: resolved.error }], isError: true };
+            }
+
+            // Request headers take precedence over config.defaultHeaders.
             const mergedHeaders: Record<string, string> = { ...config.defaultHeaders, ...params.headers };
             const defaults = applyDefaultHeaders(mergedHeaders, params.user_agent, config);
 
-            // Build full params with config defaults
+            // executeCurlRequest runs no schema parse, so the schema's .default() values (follow_redirects, insecure, verbose, include_headers, compressed, include_metadata) are restated here.
             const fullParams: CurlExecuteInput = {
-                url,
+                url: resolved.url,
                 method: params.method,
                 headers: defaults.headers,
                 data: params.data,

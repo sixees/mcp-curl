@@ -8,7 +8,11 @@ import type { CurlExecuteInput, JqQueryInput } from "../server/schemas.js";
  * These settings affect how all tool calls are processed.
  */
 export interface McpCurlConfig {
-    /** Base URL prepended to relative URLs in curl_execute */
+    /**
+     * Base URL that a `url` starting with a single `/` is resolved against, in
+     * `curl_execute` and `utilities().executeRequest`. An absolute URL passes
+     * through unchanged, so this is a convenience, not a host restriction.
+     */
     baseUrl?: string;
     /** Default headers added to all curl_execute requests */
     defaultHeaders?: Record<string, string>;
@@ -37,7 +41,7 @@ export interface McpCurlConfig {
      * (spotlighting). Independent of the always-on defence pass — see the
      * **defence-in-depth wrap** below.
      *
-     * **Defence-in-depth wrap (PR-6b).** Every tool result returned by this
+     * **Defence-in-depth wrap.** Every tool result returned by this
      * server — `curl_execute`, `jq_query`, YAML-driven endpoints registered
      * via `createApiServer()`, custom tools registered via
      * `registerCustomTool()`, and synthesised results returned by a

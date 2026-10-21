@@ -387,7 +387,9 @@ server.registerCustomTool(
         title: "Get User Profile",
         description: "Fetch user profile with formatted output",
         inputSchema: z.object({
-            userId: z.string().describe("User ID"),
+            // The model chooses this value. Allowing only id characters keeps
+            // "." and "..", which encoding leaves alone, out of the path.
+            userId: z.string().regex(/^[A-Za-z0-9_-]+$/).describe("User ID"),
         }),
         annotations: {
             readOnlyHint: true,
@@ -399,7 +401,7 @@ server.registerCustomTool(
 
         // Make request using instance utilities (applies config)
         const result = await utils.executeRequest({
-            url: `/users/${encodeURIComponent(userId)}`,  // Encode to prevent path traversal
+            url: `/users/${encodeURIComponent(userId)}`,  // Encode so the id stays one path segment
             headers: {"Accept": "application/json"},
         });
 
@@ -410,7 +412,6 @@ server.registerCustomTool(
             };
         }
 
-        // Format the response
         try {
             const user = JSON.parse(result.content[0].text);
             const formatted = `
@@ -435,6 +436,18 @@ User Profile:
     }
 );
 ```
+
+A relative `url` or `path` passed to `executeRequest` must start with a single `/` and
+contain no control characters. One starting `//`, `/\` or `\` returns an error result
+instead of a request. Build it from encoded segments, as above, so a value from the
+model cannot produce one. See [`baseUrl`](./configuration.md#baseurl).
+
+**Encoding alone does not keep a segment in place.** `encodeURIComponent` turns `/`
+into `%2F`, so a value cannot add segments, but it leaves `.` and `..` unchanged.
+`executeRequest` refuses a relative value with a `.` or `..` segment, so
+`userId: ".."` returns an error result rather than requesting the API root.
+Constraining the id in the tool's `inputSchema`, as the example does, rejects it
+earlier, with a schema error the model can act on.
 
 ## Input Schema Patterns
 

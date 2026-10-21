@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: `utilities().executeRequest` refuses a relative value a URL parser would
+  read as a host.** With `baseUrl` configured, a `path` (after its missing leading `/`
+  is added) or a relative `url` must start with a single `/` and contain no control
+  characters. A value starting `//`, `/\` or `\` — for example `path: "//users"`,
+  which 5.0.x joined to `<baseUrl>//users` — now returns an error result that states
+  the rule, and no request is made. So does any control character (C0 or DEL)
+  anywhere in it: the SSRF check's URL parser strips a tab, CR or LF and
+  percent-encodes the rest, so the URL it checks is not the value handed to cURL. **To adjust:**
+  collapse leading slashes, and percent-encode segments built from data.
+- **BREAKING: a `.` or `..` path segment is refused, not resolved.** A relative `url`
+  or `path` (on `executeRequest` and on `curl_execute`) and a YAML endpoint's path
+  parameter return an error result when a whole path segment is `.` or `..`, literal
+  or `%2e`-encoded in any case. Both the SSRF check and cURL resolve such a segment,
+  so `/users/..` requested the parent of the path it was built under, and
+  `encodeURIComponent` does not prevent it. Only the path is checked: a dot in the
+  query or fragment, or a dot that is not the whole segment (`/v1.2/`,
+  `/.well-known/`), still passes. An absolute `curl_execute` url is not checked,
+  because it names its own path. **To adjust:** do not build a path segment from a
+  bare `.` or `..`.
+  **Both changes shipped in a MINOR release by decision**, not by oversight: mcp-curl has one
+  consumer, internal, and that consumer is told about this change directly.
+
+### Fixed
+
+- **`baseUrl` works on the `curl_execute` tool path.** The strict `url` schema
+  rejected every relative url before the handler ran, so the prepend never fired.
+  A server with `baseUrl` now advertises `url` as an absolute http(s) URL or a
+  single-`/` path (`anyOf`), and resolves the path against the base before the SSRF
+  check. A server without `baseUrl`, the standalone binary included, advertises the
+  same schema as before. `executeRequest` resolves a relative `url` the same way, so
+  the `docs/custom-tools.md` examples now work as written. `baseUrl` is a
+  convenience, not a host restriction: an absolute URL to any host still passes.
+
 ## [5.0.1] - 2026-10-20
 
 ### Notes
