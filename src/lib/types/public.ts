@@ -17,7 +17,7 @@ export interface McpCurlConfig {
      * through unchanged, so this is a convenience, not a host restriction.
      */
     baseUrl?: string;
-    /** Default headers added to all curl_execute requests */
+    /** Default headers for `curl_execute` and `utilities().executeRequest`; a request's own header of the same name wins */
     defaultHeaders?: Record<string, string>;
     /** Default timeout in seconds (1-300) for curl_execute */
     defaultTimeout?: number;

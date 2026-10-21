@@ -261,9 +261,9 @@ export class McpCurlServer {
      *   `.refine()` / `.check()` chains, `.strict()` / `.passthrough()`
      *   modes, `z.array().min()` / `.max()` / `.length()` / `.nonempty()`
      *   constraints, factory defaults on `ZodDefault`, and
-     *   `ZodDiscriminatedUnion` discriminators. Callers no longer need to
-     *   defensively sanitise field descriptions sourced from external input;
-     *   doing so remains harmless (the walk is idempotent).
+     *   `ZodDiscriminatedUnion` discriminators. Callers need not sanitise field
+     *   descriptions sourced from external input themselves; doing so is
+     *   harmless (the walk is idempotent).
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()
@@ -389,10 +389,9 @@ export class McpCurlServer {
      * Useful for tests that need to assert what was registered (and what its
      * advertised title/description look like) without starting the server.
      *
-     * Returned entries are frozen — including `meta` and `meta.annotations` —
-     * so a caller cannot mutate them and indirectly change tool registrations
-     * after the fact (the same `meta` reference was forwarded to
-     * `server.registerTool` during start). `meta.inputSchema` is intentionally
+     * Returned entries are fresh frozen copies — `meta` and `meta.annotations`
+     * included — so nothing a caller does to them reaches the stored `meta` that
+     * `start()` forwards to `server.registerTool`. `meta.inputSchema` is intentionally
      * shared by reference: Zod schema instances rely on internal mutable state
      * and freezing would break them; treat it as read-only by convention.
      */

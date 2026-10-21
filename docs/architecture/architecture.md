@@ -63,8 +63,8 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 
 ### Business Rules / Invariants
 
-> **The numbered, citable invariant list lives in `ARCHITECTURE.md` at the repository
-> root** — that is the copy a review finding or an RC cites by number, and the copy to
+> **The numbered, citable invariant list lives in `.sixees/ARCHITECTURE.md`** — that is
+> the copy a review finding or an RC cites by number, and the copy to
 > change. The bullets below are the operational rules of this system stated in prose;
 > where the two describe the same property, the numbered list is authoritative. Do not
 > add a new invariant here without adding it there, or the two will diverge — they did
@@ -140,7 +140,7 @@ Stage notes:
 | Store | Type | What it holds | Access pattern |
 |---|---|---|---|
 | `SessionManager.sessions` | In-memory `Map<string, Session>` | HTTP transports + per-session `McpServer` + `lastActivity` | Created on `POST /mcp`, idle-reaped at 1 h |
-| Rate limiter | Three `Map`s — host and client fixed-window counters, plus a per-host timestamp log while `rateLimit` is set | Fixed-window counters; sliding log | Created in handler, swept every 10 s |
+| Rate limiter | Three `Map`s — host and client fixed-window counters, plus a per-host timestamp log recorded while `rateLimit` is set and kept across a release, so a restart with the same `windowMs` resumes it | Fixed-window counters; sliding log | Created in handler, swept every 10 s |
 | Memory tracker | Module-level counter | Bytes accumulated across in-flight requests | Per-chunk `allocate` / `release` |
 | Injection-detect throttle | `Map<host, lastTs>` | Per-host last-logged time | 60 s window, swept on interval |
 | Allowed-dirs cache | TTL'd map | Resolved cwd / output-dir paths | 60 s TTL (`config/jq.ts`) |
@@ -178,7 +178,7 @@ Two fixed-window counters (per-host, per-client) — `security/rate-limiter.ts`.
 
 Each map also refuses keys beyond `RATE_LIMIT.MAX_TRACKED_KEYS` (`config/session.ts`), enforced at the write in `rate-limiter.ts::ensureCapacity`, which both the fixed-window and the sliding-log check reach. **It refuses rather than evicting**: evicting a counter would reset it and bypass the limit. The ceiling is derived from `SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE`, the cardinality every concurrent session spending its whole quota on distinct hosts would produce. **That is what it is sized against, not a proven upper bound** — `MAX_SESSIONS` caps sessions held at once, not sessions opened during a window, so churn past it is possible and costs a refusal that expires one window later. Windows are measured on a monotonic clock (`rate-limiter.ts::elapsedNow`), so a backward wall-clock step neither wedges the ceiling nor resets an active counter. The cap matters because the cleanup interval is started by the transports and `McpCurlServer` only — an embedder calling `executeCurlRequest` directly starts none of them.
 
-**Boundary burst is exploitable today.** The window resets unconditionally when `rate-limiter.ts::windowClosed` reports the window closed, so up to 2× the nominal limit can pass in a 1–2 second crossing — 120 requests per host, 600 per client, each a possible 10 MB pull (~1.2 GB of amplified DoS in seconds). Treat the limits as soft when serving untrusted clients (HTTP unauthed, shared stdio).
+**Boundary burst is exploitable today on the fixed windows.** A fixed window resets unconditionally when `rate-limiter.ts::windowClosed` reports it closed, so up to 2× the nominal limit can pass in a 1–2 second crossing — 120 requests per host under the default gate, 600 per client, each a possible 10 MB pull (~1.2 GB of amplified DoS in seconds). A configured `rateLimit` is a sliding log, so its host gate has no boundary to cross; the client gate still does. Treat the limits as soft when serving untrusted clients (HTTP unauthed, shared stdio).
 
 ### Authentication & Authorization
 

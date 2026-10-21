@@ -19,7 +19,7 @@ interface McpCurlConfig {
     defaultUserAgent?: string;
     defaultReferer?: string;
     enableSpotlighting?: boolean;
-    rateLimit?: { max: number; windowMs: number };
+    rateLimit?: { readonly max: number; readonly windowMs: number };
 }
 ```
 

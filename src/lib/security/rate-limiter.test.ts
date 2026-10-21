@@ -16,8 +16,9 @@ const CAP = RATE_LIMIT.MAX_TRACKED_KEYS;
 
 // Fewer requests per client than its quota, so the client gate never fires
 // while a case is filling the HOST map. Rotating the client id on every call
-// saturates the client gate first and leaves the host cap unreached — the host
-// map peaks below CAP and its refusal branch never runs.
+// fills the client map in lockstep with the host map, so the next fresh client
+// is refused by the CLIENT cap — and an assertion matching only "tracking is
+// at capacity" passes on that refusal without the host branch ever running.
 const PER_CLIENT = RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE - 50;
 
 beforeEach(() => {
@@ -340,7 +341,7 @@ describe("installHostRateLimit — ownership", () => {
     const HOUR = 3_600_000;
     const HOST = "api.example.test";
 
-    /** Spend the one request a `max: 1` limit admits, then prove it still holds. */
+    /** Prove a `max: 1` limit still holds: the caller has spent its one request, so the next is refused. */
     function expectLimitOfOneHeld(): void {
         expect(() => checkRateLimits(HOST, "probe")).toThrow(/Maximum 1 requests per 3600 s/);
     }

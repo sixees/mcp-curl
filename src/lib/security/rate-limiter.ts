@@ -29,12 +29,16 @@ const clientRateLimitMap = new Map<string, RateLimitEntry>();
 
 /**
  * Admission timestamps per host, oldest first, recorded only while a host
- * limit is installed. Each log holds at most `max` entries, because a request
- * is refused before it is recorded once the log is full.
+ * limit is installed. A request is refused before it is recorded once the log
+ * holds `max`, so a log never exceeds the largest `max` it was recorded under.
+ * A re-install with the same window and a smaller `max` keeps the longer log,
+ * which admits nothing until it drains below the new `max`.
  *
  * **Kept across a release**, so a server that restarts, or hands over to one
  * with the same window, does not get a fresh quota inside a window the
- * upstream is still counting. The sweep expires it by {@link logWindowMs}.
+ * upstream is still counting. Only a cleanup sweep expires a released log, by
+ * {@link logWindowMs}, and `McpCurlServer.shutdown` stops that server's sweep
+ * along with its limit.
  */
 const hostSlidingLog = new Map<string, number[]>();
 
@@ -68,7 +72,8 @@ function elapsedNow(): number {
 }
 
 /**
- * Whether an entry's window has closed.
+ * Measured against the fixed `RATE_LIMIT.WINDOW_MS`: entries in these maps are
+ * written only by the fixed-window gates, never under a configured `windowMs`.
  */
 function windowClosed(entry: RateLimitEntry, now: number): boolean {
     return leftWindow(entry.windowStart, now, RATE_LIMIT.WINDOW_MS);
@@ -111,9 +116,10 @@ function cleanupExpiredLogs(): void {
  * Refuse a key the map cannot track. Called only for a key not already in it.
  *
  * Only a key we are not already tracking can grow the map, and nothing
- * guarantees the cleanup interval is running: it is started by the three
- * process mains, and an embedder reaching here through the exported
- * `registerEndpointTools` or `executeCurlRequest` starts none of them.
+ * guarantees the cleanup interval is running: it is started only by
+ * `runStdio`, `runHTTP` and `McpCurlServer.start`, and an embedder reaching
+ * here through the exported `registerEndpointTools` or `executeCurlRequest`
+ * calls none of them.
  *
  * This REJECTS where `bounded-throttle.ts::setBounded` evicts — that file owns
  * why a counter may not be evicted. Refusing a key we cannot track fails
@@ -136,7 +142,8 @@ function formatWindow(ms: number): string {
 }
 
 /**
- * Clean up expired entries from a rate limit map.
+ * Sweep a fixed-window map. Sliding logs are swept by {@link cleanupExpiredLogs},
+ * against the window they were recorded under rather than this one.
  */
 function cleanupExpiredEntries(map: Map<string, RateLimitEntry>): void {
     const now = elapsedNow();
@@ -148,7 +155,9 @@ function cleanupExpiredEntries(map: Map<string, RateLimitEntry>): void {
 }
 
 /**
- * Internal rate limit check for a single map.
+ * Fixed-window check shared by the client gate and the default host gate.
+ * Capacity is checked only for an untracked key, and both refusals throw
+ * before writing, so a refused request adds no key and no count.
  */
 function checkRateLimitInternal(
     map: Map<string, RateLimitEntry>,
@@ -204,7 +213,7 @@ function checkSlidingHostLimit(hostname: string, limit: HostRateLimit, errorPref
  *
  * @param hostname - Target hostname (for per-host limit)
  * @param clientId - Client identifier (session ID for HTTP, default for stdio)
- * @throws Error if either rate limit is exceeded
+ * @throws Error if either rate limit is exceeded, or if the key is untracked and its map is at RATE_LIMIT.MAX_TRACKED_KEYS
  */
 export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.STDIO_CLIENT_ID): void {
     // **Client gate first, and the order is load-bearing.** Whichever map is
@@ -336,7 +345,9 @@ export function startRateLimitCleanup(): NodeJS.Timeout {
 }
 
 /**
- * Stop the rate limit cleanup interval.
+ * Stops only the sweep. The maps, the sliding logs and any installed host
+ * limit are left in place, so stopping it never hands a host a fresh quota;
+ * {@link releaseHostRateLimit} drops the limit.
  */
 export function stopRateLimitCleanup(interval: NodeJS.Timeout): void {
     clearInterval(interval);

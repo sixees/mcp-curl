@@ -19,9 +19,11 @@ import * as publicApi from "./lib.js";
 // `Object.keys(publicApi)` only sees value exports — type-only `export type { … }`
 // declarations are erased by TypeScript and leave no runtime trace. A future PR
 // dropping one of these `export type` lines from `lib.ts` would silently pass
-// the runtime frozen-surface check below. This `import type` pins each one: if
-// the symbol stops being re-exported from `./lib.js`, this file fails to
-// compile, and the test suite refuses to start.
+// the runtime frozen-surface check below. This `import type` pins each type it
+// names: if one stops being re-exported from `./lib.js`, this file fails to
+// compile, and the test suite refuses to start. `DefendTextOptions` is not
+// among them — it is imported from `./lib/response/index.js` further down,
+// so its re-export from `src/lib.ts` is unpinned.
 //
 // Keep this list in lockstep with the `export type { … }` blocks in `src/lib.ts`.
 import type {

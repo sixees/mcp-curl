@@ -11,7 +11,7 @@ export const SESSION = {
 } as const;
 
 const RATE_LIMIT_QUOTAS = {
-    /** Maximum requests per host per minute */
+    /** Per-host requests per minute while no `rateLimit` is installed; a configured one replaces it */
     MAX_PER_HOST_PER_MINUTE: 60,
     /** Maximum requests per client per minute */
     MAX_PER_CLIENT_PER_MINUTE: 300,
@@ -26,7 +26,7 @@ const RATE_LIMIT_QUOTAS = {
 export const RATE_LIMIT = {
     ...RATE_LIMIT_QUOTAS,
     /**
-     * Ceiling on distinct keys either rate-limit map tracks.
+     * Ceiling on distinct keys each rate-limit map tracks — the client map, the fixed host map and the sliding host log.
      *
      * **Derived rather than chosen, because exceeding it refuses a request.**
      * Every concurrent session spending its whole quota on distinct hosts is
