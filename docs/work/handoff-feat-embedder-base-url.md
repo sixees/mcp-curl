@@ -229,3 +229,7 @@ None filed this round.
 ### Files Modified
 
 - `docs/api-schema.md`
+
+### Round 2 — 2026-10-21
+
+CodeRabbit full review and Codex review of `e80726c`: no new findings (Codex: "Didn't find any major issues"; CodeRabbit filed no threads). CodeRabbit withdrew both query/fragment-in-`baseUrl` threads after the round-1 decline. The fetch returned 5 entries, all acknowledgements or receipts. Loop stopped: five or fewer comments, no P1.
