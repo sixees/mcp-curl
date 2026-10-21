@@ -7,10 +7,10 @@ own the rest, and each fact lives in exactly one of them:
 
 | Question | Document |
 |---|---|
-| What must a change not break? (numbered invariants, trust boundaries) | [`ARCHITECTURE.md`](./ARCHITECTURE.md) |
+| What must a change not break? (numbered invariants, trust boundaries) | [`ARCHITECTURE.md`](./.sixees/ARCHITECTURE.md) |
 | How is this system built? (stack, lifecycle, security detail) | [`docs/architecture/architecture.md`](./docs/architecture/architecture.md) |
-| What must the work look like? | [`CONVENTIONS.md`](./CONVENTIONS.md) |
-| What went wrong before, and what did it teach us? | [`LESSONS.md`](./LESSONS.md) |
+| What must the work look like? | [`CONVENTIONS.md`](./.sixees/CONVENTIONS.md) |
+| What went wrong before, and what did it teach us? | [`LESSONS.md`](./.sixees/LESSONS.md) |
 | How is the workflow configured for this repo? | [`docs/compound/compound-engineering-profile.md`](./docs/compound/compound-engineering-profile.md) |
 
 Session rules under `.claude/rules/` load automatically. They are gitignored and
@@ -45,7 +45,7 @@ TRANSPORT=http PORT=3000 npm start  # Run with HTTP transport
 
 ## Before changing anything
 
-**Read [`ARCHITECTURE.md`](./ARCHITECTURE.md) first if the change touches
+**Read [`ARCHITECTURE.md`](./.sixees/ARCHITECTURE.md) first if the change touches
 `src/lib/security/`, `src/lib/config/security/`, `src/lib/execution/`, or
 `src/lib/response/`.** Those four directories carry the numbered invariants; a
 change there that does not say which invariant it touches has not been thought
@@ -70,12 +70,12 @@ before sanitising. Check `ARCHITECTURE.md` before simplifying any of it.
 ## What lives where
 
 - **Numbered invariants and the trust-boundary map** →
-  [`ARCHITECTURE.md`](./ARCHITECTURE.md). Cite them by number.
+  [`ARCHITECTURE.md`](./.sixees/ARCHITECTURE.md). Cite them by number.
 - **Stack, directory structure, request lifecycle, data stores, full security
   architecture** → [`docs/architecture/architecture.md`](./docs/architecture/architecture.md)
   (this one is published to npm; the root file is not)
 - **Code style, naming, layering rules, test and commit conventions, work-product
-  paths** → [`CONVENTIONS.md`](./CONVENTIONS.md)
+  paths** → [`CONVENTIONS.md`](./.sixees/CONVENTIONS.md)
 - **Reality Corrections and the shapes this project has earned** →
-  [`LESSONS.md`](./LESSONS.md) — read it before planning anything touching a
+  [`LESSONS.md`](./.sixees/LESSONS.md) — read it before planning anything touching a
   surface an RC already names.

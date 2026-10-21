@@ -19,11 +19,9 @@ import * as publicApi from "./lib.js";
 // `Object.keys(publicApi)` only sees value exports — type-only `export type { … }`
 // declarations are erased by TypeScript and leave no runtime trace. A future PR
 // dropping one of these `export type` lines from `lib.ts` would silently pass
-// the runtime frozen-surface check below. This `import type` pins each type it
-// names: if one stops being re-exported from `./lib.js`, this file fails to
-// compile, and the test suite refuses to start. `DefendTextOptions` is not
-// among them — it is imported from `./lib/response/index.js` further down,
-// so its re-export from `src/lib.ts` is unpinned.
+// the runtime frozen-surface check below. This `import type` pins each one: if
+// the symbol stops being re-exported from `./lib.js`, this file fails to
+// compile, and the test suite refuses to start.
 //
 // Keep this list in lockstep with the `export type { … }` blocks in `src/lib.ts`.
 import type {
@@ -54,6 +52,7 @@ import type {
     CurlExecuteInput,
     JqQueryInput,
     CreateHttpOnlyUrlSchemaOptions,
+    DefendTextOptions,
 } from "./lib.js";
 
 // Reference each type once so unused-import linters don't strip them. The
@@ -122,7 +121,6 @@ import {
 } from "./lib/utils/index.js";
 import { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 import { defendText } from "./lib/response/index.js";
-import type { DefendTextOptions } from "./lib/response/index.js";
 
 describe("public barrel (src/lib.ts)", () => {
     describe("re-exports the same reference as the deep import", () => {
