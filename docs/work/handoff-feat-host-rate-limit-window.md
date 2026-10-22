@@ -138,6 +138,7 @@ Fixes are in 1202643. The todos were deleted after completion, at the operator's
 | `docs/architecture/architecture.md` points at `.sixees/ARCHITECTURE.md`, which is gitignored and not published | coderabbitai (Minor) | P3 | Line in diff; the condition is not | The invariant list became a per-clone, gitignored document in #42. Before this PR the line named a root file that no longer existed, and this PR corrected the location. Whether the list should be tracked or published is the standards-documents layout decided in #42, not this PR. The bare `ARCHITECTURE.md` references at line 90 and in `src/lib.ts` are pre-existing and unchanged |
 | The `rateLimit` example calls `configure(...)` without a receiver | coderabbitai (Minor) | P3 | In diff | False positive. Every option section in `docs/configuration.md` uses the same bare `configure({...})` form, and the receiver appears in the full examples further down. Changing one section would break the document's convention |
 | `retryMs` uses `log[0]`, which is wrong when the log holds more than `max` entries | coderabbitai (Minor) | P3 | In diff | No consequence in this population. The log exceeds `max` only when a server restarts in the same process with the same `windowMs` and a smaller `max`, and no caller does that. Fixing the number would also make the specified wording ("the oldest leaves the window in N s", plan acceptance criterion and `docs/configuration.md`) false in that case, so it is not a one-line fix |
+| Repeat of the `retryMs` finding, now proposing to reword the message to "the next request can be retried in N s" | coderabbitai (Minor) | P3 | In diff | Declined for the round-1 reason: no caller restarts in-process with a smaller `max`, so the log never holds more than `max` entries in practice. The rewording changes the refusal text the plan specified for a case that does not occur. Operator closed the review with "nothing more to do" |
 
 ### Decisions Revised
 
@@ -157,4 +158,4 @@ None filed this round.
 - `src/lib/extensible/mcp-curl-server.test.ts` (two regression tests; the `close` mock is now shared)
 - `dist/` (rebuilt)
 
-**Still open from the tail read:** CodeRabbit's repeat of the retry-delay finding (thread on this handoff, with a proposed message change). Not dispositioned. Codex's review has shown "Running" on `e6000cd` since 05:29 and posted nothing.
+**Tail read, repeat finding.** CodeRabbit re-raised the retry-delay finding, now proposing to reword the message. Declined; see the last row of *Declined Findings*. Codex's review showed "Running" on `e6000cd` from 05:29 and never posted findings. The operator closed the review and authorised the merge.
