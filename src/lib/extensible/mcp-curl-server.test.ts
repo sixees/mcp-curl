@@ -1182,12 +1182,14 @@ describe("McpCurlServer rateLimit lifecycle", () => {
     const LIMITED = "Rate limit exceeded for host";
     const REACHED_CURL = /cURL exited \d+/;
     let server: McpCurlServer;
+    let close: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
         clearRateLimitMaps();
+        close = vi.fn().mockResolvedValue(undefined);
         const capture = captureTools({
             connect: vi.fn().mockResolvedValue(undefined),
-            close: vi.fn().mockResolvedValue(undefined),
+            close,
             registerResource: vi.fn(),
             registerPrompt: vi.fn(),
         });
@@ -1266,6 +1268,43 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         await server.start("stdio");
         const again = await server.utilities().executeRequest({ url: URL });
         expect(textOf(again)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+    });
+
+    it("shares one teardown between concurrent shutdown() calls, so a late one cannot release a restart's limit", async () => {
+        const pending: (() => void)[] = [];
+        close.mockImplementation(() => new Promise<void>((resolve) => pending.push(resolve)));
+        await server.start("stdio");
+        const early = server.shutdown();
+        const late = server.shutdown();
+        pending.shift()!();
+        await early;
+
+        await server.start("stdio");
+        pending.splice(0).forEach((resolve) => resolve());
+        await late;
+
+        close.mockResolvedValue(undefined);
+        expect(textOf(await server.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+        const second = await server.utilities().executeRequest({ url: URL });
+        expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+    });
+
+    it("reads the rateLimit accessor once, so configure() validates the value it stores", async () => {
+        let reads = 0;
+        const options = {
+            allowLocalhost: true,
+            get rateLimit() {
+                return reads++ === 0 ? undefined : { max: NaN, windowMs: 1 };
+            },
+        };
+        const configured = new McpCurlServer().configure(options);
+        expect(reads).toBe(1);
+        await server.shutdown();
+        try {
+            await expect(configured.start("stdio")).resolves.toBeUndefined();
+        } finally {
+            await configured.shutdown();
+        }
     });
 
     describe("with a second server in the process", () => {

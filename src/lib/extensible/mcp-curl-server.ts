@@ -120,6 +120,7 @@ export class McpCurlServer {
     };
     private _customTools: CustomToolDef[] = [];
     private _started = false;
+    private _shutdown: Promise<void> | null = null;
     private _server: McpServer | null = null;
     private _httpServer: Server | null = null;
     private _sessionManager: SessionManager | null = null;
@@ -139,6 +140,8 @@ export class McpCurlServer {
      */
     configure(config: Partial<McpCurlConfig>): this {
         this.ensureNotStarted("configure()");
+        // One read of every accessor, so the rateLimit checked below is the one stored.
+        config = { ...config };
         // Parsed before anything is merged, so a throw leaves the config as it was.
         if (config.rateLimit !== undefined) {
             config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
@@ -512,6 +515,16 @@ export class McpCurlServer {
         if (!this._started) {
             return; // Nothing to shut down
         }
+        // Concurrent calls share one teardown. Two would each run it, and the
+        // later one could release the host limit and intervals of a start()
+        // that ran after the earlier one finished.
+        this._shutdown ??= this.teardown().finally(() => {
+            this._shutdown = null;
+        });
+        return this._shutdown;
+    }
+
+    private async teardown(): Promise<void> {
         console.error("Shutting down McpCurlServer...");
 
         // Close HTTP server if running with timeout

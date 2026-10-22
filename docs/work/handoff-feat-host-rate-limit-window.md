@@ -117,3 +117,40 @@ The builder's rewrite of todo 022's "exactly one copy" criterion was the builder
 | 024 | Fixed, Option 1 (`readonly` fields) |
 
 Fixes are in 1202643. The todos were deleted after completion, at the operator's request.
+
+## Review Comments Addressed — 2026-10-22
+
+**PR:** #47. Surface 3, round 1. Reviews requested from CodeRabbit, Codex and Copilot. Codex was still running at the read and posted nothing in this round.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Two concurrent `shutdown()` calls can both run teardown; the later one releases the host limit and intervals of a `start()` that ran after the earlier finished | copilot-pull-request-reviewer (High → P2) | Fix needed | `McpCurlServer.shutdown` now shares one in-flight `teardown()` between concurrent callers. The fix covers the whole class: the cleanup intervals sat in the same race before this PR, and the host limit is the instance this PR added. Regression test with independently deferred `close()`; mutation probe (no coalescing) fails it |
+| `configure()` reads the outer `rateLimit` accessor up to three times, so the guard can see `undefined` and the copy loop store an unvalidated object | copilot-pull-request-reviewer (Medium → P3) | Fix needed | `configure()` snapshots its argument once before the guard. This is the class the operator closed in round 2 (021, Option 1), one level out. Regression test; mutation probe (no snapshot) fails it |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| `docs/architecture/architecture.md` points at `.sixees/ARCHITECTURE.md`, which is gitignored and not published | coderabbitai (Minor) | P3 | Line in diff; the condition is not | The invariant list became a per-clone, gitignored document in #42. Before this PR the line named a root file that no longer existed, and this PR corrected the location. Whether the list should be tracked or published is the standards-documents layout decided in #42, not this PR. The bare `ARCHITECTURE.md` references at line 90 and in `src/lib.ts` are pre-existing and unchanged |
+| The `rateLimit` example calls `configure(...)` without a receiver | coderabbitai (Minor) | P3 | In diff | False positive. Every option section in `docs/configuration.md` uses the same bare `configure({...})` form, and the receiver appears in the full examples further down. Changing one section would break the document's convention |
+| `retryMs` uses `log[0]`, which is wrong when the log holds more than `max` entries | coderabbitai (Minor) | P3 | In diff | No consequence in this population. The log exceeds `max` only when a server restarts in the same process with the same `windowMs` and a smaller `max`, and no caller does that. Fixing the number would also make the specified wording ("the oldest leaves the window in N s", plan acceptance criterion and `docs/configuration.md`) false in that case, so it is not a one-line fix |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None. No todo is linked to #47.
+
+### Outstanding Todos
+
+None filed this round.
+
+### Files Modified
+
+- `src/lib/extensible/mcp-curl-server.ts` (`configure`, `shutdown`, new `teardown`)
+- `src/lib/extensible/mcp-curl-server.test.ts` (two regression tests; the `close` mock is now shared)
+- `dist/` (rebuilt)
