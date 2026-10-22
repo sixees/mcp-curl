@@ -2,9 +2,10 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
- * Schema for structured cURL execution.
- * Validates all parameters for the curl_execute tool.
- */
+* Input schema for the curl_execute tool on a server with no `baseUrl`.
+* `CurlExecuteBaseUrlSchema` extends it for a server with one, so a relative
+* `url` is accepted only where something resolves it.
+*/
 declare const CurlExecuteSchema: z.ZodObject<{
     url: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     method: z.ZodOptional<z.ZodEnum<{
@@ -280,6 +281,9 @@ declare function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<
  * @param pathParams - Values for path parameters
  * @param queryParams - Query parameters to append
  * @returns Fully constructed URL
+ * @throws Error if a path parameter makes a `.` or `..` path segment.
+ *   `encodeURIComponent` keeps a value inside one segment but leaves `.`
+ *   alone, so `{id}` set to `..` would request the endpoint's parent.
  */
 declare function buildUrl(baseUrl: string, path: string, pathParams: Record<string, unknown>, queryParams: Record<string, string>): string;
 /**

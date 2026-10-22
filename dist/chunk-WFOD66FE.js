@@ -1,6 +1,7 @@
 import {
   CURL_EXECUTE_TOOL_META,
   CUSTOM_TOOL_HOSTNAME_LABEL,
+  CurlExecuteBaseUrlSchema,
   ENV,
   JQ_QUERY_HOSTNAME_LABEL,
   JqQuerySchema,
@@ -11,6 +12,7 @@ import {
   SESSION,
   applyDefaultHeaders,
   applyJqFilter,
+  assertPositiveInteger,
   cleanupOrphanedTempDirs,
   cleanupTempDir,
   createConfigError,
@@ -20,10 +22,13 @@ import {
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
+  installHostRateLimit,
   isValidSessionId,
+  parseHostRateLimit,
   parsePort,
-  resolveBaseUrl,
+  releaseHostRateLimit,
   resolveOutputDir,
+  resolveRequestUrl,
   safeHostname,
   safeStringCompare,
   sanitizeDescription,
@@ -36,7 +41,7 @@ import {
   validateFilePath,
   validateOutputDir,
   writeUniqueFile
-} from "./chunk-RXLJX33S.js";
+} from "./chunk-Z7K23AMN.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -351,7 +356,7 @@ Files can only be read from:
 - **Localhost**: Blocked by default (set MCP_CURL_ALLOW_LOCALHOST=true with port restrictions)
 
 ### Rate Limits
-- Per-hostname: 60 requests/minute
+- Per-hostname: by default 60 requests/minute; the embedder may configure a different per-host window
 - Per-client: 300 requests/minute total (HTTP: per session; stdio: shared single bucket)
 
 ### Resource Limits
@@ -486,7 +491,7 @@ function createInstanceUtilities(config) {
     async executeRequest(params) {
       let url = params.url;
       if (!url && params.path && config.baseUrl) {
-        url = resolveBaseUrl(config.baseUrl, params.path);
+        url = params.path.startsWith("/") ? params.path : `/${params.path}`;
       }
       if (!url) {
         return {
@@ -499,10 +504,14 @@ function createInstanceUtilities(config) {
           isError: true
         };
       }
+      const resolved = resolveRequestUrl(config.baseUrl, url);
+      if (!resolved.ok) {
+        return { content: [{ type: "text", text: resolved.error }], isError: true };
+      }
       const mergedHeaders = { ...config.defaultHeaders, ...params.headers };
       const defaults = applyDefaultHeaders(mergedHeaders, params.user_agent, config);
       const fullParams = {
-        url,
+        url: resolved.url,
         method: params.method,
         headers: defaults.headers,
         data: params.data,
@@ -552,9 +561,7 @@ var SessionManager = class {
    */
   constructor(maxSessions = SESSION.MAX_SESSIONS) {
     this.maxSessions = maxSessions;
-    if (!Number.isInteger(maxSessions) || maxSessions < 1) {
-      throw new Error(`maxSessions must be a positive integer, got: ${maxSessions}`);
-    }
+    assertPositiveInteger("maxSessions", maxSessions);
   }
   sessions = /* @__PURE__ */ new Map();
   cleanupInterval = null;
@@ -767,9 +774,6 @@ function applySharedConfigDefaults(params, config) {
 }
 function applyConfigTransformsCurl(params, config) {
   const transformed = { ...params };
-  if (config.baseUrl && !params.url.match(/^https?:\/\//i)) {
-    transformed.url = resolveBaseUrl(config.baseUrl, params.url);
-  }
   const mergedHeaders = { ...config.defaultHeaders, ...params.headers };
   const defaults = applyDefaultHeaders(mergedHeaders, transformed.user_agent, config);
   transformed.headers = defaults.headers;
@@ -790,7 +794,14 @@ function registerCurlToolWithHooks(server, options) {
         isError: true
       };
     }
-    const transformedParams = applyConfigTransformsCurl(params, config);
+    const resolved = resolveRequestUrl(config.baseUrl, params.url);
+    if (!resolved.ok) {
+      return wrap(
+        { content: [{ type: "text", text: resolved.error }], isError: true },
+        safeHostname(params.url)
+      );
+    }
+    const transformedParams = applyConfigTransformsCurl({ ...params, url: resolved.url }, config);
     return await executeWithHooks(
       "curl_execute",
       transformedParams,
@@ -802,7 +813,8 @@ function registerCurlToolWithHooks(server, options) {
       (p) => safeHostname(p.url)
     );
   };
-  server.registerTool("curl_execute", CURL_EXECUTE_TOOL_META, handler);
+  const meta = config.baseUrl ? { ...CURL_EXECUTE_TOOL_META, inputSchema: CurlExecuteBaseUrlSchema } : CURL_EXECUTE_TOOL_META;
+  server.registerTool("curl_execute", meta, handler);
 }
 function registerJqToolWithHooks(server, options) {
   const { executor, enabled, config, hooks } = options;
@@ -969,7 +981,8 @@ var KNOWN_CONFIG_KEYS_ARRAY = [
   "allowedOrigins",
   "defaultUserAgent",
   "defaultReferer",
-  "enableSpotlighting"
+  "enableSpotlighting",
+  "rateLimit"
 ];
 var KNOWN_CONFIG_KEYS = new Set(KNOWN_CONFIG_KEYS_ARRAY);
 var McpCurlServer = class {
@@ -986,10 +999,13 @@ var McpCurlServer = class {
   };
   _customTools = [];
   _started = false;
+  _starting = null;
+  _shutdown = null;
   _server = null;
   _httpServer = null;
   _sessionManager = null;
   _rateLimitInterval = null;
+  _hostLimitHandle = null;
   _injectionCleanupInterval = null;
   _wrapErrorCleanupInterval = null;
   _utilities = null;
@@ -999,10 +1015,14 @@ var McpCurlServer = class {
    *
    * @param config - Configuration options to merge
    * @returns this for chaining
-   * @throws Error if called after start()
+   * @throws Error if called after start(), or if `rateLimit` is not two positive integers
    */
   configure(config) {
     this.ensureNotStarted("configure()");
+    config = { ...config };
+    if (config.rateLimit !== void 0) {
+      config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
+    }
     const picked = {};
     const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
     for (const key of Object.keys(config)) {
@@ -1115,9 +1135,9 @@ var McpCurlServer = class {
    *   `.refine()` / `.check()` chains, `.strict()` / `.passthrough()`
    *   modes, `z.array().min()` / `.max()` / `.length()` / `.nonempty()`
    *   constraints, factory defaults on `ZodDefault`, and
-   *   `ZodDiscriminatedUnion` discriminators. Callers no longer need to
-   *   defensively sanitise field descriptions sourced from external input;
-   *   doing so remains harmless (the walk is idempotent).
+   *   `ZodDiscriminatedUnion` discriminators. Callers need not sanitise field
+   *   descriptions sourced from external input themselves; doing so is
+   *   harmless (the walk is idempotent).
    * @param handler - Tool handler function
    * @returns this for chaining
    * @throws Error if called after start()
@@ -1215,10 +1235,9 @@ var McpCurlServer = class {
    * Useful for tests that need to assert what was registered (and what its
    * advertised title/description look like) without starting the server.
    *
-   * Returned entries are frozen — including `meta` and `meta.annotations` —
-   * so a caller cannot mutate them and indirectly change tool registrations
-   * after the fact (the same `meta` reference was forwarded to
-   * `server.registerTool` during start). `meta.inputSchema` is intentionally
+   * Returned entries are fresh frozen copies — `meta` and `meta.annotations`
+   * included — so nothing a caller does to them reaches the stored `meta` that
+   * `start()` forwards to `server.registerTool`. `meta.inputSchema` is intentionally
    * shared by reference: Zod schema instances rely on internal mutable state
    * and freezing would break them; treat it as read-only by convention.
    */
@@ -1255,11 +1274,23 @@ var McpCurlServer = class {
       throw new Error("Server is already running. Call shutdown() before starting again.");
     }
     this._started = true;
-    this._frozenConfig = this.freezeConfig();
+    const config = this.freezeConfig();
+    this._frozenConfig = config;
+    this._starting = this.launch(transport, config);
     try {
-      const httpAuthToken = transport === "http" ? this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN] : void 0;
+      await this._starting;
+    } finally {
+      this._starting = null;
+    }
+  }
+  async launch(transport, config) {
+    try {
+      const httpAuthToken = transport === "http" ? config.authToken ?? process.env[ENV.AUTH_TOKEN] : void 0;
       if (transport === "http") {
         validateAuthToken(httpAuthToken);
+      }
+      if (config.rateLimit) {
+        this._hostLimitHandle = installHostRateLimit(config.rateLimit);
       }
       await cleanupOrphanedTempDirs();
       this._rateLimitInterval = startRateLimitCleanup();
@@ -1290,18 +1321,7 @@ var McpCurlServer = class {
         this._sessionManager.stopCleanup();
         this._sessionManager = null;
       }
-      if (this._rateLimitInterval) {
-        stopRateLimitCleanup(this._rateLimitInterval);
-        this._rateLimitInterval = null;
-      }
-      if (this._injectionCleanupInterval) {
-        stopInjectionCleanup(this._injectionCleanupInterval);
-        this._injectionCleanupInterval = null;
-      }
-      if (this._wrapErrorCleanupInterval) {
-        stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
-        this._wrapErrorCleanupInterval = null;
-      }
+      this.releaseProcessState();
       this._server = null;
       this._started = false;
       this._frozenConfig = null;
@@ -1318,6 +1338,15 @@ var McpCurlServer = class {
     if (!this._started) {
       return;
     }
+    this._shutdown ??= (async () => {
+      await this._starting?.catch(() => void 0);
+      if (this._started) await this.teardown();
+    })().finally(() => {
+      this._shutdown = null;
+    });
+    return this._shutdown;
+  }
+  async teardown() {
     console.error("Shutting down McpCurlServer...");
     if (this._httpServer) {
       const SHUTDOWN_TIMEOUT = 5e3;
@@ -1363,15 +1392,7 @@ var McpCurlServer = class {
         this._server = null;
       }
     }
-    if (this._rateLimitInterval) {
-      stopRateLimitCleanup(this._rateLimitInterval);
-    }
-    if (this._injectionCleanupInterval) {
-      stopInjectionCleanup(this._injectionCleanupInterval);
-    }
-    if (this._wrapErrorCleanupInterval) {
-      stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
-    }
+    this.releaseProcessState();
     try {
       await cleanupTempDir();
     } catch (error) {
@@ -1380,9 +1401,6 @@ var McpCurlServer = class {
       this._started = false;
       this._frozenConfig = null;
       this._utilities = null;
-      this._rateLimitInterval = null;
-      this._injectionCleanupInterval = null;
-      this._wrapErrorCleanupInterval = null;
       this._sessionManager = null;
     }
   }
@@ -1481,6 +1499,29 @@ var McpCurlServer = class {
       defaultHeaders: this._config.defaultHeaders ? Object.freeze({ ...this._config.defaultHeaders }) : void 0,
       allowedOrigins: this._config.allowedOrigins ? Object.freeze([...this._config.allowedOrigins]) : void 0
     });
+  }
+  /**
+   * Undo `start()`'s process-wide effects: the three cleanup intervals and
+   * this server's host limit. Shared by the start rollback and `shutdown()`,
+   * and safe to call when any of them was never set up.
+   */
+  releaseProcessState() {
+    if (this._rateLimitInterval) {
+      stopRateLimitCleanup(this._rateLimitInterval);
+      this._rateLimitInterval = null;
+    }
+    if (this._hostLimitHandle) {
+      releaseHostRateLimit(this._hostLimitHandle);
+      this._hostLimitHandle = null;
+    }
+    if (this._injectionCleanupInterval) {
+      stopInjectionCleanup(this._injectionCleanupInterval);
+      this._injectionCleanupInterval = null;
+    }
+    if (this._wrapErrorCleanupInterval) {
+      stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
+      this._wrapErrorCleanupInterval = null;
+    }
   }
   /**
    * Ensure server has not been started.

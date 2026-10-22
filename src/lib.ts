@@ -96,6 +96,7 @@ export {
 export type {
     // Configuration
     McpCurlConfig,
+    HostRateLimit,
     TransportMode,
 
     // Hook types

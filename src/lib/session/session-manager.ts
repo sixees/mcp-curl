@@ -3,6 +3,7 @@
 
 import type { Session } from "../types/index.js";
 import { SESSION } from "../config/index.js";
+import { assertPositiveInteger } from "../utils/index.js";
 
 /**
  * Manages HTTP transport sessions with automatic cleanup.
@@ -18,9 +19,7 @@ export class SessionManager {
      * @throws Error if maxSessions is not a positive integer
      */
     constructor(private readonly maxSessions: number = SESSION.MAX_SESSIONS) {
-        if (!Number.isInteger(maxSessions) || maxSessions < 1) {
-            throw new Error(`maxSessions must be a positive integer, got: ${maxSessions}`);
-        }
+        assertPositiveInteger("maxSessions", maxSessions);
     }
 
     has(id: string): boolean {

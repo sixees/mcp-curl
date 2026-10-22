@@ -49,7 +49,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 | `SavedFile` | `response/file-saver.ts` | `mode 0o600`, filename `safeBase_<ms>_<8 hex>.txt`. **`flag "wx"` is the guarantee** — no naming scheme guarantees uniqueness, and `wx` is what makes a residual collision an `EEXIST` rather than a silent overwrite. The 8 hex characters of a `randomUUID` make that collision improbable; the timestamp only sorts the directory |
 | `JqFilter` | `jq/parser.ts`, `jq/filter.ts` | Bounded subset — ≤20 paths, 100 ms parse timeout |
 | `Session` | `session/session-manager.ts` | HTTP only; UUID-keyed; 1 h idle timeout |
-| `RateLimitEntry` | `security/rate-limiter.ts` | Two `Map`s — per-host + per-client |
+| `RateLimitEntry` | `security/rate-limiter.ts` | Two `Map`s — per-host + per-client — plus a per-host timestamp log `Map` used only when `rateLimit` is configured |
 | `Hook` | `extensible/hook-executor.ts` | `beforeRequest` / `afterResponse` / `onError` |
 | `ApiSchema` / `EndpointTool` | `schema/loader.ts`, `generator.ts` | YAML → Zod input schema → curl-delegating handler |
 
@@ -63,8 +63,8 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 
 ### Business Rules / Invariants
 
-> **The numbered, citable invariant list lives in `ARCHITECTURE.md` at the repository
-> root** — that is the copy a review finding or an RC cites by number, and the copy to
+> **The numbered, citable invariant list lives in `.sixees/ARCHITECTURE.md`** — that is
+> the copy a review finding or an RC cites by number, and the copy to
 > change. The bullets below are the operational rules of this system stated in prose;
 > where the two describe the same property, the numbered list is authoritative. Do not
 > add a new invariant here without adding it there, or the two will diverge — they did
@@ -88,7 +88,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
   returned normally and the result reports `headers_unsupported`: a fact about the
   host, distinct from `headers_undetermined`, which says the origin sent no header
   block. See `ARCHITECTURE.md` invariants 1a, 13 and 14.
-- Both per-host (60/min) **and** per-client (300/min) rate limits apply.
+- Both per-host (60/min by default) **and** per-client (300/min) rate limits apply.
 - `jq_query` reads are confined to `{ tempDir, MCP_CURL_OUTPUT_DIR, cwd-subtree }` after `realpath()` resolution.
 - Responses larger than `max_result_size` (default 500 KB, max 1 MB) auto-save to a `0o600` file.
 - Custom tool names match `^[a-z][a-z0-9_]*$`; `curl_execute` and `jq_query` are reserved.
@@ -140,7 +140,7 @@ Stage notes:
 | Store | Type | What it holds | Access pattern |
 |---|---|---|---|
 | `SessionManager.sessions` | In-memory `Map<string, Session>` | HTTP transports + per-session `McpServer` + `lastActivity` | Created on `POST /mcp`, idle-reaped at 1 h |
-| Rate limiter | Two `Map`s (host, client) | Fixed-window counters | Created in handler, swept every 10 s |
+| Rate limiter | Three `Map`s — host and client fixed-window counters, plus a per-host timestamp log recorded while `rateLimit` is set and kept across a release, so a restart with the same `windowMs` resumes it | Fixed-window counters; sliding log | Created in handler, swept every 10 s |
 | Memory tracker | Module-level counter | Bytes accumulated across in-flight requests | Per-chunk `allocate` / `release` |
 | Injection-detect throttle | `Map<host, lastTs>` | Per-host last-logged time | 60 s window, swept on interval |
 | Allowed-dirs cache | TTL'd map | Resolved cwd / output-dir paths | 60 s TTL (`config/jq.ts`) |
@@ -174,11 +174,11 @@ For exact blocklists — CIDRs, hostnames, TLDs, rebinding services — see `src
 
 ### Rate Limiting
 
-Two fixed-window counters (per-host, per-client) — `security/rate-limiter.ts`. Limits: 60/min per host, 300/min per client; both must pass. The client gate runs first, so a request it refuses adds no host key. Cleanup `setInterval` runs every 10 s (`unref`'d). For stdio, client id is the constant `__stdio_client__`; for HTTP, it is the validated session id.
+Two fixed-window counters (per-host, per-client) — `security/rate-limiter.ts`. Limits: 60/min per host, 300/min per client; both must pass. An embedder's `rateLimit { max, windowMs }` replaces the per-host counter with a sliding log of timestamps (at most `max` per host), installed process-wide by `McpCurlServer.start()` through `installHostRateLimit`, which parses it (`parseHostRateLimit`, reading each field once) and returns a handle; only that handle's `releaseHostRateLimit` — the same server's `shutdown()` or failed `start()` — restores the default, and a second install while one is held throws. A release keeps the logs, and a re-install with the same `windowMs` resumes them, so an in-process restart gets no fresh quota. It shares `MAX_TRACKED_KEYS` and the refuse-when-full rule, and the sweep drops a host once its newest timestamp leaves the window it was recorded under. Both host gates key on the hostname with trailing dots stripped (`rate-limiter.ts::canonicalHost`). The client gate runs first, so a request it refuses adds no host key. Cleanup `setInterval` runs every 10 s (`unref`'d). For stdio, client id is the constant `__stdio_client__`; for HTTP, it is the validated session id.
 
-Each map also refuses keys beyond `RATE_LIMIT.MAX_TRACKED_KEYS` (`config/session.ts`), enforced at the write in `rate-limiter.ts::checkRateLimitInternal`. **It refuses rather than evicting**: evicting a counter would reset it and bypass the limit. The ceiling is derived from `SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE`, the cardinality every concurrent session spending its whole quota on distinct hosts would produce. **That is what it is sized against, not a proven upper bound** — `MAX_SESSIONS` caps sessions held at once, not sessions opened during a window, so churn past it is possible and costs a refusal that expires one window later. Windows are measured on a monotonic clock (`rate-limiter.ts::elapsedNow`), so a backward wall-clock step neither wedges the ceiling nor resets an active counter. The cap matters because the cleanup interval is started by the transports and `McpCurlServer` only — an embedder calling `executeCurlRequest` directly starts none of them.
+Each map also refuses keys beyond `RATE_LIMIT.MAX_TRACKED_KEYS` (`config/session.ts`), enforced at the write in `rate-limiter.ts::ensureCapacity`, which both the fixed-window and the sliding-log check reach. **It refuses rather than evicting**: evicting a counter would reset it and bypass the limit. The ceiling is derived from `SESSION.MAX_SESSIONS × MAX_PER_CLIENT_PER_MINUTE`, the cardinality every concurrent session spending its whole quota on distinct hosts would produce. **That is what it is sized against, not a proven upper bound** — `MAX_SESSIONS` caps sessions held at once, not sessions opened during a window, so churn past it is possible and costs a refusal that expires one window later. Windows are measured on a monotonic clock (`rate-limiter.ts::elapsedNow`), so a backward wall-clock step neither wedges the ceiling nor resets an active counter. The cap matters because the cleanup interval is started by the transports and `McpCurlServer` only — an embedder calling `executeCurlRequest` directly starts none of them.
 
-**Boundary burst is exploitable today.** The window resets unconditionally when `rate-limiter.ts::windowClosed` reports the window closed, so up to 2× the nominal limit can pass in a 1–2 second crossing — 120 requests per host, 600 per client, each a possible 10 MB pull (~1.2 GB of amplified DoS in seconds). Treat the limits as soft when serving untrusted clients (HTTP unauthed, shared stdio).
+**Boundary burst is exploitable today on the fixed windows.** A fixed window resets unconditionally when `rate-limiter.ts::windowClosed` reports it closed, so up to 2× the nominal limit can pass in a 1–2 second crossing — 120 requests per host under the default gate, 600 per client, each a possible 10 MB pull (~1.2 GB of amplified DoS in seconds). A configured `rateLimit` is a sliding log, so its host gate has no boundary to cross; the client gate still does. Treat the limits as soft when serving untrusted clients (HTTP unauthed, shared stdio).
 
 ### Authentication & Authorization
 

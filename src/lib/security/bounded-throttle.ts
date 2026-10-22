@@ -1,6 +1,6 @@
 // src/lib/security/bounded-throttle.ts
 // The evicting half of "a process-lifetime map must not grow without bound".
-// The rejecting half lives at its two call sites; see setBounded below.
+// The rejecting half lives in its two siblings; see setBounded below.
 
 import { THROTTLE } from "../config/session.js";
 
@@ -21,7 +21,7 @@ import { THROTTLE } from "../config/session.js";
  * **Evicting is safe here and nowhere else.** A throttle entry only suppresses
  * a log line, so dropping one costs at most one extra line of stderr. Two
  * siblings enforce a cap the same way but *reject* instead, because what they
- * hold cannot be dropped: `rate-limiter.ts::checkRateLimitInternal`, where
+ * hold cannot be dropped: `rate-limiter.ts::ensureCapacity`, where
  * evicting a counter would reset it and bypass the limit, and
  * `session-manager.ts::SessionManager.set`, where admitting one costs a transport.
  *

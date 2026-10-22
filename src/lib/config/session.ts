@@ -11,7 +11,7 @@ export const SESSION = {
 } as const;
 
 const RATE_LIMIT_QUOTAS = {
-    /** Maximum requests per host per minute */
+    /** Per-host requests per minute while no `rateLimit` is installed; a configured one replaces it */
     MAX_PER_HOST_PER_MINUTE: 60,
     /** Maximum requests per client per minute */
     MAX_PER_CLIENT_PER_MINUTE: 300,
@@ -26,7 +26,7 @@ const RATE_LIMIT_QUOTAS = {
 export const RATE_LIMIT = {
     ...RATE_LIMIT_QUOTAS,
     /**
-     * Ceiling on distinct keys either rate-limit map tracks.
+     * Ceiling on distinct keys each rate-limit map tracks — the client map, the fixed host map and the sliding host log.
      *
      * **Derived rather than chosen, because exceeding it refuses a request.**
      * Every concurrent session spending its whole quota on distinct hosts is
@@ -42,6 +42,14 @@ export const RATE_LIMIT = {
      * (`tools/curl-execute.ts`) — and the map drains one window later, so the
      * failure is a bounded refusal rather than a wedge. Raising this number
      * buys nothing that the window does not already give back.
+     *
+     * **A configured `rateLimit` stretches that drain to its own `windowMs`.**
+     * The sliding host map shares this ceiling and the reject-when-full rule,
+     * and a host stays tracked until its newest request leaves the configured
+     * window, so the sizing above is per minute while the drain may be per
+     * hour. Filling it then refuses new hosts for up to one configured window.
+     * That is accepted, not overlooked: an embedder that sets `rateLimit`
+     * fronts one API and reaches a handful of hosts.
      *
      * Deliberately not {@link THROTTLE.MAX_TRACKED_KEYS}: that one bounds log
      * throttles, where overflow costs a line of stderr. Sharing a value would

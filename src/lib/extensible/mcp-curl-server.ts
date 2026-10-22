@@ -27,6 +27,10 @@ import { cleanupOrphanedTempDirs, cleanupTempDir } from "../files/index.js";
 import {
     startRateLimitCleanup,
     stopRateLimitCleanup,
+    parseHostRateLimit,
+    installHostRateLimit,
+    releaseHostRateLimit,
+    type HostRateLimitHandle,
     startInjectionCleanup,
     stopInjectionCleanup,
     startWrapErrorCleanup,
@@ -93,7 +97,7 @@ const KNOWN_CONFIG_KEYS_ARRAY = [
     "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
     "maxResultSize", "allowLocalhost", "port", "host",
     "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
-    "enableSpotlighting",
+    "enableSpotlighting", "rateLimit",
 ] as const satisfies readonly (keyof McpCurlConfig)[];
 
 // Compile-time check: fails if any McpCurlConfig key is missing from the array
@@ -116,10 +120,13 @@ export class McpCurlServer {
     };
     private _customTools: CustomToolDef[] = [];
     private _started = false;
+    private _starting: Promise<void> | null = null;
+    private _shutdown: Promise<void> | null = null;
     private _server: McpServer | null = null;
     private _httpServer: Server | null = null;
     private _sessionManager: SessionManager | null = null;
     private _rateLimitInterval: NodeJS.Timeout | null = null;
+    private _hostLimitHandle: HostRateLimitHandle | null = null;
     private _injectionCleanupInterval: NodeJS.Timeout | null = null;
     private _wrapErrorCleanupInterval: NodeJS.Timeout | null = null;
     private _utilities: InstanceUtilities | null = null;
@@ -130,10 +137,16 @@ export class McpCurlServer {
      *
      * @param config - Configuration options to merge
      * @returns this for chaining
-     * @throws Error if called after start()
+     * @throws Error if called after start(), or if `rateLimit` is not two positive integers
      */
     configure(config: Partial<McpCurlConfig>): this {
         this.ensureNotStarted("configure()");
+        // One read of every accessor, so the rateLimit checked below is the one stored.
+        config = { ...config };
+        // Parsed before anything is merged, so a throw leaves the config as it was.
+        if (config.rateLimit !== undefined) {
+            config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
+        }
         const picked: Partial<McpCurlConfig> = {};
         const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
         for (const key of Object.keys(config)) {
@@ -252,9 +265,9 @@ export class McpCurlServer {
      *   `.refine()` / `.check()` chains, `.strict()` / `.passthrough()`
      *   modes, `z.array().min()` / `.max()` / `.length()` / `.nonempty()`
      *   constraints, factory defaults on `ZodDefault`, and
-     *   `ZodDiscriminatedUnion` discriminators. Callers no longer need to
-     *   defensively sanitise field descriptions sourced from external input;
-     *   doing so remains harmless (the walk is idempotent).
+     *   `ZodDiscriminatedUnion` discriminators. Callers need not sanitise field
+     *   descriptions sourced from external input themselves; doing so is
+     *   harmless (the walk is idempotent).
      * @param handler - Tool handler function
      * @returns this for chaining
      * @throws Error if called after start()
@@ -380,10 +393,9 @@ export class McpCurlServer {
      * Useful for tests that need to assert what was registered (and what its
      * advertised title/description look like) without starting the server.
      *
-     * Returned entries are frozen — including `meta` and `meta.annotations` —
-     * so a caller cannot mutate them and indirectly change tool registrations
-     * after the fact (the same `meta` reference was forwarded to
-     * `server.registerTool` during start). `meta.inputSchema` is intentionally
+     * Returned entries are fresh frozen copies — `meta` and `meta.annotations`
+     * included — so nothing a caller does to them reaches the stored `meta` that
+     * `start()` forwards to `server.registerTool`. `meta.inputSchema` is intentionally
      * shared by reference: Zod schema instances rely on internal mutable state
      * and freezing would break them; treat it as read-only by convention.
      */
@@ -424,8 +436,17 @@ export class McpCurlServer {
             throw new Error("Server is already running. Call shutdown() before starting again.");
         }
         this._started = true;
-        this._frozenConfig = this.freezeConfig();
+        const config = this.freezeConfig();
+        this._frozenConfig = config;
+        this._starting = this.launch(transport, config);
+        try {
+            await this._starting;
+        } finally {
+            this._starting = null;
+        }
+    }
 
+    private async launch(transport: TransportMode, config: Readonly<McpCurlConfig>): Promise<void> {
         try {
             // Resolve and validate the HTTP auth token *before* any
             // side-effecting setup. The rollback handler below would tear
@@ -436,10 +457,17 @@ export class McpCurlServer {
             // auth middleware see the same value.
             const httpAuthToken =
                 transport === "http"
-                    ? (this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN])
+                    ? (config.authToken ?? process.env[ENV.AUTH_TOKEN])
                     : undefined;
             if (transport === "http") {
                 validateAuthToken(httpAuthToken);
+            }
+
+            // Claimed before any other side effect, so a refusal (another
+            // server holds the limit) leaves nothing to undo. Left unclaimed
+            // without `rateLimit`, so this server cannot release another's.
+            if (config.rateLimit) {
+                this._hostLimitHandle = installHostRateLimit(config.rateLimit);
             }
 
             // Clean up orphaned temp directories from previous runs
@@ -479,18 +507,7 @@ export class McpCurlServer {
                 this._sessionManager.stopCleanup();
                 this._sessionManager = null;
             }
-            if (this._rateLimitInterval) {
-                stopRateLimitCleanup(this._rateLimitInterval);
-                this._rateLimitInterval = null;
-            }
-            if (this._injectionCleanupInterval) {
-                stopInjectionCleanup(this._injectionCleanupInterval);
-                this._injectionCleanupInterval = null;
-            }
-            if (this._wrapErrorCleanupInterval) {
-                stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
-                this._wrapErrorCleanupInterval = null;
-            }
+            this.releaseProcessState();
             this._server = null;
             this._started = false;
             this._frozenConfig = null;
@@ -508,6 +525,23 @@ export class McpCurlServer {
         if (!this._started) {
             return; // Nothing to shut down
         }
+        // Concurrent calls share one teardown. Two would each run it, and the
+        // later one could release the host limit and intervals of a start()
+        // that ran after the earlier one finished. It also waits out a start()
+        // still in progress: tearing down mid-start releases the host limit
+        // and leaves the rest of start() to bring the server up without it.
+        this._shutdown ??= (async () => {
+            // start()'s own caller gets its error; a failed start has already
+            // rolled itself back, which the _started check below sees.
+            await this._starting?.catch(() => undefined);
+            if (this._started) await this.teardown();
+        })().finally(() => {
+            this._shutdown = null;
+        });
+        return this._shutdown;
+    }
+
+    private async teardown(): Promise<void> {
         console.error("Shutting down McpCurlServer...");
 
         // Close HTTP server if running with timeout
@@ -561,17 +595,7 @@ export class McpCurlServer {
             }
         }
 
-        // Stop rate limit cleanup, injection detection cleanup, and the
-        // wrap-error throttle cleanup (PR-6b).
-        if (this._rateLimitInterval) {
-            stopRateLimitCleanup(this._rateLimitInterval);
-        }
-        if (this._injectionCleanupInterval) {
-            stopInjectionCleanup(this._injectionCleanupInterval);
-        }
-        if (this._wrapErrorCleanupInterval) {
-            stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
-        }
+        this.releaseProcessState();
 
         // Clean up temp directory (wrapped in try/finally to always reset state)
         try {
@@ -583,9 +607,6 @@ export class McpCurlServer {
             this._started = false;
             this._frozenConfig = null;
             this._utilities = null;
-            this._rateLimitInterval = null;
-            this._injectionCleanupInterval = null;
-            this._wrapErrorCleanupInterval = null;
             this._sessionManager = null;
         }
     }
@@ -709,6 +730,30 @@ export class McpCurlServer {
                 ? Object.freeze([...this._config.allowedOrigins]) as readonly string[]
                 : undefined,
         });
+    }
+
+    /**
+     * Undo `start()`'s process-wide effects: the three cleanup intervals and
+     * this server's host limit. Shared by the start rollback and `shutdown()`,
+     * and safe to call when any of them was never set up.
+     */
+    private releaseProcessState(): void {
+        if (this._rateLimitInterval) {
+            stopRateLimitCleanup(this._rateLimitInterval);
+            this._rateLimitInterval = null;
+        }
+        if (this._hostLimitHandle) {
+            releaseHostRateLimit(this._hostLimitHandle);
+            this._hostLimitHandle = null;
+        }
+        if (this._injectionCleanupInterval) {
+            stopInjectionCleanup(this._injectionCleanupInterval);
+            this._injectionCleanupInterval = null;
+        }
+        if (this._wrapErrorCleanupInterval) {
+            stopWrapErrorCleanup(this._wrapErrorCleanupInterval);
+            this._wrapErrorCleanupInterval = null;
+        }
     }
 
     /**

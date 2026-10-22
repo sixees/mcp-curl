@@ -7,6 +7,7 @@ import { McpCurlServer } from "./mcp-curl-server.js";
 import { MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
 import { isWrappedResult } from "../response/post-processor.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
+import { clearRateLimitMaps } from "../security/rate-limiter.js";
 import * as serverFactory from "../server/server-factory.js";
 import { captureTools, type CapturedTool } from "./tool-capture.test-fixture.js";
 
@@ -56,6 +57,31 @@ describe("McpCurlServer", () => {
             expect(config.baseUrl).toBe("https://api.example.com");
             expect(config.serverName).toBeUndefined();
             vi.restoreAllMocks();
+        });
+
+        it("keeps a valid rateLimit", () => {
+            server.configure({ rateLimit: { max: 240, windowMs: 3_600_000 } });
+            expect(server.getConfig().rateLimit).toEqual({ max: 240, windowMs: 3_600_000 });
+        });
+
+        it.each([
+            ["max", { max: 0, windowMs: 1000 }, "rateLimit.max must be a positive integer, got: 0"],
+            ["max", { max: -1, windowMs: 1000 }, "rateLimit.max must be a positive integer, got: -1"],
+            ["max", { max: 1.5, windowMs: 1000 }, "rateLimit.max must be a positive integer, got: 1.5"],
+            ["max", { max: "240", windowMs: 1000 }, "rateLimit.max must be a positive integer, got: 240"],
+            ["max", { windowMs: 1000 }, "rateLimit.max must be a positive integer, got: undefined"],
+            ["windowMs", { max: 1, windowMs: 0 }, "rateLimit.windowMs must be a positive integer, got: 0"],
+            ["windowMs", { max: 1, windowMs: Infinity }, "rateLimit.windowMs must be a positive integer, got: Infinity"],
+            ["windowMs", { max: 1, windowMs: NaN }, "rateLimit.windowMs must be a positive integer, got: NaN"],
+        ])("throws on a rateLimit with a bad %s", (_field, rateLimit, message) => {
+            expect(() => server.configure({ rateLimit } as never)).toThrow(new Error(message));
+        });
+
+        it("throws on a rateLimit that is not an object, and changes nothing", () => {
+            server.configure({ baseUrl: "https://api.example.com" });
+            expect(() => server.configure({ rateLimit: null, baseUrl: "https://other.example" } as never))
+                .toThrow("rateLimit must be an object { max, windowMs }, got: null");
+            expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
         });
 
         it("should not warn on known config keys", () => {
@@ -1144,4 +1170,210 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         expect(result.content[0].text).toBe(json);
     });
 
+});
+
+describe("McpCurlServer rateLimit lifecycle", () => {
+    // A real request to a closed loopback port: the first call passes the SSRF
+    // gate and the limiter and fails at connect, so the limiter is observed
+    // through its own refusal text rather than through a stub of it. Each
+    // admitted call is asserted to have reached cURL, because an earlier
+    // refusal would make every "not limited" assertion here pass vacuously.
+    const URL = "http://localhost:65000/x";
+    const LIMITED = "Rate limit exceeded for host";
+    const REACHED_CURL = /cURL exited \d+/;
+    let server: McpCurlServer;
+    let connect: ReturnType<typeof vi.fn>;
+    let close: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+        clearRateLimitMaps();
+        connect = vi.fn().mockResolvedValue(undefined);
+        close = vi.fn().mockResolvedValue(undefined);
+        const capture = captureTools({
+            connect,
+            close,
+            registerResource: vi.fn(),
+            registerPrompt: vi.fn(),
+        });
+        vi.spyOn(serverFactory, "createServer").mockReturnValue(capture.server);
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+        server = new McpCurlServer().configure({
+            allowLocalhost: true,
+            rateLimit: { max: 1, windowMs: 3_600_000 },
+        });
+    });
+
+    afterEach(async () => {
+        await server.shutdown();
+        vi.restoreAllMocks();
+        clearRateLimitMaps();
+    });
+
+    // cURL's exit note is a second content part after the (empty) body.
+    const textOf = (result: { content: { type: string; text?: string }[] }) =>
+        result.content.map((part) => part.text ?? "").join("\n");
+
+    it("counts a utilities() request after start() against the configured host limit", async () => {
+        await server.start("stdio");
+        const first = await server.utilities().executeRequest({ url: URL });
+        expect(textOf(first)).toMatch(REACHED_CURL);
+
+        const second = await server.utilities().executeRequest({ url: URL });
+        expect(second.isError).toBe(true);
+        expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+    });
+
+    it("restores the default limit at shutdown()", async () => {
+        await server.start("stdio");
+        await server.utilities().executeRequest({ url: URL });
+        await server.shutdown();
+
+        const after = await server.utilities().executeRequest({ url: URL });
+        expect(textOf(after)).toMatch(REACHED_CURL);
+    });
+
+    it("uses the limit as configured when the caller mutates its object before start()", async () => {
+        const limit = { max: 1, windowMs: 3_600_000 };
+        const mutated = new McpCurlServer().configure({ allowLocalhost: true, rateLimit: limit });
+        limit.max = Number(process.env.MCP_CURL_TEST_UNSET_VARIABLE);
+        expect(limit.max).toBeNaN();
+        await server.shutdown();
+        try {
+            await mutated.start("stdio");
+            expect(textOf(await mutated.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+            const second = await mutated.utilities().executeRequest({ url: URL });
+            expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        } finally {
+            await mutated.shutdown();
+        }
+    });
+
+    it("parses each field once, so an accessor cannot pass with one value and store another", async () => {
+        let reads = 0;
+        const shifty = { get max() { return reads++ === 0 ? 1 : NaN; }, windowMs: 3_600_000 };
+        const parsed = new McpCurlServer().configure({ allowLocalhost: true, rateLimit: shifty });
+        await server.shutdown();
+        try {
+            await parsed.start("stdio");
+            expect(textOf(await parsed.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+            const second = await parsed.utilities().executeRequest({ url: URL });
+            expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        } finally {
+            await parsed.shutdown();
+        }
+    });
+
+    it("keeps the quota spent when the same server restarts inside the window", async () => {
+        await server.start("stdio");
+        expect(textOf(await server.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+        await server.shutdown();
+        await server.start("stdio");
+        const again = await server.utilities().executeRequest({ url: URL });
+        expect(textOf(again)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+    });
+
+    it("shares one teardown between concurrent shutdown() calls, so a late one cannot release a restart's limit", async () => {
+        const pending: (() => void)[] = [];
+        close.mockImplementation(() => new Promise<void>((resolve) => pending.push(resolve)));
+        await server.start("stdio");
+        const early = server.shutdown();
+        const late = server.shutdown();
+        await vi.waitFor(() => expect(pending).toHaveLength(1));
+        pending.shift()!();
+        await early;
+
+        await server.start("stdio");
+        pending.splice(0).forEach((resolve) => resolve());
+        await late;
+
+        close.mockResolvedValue(undefined);
+        expect(textOf(await server.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+        const second = await server.utilities().executeRequest({ url: URL });
+        expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+    });
+
+    it("waits for a start() in progress before tearing down, so the server does not come up without its limit", async () => {
+        let finishConnect!: () => void;
+        connect.mockImplementation(() => new Promise<void>((resolve) => (finishConnect = resolve)));
+        const starting = server.start("stdio");
+        const stopping = server.shutdown();
+        await vi.waitFor(() => expect(connect).toHaveBeenCalled());
+        finishConnect();
+        await starting;
+        await stopping;
+
+        expect(server.isStarted()).toBe(false);
+        expect(close).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads the rateLimit accessor once, so configure() validates the value it stores", async () => {
+        let reads = 0;
+        const options = {
+            allowLocalhost: true,
+            get rateLimit() {
+                return reads++ === 0 ? undefined : { max: NaN, windowMs: 1 };
+            },
+        };
+        const configured = new McpCurlServer().configure(options);
+        expect(reads).toBe(1);
+        await server.shutdown();
+        try {
+            await expect(configured.start("stdio")).resolves.toBeUndefined();
+        } finally {
+            await configured.shutdown();
+        }
+    });
+
+    describe("with a second server in the process", () => {
+        let other: McpCurlServer;
+
+        beforeEach(async () => {
+            await server.start("stdio");
+            expect(textOf(await server.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
+            other = new McpCurlServer().configure({ allowLocalhost: true });
+        });
+
+        afterEach(async () => {
+            await other.shutdown();
+        });
+
+        async function expectFirstLimitHeld(): Promise<void> {
+            const again = await server.utilities().executeRequest({ url: URL });
+            expect(textOf(again)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        }
+
+        it("keeps the first server's limit when one without rateLimit starts", async () => {
+            await other.start("stdio");
+            await expectFirstLimitHeld();
+        });
+
+        it("keeps the first server's limit when one without rateLimit fails to start", async () => {
+            other.configure({ authToken: "\u0001" });
+            await expect(other.start("http")).rejects.toThrow(/printable ASCII/);
+            await expectFirstLimitHeld();
+        });
+
+        it("keeps the first server's limit when one without rateLimit shuts down", async () => {
+            await other.start("stdio");
+            await other.shutdown();
+            await expectFirstLimitHeld();
+        });
+
+        it("refuses a second rateLimit, and keeps the first", async () => {
+            other.configure({ rateLimit: { max: 100, windowMs: 3_600_000 } });
+            await expect(other.start("stdio")).rejects.toThrow(/already installed by another McpCurlServer/);
+            await expectFirstLimitHeld();
+        });
+    });
+
+    it("restores the default limit when start() fails", async () => {
+        vi.spyOn(serverFactory, "createServer").mockImplementation(() => {
+            throw new Error("boom");
+        });
+        await expect(server.start("stdio")).rejects.toThrow("boom");
+
+        await server.utilities().executeRequest({ url: URL });
+        const second = await server.utilities().executeRequest({ url: URL });
+        expect(textOf(second)).toMatch(REACHED_CURL);
+    });
 });

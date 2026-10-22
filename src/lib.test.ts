@@ -42,6 +42,7 @@ import type {
     ApiSchema,
     GeneratorConfig,
     McpCurlConfig,
+    HostRateLimit,
     TransportMode,
     HookContext,
     BeforeRequestResult,
@@ -51,6 +52,7 @@ import type {
     CurlExecuteInput,
     JqQueryInput,
     CreateHttpOnlyUrlSchemaOptions,
+    DefendTextOptions,
 } from "./lib.js";
 
 // Reference each type once so unused-import linters don't strip them. The
@@ -74,6 +76,7 @@ type _PinnedPublicTypes = [
     ApiSchema,
     GeneratorConfig,
     McpCurlConfig,
+    HostRateLimit,
     TransportMode,
     HookContext,
     BeforeRequestResult,
@@ -84,6 +87,11 @@ type _PinnedPublicTypes = [
     JqQueryInput,
     CreateHttpOnlyUrlSchemaOptions,
 ];
+
+// The limit is frozen at runtime, so the type must refuse the write the
+// runtime would throw on.
+// @ts-expect-error HostRateLimit fields are readonly
+((): void => { ({} as HostRateLimit).max = 1; });
 
 import { McpCurlServer, createInstanceUtilities } from "./lib/extensible/index.js";
 import { createApiServer, createApiServerSync } from "./lib/api-server.js";
@@ -113,7 +121,6 @@ import {
 } from "./lib/utils/index.js";
 import { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 import { defendText } from "./lib/response/index.js";
-import type { DefendTextOptions } from "./lib/response/index.js";
 
 describe("public barrel (src/lib.ts)", () => {
     describe("re-exports the same reference as the deep import", () => {

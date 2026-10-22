@@ -93,3 +93,19 @@ export function createConfigError(configName: string, value: string, reason: str
         .replace(/\0/g, "\\0");
     return new Error(`Invalid ${configName} value "${safeValue}": ${reason}.`);
 }
+
+/**
+ * Throw unless `value` is an integer of at least 1.
+ *
+ * Takes `unknown` because config objects reach the library from untyped
+ * JavaScript, where a string `"240"` is the likely mistake.
+ *
+ * @example
+ * assertPositiveInteger("maxSessions", 0)
+ * // Error: maxSessions must be a positive integer, got: 0
+ */
+export function assertPositiveInteger(name: string, value: unknown): asserts value is number {
+    if (!Number.isInteger(value) || (value as number) < 1) {
+        throw new Error(`${name} must be a positive integer, got: ${String(value)}`);
+    }
+}

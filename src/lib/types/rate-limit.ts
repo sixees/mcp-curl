@@ -19,3 +19,15 @@ export interface RateLimitEntry {
      */
     windowStart: number;
 }
+
+/**
+ * An embedder-configured per-host limit: at most `max` requests to one host in
+ * any `windowMs` span. Enforced as a sliding log, so it cannot be reset by the
+ * fixed window's boundary or by the cleanup sweep.
+ */
+export interface HostRateLimit {
+    /** Requests admitted per host in any one window (positive integer) */
+    readonly max: number;
+    /** Window length in milliseconds (positive integer) */
+    readonly windowMs: number;
+}

@@ -2,6 +2,9 @@
 // Public API types for McpCurlServer extensible class
 
 import type { CurlExecuteInput, JqQueryInput } from "../server/schemas.js";
+import type { HostRateLimit } from "./rate-limit.js";
+
+export type { HostRateLimit };
 
 /**
  * Configuration options for McpCurlServer.
@@ -14,7 +17,7 @@ export interface McpCurlConfig {
      * through unchanged, so this is a convenience, not a host restriction.
      */
     baseUrl?: string;
-    /** Default headers added to all curl_execute requests */
+    /** Default headers for `curl_execute` and `utilities().executeRequest`; a request's own header of the same name wins */
     defaultHeaders?: Record<string, string>;
     /** Default timeout in seconds (1-300) for curl_execute */
     defaultTimeout?: number;
@@ -36,6 +39,20 @@ export interface McpCurlConfig {
     defaultUserAgent?: string;
     /** Default Referer for all requests. Empty string disables. */
     defaultReferer?: string;
+    /**
+     * Per-host limit as a sliding window: at most `max` requests to any one
+     * host in any `windowMs` span. Unset, each host gets the fixed default of
+     * 60 per minute. Both fields must be positive integers, or `configure()`
+     * throws. The per-client limit is not affected.
+     *
+     * Applied process-wide by `start()` and released only by this server's
+     * `shutdown()` or failed `start()`, so it also counts `utilities()` calls,
+     * YAML endpoint tools and any other server in the process. While one server
+     * holds it, another's `start()` with a `rateLimit` throws. It is local
+     * throttling, not quota accounting: the count starts again with the
+     * process, and requests made elsewhere on the same credential are not seen.
+     */
+    rateLimit?: HostRateLimit;
     /**
      * Wrap responses in per-request sentinel tags to resist prompt injection
      * (spotlighting). Independent of the always-on defence pass — see the

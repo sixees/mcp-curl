@@ -11,6 +11,10 @@ export {
     checkRateLimits,
     startRateLimitCleanup,
     stopRateLimitCleanup,
+    parseHostRateLimit,
+    installHostRateLimit,
+    releaseHostRateLimit,
+    type HostRateLimitHandle,
     // Note: clearRateLimitMaps and rateLimitMapSizes intentionally not exported here (test-only).
     // Tests should import directly from "./rate-limiter.js" if needed.
 } from "./rate-limiter.js";
