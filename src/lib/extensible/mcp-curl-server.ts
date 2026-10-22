@@ -120,6 +120,7 @@ export class McpCurlServer {
     };
     private _customTools: CustomToolDef[] = [];
     private _started = false;
+    private _starting: Promise<void> | null = null;
     private _shutdown: Promise<void> | null = null;
     private _server: McpServer | null = null;
     private _httpServer: Server | null = null;
@@ -435,8 +436,17 @@ export class McpCurlServer {
             throw new Error("Server is already running. Call shutdown() before starting again.");
         }
         this._started = true;
-        this._frozenConfig = this.freezeConfig();
+        const config = this.freezeConfig();
+        this._frozenConfig = config;
+        this._starting = this.launch(transport, config);
+        try {
+            await this._starting;
+        } finally {
+            this._starting = null;
+        }
+    }
 
+    private async launch(transport: TransportMode, config: Readonly<McpCurlConfig>): Promise<void> {
         try {
             // Resolve and validate the HTTP auth token *before* any
             // side-effecting setup. The rollback handler below would tear
@@ -447,7 +457,7 @@ export class McpCurlServer {
             // auth middleware see the same value.
             const httpAuthToken =
                 transport === "http"
-                    ? (this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN])
+                    ? (config.authToken ?? process.env[ENV.AUTH_TOKEN])
                     : undefined;
             if (transport === "http") {
                 validateAuthToken(httpAuthToken);
@@ -456,8 +466,8 @@ export class McpCurlServer {
             // Claimed before any other side effect, so a refusal (another
             // server holds the limit) leaves nothing to undo. Left unclaimed
             // without `rateLimit`, so this server cannot release another's.
-            if (this._frozenConfig.rateLimit) {
-                this._hostLimitHandle = installHostRateLimit(this._frozenConfig.rateLimit);
+            if (config.rateLimit) {
+                this._hostLimitHandle = installHostRateLimit(config.rateLimit);
             }
 
             // Clean up orphaned temp directories from previous runs
@@ -517,8 +527,15 @@ export class McpCurlServer {
         }
         // Concurrent calls share one teardown. Two would each run it, and the
         // later one could release the host limit and intervals of a start()
-        // that ran after the earlier one finished.
-        this._shutdown ??= this.teardown().finally(() => {
+        // that ran after the earlier one finished. It also waits out a start()
+        // still in progress: tearing down mid-start releases the host limit
+        // and leaves the rest of start() to bring the server up without it.
+        this._shutdown ??= (async () => {
+            // start()'s own caller gets its error; a failed start has already
+            // rolled itself back, which the _started check below sees.
+            await this._starting?.catch(() => undefined);
+            if (this._started) await this.teardown();
+        })().finally(() => {
             this._shutdown = null;
         });
         return this._shutdown;

@@ -1,6 +1,6 @@
 import {
   McpCurlServer
-} from "./chunk-PTN2VKS3.js";
+} from "./chunk-WFOD66FE.js";
 import {
   generateToolDefinitions,
   getMethodAnnotations,

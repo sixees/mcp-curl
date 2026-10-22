@@ -1182,13 +1182,15 @@ describe("McpCurlServer rateLimit lifecycle", () => {
     const LIMITED = "Rate limit exceeded for host";
     const REACHED_CURL = /cURL exited \d+/;
     let server: McpCurlServer;
+    let connect: ReturnType<typeof vi.fn>;
     let close: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
         clearRateLimitMaps();
+        connect = vi.fn().mockResolvedValue(undefined);
         close = vi.fn().mockResolvedValue(undefined);
         const capture = captureTools({
-            connect: vi.fn().mockResolvedValue(undefined),
+            connect,
             close,
             registerResource: vi.fn(),
             registerPrompt: vi.fn(),
@@ -1276,6 +1278,7 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         await server.start("stdio");
         const early = server.shutdown();
         const late = server.shutdown();
+        await vi.waitFor(() => expect(pending).toHaveLength(1));
         pending.shift()!();
         await early;
 
@@ -1287,6 +1290,20 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         expect(textOf(await server.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
         const second = await server.utilities().executeRequest({ url: URL });
         expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+    });
+
+    it("waits for a start() in progress before tearing down, so the server does not come up without its limit", async () => {
+        let finishConnect!: () => void;
+        connect.mockImplementation(() => new Promise<void>((resolve) => (finishConnect = resolve)));
+        const starting = server.start("stdio");
+        const stopping = server.shutdown();
+        await vi.waitFor(() => expect(connect).toHaveBeenCalled());
+        finishConnect();
+        await starting;
+        await stopping;
+
+        expect(server.isStarted()).toBe(false);
+        expect(close).toHaveBeenCalledTimes(1);
     });
 
     it("reads the rateLimit accessor once, so configure() validates the value it stores", async () => {

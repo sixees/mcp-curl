@@ -129,6 +129,8 @@ Fixes are in 1202643. The todos were deleted after completion, at the operator's
 | Two concurrent `shutdown()` calls can both run teardown; the later one releases the host limit and intervals of a `start()` that ran after the earlier finished | copilot-pull-request-reviewer (High → P2) | Fix needed | `McpCurlServer.shutdown` now shares one in-flight `teardown()` between concurrent callers. The fix covers the whole class: the cleanup intervals sat in the same race before this PR, and the host limit is the instance this PR added. Regression test with independently deferred `close()`; mutation probe (no coalescing) fails it |
 | `configure()` reads the outer `rateLimit` accessor up to three times, so the guard can see `undefined` and the copy loop store an unvalidated object | copilot-pull-request-reviewer (Medium → P3) | Fix needed | `configure()` snapshots its argument once before the guard. This is the class the operator closed in round 2 (021, Option 1), one level out. Regression test; mutation probe (no snapshot) fails it |
 
+| `shutdown()` during an in-progress `start()` releases the host limit before startup finishes, so the server comes up on the default limit (tail read, on `9135704`) | coderabbitai (Major → P2) | Fix needed, by operator decision | `start()` holds its in-progress launch as `_starting`, and `shutdown()` waits it out before tearing down. A failed start has already rolled back, so shutdown then does nothing. The launch body moved into private `launch(transport, config)`, which takes the frozen config as a parameter. Regression test with a deferred `connect()`; mutation probe (no wait) fails it. Builder recommended declining because this lifecycle code had drawn findings in four rounds; the operator chose to fix |
+
 ### Declined Findings
 
 | Comment | Reviewer | Severity | Scope call | Reason declined |
@@ -151,6 +153,8 @@ None filed this round.
 
 ### Files Modified
 
-- `src/lib/extensible/mcp-curl-server.ts` (`configure`, `shutdown`, new `teardown`)
+- `src/lib/extensible/mcp-curl-server.ts` (`configure`, `start`, `shutdown`, new `launch` and `teardown`)
 - `src/lib/extensible/mcp-curl-server.test.ts` (two regression tests; the `close` mock is now shared)
 - `dist/` (rebuilt)
+
+**Still open from the tail read:** CodeRabbit's repeat of the retry-delay finding (thread on this handoff, with a proposed message change). Not dispositioned. Codex's review has shown "Running" on `e6000cd` since 05:29 and posted nothing.

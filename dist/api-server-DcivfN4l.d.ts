@@ -273,6 +273,7 @@ declare class McpCurlServer {
     private _tools;
     private _customTools;
     private _started;
+    private _starting;
     private _shutdown;
     private _server;
     private _httpServer;
@@ -449,6 +450,7 @@ declare class McpCurlServer {
      * @throws Error if already started
      */
     start(transport?: TransportMode): Promise<void>;
+    private launch;
     /**
      * Gracefully shutdown the server.
      * Closes all connections and cleans up resources.

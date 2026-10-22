@@ -999,6 +999,7 @@ var McpCurlServer = class {
   };
   _customTools = [];
   _started = false;
+  _starting = null;
   _shutdown = null;
   _server = null;
   _httpServer = null;
@@ -1273,14 +1274,23 @@ var McpCurlServer = class {
       throw new Error("Server is already running. Call shutdown() before starting again.");
     }
     this._started = true;
-    this._frozenConfig = this.freezeConfig();
+    const config = this.freezeConfig();
+    this._frozenConfig = config;
+    this._starting = this.launch(transport, config);
     try {
-      const httpAuthToken = transport === "http" ? this._frozenConfig.authToken ?? process.env[ENV.AUTH_TOKEN] : void 0;
+      await this._starting;
+    } finally {
+      this._starting = null;
+    }
+  }
+  async launch(transport, config) {
+    try {
+      const httpAuthToken = transport === "http" ? config.authToken ?? process.env[ENV.AUTH_TOKEN] : void 0;
       if (transport === "http") {
         validateAuthToken(httpAuthToken);
       }
-      if (this._frozenConfig.rateLimit) {
-        this._hostLimitHandle = installHostRateLimit(this._frozenConfig.rateLimit);
+      if (config.rateLimit) {
+        this._hostLimitHandle = installHostRateLimit(config.rateLimit);
       }
       await cleanupOrphanedTempDirs();
       this._rateLimitInterval = startRateLimitCleanup();
@@ -1328,7 +1338,10 @@ var McpCurlServer = class {
     if (!this._started) {
       return;
     }
-    this._shutdown ??= this.teardown().finally(() => {
+    this._shutdown ??= (async () => {
+      await this._starting?.catch(() => void 0);
+      if (this._started) await this.teardown();
+    })().finally(() => {
       this._shutdown = null;
     });
     return this._shutdown;
