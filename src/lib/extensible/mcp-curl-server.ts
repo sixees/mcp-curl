@@ -36,7 +36,11 @@ import {
     startWrapErrorCleanup,
     stopWrapErrorCleanup,
 } from "../security/index.js";
-import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
+import {
+    sanitizeDescription,
+    MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+    MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
+} from "../utils/index.js";
 import { createWrapper } from "../response/post-processor.js";
 import {
     createHttpApp,
@@ -97,7 +101,7 @@ const KNOWN_CONFIG_KEYS_ARRAY = [
     "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
     "maxResultSize", "allowLocalhost", "port", "host",
     "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
-    "enableSpotlighting", "rateLimit",
+    "enableSpotlighting", "rateLimit", "curlExecuteDescriptionAppend",
 ] as const satisfies readonly (keyof McpCurlConfig)[];
 
 // Compile-time check: fails if any McpCurlConfig key is missing from the array
@@ -137,7 +141,9 @@ export class McpCurlServer {
      *
      * @param config - Configuration options to merge
      * @returns this for chaining
-     * @throws Error if called after start(), or if `rateLimit` is not two positive integers
+     * @throws Error if called after start(), if `rateLimit` is not two positive integers,
+     *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
+     *   once sanitised
      */
     configure(config: Partial<McpCurlConfig>): this {
         this.ensureNotStarted("configure()");
@@ -146,6 +152,17 @@ export class McpCurlServer {
         // Parsed before anything is merged, so a throw leaves the config as it was.
         if (config.rateLimit !== undefined) {
             config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
+        }
+        if (config.curlExecuteDescriptionAppend !== undefined) {
+            const append = sanitizeDescription(config.curlExecuteDescriptionAppend);
+            // Rejected rather than truncated: a cut append can end mid-instruction.
+            if (append.length > MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH) {
+                throw new Error(
+                    `McpCurlServer.configure(): curlExecuteDescriptionAppend is ${append.length} chars after sanitising; ` +
+                        `the maximum is ${MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH}`
+                );
+            }
+            config = { ...config, curlExecuteDescriptionAppend: append };
         }
         const picked: Partial<McpCurlConfig> = {};
         const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
@@ -438,6 +455,11 @@ export class McpCurlServer {
         this._started = true;
         const config = this.freezeConfig();
         this._frozenConfig = config;
+        if (config.curlExecuteDescriptionAppend && !this._tools.curl_execute) {
+            console.warn(
+                "McpCurlServer.start(): curlExecuteDescriptionAppend is set but curl_execute is disabled, so it is never shown"
+            );
+        }
         this._starting = this.launch(transport, config);
         try {
             await this._starting;

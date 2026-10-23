@@ -40,4 +40,5 @@ export {
     isSpotlightEnvelope,
     SPOTLIGHT_SENTINEL_PREFIX,
     MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+    MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
 } from "./sanitize.js";

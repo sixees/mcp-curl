@@ -4,12 +4,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
 import { McpCurlServer } from "./mcp-curl-server.js";
-import { MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
+import {
+    MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+    MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
+} from "../utils/index.js";
 import { isWrappedResult } from "../response/post-processor.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearRateLimitMaps } from "../security/rate-limiter.js";
 import * as serverFactory from "../server/server-factory.js";
 import { captureTools, type CapturedTool } from "./tool-capture.test-fixture.js";
+import { CURL_EXECUTE_TOOL_META } from "../tools/curl-execute.js";
 
 describe("McpCurlServer", () => {
     let server: McpCurlServer;
@@ -1375,5 +1379,82 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         await server.utilities().executeRequest({ url: URL });
         const second = await server.utilities().executeRequest({ url: URL });
         expect(textOf(second)).toMatch(REACHED_CURL);
+    });
+});
+
+describe("McpCurlServer curlExecuteDescriptionAppend", () => {
+    const ZWSP = "\u200B";
+    const RLO = "\u202E";
+    let server: McpCurlServer;
+    let tools: Map<string, CapturedTool>;
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+        const capture = captureTools({
+            connect: vi.fn().mockResolvedValue(undefined),
+            close: vi.fn().mockResolvedValue(undefined),
+            registerResource: vi.fn(),
+            registerPrompt: vi.fn(),
+        });
+        tools = capture.tools;
+        vi.spyOn(serverFactory, "createServer").mockReturnValue(capture.server);
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+        warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        server = new McpCurlServer();
+    });
+
+    afterEach(async () => {
+        await server.shutdown();
+        vi.restoreAllMocks();
+    });
+
+    it("strips attack codepoints at configure() and keeps the ordinary text", () => {
+        server.configure({ curlExecuteDescriptionAppend: `Use /api/v9${ZWSP} paths.${RLO}\nA 402 means quota.` });
+
+        expect(server.getConfig().curlExecuteDescriptionAppend).toBe("Use /api/v9  paths. \nA 402 means quota.");
+    });
+
+    it("registers the sanitised append after the built-in text when the server starts", async () => {
+        server.configure({ curlExecuteDescriptionAppend: `Fronts Toggl.${ZWSP}` });
+        await server.start("stdio");
+
+        expect(tools.get("curl_execute")!.meta.description).toBe(
+            `${CURL_EXECUTE_TOOL_META.description}\n\nFronts Toggl.`
+        );
+    });
+
+    it("accepts an append of exactly the cap", () => {
+        const append = "a".repeat(MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH);
+        server.configure({ curlExecuteDescriptionAppend: append });
+        expect(server.getConfig().curlExecuteDescriptionAppend).toBe(append);
+    });
+
+    it("throws on an append one over the cap, naming the length and the cap, and changes nothing", () => {
+        server.configure({ baseUrl: "https://api.example.com" });
+        const append = "a".repeat(MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH + 1);
+
+        expect(() =>
+            server.configure({ curlExecuteDescriptionAppend: append, baseUrl: "https://other.example" })
+        ).toThrow(
+            `curlExecuteDescriptionAppend is ${MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH + 1} chars after sanitising; ` +
+                `the maximum is ${MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH}`
+        );
+        expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
+    });
+
+    it("warns at start() when the append is set and curl_execute is disabled", async () => {
+        server.configure({ curlExecuteDescriptionAppend: "Fronts Toggl." }).disableCurlExecute();
+        await server.start("stdio");
+
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringContaining("curlExecuteDescriptionAppend is set but curl_execute is disabled")
+        );
+    });
+
+    it("does not warn at start() when curl_execute is enabled", async () => {
+        server.configure({ curlExecuteDescriptionAppend: "Fronts Toggl." });
+        await server.start("stdio");
+
+        expect(warnSpy).not.toHaveBeenCalled();
     });
 });

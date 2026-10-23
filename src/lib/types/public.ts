@@ -54,6 +54,15 @@ export interface McpCurlConfig {
      */
     rateLimit?: HostRateLimit;
     /**
+     * Text appended to the built-in `curl_execute` description, after its
+     * version line — for what the model needs to know about the API this server
+     * fronts: path prefixes, body shapes, pagination, which status means quota.
+     * Trusted config: `configure()` strips Unicode attack codepoints and throws
+     * if the result exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`; it is
+     * never truncated. Keep it short — it is sent on every turn of every session.
+     */
+    curlExecuteDescriptionAppend?: string;
+    /**
      * Wrap responses in per-request sentinel tags to resist prompt injection
      * (spotlighting). Independent of the always-on defence pass — see the
      * **defence-in-depth wrap** below.

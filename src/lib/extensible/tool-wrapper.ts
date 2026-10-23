@@ -111,11 +111,18 @@ export function registerCurlToolWithHooks(
         );
     };
 
-    // A relative `url` is advertised only where something resolves it; every
-    // other server keeps the canonical meta object byte for byte.
-    const meta = config.baseUrl
-        ? { ...CURL_EXECUTE_TOOL_META, inputSchema: CurlExecuteBaseUrlSchema }
-        : CURL_EXECUTE_TOOL_META;
+    // A relative `url` is advertised only where something resolves it, and the
+    // embedder's append (already sanitised by configure()) only where one is
+    // set; every other server keeps the canonical meta object byte for byte.
+    const append = config.curlExecuteDescriptionAppend;
+    const meta =
+        config.baseUrl || append
+            ? {
+                  ...CURL_EXECUTE_TOOL_META,
+                  ...(config.baseUrl && { inputSchema: CurlExecuteBaseUrlSchema }),
+                  ...(append && { description: `${CURL_EXECUTE_TOOL_META.description}\n\n${append}` }),
+              }
+            : CURL_EXECUTE_TOOL_META;
     server.registerTool("curl_execute", meta, handler);
 }
 

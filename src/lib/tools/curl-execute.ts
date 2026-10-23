@@ -2,7 +2,7 @@
 // The curl_execute executor and its tool metadata; registration is tools/index.ts::registerAllTools
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
-import { TEMP_DIR, LIMITS } from "../config/index.js";
+import { TEMP_DIR, LIMITS, SERVER } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
@@ -47,6 +47,10 @@ export interface CurlExecuteExtra {
 /**
  * Tool metadata for curl_execute.
  * Exported for use by McpCurlServer to register with hooks.
+ *
+ * The description's last line is the version token, so a model can read the
+ * version from inside a session; line 1 stays the summary because some clients
+ * show only that line. An embedder's append goes after the token.
  */
 export const CURL_EXECUTE_TOOL_META = {
     title: "Execute cURL Request",
@@ -158,7 +162,9 @@ Temp File Lifecycle:
   - Stored in a secure temp directory (owner-only access: 0o700/0o600)
   - Deleted on graceful server shutdown (SIGINT/SIGTERM)
   - Orphaned files from crashed sessions are cleaned on next server start
-  - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash`,
+  - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash
+
+mcp-curl v${SERVER.VERSION}`,
     inputSchema: CurlExecuteSchema,
     annotations: {
         readOnlyHint: false,
