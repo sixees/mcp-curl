@@ -1,4 +1,4 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, h as HostRateLimit, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-DcivfN4l.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, h as HostRateLimit, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-CTaU8de9.js';
 export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-Do0M6C0q.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
@@ -95,6 +95,14 @@ declare function safeHostname(url: string | undefined, fallback?: string): strin
  * staying under 1000 provides a safe margin.
  */
 declare const MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1000;
+/**
+ * Maximum length of `McpCurlConfig.curlExecuteDescriptionAppend`, after sanitising.
+ * A budget choice, not a client limit: the client rationale above covers a whole
+ * custom-tool description, while the built-in curl_execute description is already
+ * several KB. The append loads on every turn of every session, so this is a
+ * ceiling against runaway prompt cost, not a target.
+ */
+declare const MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH = 8000;
 /**
  * Sanitize a string for use in tool metadata or prompt templates.
  * Strips dangerous Unicode attack vectors (bidi overrides, zero-width chars, soft hyphen,
@@ -392,4 +400,4 @@ declare function logInjectionDetected(hostname: string): void;
  */
 declare function sanitizeAndDetect(text: string, label: string): string;
 
-export { type CreateHttpOnlyUrlSchemaOptions, type DefendTextOptions, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, applySpotlighting, createHttpOnlyUrlSchema, defendText, detectInjectionPattern, logInjectionDetected, safeHostname, sanitizeAndDetect, sanitizeDescription, sanitizeResponse };
+export { type CreateHttpOnlyUrlSchemaOptions, type DefendTextOptions, MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, applySpotlighting, createHttpOnlyUrlSchema, defendText, detectInjectionPattern, logInjectionDetected, safeHostname, sanitizeAndDetect, sanitizeDescription, sanitizeResponse };

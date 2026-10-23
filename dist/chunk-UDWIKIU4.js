@@ -6,6 +6,7 @@ import {
   JQ_QUERY_HOSTNAME_LABEL,
   JqQuerySchema,
   LIMITS,
+  MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
   PRINTABLE_ASCII,
   SERVER,
@@ -41,7 +42,7 @@ import {
   validateFilePath,
   validateOutputDir,
   writeUniqueFile
-} from "./chunk-Z7K23AMN.js";
+} from "./chunk-GNA6F4ZN.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -813,7 +814,14 @@ function registerCurlToolWithHooks(server, options) {
       (p) => safeHostname(p.url)
     );
   };
-  const meta = config.baseUrl ? { ...CURL_EXECUTE_TOOL_META, inputSchema: CurlExecuteBaseUrlSchema } : CURL_EXECUTE_TOOL_META;
+  const append = config.curlExecuteDescriptionAppend;
+  const meta = config.baseUrl || append ? {
+    ...CURL_EXECUTE_TOOL_META,
+    ...config.baseUrl && { inputSchema: CurlExecuteBaseUrlSchema },
+    ...append && { description: `${CURL_EXECUTE_TOOL_META.description}
+
+${append}` }
+  } : CURL_EXECUTE_TOOL_META;
   server.registerTool("curl_execute", meta, handler);
 }
 function registerJqToolWithHooks(server, options) {
@@ -982,7 +990,8 @@ var KNOWN_CONFIG_KEYS_ARRAY = [
   "defaultUserAgent",
   "defaultReferer",
   "enableSpotlighting",
-  "rateLimit"
+  "rateLimit",
+  "curlExecuteDescriptionAppend"
 ];
 var KNOWN_CONFIG_KEYS = new Set(KNOWN_CONFIG_KEYS_ARRAY);
 var McpCurlServer = class {
@@ -1015,13 +1024,24 @@ var McpCurlServer = class {
    *
    * @param config - Configuration options to merge
    * @returns this for chaining
-   * @throws Error if called after start(), or if `rateLimit` is not two positive integers
+   * @throws Error if called after start(), if `rateLimit` is not two positive integers,
+   *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
+   *   once sanitised
    */
   configure(config) {
     this.ensureNotStarted("configure()");
     config = { ...config };
     if (config.rateLimit !== void 0) {
       config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
+    }
+    if (config.curlExecuteDescriptionAppend !== void 0) {
+      const append = sanitizeDescription(config.curlExecuteDescriptionAppend);
+      if (append.length > MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH) {
+        throw new Error(
+          `McpCurlServer.configure(): curlExecuteDescriptionAppend is ${append.length} chars after sanitising; the maximum is ${MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH}`
+        );
+      }
+      config = { ...config, curlExecuteDescriptionAppend: append };
     }
     const picked = {};
     const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
@@ -1276,6 +1296,11 @@ var McpCurlServer = class {
     this._started = true;
     const config = this.freezeConfig();
     this._frozenConfig = config;
+    if (config.curlExecuteDescriptionAppend && !this._tools.curl_execute) {
+      console.warn(
+        "McpCurlServer.start(): curlExecuteDescriptionAppend is set but curl_execute is disabled, so it is never shown"
+      );
+    }
     this._starting = this.launch(transport, config);
     try {
       await this._starting;
