@@ -1,5 +1,5 @@
 # Work Handoff: curl_execute version line and embedder description append
-**Date:** 2026-10-23 | **Branch:** feat/curl-execute-description-append | **Plan:** docs/plans/2026-10-20-feat-embedder-persona-gaps-plan.md | **Status:** in-review — created by the Surface 2 review inside `/sixees-workflow:work`, before that run's own handoff schema was written
+**Date:** 2026-10-23 | **Branch:** feat/curl-execute-description-append | **Plan:** docs/plans/2026-10-20-feat-embedder-persona-gaps-plan.md | **Status:** complete — tasks 11–14 done; review filed one in-scope P2 (todo 021) that the operator should decide before merge
 **Plan slice:** PR-3
 
 ## Code Review — 2026-10-23
@@ -35,3 +35,119 @@ whether the warning's claim is true. That gap is the P2.
 1525 total, 1518 passed, 0 failed, 7 skipped.
 
 **Open without a todo:** none. **Blockers:** none (no P1, no escalation).
+
+## Summary
+
+This slice ships plan items 3 and 7 (PR-3, tasks 11–14). The built-in `curl_execute` description
+now ends with `mcp-curl v<version>`, so a session can read the version without prose matching.
+A new optional `McpCurlConfig.curlExecuteDescriptionAppend` lets an embedder add tool-shaped API
+knowledge after that line. It is sanitised and capped at `configure()`, composed at registration,
+and documented in `docs/configuration.md`. The change is additive and optional, so it is MINOR. The
+version bump itself is PR-4's.
+
+## What was implemented
+
+- **Version line:** `src/lib/tools/curl-execute.ts::CURL_EXECUTE_TOOL_META` adds a final
+  `mcp-curl v${SERVER.VERSION}` line. Line 1, the summary, is unchanged. `SERVER` is imported from
+  `config/`, which is down the layering arrow.
+- **Cap:** `src/lib/utils/sanitize.ts::MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH = 8000` sits
+  beside `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH`. Its docblock says it is a budget choice, not a client
+  limit (K-22). It is exported through `src/lib/utils/index.ts` and `src/lib.ts`, and
+  `src/lib.test.ts`'s export list is updated.
+- **Config key:** `src/lib/types/public.ts::McpCurlConfig.curlExecuteDescriptionAppend` is added to
+  `KNOWN_CONFIG_KEYS_ARRAY`. The compile-time exhaustiveness assert enforces this. `freezeConfig`
+  is unchanged because the value is a string.
+- **Validation:** `McpCurlServer.configure()` runs `sanitizeDescription`, which reuses the
+  custom-tool sanitiser, then throws on more than 8000 characters, naming the length and the cap. It
+  never truncates (operator Q3). The check runs before the merge, as the `rateLimit` parse does, so
+  a throw changes nothing.
+- **Composition:** `src/lib/extensible/tool-wrapper.ts::registerCurlToolWithHooks` builds the meta
+  with conditional spreads, so the `baseUrl` schema and the append compose. With neither set, the
+  canonical meta object is registered unchanged.
+- **Warning:** `McpCurlServer.start()` warns when the append is set and `curl_execute` is disabled.
+  **The review showed this warning's claim is false.** See todo 021.
+- **Docs:** `docs/configuration.md` covers the interface, the table row, a `### curlExecuteDescriptionAppend`
+  section (keep it short, the cap and the rejection, trusted config, appended rather than replacing),
+  and the version line versus `serverInfo.name` (K-8, stated once).
+
+## Key decisions
+
+| Decision | Reasoning | Alternatives considered |
+|---|---|---|
+| Store the **sanitised** append in config, not the raw one | One sanitise, and `getConfig()` returns what the model sees | Sanitise at registration: that runs once per HTTP session, and the length check would happen after `start()` |
+| Skip composing when the append sanitises to empty | Avoids a trailing blank line on the description | Always compose |
+| Use a generic example in the published docs (`api.example.com`) | `docs/` ships to npm; the reference embedder is instance data (rule 04) | The reference embedder's real paths |
+| Commit the rebuilt `dist/` | Prior PRs (#43, #47, …) commit `dist/` | Leave `dist/` for the release PR |
+
+## What to pay attention to during review
+
+- **Todo 021 (P2):** a disabled `curl_execute` is still registered and listed, and `enabled` gates
+  only the handler. The append therefore still reaches the model, and the `start()` warning and doc
+  sentence ("never shown") are false. The plan's premise for the warning was wrong at HEAD. I did
+  not check it during the audit.
+- The append is **trusted config** and does not go through `defendText` (invariant 1a covers remote
+  text). The docs say not to build it from API responses. Code cannot enforce that.
+- `SERVER.VERSION` is `0.0.0` under vitest (no tsup `define`), so the test checks the token's shape
+  and its position, not a real version.
+
+## Known issues and limitations
+
+- Todo 021 is described above. The out-of-scope sibling with the same false premise is the
+  `src/lib/api-server.ts::createApiServer` docblock ("Only expose generated tools").
+- Todo 022 (P3): the test now holds a third copy of the startable-server stub.
+- `sanitizeDescription` does not collapse whitespace padding. This is accepted because the input
+  is trusted and capped.
+
+## Testing summary
+
+- **Added:** three e2e cases in `src/lib/extensible/tool-wrapper.e2e.test.ts`, run through
+  `connectInMemory` and `listTools`: line 1 and the version line, the append after the version
+  line, and the append composed with the `baseUrl` schema. Six cases in
+  `src/lib/extensible/mcp-curl-server.test.ts`: attack codepoints stripped with ordinary text kept,
+  the sanitised append registered at `start()`, exactly-cap accepted, cap+1 throws and changes
+  nothing, warns when disabled, no warning when enabled. `src/lib.test.ts` gains the export name.
+- **Mutation probes, each restored from a `cp` backup and verified byte-identical with `cmp`:**
+  removing the sanitise, the reject, the warning, the composition or the version line each fails
+  named tests.
+- **Full suite:** `npx vitest run --reporter=json` → 1525 total, 1518 passed, 0 failed, 7 skipped.
+  **Runner caveat:** `/sixees-workflow:work` does not treat vitest's machine-readable mode as a
+  trusted verdict, so this run formally applied **no test verification**. The operator's own run is
+  the test floor before the push.
+- **Build:** `npm run build` passes. There is no lint script. `tsc --noEmit` over the whole tree
+  reports type errors in test files this branch does not touch (`post-processor.test.ts`,
+  `schema.test.ts`, `lib.test.ts` line 82, a `BeforeRequestResult` generic). I did not establish
+  whether they predate the branch.
+
+## Commit history
+
+```
+530c0a8 docs(review): Surface 2 record and todos 021, 022 for PR-3
+b6a3e92 docs(configuration): curlExecuteDescriptionAppend and the version line
+a65e33f feat(curl_execute): version line and embedder description append
+```
+
+## Review context
+
+Suggested order: `curl-execute.ts` (version line), `sanitize.ts` (cap), `mcp-curl-server.ts`
+(`configure`, `start`), `tool-wrapper.ts` (composition), tests, docs. Invariants touched: 11
+(additive, MINOR), 10 (layering), 1a (not engaged, since the append is trusted config). Depends on
+PR-1 (`connectInMemory`), which has landed. PR-4 documents these `configure()` throws and bumps to
+5.1.0.
+
+## Follow-up work
+
+- [ ] Operator: decide todo 021 (before merge, or as a follow-up)
+- [ ] Operator: decide todo 022
+- [ ] PR-4: CHANGELOG `5.1.0` entry must mention that the description bytes now change every release
+
+### Outstanding Todos
+
+| file | priority | description | source |
+|---|---|---|---|
+| 021 | P2 | the description append is shown on a disabled curl_execute; the warning and the doc claim otherwise | Surface 2 review (architecture-strategist) |
+| 022 | P3 | the startable McpServer stub is rebuilt in each describe block | Surface 2 review (pattern-recognition-specialist) |
+
+### Resolved Todos
+
+| id | title | summary | by | date |
+|---|---|---|---|---|
