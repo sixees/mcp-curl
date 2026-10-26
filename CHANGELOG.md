@@ -5,7 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.1.0] - 2026-10-26
+
+### Notes
+
+- **Not in this release, by decision:**
+  - **`baseUrl` does not pin absolute URLs to its origin.** It is a convenience,
+    not a security boundary; pinning would narrow a published input. Keep a
+    credential in `defaultHeaders`, never in tool-call arguments, so it stays out
+    of the transcript. `defaultHeaders` are sent to every host, so this does not
+    scope the key to `baseUrl` (`docs/configuration.md` → *defaultHeaders*).
+  - **`utilities()` calls do not run hooks.** No in-process hook can count
+    requests made by another process on the same credential, which is what an
+    embedder counting quota needs.
+  - **The MCP `serverInfo` name and version are not configurable.** The version
+    line and `curlExecuteDescriptionAppend` identify the server inside a session.
+
+### Added
+
+- **`rateLimit { max, windowMs }`: a configurable per-host sliding window.** At most
+  `max` requests to any one host in any `windowMs` span, replacing the fixed default
+  of 60 per host per minute. Unset, the default and its refusal text are unchanged.
+  `configure()` throws unless both fields are positive integers. `start()` applies
+  it process-wide, so it also counts `utilities().executeRequest` and YAML endpoint
+  tools, and `shutdown()` restores the default. Only one server in a process may
+  hold a `rateLimit`; a second server's `start()` with its own throws. It is local
+  throttling, not quota accounting: a process restart starts the count again, and
+  requests made elsewhere on the same credential are not seen, so leave headroom
+  below a hard upstream quota. `HostRateLimit` is exported.
+- **`curlExecuteDescriptionAppend`: embedder text at the end of the `curl_execute`
+  description**, for what the model needs to know about the API the server
+  fronts. `configure()` replaces each run of Unicode attack codepoints with a
+  space, trims it, and throws if the result is over
+  `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH` (8000, exported); it is never
+  truncated. It is sent on every turn, so keep it short. With `curl_execute`
+  disabled the append is not shown, and `start()` warns.
+- **`docs/getting-started.md` → *Reporting a configuration error*:** how to catch a
+  `configure()` or config-loading failure, start anyway, and return the reason
+  from `curl_execute` instead of exiting before a client connects.
 
 ### Changed
 
@@ -30,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bare `.` or `..`.
   **Both changes shipped in a MINOR release by decision**, not by oversight: mcp-curl has one
   consumer, internal, and that consumer is told about this change directly.
+- **The `curl_execute` description gains a version line**, `mcp-curl v<version>`,
+  after the built-in text and before any `curlExecuteDescriptionAppend`.
+  A session can read the package version without matching prose; line 1 is still
+  the summary. **The description's bytes now change with every release**, so a
+  client or test that pins the full description text must expect that. The MCP
+  `serverInfo.name` is still `curl-mcp-server`, a different string from the
+  package name in this line.
 
 ### Fixed
 

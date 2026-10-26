@@ -85,7 +85,10 @@ arguments, so it stays out of the transcript.
 
 ### defaultHeaders
 
-Added to all requests. Merged with request-specific headers (request headers take precedence):
+Added to all requests, whatever their host: an absolute URL the model sends to
+another host gets them too, `baseUrl` notwithstanding. A key kept here stays out of
+the transcript, but it is not scoped to one API. Merged with request-specific
+headers (request headers take precedence):
 
 ```typescript
 .
