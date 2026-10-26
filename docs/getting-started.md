@@ -144,7 +144,7 @@ kills the process before an MCP client connects, and the client shows only
 that the server exited.
 
 To report the reason inside the session instead, catch the failure, start
-anyway, and answer every `curl_execute` call with it:
+anyway, and answer each well-formed `curl_execute` call with it:
 
 ```typescript
 import {McpCurlServer} from "mcp-curl";

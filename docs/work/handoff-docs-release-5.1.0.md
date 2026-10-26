@@ -122,3 +122,37 @@ At the operator's direction ("Fix 021-023 first"):
 - **Unchanged notes:** TS7030 under `noImplicitReturns` (same shape as `docs/hooks.md`); YAML endpoint tools also bypass hooks; sentence-case H2.
 - **Suite after fixes:** `npx vitest run --reporter=json`: 1527 total, 1520 passed, 0 failed, 7 skipped (uncertified, as above). `npm run build` passes.
 - **Surface 2 has not re-run over these fixes** (K-16): they are the least-reviewed text on the branch.
+
+## Review Comments Addressed — 2026-10-26
+
+Surface 3 on PR #49: CodeRabbit (full review) and Codex (review), requested at `52714c6`.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| "answer every `curl_execute` call" contradicts the schema-error bullet | coderabbitai | Fix needed (P3, in scope, one line) | `docs/getting-started.md` → *Reporting a configuration error*: "answer each well-formed `curl_execute` call". The section's only absolute claim. |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| CHANGELOG Notes: replace the `defaultHeaders` credential advice with a host-bound option | coderabbitai | P2 | in scope | Already decided: the plan declined origin pinning (operator Q1), partly because cURL forwards custom headers across redirects, so a gate on the first URL is a false green. Todo 022 settled the remedy as stating the every-host scope, which the note does. |
+| Handoff lists todos 021–023 as open above the sections that resolve them | coderabbitai (review body) | P3 | in scope | Already decided: handoffs are add-only (`skill: handoff-path`). `Status:` and *Review Fixes* record the resolution. |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None this round.
+
+### Outstanding Todos
+
+None filed this round.
+
+### Files Modified
+
+- `docs/getting-started.md`
+- `docs/work/handoff-docs-release-5.1.0.md`
