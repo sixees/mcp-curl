@@ -155,13 +155,16 @@ function loadConfig() {
         throw new Error("EXAMPLE_API_KEY is not set");
     }
     return {
-        baseUrl: "https://api.example.com",
         defaultHeaders: {"Authorization": `Bearer ${apiKey}`},
         rateLimit: {max: Number(process.env.EXAMPLE_MAX_PER_HOUR ?? 200), windowMs: 3_600_000},
     };
 }
 
-const server = new McpCurlServer();
+// Fixed options first, outside the try, so a failure below cannot drop them.
+const server = new McpCurlServer().configure({
+    baseUrl: "https://api.example.com",
+    curlExecuteDescriptionAppend: "Example API v2. Paths start with /v2.",
+});
 
 let configError: string | undefined;
 try {
@@ -185,6 +188,11 @@ await server.start("stdio");
 
 - **Load inside the `try`.** Config read at module scope, or a
   `process.exit` in your loader, fails before the `try` is reached.
+- **Configure the fixed options first.** A throw rejects the whole
+  `configure()` call. If `baseUrl` were in the failing call it would stay
+  unset, so a relative `url` would fail the input schema before the hook runs
+  and the model would never see the reason. The description append would be
+  lost the same way.
 - **Guard `curl_execute` only.** `jq_query` reads files already saved and
   needs no configuration, so it keeps working.
 - **Name the variable, never its value.** The reason is returned to the model

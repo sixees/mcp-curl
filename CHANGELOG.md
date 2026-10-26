@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Not in this release, by decision:**
   - **`baseUrl` does not pin absolute URLs to its origin.** It is a convenience,
     not a security boundary; pinning would narrow a published input. Keep a
-    credential in `defaultHeaders`, never in tool-call arguments.
+    credential in `defaultHeaders`, never in tool-call arguments, so it stays out
+    of the transcript. `defaultHeaders` are sent to every host, so this does not
+    scope the key to `baseUrl` (`docs/configuration.md` → *defaultHeaders*).
   - **`utilities()` calls do not run hooks.** No in-process hook can count
     requests made by another process on the same credential, which is what an
     embedder counting quota needs.
