@@ -67,7 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bare `.` or `..`.
   **Both changes shipped in a MINOR release by decision**, not by oversight: mcp-curl has one
   consumer, internal, and that consumer is told about this change directly.
-- **The `curl_execute` description ends with a version line**, `mcp-curl v<version>`.
+- **The `curl_execute` description gains a version line**, `mcp-curl v<version>`,
+  after the built-in text and before any `curlExecuteDescriptionAppend`.
   A session can read the package version without matching prose; line 1 is still
   the summary. **The description's bytes now change with every release**, so a
   client or test that pins the full description text must expect that. The MCP

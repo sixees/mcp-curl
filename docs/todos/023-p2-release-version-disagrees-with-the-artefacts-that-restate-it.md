@@ -11,7 +11,7 @@ dependencies: []
 
 `package.json` says `5.1.0`. Two other tracked artefacts make claims about that same version and disagree with it.
 
-1. **The committed build.** `dist/` is tracked, and every earlier release commit included it rebuilt. The 5.1.0 commit did not. At HEAD, `dist/chunk-GNA6F4ZN.js::SERVER` still bakes in `VERSION: "5.0.1"`. That value feeds the `curl_execute` version line, `serverInfo.version` and the default User-Agent, so a run from the tagged commit without a rebuild reports `mcp-curl v5.0.1`. That is the new version-line feature reporting the wrong version. npm consumers are unaffected, because `prepublishOnly` runs the build. The rebuilt `dist/` is sitting uncommitted in the working tree.
+1. **The committed build.** `dist/` is tracked, and every earlier release commit included it rebuilt. The 5.1.0 commit (a2d4b9b) did not: at a2d4b9b, `dist/chunk-GNA6F4ZN.js::SERVER` bakes in `VERSION: "5.0.1"`. That value feeds the `curl_execute` version line, `serverInfo.version` and the default User-Agent, so a run from that commit without a rebuild reports `mcp-curl v5.0.1`. That is the new version-line feature reporting the wrong version. npm consumers are unaffected, because `prepublishOnly` runs the build. At a2d4b9b the rebuilt `dist/` was in the working tree, uncommitted.
 2. **The severity contract.** 5.1.0 ships two `**BREAKING:**` changes as a MINOR, by an operator decision (2026-10-21, recorded in `docs/work/handoff-feat-embedder-base-url.md` and in the CHANGELOG). `.sixees/ARCHITECTURE.md` → invariant 11 still reads as absolute ("A breaking change … is a MAJOR bump"), and no RC records the exception. #46's `feat(url)!:` subject disagrees with the CONVENTIONS rule that `!` goes only with a MAJOR. A later round will either re-open the decision as a P1, or cite 5.1.0 as precedent without its condition.
 
 ## Findings
@@ -21,7 +21,7 @@ dependencies: []
 - instances:
   - `package.json::version`: `5.1.0` (and `package-lock.json`). **confirmed, in diff**
   - `CHANGELOG.md::[5.1.0]`: "Both changes shipped in a MINOR release by decision". **confirmed, in diff**
-  - `dist/chunk-GNA6F4ZN.js::SERVER`: committed `"5.0.1"`. **confirmed**
+  - `dist/chunk-GNA6F4ZN.js::SERVER` at a2d4b9b: committed `"5.0.1"`. **confirmed**
   - `.sixees/ARCHITECTURE.md::Invariants #11`: no exception clause. **confirmed, out of diff**
   - `.sixees/CONVENTIONS.md::! breaking marker rule`: disagrees with #46's subject. **confirmed, out of diff**
 - sweep:
