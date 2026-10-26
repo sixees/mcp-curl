@@ -65,7 +65,8 @@ version bump itself is PR-4's.
   with conditional spreads, so the `baseUrl` schema and the append compose. With neither set, the
   canonical meta object is registered unchanged.
 - **Warning:** `McpCurlServer.start()` warns when the append is set and `curl_execute` is disabled.
-  **The review showed this warning's claim is false.** See todo 021.
+  **The review showed this warning's claim is false.** See todo 021. *(Resolved: the append is now
+  composed only for an enabled tool, so the warning is true — see Resolved Todos.)*
 - **Docs:** `docs/configuration.md` covers the interface, the table row, a `### curlExecuteDescriptionAppend`
   section (keep it short, the cap and the rejection, trusted config, appended rather than replacing),
   and the version line versus `serverInfo.name` (K-8, stated once).
@@ -84,7 +85,8 @@ version bump itself is PR-4's.
 - **Todo 021 (P2):** a disabled `curl_execute` is still registered and listed, and `enabled` gates
   only the handler. The append therefore still reaches the model, and the `start()` warning and doc
   sentence ("never shown") are false. The plan's premise for the warning was wrong at HEAD. I did
-  not check it during the audit.
+  not check it during the audit. *(Resolved in `93a2d69`: a disabled tool is still listed, but
+  without the append; nothing further to fix — see Resolved Todos.)*
 - The append is **trusted config** and does not go through `defendText` (invariant 1a covers remote
   text). The docs say not to build it from API responses. Code cannot enforce that.
 - `SERVER.VERSION` is `0.0.0` under vitest (no tsup `define`), so the test checks the token's shape
@@ -94,7 +96,9 @@ version bump itself is PR-4's.
 
 - Todo 021 is described above. The out-of-scope sibling with the same false premise is the
   `src/lib/api-server.ts::createApiServer` docblock ("Only expose generated tools").
-- Todo 022 (P3): the test now holds a third copy of the startable-server stub.
+  *(Resolved, sibling included — see Resolved Todos.)*
+- Todo 022 (P3): the test now holds a third copy of the startable-server stub. *(Resolved —
+  `stubServerFactory`; see Resolved Todos.)*
 - `sanitizeDescription` does not collapse whitespace padding. This is accepted because the input
   is trusted and capped.
 
@@ -136,8 +140,8 @@ PR-1 (`connectInMemory`), which has landed. PR-4 documents these `configure()` t
 
 ## Follow-up work
 
-- [ ] Operator: decide todo 021 (before merge, or as a follow-up)
-- [ ] Operator: decide todo 022
+- [x] Operator: decide todo 021 (before merge, or as a follow-up) — fixed on this branch
+- [x] Operator: decide todo 022 — fixed on this branch
 - [ ] PR-4: CHANGELOG `5.1.0` entry must mention that the description bytes now change every release
 
 ### Outstanding Todos
@@ -161,3 +165,30 @@ Both todo files were deleted at the operator's direction once resolved.
 `/sixees-workflow:sync-comments --branch` audited 14 files. It corrected 5 class B comments,
 stripped history from 4 (class D), and downgraded 1 class C doc claim (the disabled-tool bullet,
 which the 021 fix has since made true again in its new wording). It changed no code.
+
+## Review Comments Addressed — 2026-10-26
+
+Surface 3, round 1. Requested: CodeRabbit (full review), Codex (scoped `@codex review`), Copilot
+(GraphQL `requestReviews`, `union: true`; pre-read empty). Baseline before the requests: 0 open bot
+comments. Codex was still `running` at the read after the 15-minute wait, so its output belongs to
+the next round.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| The handoff still says the append reaches a disabled tool and asks for a fix to closed todo 021 | coderabbitai (Minor → P3, in scope) | Fix needed (documentation) | Annotated the four stale passages as resolved and ticked the two follow-up checkboxes; nothing deleted |
+
+### Declined Findings
+
+None this round. Copilot's review body graded the PR "🔵 Needs a closer look" only because the test
+run is uncertified, and filed no issues. That is the operator's `npm test` gate, already stated in
+the PR body, not a finding. CodeRabbit's `✅ Action performed` is an acknowledgement.
+
+### Decisions Revised
+
+None.
+
+### Files Modified
+
+- `docs/work/handoff-feat-curl-execute-description-append.md`
