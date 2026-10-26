@@ -1,5 +1,5 @@
 # Work Handoff: curl_execute version line and embedder description append
-**Date:** 2026-10-23 | **Branch:** feat/curl-execute-description-append | **Plan:** docs/plans/2026-10-20-feat-embedder-persona-gaps-plan.md | **Status:** complete — tasks 11–14 done; review filed one in-scope P2 (todo 021) that the operator should decide before merge
+**Date:** 2026-10-23 | **Branch:** feat/curl-execute-description-append | **Plan:** docs/plans/2026-10-20-feat-embedder-persona-gaps-plan.md | **Status:** complete — tasks 11–14 done; review todos 021 and 022 resolved on this branch (operator-directed)
 **Plan slice:** PR-3
 
 ## Code Review — 2026-10-23
@@ -144,10 +144,20 @@ PR-1 (`connectInMemory`), which has landed. PR-4 documents these `configure()` t
 
 | file | priority | description | source |
 |---|---|---|---|
-| 021 | P2 | the description append is shown on a disabled curl_execute; the warning and the doc claim otherwise | Surface 2 review (architecture-strategist) |
-| 022 | P3 | the startable McpServer stub is rebuilt in each describe block | Surface 2 review (pattern-recognition-specialist) |
+| 021 | P2 | the description append is shown on a disabled curl_execute; the warning and the doc claim otherwise | Surface 2 review (architecture-strategist) — *resolved, see below* |
+| 022 | P3 | the startable McpServer stub is rebuilt in each describe block | Surface 2 review (pattern-recognition-specialist) — *resolved, see below* |
 
 ### Resolved Todos
 
 | id | title | summary | by | date |
 |---|---|---|---|---|
+| 021 | the description append is shown on a disabled curl_execute | `registerCurlToolWithHooks` composes the append only when `enabled` (Option 1); e2e test `leaves the append off a disabled tool, which is still listed` added and its teeth probed; `docs/configuration.md`, the `registerToolsOnServer` docblock and the `api-server.ts::createApiServer` example corrected | Claude Code | 2026-10-26 |
+| 022 | the startable McpServer stub is rebuilt per describe block | `tool-capture.test-fixture.ts::stubServerFactory` extracted; the three `beforeEach` blocks call it | Claude Code | 2026-10-26 |
+
+Both todo files were deleted at the operator's direction once resolved.
+
+## Comment sync — 2026-10-26
+
+`/sixees-workflow:sync-comments --branch` audited 14 files. It corrected 5 class B comments,
+stripped history from 4 (class D), and downgraded 1 class C doc claim (the disabled-tool bullet,
+which the 021 fix has since made true again in its new wording). It changed no code.

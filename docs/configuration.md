@@ -342,10 +342,9 @@ Lists page with ?page=N; a 429 means the hourly quota is spent: stop and tell th
   the response-side defence pipeline. Do not build it from API responses.
 - **Appended, not replacing.** The built-in description is unchanged; your text
   follows its last line, after a blank line.
-- **Shown even when disabled.** `disableCurlExecute()` stops `curl_execute`
-  running but not its listing: the tool is still registered with your append on
-  its description, so the append is still sent on every turn. Leave the append
-  unset on a server that disables the tool. `start()` warns when both are set.
+- **Only where it can be used.** With `disableCurlExecute()` the tool is still
+  listed, but without your append, and `start()` warns that the append is set
+  but never shown.
 
 **The version line.** The built-in description's last line is
 `mcp-curl v<version>`, matching `^mcp-curl v\d+\.\d+\.\d+$`, so a model or

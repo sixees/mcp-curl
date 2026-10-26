@@ -652,8 +652,8 @@ export class McpCurlServer {
     /**
      * Register the built-in tools, with hooks, and the custom tools, with the
      * defence wrap but no hooks, on a given server. A disabled built-in is still
-     * registered and listed, with its full description (any
-     * `curlExecuteDescriptionAppend` included). Only its handler refuses.
+     * registered and listed, without `curlExecuteDescriptionAppend`; only its
+     * handler refuses.
      *
      * @param server - MCP server to register tools on
      */

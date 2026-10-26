@@ -28,11 +28,11 @@ function okExecutor() {
     });
 }
 
-async function connectCurl(config: McpCurlConfig, executor: CurlToolExecutor) {
+async function connectCurl(config: McpCurlConfig, executor: CurlToolExecutor, enabled = true) {
     const server = createServer();
     registerCurlToolWithHooks(server, {
         executor,
-        enabled: true,
+        enabled,
         config,
         hooks: { beforeRequest: [], afterResponse: [], onError: [] },
     });
@@ -177,6 +177,15 @@ describe("curl_execute description, through a real MCP client", () => {
 
         expect(description).toBe(`${CURL_EXECUTE_TOOL_META.description}\n\n${append}`);
         expect(CURL_EXECUTE_TOOL_META.description.endsWith(`mcp-curl v${SERVER.VERSION}`)).toBe(true);
+    });
+
+    it("leaves the append off a disabled tool, which is still listed", async () => {
+        const client = await connectCurl({ curlExecuteDescriptionAppend: "Fronts the example API." }, okExecutor(), false);
+
+        const { tools } = await client.listTools();
+
+        expect(tools.map((tool) => tool.name)).toEqual(["curl_execute"]);
+        expect(tools[0].description).toBe(CURL_EXECUTE_TOOL_META.description);
     });
 
     it("composes the append with the baseUrl schema rather than replacing it", async () => {

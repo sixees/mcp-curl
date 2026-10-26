@@ -814,7 +814,7 @@ function registerCurlToolWithHooks(server, options) {
       (p) => safeHostname(p.url)
     );
   };
-  const append = config.curlExecuteDescriptionAppend;
+  const append = enabled ? config.curlExecuteDescriptionAppend : void 0;
   const meta = config.baseUrl || append ? {
     ...CURL_EXECUTE_TOOL_META,
     ...config.baseUrl && { inputSchema: CurlExecuteBaseUrlSchema },
@@ -1444,7 +1444,10 @@ var McpCurlServer = class {
     return server;
   }
   /**
-   * Register tools with hooks applied on a given server.
+   * Register the built-in tools, with hooks, and the custom tools, with the
+   * defence wrap but no hooks, on a given server. A disabled built-in is still
+   * registered and listed, without `curlExecuteDescriptionAppend`; only its
+   * handler refuses.
    *
    * @param server - MCP server to register tools on
    */

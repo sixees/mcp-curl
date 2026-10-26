@@ -12,7 +12,7 @@ import { isWrappedResult } from "../response/post-processor.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearRateLimitMaps } from "../security/rate-limiter.js";
 import * as serverFactory from "../server/server-factory.js";
-import { captureTools, type CapturedTool } from "./tool-capture.test-fixture.js";
+import { stubServerFactory, type CapturedTool } from "./tool-capture.test-fixture.js";
 import { CURL_EXECUTE_TOOL_META } from "../tools/curl-execute.js";
 
 describe("McpCurlServer", () => {
@@ -946,14 +946,7 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         // Captures every registerTool call so the test can invoke the wrapped
         // handler synchronously. The lifecycle methods touched by
         // start("stdio") are no-ops.
-        const capture = captureTools({
-            connect: vi.fn().mockResolvedValue(undefined),
-            close: vi.fn().mockResolvedValue(undefined),
-            registerResource: vi.fn(),
-            registerPrompt: vi.fn(),
-        });
-        tools = capture.tools;
-        vi.spyOn(serverFactory, "createServer").mockReturnValue(capture.server);
+        tools = stubServerFactory().tools;
         // Avoid noisy stderr in tests.
         vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -1191,15 +1184,7 @@ describe("McpCurlServer rateLimit lifecycle", () => {
 
     beforeEach(() => {
         clearRateLimitMaps();
-        connect = vi.fn().mockResolvedValue(undefined);
-        close = vi.fn().mockResolvedValue(undefined);
-        const capture = captureTools({
-            connect,
-            close,
-            registerResource: vi.fn(),
-            registerPrompt: vi.fn(),
-        });
-        vi.spyOn(serverFactory, "createServer").mockReturnValue(capture.server);
+        ({ connect, close } = stubServerFactory());
         vi.spyOn(console, "error").mockImplementation(() => undefined);
         server = new McpCurlServer().configure({
             allowLocalhost: true,
@@ -1390,14 +1375,7 @@ describe("McpCurlServer curlExecuteDescriptionAppend", () => {
     let warnSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-        const capture = captureTools({
-            connect: vi.fn().mockResolvedValue(undefined),
-            close: vi.fn().mockResolvedValue(undefined),
-            registerResource: vi.fn(),
-            registerPrompt: vi.fn(),
-        });
-        tools = capture.tools;
-        vi.spyOn(serverFactory, "createServer").mockReturnValue(capture.server);
+        tools = stubServerFactory().tools;
         vi.spyOn(console, "error").mockImplementation(() => undefined);
         warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         server = new McpCurlServer();

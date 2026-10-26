@@ -113,8 +113,10 @@ export function registerCurlToolWithHooks(
 
     // A relative `url` is advertised only where something resolves it, and the
     // embedder's append (already sanitised by configure()) only where one is
-    // set; every other server keeps the canonical meta object byte for byte.
-    const append = config.curlExecuteDescriptionAppend;
+    // set and the tool can run: a disabled tool is still listed, so an append
+    // on it would cost every turn and describe calls that are refused. Every
+    // other server keeps the canonical meta object byte for byte.
+    const append = enabled ? config.curlExecuteDescriptionAppend : undefined;
     const meta =
         config.baseUrl || append
             ? {
