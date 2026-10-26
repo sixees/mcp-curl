@@ -36,7 +36,11 @@ import {
     startWrapErrorCleanup,
     stopWrapErrorCleanup,
 } from "../security/index.js";
-import { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "../utils/index.js";
+import {
+    sanitizeDescription,
+    MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+    MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
+} from "../utils/index.js";
 import { createWrapper } from "../response/post-processor.js";
 import {
     createHttpApp,
@@ -88,8 +92,8 @@ interface CustomToolDef {
  *   .configure({ baseUrl: "https://api.example.com" })
  *   .beforeRequest((ctx) => {
  *     console.log("Request:", ctx.tool, ctx.params);
- *   })
- *   .start("stdio");
+ *   });
+ * await server.start("stdio");
  * ```
  */
 
@@ -97,7 +101,7 @@ const KNOWN_CONFIG_KEYS_ARRAY = [
     "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
     "maxResultSize", "allowLocalhost", "port", "host",
     "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
-    "enableSpotlighting", "rateLimit",
+    "enableSpotlighting", "rateLimit", "curlExecuteDescriptionAppend",
 ] as const satisfies readonly (keyof McpCurlConfig)[];
 
 // Compile-time check: fails if any McpCurlConfig key is missing from the array
@@ -137,7 +141,9 @@ export class McpCurlServer {
      *
      * @param config - Configuration options to merge
      * @returns this for chaining
-     * @throws Error if called after start(), or if `rateLimit` is not two positive integers
+     * @throws Error if called after start(), if `rateLimit` is not two positive integers,
+     *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
+     *   once sanitised
      */
     configure(config: Partial<McpCurlConfig>): this {
         this.ensureNotStarted("configure()");
@@ -146,6 +152,17 @@ export class McpCurlServer {
         // Parsed before anything is merged, so a throw leaves the config as it was.
         if (config.rateLimit !== undefined) {
             config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
+        }
+        if (config.curlExecuteDescriptionAppend !== undefined) {
+            const append = sanitizeDescription(config.curlExecuteDescriptionAppend);
+            // Rejected rather than truncated: a cut append can end mid-instruction.
+            if (append.length > MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH) {
+                throw new Error(
+                    `McpCurlServer.configure(): curlExecuteDescriptionAppend is ${append.length} chars after sanitising; ` +
+                        `the maximum is ${MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH}`
+                );
+            }
+            config = { ...config, curlExecuteDescriptionAppend: append };
         }
         const picked: Partial<McpCurlConfig> = {};
         const knownKeysList = KNOWN_CONFIG_KEYS_ARRAY.join(", ");
@@ -336,8 +353,9 @@ export class McpCurlServer {
             inputSchema: sanitizeFieldDescriptionsDeep(meta.inputSchema),
         };
 
-        // Warn only when sanitization itself caused truncation — not when the pre-existing
-        // description was already longer than the sanitized result (e.g. attack chars removed).
+        // Measured on the sanitised text, not the raw input: this fires only when the
+        // slice above cut something, so a raw description that sanitising brought back
+        // under the limit (e.g. a trailing attack char trimmed) does not warn.
         if (sanitizedDesc.length > MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) {
             console.warn(
                 `McpCurlServer.registerCustomTool("${name}"): description truncated to ${MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH} chars`
@@ -438,6 +456,11 @@ export class McpCurlServer {
         this._started = true;
         const config = this.freezeConfig();
         this._frozenConfig = config;
+        if (config.curlExecuteDescriptionAppend && !this._tools.curl_execute) {
+            console.warn(
+                "McpCurlServer.start(): curlExecuteDescriptionAppend is set but curl_execute is disabled, so it is never shown"
+            );
+        }
         this._starting = this.launch(transport, config);
         try {
             await this._starting;
@@ -473,8 +496,8 @@ export class McpCurlServer {
             // Clean up orphaned temp directories from previous runs
             await cleanupOrphanedTempDirs();
 
-            // Start rate limit cleanup, injection detection cleanup, and the
-            // PR-6b defence-in-depth wrap-error throttle cleanup.
+            // Process-wide intervals: releaseProcessState() stops them on shutdown and on
+            // a failed start, so a rolled-back start leaves no timer running.
             this._rateLimitInterval = startRateLimitCleanup();
             this._injectionCleanupInterval = startInjectionCleanup();
             this._wrapErrorCleanupInterval = startWrapErrorCleanup();
@@ -487,7 +510,7 @@ export class McpCurlServer {
                 await this.startStdio();
             }
         } catch (error) {
-            // Rollback state on failure to allow retry with new instance
+            // Roll back on failure, so this same instance can start() again and shutdown() sees a server that never started
             if (this._httpServer) {
                 try {
                     await new Promise<void>((resolve, reject) => {
@@ -627,7 +650,10 @@ export class McpCurlServer {
     }
 
     /**
-     * Register tools with hooks applied on a given server.
+     * Register the built-in tools, with hooks, and the custom tools, with the
+     * defence wrap but no hooks, on a given server. A disabled built-in is still
+     * registered and listed, without `curlExecuteDescriptionAppend`; only its
+     * handler refuses.
      *
      * @param server - MCP server to register tools on
      */
@@ -649,7 +675,7 @@ export class McpCurlServer {
         });
 
         // Register custom tools — wrap each handler with the defence-in-depth
-        // post-processor (PR-6b). User custom tools and YAML-driven tools both
+        // post-processor. User custom tools and YAML-driven tools both
         // flow through this loop; YAML tools are double-wrapped (the inner
         // wrap fires inside `createToolHandler` with the real request hostname
         // and tags the result) but the Symbol-tag idempotence makes the outer

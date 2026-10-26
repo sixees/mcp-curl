@@ -113,7 +113,11 @@ export type {
 
 // 6. Sanitization helpers (callers need these to defend against prompt injection
 // in externally-sourced tool metadata — see docs/custom-tools.md).
-export { sanitizeDescription, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH } from "./lib/utils/index.js";
+export {
+    sanitizeDescription,
+    MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+    MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
+} from "./lib/utils/index.js";
 
 // 7. Response-side defence helpers — callers emitting external content (HTTP body,
 // file content, third-party API response) should defend + spotlight to honour

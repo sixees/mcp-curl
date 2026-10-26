@@ -21,6 +21,15 @@ const WS_PADDING_DISCRETE_SET: ReadonlySet<number> = new Set<number>(
  */
 export const MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1000;
 
+/**
+ * Maximum length of `McpCurlConfig.curlExecuteDescriptionAppend`, after sanitising.
+ * A budget choice, not a client limit: the client rationale above covers a whole
+ * custom-tool description, while the built-in curl_execute description is already
+ * several KB. The append loads on every turn of every session, so this is a
+ * ceiling against runaway prompt cost, not a target.
+ */
+export const MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH = 8000;
+
 // NOT exported — g+u flags make regexes stateful; external .test() corrupts lastIndex.
 const DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
 

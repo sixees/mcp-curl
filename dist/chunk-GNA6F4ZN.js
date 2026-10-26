@@ -191,6 +191,7 @@ var WS_PADDING_DISCRETE_SET = new Set(
   WHITESPACE_PADDING_CODEPOINTS.discrete
 );
 var MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH = 1e3;
+var MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH = 8e3;
 var DESC_CONTROL_CHARS = new RegExp(`[${UNICODE_ATTACK_RANGES}]+`, "gu");
 var WHITESPACE_PADDING_PATTERN = `[${WHITESPACE_PADDING_CLASS}]{50,}|(?:\\n[ \\t\\xa0]?){20,}`;
 var RESPONSE_SANITIZE_PATTERN = new RegExp(
@@ -2874,7 +2875,9 @@ Temp File Lifecycle:
   - Stored in a secure temp directory (owner-only access: 0o700/0o600)
   - Deleted on graceful server shutdown (SIGINT/SIGTERM)
   - Orphaned files from crashed sessions are cleaned on next server start
-  - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash`,
+  - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash
+
+mcp-curl v${SERVER.VERSION}`,
   inputSchema: CurlExecuteSchema,
   annotations: {
     readOnlyHint: false,
@@ -3027,6 +3030,7 @@ export {
   LIMITS,
   parsePort,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
+  MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
   sanitizeDescription,
   sanitizeResponse,
   detectInjectionPattern,

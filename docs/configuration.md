@@ -20,6 +20,7 @@ interface McpCurlConfig {
     defaultReferer?: string;
     enableSpotlighting?: boolean;
     rateLimit?: { readonly max: number; readonly windowMs: number };
+    curlExecuteDescriptionAppend?: string;
 }
 ```
 
@@ -41,6 +42,7 @@ interface McpCurlConfig {
 | `defaultReferer`     | `string`                 | none        | Referer for all requests; empty string disables                          |
 | `enableSpotlighting` | `boolean`                | false       | Wrap response text in per-message sentinel envelopes (defence-in-depth)  |
 | `rateLimit`          | `{ max, windowMs }`      | 60/min      | Per-host limit as a sliding window; see [rateLimit](#ratelimit)          |
+| `curlExecuteDescriptionAppend` | `string`       | none        | Text added to the `curl_execute` description; see [curlExecuteDescriptionAppend](#curlexecutedescriptionappend) |
 
 ## Detailed Options
 
@@ -310,6 +312,47 @@ starts it from zero while the upstream's window keeps running. It cannot see
 requests made by other processes, apps or clients on the same credential. For
 a hard upstream quota, set `max` below it and leave headroom for what this
 process cannot see (for example, 200 of a 240/hour quota).
+
+### curlExecuteDescriptionAppend
+
+Add what the model needs to know about the API this server fronts to the end of
+the `curl_execute` description, where it reads it before every call.
+
+```typescript
+configure({
+    baseUrl: "https://api.example.com",
+    curlExecuteDescriptionAppend: `Example API v2. Paths start with /v2.
+GET /v2/me returns the user; project endpoints are /v2/projects/{id}/...
+Lists page with ?page=N; a 429 means the hourly quota is spent: stop and tell the user.`,
+})
+```
+
+- **Keep it short.** The description is sent on every turn of every session
+  that connects this server, so every byte here is paid for again and again.
+  Put tool-shaped knowledge in it — path prefixes, self-scoped endpoints, body
+  shapes, pagination, which status means quota — which typically fits in
+  2–4 KB. Domain knowledge belongs in the host project, not here.
+- **Capped, never truncated.** `configure()` replaces each run of Unicode attack
+  codepoints (bidi overrides, zero-width characters and the like) with a space and
+  trims the ends, as `sanitizeDescription` does for custom tools, then throws if
+  the result is longer than `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH` (8000
+  characters), naming the length and the cap. The cap is a ceiling against runaway
+  prompt cost, not a target.
+- **Trusted config.** The text is yours, not the remote's, so it does not take
+  the response-side defence pipeline. Do not build it from API responses.
+- **Appended, not replacing.** The built-in description is unchanged; your text
+  follows its last line, after a blank line.
+- **Only where it can be used.** With `disableCurlExecute()` the tool is still
+  listed, but without your append, and `start()` warns that the append is set
+  but never shown.
+
+**The version line.** The built-in description's last line is
+`mcp-curl v<version>`, matching `^mcp-curl v\d+\.\d+\.\d+$`, so a model or
+an embedder can read the version from inside a session; line 1 stays the tool's
+summary. The token is the npm package name, which is what you pin. The MCP
+`serverInfo.name` the server reports at initialisation is `curl-mcp-server`, a
+different string. Because the version is in the description, the description's
+bytes change with every release.
 
 ## Environment Variables
 

@@ -111,11 +111,20 @@ export function registerCurlToolWithHooks(
         );
     };
 
-    // A relative `url` is advertised only where something resolves it; every
+    // A relative `url` is advertised only where something resolves it, and the
+    // embedder's append (already sanitised by configure()) only where one is
+    // set and the tool can run: a disabled tool is still listed, so an append
+    // on it would cost every turn and describe calls that are refused. Every
     // other server keeps the canonical meta object byte for byte.
-    const meta = config.baseUrl
-        ? { ...CURL_EXECUTE_TOOL_META, inputSchema: CurlExecuteBaseUrlSchema }
-        : CURL_EXECUTE_TOOL_META;
+    const append = enabled ? config.curlExecuteDescriptionAppend : undefined;
+    const meta =
+        config.baseUrl || append
+            ? {
+                  ...CURL_EXECUTE_TOOL_META,
+                  ...(config.baseUrl && { inputSchema: CurlExecuteBaseUrlSchema }),
+                  ...(append && { description: `${CURL_EXECUTE_TOOL_META.description}\n\n${append}` }),
+              }
+            : CURL_EXECUTE_TOOL_META;
     server.registerTool("curl_execute", meta, handler);
 }
 

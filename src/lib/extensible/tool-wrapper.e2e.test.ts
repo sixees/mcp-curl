@@ -10,6 +10,7 @@ import { connectInMemory, type InMemoryConnection } from "./in-memory-client.tes
 import type { CurlToolExecutor } from "./types.js";
 import type { McpCurlConfig } from "../types/public.js";
 import { createServer } from "../server/server-factory.js";
+import { SERVER } from "../config/index.js";
 import { CURL_EXECUTE_TOOL_META, executeCurlRequest } from "../tools/curl-execute.js";
 
 const BASE = "https://api.example.com/v1";
@@ -27,11 +28,11 @@ function okExecutor() {
     });
 }
 
-async function connectCurl(config: McpCurlConfig, executor: CurlToolExecutor) {
+async function connectCurl(config: McpCurlConfig, executor: CurlToolExecutor, enabled = true) {
     const server = createServer();
     registerCurlToolWithHooks(server, {
         executor,
-        enabled: true,
+        enabled,
         config,
         hooks: { beforeRequest: [], afterResponse: [], onError: [] },
     });
@@ -151,5 +152,51 @@ describe("curl_execute without baseUrl, through a real MCP client", () => {
         const { tools: expected } = await connection.client.listTools();
 
         expect(tools).toEqual(expected);
+    });
+});
+
+describe("curl_execute description, through a real MCP client", () => {
+    async function listedDescription(config: McpCurlConfig): Promise<string> {
+        const client = await connectCurl(config, okExecutor());
+        const { tools } = await client.listTools();
+        return tools[0].description!;
+    }
+
+    it("keeps the summary on line 1 and ends the built-in text with the version token", async () => {
+        const lines = (await listedDescription({})).split("\n");
+
+        expect(lines[0]).toBe("Execute an HTTP request using cURL with structured parameters.");
+        expect(lines.at(-1)).toBe(`mcp-curl v${SERVER.VERSION}`);
+        expect(lines.at(-1)).toMatch(/^mcp-curl v\d+\.\d+\.\d+$/);
+    });
+
+    it("puts the embedder append after the version line, leaving the built-in text unchanged", async () => {
+        const append = "Paths are relative to /api/v9.\nA 402 means the hourly quota is spent.";
+
+        const description = await listedDescription({ curlExecuteDescriptionAppend: append });
+
+        expect(description).toBe(`${CURL_EXECUTE_TOOL_META.description}\n\n${append}`);
+        expect(CURL_EXECUTE_TOOL_META.description.endsWith(`mcp-curl v${SERVER.VERSION}`)).toBe(true);
+    });
+
+    it("leaves the append off a disabled tool, which is still listed", async () => {
+        const client = await connectCurl({ curlExecuteDescriptionAppend: "Fronts the example API." }, okExecutor(), false);
+
+        const { tools } = await client.listTools();
+
+        expect(tools.map((tool) => tool.name)).toEqual(["curl_execute"]);
+        expect(tools[0].description).toBe(CURL_EXECUTE_TOOL_META.description);
+    });
+
+    it("composes the append with the baseUrl schema rather than replacing it", async () => {
+        const client = await connectCurl(
+            { baseUrl: BASE, curlExecuteDescriptionAppend: "Fronts the example API." },
+            okExecutor()
+        );
+        const { tools } = await client.listTools();
+        const url = (tools[0].inputSchema.properties as Record<string, { anyOf?: object[] }>).url;
+
+        expect(tools[0].description!.endsWith("\n\nFronts the example API.")).toBe(true);
+        expect(url.anyOf).toHaveLength(2);
     });
 });

@@ -159,7 +159,7 @@ export type CreateApiServerOptions =
  * // From YAML file
  * const server = await createApiServer({
  *   definitionPath: "./my-api.yaml",
- *   disableCurlExecute: true, // Only expose generated tools
+ *   disableCurlExecute: true, // curl_execute stays listed but refuses every call
  * });
  * await server.start("stdio");
  *

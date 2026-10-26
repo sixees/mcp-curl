@@ -258,6 +258,7 @@ describe("public barrel (src/lib.ts)", () => {
             "getMethodAnnotations",
             "sanitizeDescription",
             "MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH",
+            "MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH",
             "defendText",
             "applySpotlighting",
             "sanitizeResponse",

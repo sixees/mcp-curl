@@ -11,7 +11,9 @@
 // What this one offers instead is the module-private wrap tag on the result,
 // and the registered `meta`, so a test can assert which `inputSchema` a
 // configuration selected.
+import { vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import * as serverFactory from "../server/server-factory.js";
 
 export type CapturedHandler = (...args: unknown[]) => Promise<unknown>;
 
@@ -38,4 +40,27 @@ export function captureTools(members: Record<string, unknown> = {}): {
         },
     };
     return { server: server as unknown as McpServer, tools };
+}
+
+/**
+ * Make `createServer` return a capturing fake whose lifecycle members are
+ * no-ops, so `McpCurlServer.start("stdio")` runs without touching stdin.
+ * Restored by `vi.restoreAllMocks()`. `connect` and `close` are returned so a
+ * test can assert on the lifecycle.
+ */
+export function stubServerFactory(): {
+    tools: Map<string, CapturedTool>;
+    connect: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+} {
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn().mockResolvedValue(undefined);
+    const { server, tools } = captureTools({
+        connect,
+        close,
+        registerResource: vi.fn(),
+        registerPrompt: vi.fn(),
+    });
+    vi.spyOn(serverFactory, "createServer").mockReturnValue(server);
+    return { tools, connect, close };
 }
