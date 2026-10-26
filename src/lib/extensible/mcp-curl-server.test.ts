@@ -483,7 +483,7 @@ describe("McpCurlServer.registerCustomTool()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PR-5 — deep sanitisation of `inputSchema` field descriptions.
+// Deep sanitisation of `inputSchema` field descriptions.
 //
 // Every assertion reads via the public `.description` getter or
 // `z.toJSONSchema(...)` — never `_def.description` — because Zod v4 stores
@@ -924,7 +924,7 @@ describe("McpCurlServer.registerCustomTool() inputSchema deep sanitisation (B4)"
 });
 
 // -----------------------------------------------------------------------------
-// PR-6b — defence-in-depth wrap on custom-tool output (4th asymmetry closure)
+// Defence-in-depth wrap on custom-tool output
 // -----------------------------------------------------------------------------
 //
 // The wrap is applied inside `registerToolsOnServer`, which only runs after

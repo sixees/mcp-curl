@@ -92,8 +92,8 @@ interface CustomToolDef {
  *   .configure({ baseUrl: "https://api.example.com" })
  *   .beforeRequest((ctx) => {
  *     console.log("Request:", ctx.tool, ctx.params);
- *   })
- *   .start("stdio");
+ *   });
+ * await server.start("stdio");
  * ```
  */
 
@@ -353,8 +353,9 @@ export class McpCurlServer {
             inputSchema: sanitizeFieldDescriptionsDeep(meta.inputSchema),
         };
 
-        // Warn only when sanitization itself caused truncation — not when the pre-existing
-        // description was already longer than the sanitized result (e.g. attack chars removed).
+        // Measured on the sanitised text, not the raw input: this fires only when the
+        // slice above cut something, so a raw description that sanitising brought back
+        // under the limit (e.g. a trailing attack char trimmed) does not warn.
         if (sanitizedDesc.length > MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) {
             console.warn(
                 `McpCurlServer.registerCustomTool("${name}"): description truncated to ${MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH} chars`
@@ -495,8 +496,8 @@ export class McpCurlServer {
             // Clean up orphaned temp directories from previous runs
             await cleanupOrphanedTempDirs();
 
-            // Start rate limit cleanup, injection detection cleanup, and the
-            // PR-6b defence-in-depth wrap-error throttle cleanup.
+            // Process-wide intervals: releaseProcessState() stops them on shutdown and on
+            // a failed start, so a rolled-back start leaves no timer running.
             this._rateLimitInterval = startRateLimitCleanup();
             this._injectionCleanupInterval = startInjectionCleanup();
             this._wrapErrorCleanupInterval = startWrapErrorCleanup();
@@ -509,7 +510,7 @@ export class McpCurlServer {
                 await this.startStdio();
             }
         } catch (error) {
-            // Rollback state on failure to allow retry with new instance
+            // Roll back on failure, so this same instance can start() again and shutdown() sees a server that never started
             if (this._httpServer) {
                 try {
                     await new Promise<void>((resolve, reject) => {
@@ -649,7 +650,10 @@ export class McpCurlServer {
     }
 
     /**
-     * Register tools with hooks applied on a given server.
+     * Register the built-in tools, with hooks, and the custom tools, with the
+     * defence wrap but no hooks, on a given server. A disabled built-in is still
+     * registered and listed, with its full description (any
+     * `curlExecuteDescriptionAppend` included). Only its handler refuses.
      *
      * @param server - MCP server to register tools on
      */
@@ -671,7 +675,7 @@ export class McpCurlServer {
         });
 
         // Register custom tools — wrap each handler with the defence-in-depth
-        // post-processor (PR-6b). User custom tools and YAML-driven tools both
+        // post-processor. User custom tools and YAML-driven tools both
         // flow through this loop; YAML tools are double-wrapped (the inner
         // wrap fires inside `createToolHandler` with the real request hostname
         // and tags the result) but the Symbol-tag idempotence makes the outer

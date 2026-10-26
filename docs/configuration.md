@@ -332,18 +332,20 @@ Lists page with ?page=N; a 429 means the hourly quota is spent: stop and tell th
   Put tool-shaped knowledge in it — path prefixes, self-scoped endpoints, body
   shapes, pagination, which status means quota — which typically fits in
   2–4 KB. Domain knowledge belongs in the host project, not here.
-- **Capped, never truncated.** `configure()` strips Unicode attack codepoints
-  (bidi overrides, zero-width characters and the like, as
-  `sanitizeDescription` does for custom tools), then throws if the result is
-  longer than `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH` (8000 characters),
-  naming the length and the cap. The cap is a ceiling against runaway prompt
-  cost, not a target.
+- **Capped, never truncated.** `configure()` replaces each run of Unicode attack
+  codepoints (bidi overrides, zero-width characters and the like) with a space and
+  trims the ends, as `sanitizeDescription` does for custom tools, then throws if
+  the result is longer than `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH` (8000
+  characters), naming the length and the cap. The cap is a ceiling against runaway
+  prompt cost, not a target.
 - **Trusted config.** The text is yours, not the remote's, so it does not take
   the response-side defence pipeline. Do not build it from API responses.
 - **Appended, not replacing.** The built-in description is unchanged; your text
   follows its last line, after a blank line.
-- **Only where it can be seen.** With `disableCurlExecute()`, `start()` warns
-  that the append is set but never shown.
+- **Shown even when disabled.** `disableCurlExecute()` stops `curl_execute`
+  running but not its listing: the tool is still registered with your append on
+  its description, so the append is still sent on every turn. Leave the append
+  unset on a server that disables the tool. `start()` warns when both are set.
 
 **The version line.** The built-in description's last line is
 `mcp-curl v<version>`, matching `^mcp-curl v\d+\.\d+\.\d+$`, so a model or
