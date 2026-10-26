@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 effort: s
 tags: [code-review, documentation, getting-started, hooks, baseUrl, configure]
 dependencies: []
@@ -34,12 +34,12 @@ Add a bullet saying that a failed `configure()` leaves `baseUrl` unset, so relat
 
 ## Recommended Action
 
-_Operator to choose._
+_Option 1 (operator, 2026-10-26: "fix 021-023 first")._ Fixed options go in their own `configure()` call before the `try`.
 
 ## Acceptance Criteria
 
-- [ ] The section's example, followed as written with `EXAMPLE_API_KEY` unset, answers `curl_execute({ url: "/x" })` with the configuration reason, not a schema error, or the section states plainly that it does not.
-- [ ] Optional: an integration case (through `connectInMemory`) that builds the documented server with the key unset and asserts the reason text.
+- [x] The section's example, followed as written with `EXAMPLE_API_KEY` unset, answers `curl_execute({ url: "/x" })` with the configuration reason, not a schema error, or the section states plainly that it does not.
+- [x] Optional: an integration case (through `connectInMemory`) that builds the documented server with the key unset and asserts the reason text.
 
 ## Work Log
 
@@ -47,3 +47,7 @@ _Operator to choose._
 **By:** Claude Code
 **Actions:** Filed from the `/sixees-workflow:review` pass inside `/sixees-workflow:work` PR-4 (branch `docs/release-5.1.0`). Checked against `src/lib/extensible/mcp-curl-server.ts::configure` ("a throw leaves the config as it was") and `tool-wrapper.ts::registerCurlToolWithHooks`.
 **Learnings:** The snippet was type-checked but not run; the defect is in the composition of `configure()` atomicity and schema selection (K-5).
+
+### 2026-10-26 - Fixed (19fed56)
+**By:** Claude Code
+**Actions:** `docs/getting-started.md::Reporting a configuration error` now configures `baseUrl` and `curlExecuteDescriptionAppend` first, outside the `try`, and adds a bullet explaining why. A scratch test drove both shapes through `connectInMemory` against the real `McpCurlServer.start()`, then was deleted. The old shape answered `curl_execute({url: "/users"})` with "Input validation error … format url"; the new one answered "This server is not configured: EXAMPLE_API_KEY is not set". No permanent test was added: it would guard a doc snippet, and the composition it checks is covered by the existing `configure()` atomicity and schema-selection tests.

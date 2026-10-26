@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 effort: s
 tags: [code-review, security, documentation, defaultHeaders, baseUrl, changelog, getting-started]
 dependencies: []
@@ -40,12 +40,12 @@ Restore the transcript reason in the CHANGELOG note and add one line to the gett
 
 ## Recommended Action
 
-_Operator to choose._ Population: internal team embedders whose sessions read untrusted remote content, which is the inbound threat `.sixees/ARCHITECTURE.md` defends against. A per-origin credential option in code would be a separate design decision.
+_Option 1, limited to one owner (operator, 2026-10-26)._ `docs/configuration.md` → *defaultHeaders* states that the headers go to every host; the CHANGELOG note restores the transcript reason and cites it. `README.md`'s example is left as is, as an out-of-scope sibling; it now has an owner to point to. Population: internal team embedders whose sessions read untrusted remote content, which is the inbound threat `.sixees/ARCHITECTURE.md` defends against. A per-origin credential option in code would be a separate design decision.
 
 ## Acceptance Criteria
 
-- [ ] The CHANGELOG 5.1.0 note no longer presents `defaultHeaders` as a host-scoping control; it states the transcript reason.
-- [ ] Wherever the docs recommend `defaultHeaders` for a credential, they say once (with one owner) that it is sent to every host.
+- [x] The CHANGELOG 5.1.0 note no longer presents `defaultHeaders` as a host-scoping control; it states the transcript reason.
+- [x] Wherever the docs recommend `defaultHeaders` for a credential, they say once (with one owner) that it is sent to every host.
 
 ## Work Log
 
@@ -53,3 +53,7 @@ _Operator to choose._ Population: internal team embedders whose sessions read un
 **By:** Claude Code
 **Actions:** Filed from `/sixees-workflow:review` inside `/sixees-workflow:work` PR-4 (`docs/release-5.1.0`). Cross-checked against the plan's declined origin-pin entry so the settled decision is not reopened.
 **Learnings:** Compressing a "do X, so Y" rule into a release note dropped its reason, and changed what the rule appears to claim (K-22).
+
+### 2026-10-26 - Fixed (19fed56)
+**By:** Claude Code
+**Actions:** `docs/configuration.md::defaultHeaders`: "Added to all requests, whatever their host … not scoped to one API". `CHANGELOG.md::[5.1.0] Notes`: transcript reason restored, plus the every-host sentence citing the owner. Origin pinning stays declined (plan → *Declined and deferred*).

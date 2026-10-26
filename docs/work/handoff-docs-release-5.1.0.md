@@ -1,5 +1,5 @@
 # Work Handoff: release 5.1.0 (config-error docs and version bump)
-**Date:** 2026-10-26 | **Branch:** `docs/release-5.1.0` | **Plan:** `docs/plans/2026-10-20-feat-embedder-persona-gaps-plan.md` | **Status:** partial: tasks 15–16 are implemented, but Surface 2 filed three in-scope P2 todos (021–023), and they wait on the operator before push
+**Date:** 2026-10-26 | **Branch:** `docs/release-5.1.0` | **Plan:** `docs/plans/2026-10-20-feat-embedder-persona-gaps-plan.md` | **Status:** complete: tasks 15–16 are implemented, and Surface 2's todos 021–023 are resolved on this branch (operator, 2026-10-26)
 **Plan slice:** PR-4
 
 ## Summary
@@ -82,6 +82,9 @@ Suggested order: the `CHANGELOG.md` `[5.1.0]` block, then `docs/getting-started.
 
 | id | title | summary | by | date |
 |---|---|---|---|---|
+| 021 | A documented error report runs after a gate whose shape depends on the config that failed | Fixed options configured first, outside the `try`; verified end to end (19fed56) | Claude Code | 2026-10-26 |
+| 022 | Credential guidance places a key in a header sent to every host, and does not say so | `docs/configuration.md` → *defaultHeaders* owns the every-host statement; CHANGELOG reason restored (19fed56) | Claude Code | 2026-10-26 |
+| 023 | The release's version is restated in several places, and they disagree | `dist/` rebuilt and committed (2139f93); RC and invariant 11 amendment declined by the operator | Claude Code | 2026-10-26 |
 
 ## Code Review — 2026-10-26
 
@@ -108,3 +111,14 @@ Agents (8): learnings-researcher, code-simplicity-reviewer, security-sentinel an
 Learnings: RC-5, RC-36, RC-4 and RC-54 were surfaced as Known Patterns. No `Class` matched a merged class, so nothing was escalated.
 
 **Blockers:** none at P1. Three in-scope P2 todos await the operator.
+
+## Review Fixes — 2026-10-26
+
+At the operator's direction ("Fix 021-023 first"):
+
+- **021, fixed (`19fed56`).** The getting-started example now configures `baseUrl` and the description append in their own `configure()` call before the `try`, and a bullet says why. A scratch end-to-end test (written, run and deleted) drove both shapes through `connectInMemory` and the real `start()`. The old shape gave "Input validation error … format url"; the new one gives "This server is not configured: EXAMPLE_API_KEY is not set". The snippet still type-checks under `--strict`.
+- **022, fixed (`19fed56`).** `docs/configuration.md` → *defaultHeaders* now states that the headers go to every host. The CHANGELOG note restores "so it stays out of the transcript" and cites that section. `README.md`'s example is left as an out-of-scope sibling. Origin pinning stays declined, per the plan.
+- **023, resolved.** `dist/` was rebuilt and committed (`2139f93`); only `SERVER.VERSION` changed, verified by a normalised chunk diff, and a fresh `npm run build` reproduces the committed tree. **Declined by the operator ("Neither"):** a staged RC recording the 2026-10-21 MINOR-despite-BREAKING decision, and an invariant 11 amendment. That decision stays recorded only in `CHANGELOG.md` `[5.1.0]` and `docs/work/handoff-feat-embedder-base-url.md`. **Not added:** a release guard comparing the `dist/` version with `package.json`, because it would read the working-tree build and could not see the committed one (K-17).
+- **Unchanged notes:** TS7030 under `noImplicitReturns` (same shape as `docs/hooks.md`); YAML endpoint tools also bypass hooks; sentence-case H2.
+- **Suite after fixes:** `npx vitest run --reporter=json`: 1527 total, 1520 passed, 0 failed, 7 skipped (uncertified, as above). `npm run build` passes.
+- **Surface 2 has not re-run over these fixes** (K-16): they are the least-reviewed text on the branch.

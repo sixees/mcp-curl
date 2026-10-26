@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 effort: s
 tags: [code-review, release, versioning, dist, invariants, changelog]
 dependencies: []
@@ -47,12 +47,12 @@ Commit `dist/` now, and file the invariant 11 record as follow-up work.
 
 ## Recommended Action
 
-_Operator to choose._
+_Rebuild committed; record declined (operator, 2026-10-26)._ The release guard comparing the `dist/` version with `package.json` was not added: it reads the working-tree build, which any local `npm run build` brings into line, so it cannot see the committed state (K-17).
 
 ## Acceptance Criteria
 
-- [ ] `git show HEAD:dist/chunk-*.js` carries `VERSION … "5.1.0"` (or a guard asserts the committed build matches `package.json`).
-- [ ] The MINOR-with-BREAKING decision is recorded as an RC, and invariant 11 has one spelling that agrees with it.
+- [x] `git show HEAD:dist/chunk-*.js` carries `VERSION … "5.1.0"` (or a guard asserts the committed build matches `package.json`).
+- [x] Resolved by operator decision, 2026-10-26: no RC is staged and invariant 11 is unchanged; the MINOR decision stays recorded in `CHANGELOG.md` `[5.1.0]` and `docs/work/handoff-feat-embedder-base-url.md` → *Key decisions*.
 
 ## Work Log
 
@@ -60,3 +60,7 @@ _Operator to choose._
 **By:** Claude Code
 **Actions:** Filed from `/sixees-workflow:review` inside `/sixees-workflow:work` PR-4 (`docs/release-5.1.0`). Confirmed `dist/` is tracked (`git ls-files dist`: 15 files) and that the working tree holds an uncommitted 5.1.0 build from this run's `npm run build`.
 **Learnings:** The plan's task 16 named `package.json` only. The tracked build is a third place the version lives (K-8: two spellings of one fact).
+
+### 2026-10-26 - Resolved (2139f93)
+**By:** Claude Code
+**Actions:** Rebuilt and committed `dist/`. Only `SERVER.VERSION` changed (`"5.0.1"` → `"5.1.0"`), verified by diffing each old/new chunk pair with chunk names normalised. A staged RC and an invariant 11 amendment were drafted and put to the operator, who answered "Neither".
