@@ -134,6 +134,71 @@ const server = new McpCurlServer()
     });
 ```
 
+## Reporting a configuration error
+
+`configure()` throws when an option fails validation — a `rateLimit` field
+that is not a positive integer, or a `curlExecuteDescriptionAppend` over its
+cap — and a throw leaves the configuration as it was. Your own config loading
+can fail too: a missing API key, an unparseable number. Uncaught, either one
+kills the process before an MCP client connects, and the client shows only
+that the server exited.
+
+To report the reason inside the session instead, catch the failure, start
+anyway, and answer every `curl_execute` call with it:
+
+```typescript
+import {McpCurlServer} from "mcp-curl";
+
+function loadConfig() {
+    const apiKey = process.env.EXAMPLE_API_KEY;
+    if (!apiKey) {
+        throw new Error("EXAMPLE_API_KEY is not set");
+    }
+    return {
+        baseUrl: "https://api.example.com",
+        defaultHeaders: {"Authorization": `Bearer ${apiKey}`},
+        rateLimit: {max: Number(process.env.EXAMPLE_MAX_PER_HOUR ?? 200), windowMs: 3_600_000},
+    };
+}
+
+const server = new McpCurlServer();
+
+let configError: string | undefined;
+try {
+    server.configure(loadConfig());
+} catch (error) {
+    configError = error instanceof Error ? error.message : String(error);
+}
+
+if (configError !== undefined) {
+    const reason = `This server is not configured: ${configError}`;
+    // Registered before any other beforeRequest hook, so none of them runs.
+    server.beforeRequest((ctx) => {
+        if (ctx.tool === "curl_execute") {
+            return {shortCircuit: true, response: reason, isError: true};
+        }
+    });
+}
+
+await server.start("stdio");
+```
+
+- **Load inside the `try`.** Config read at module scope, or a
+  `process.exit` in your loader, fails before the `try` is reached.
+- **Guard `curl_execute` only.** `jq_query` reads files already saved and
+  needs no configuration, so it keeps working.
+- **Name the variable, never its value.** The reason is returned to the model
+  and lands in the transcript. Write your loader's messages the same way.
+- **Custom tools bypass hooks.** A handler registered with `registerCustomTool()` needs
+  the same check: return the reason with `isError: true` before it calls
+  `utilities()`.
+- **A malformed call still gets the schema's error.** Input validation runs
+  before any hook, so a call with an invalid `url` is answered with the
+  validation error, not the configuration error.
+
+The short-circuit response goes through the same wrap as real tool output; see
+[Hooks → Short-Circuit Pattern](./hooks.md#short-circuit-pattern).
+
 ## Adding Hooks
 
 Hooks let you intercept requests and responses:
