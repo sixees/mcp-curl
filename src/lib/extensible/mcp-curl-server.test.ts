@@ -1407,6 +1407,12 @@ describe("McpCurlServer curlExecuteDescriptionAppend", () => {
         expect(server.getConfig().curlExecuteDescriptionAppend).toBe(append);
     });
 
+    it("measures the cap after sanitising, so a raw append over the cap that sanitises to it is accepted", () => {
+        const atCap = "a".repeat(MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH);
+        server.configure({ curlExecuteDescriptionAppend: atCap + ZWSP });
+        expect(server.getConfig().curlExecuteDescriptionAppend).toBe(atCap);
+    });
+
     it("throws on an append one over the cap, naming the length and the cap, and changes nothing", () => {
         server.configure({ baseUrl: "https://api.example.com" });
         const append = "a".repeat(MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH + 1);

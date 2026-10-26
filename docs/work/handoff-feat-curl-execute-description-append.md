@@ -192,3 +192,27 @@ None.
 ### Files Modified
 
 - `docs/work/handoff-feat-curl-execute-description-append.md`
+
+## Review Comments Addressed — 2026-10-26 (round 2)
+
+Read after a second 15-minute wait, with no new requests. CodeRabbit ran an incremental review on
+the push of `dd31577`. Codex was still `running` on `93a2d69`, about 32 minutes after the request,
+and had posted no findings.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| The cap tests use only ASCII, so a raw-length check passes them too; add a case that sanitises down to exactly the cap | coderabbitai (Trivial → P3, in scope: the test file is in this PR's diff) | Fix needed (test) | Added `measures the cap after sanitising, …` in `mcp-curl-server.test.ts`. Teeth probe: switching `configure()` to the raw length fails it; source restored and verified with `cmp` |
+
+### Declined Findings
+
+None this round.
+
+### Files Modified
+
+- `src/lib/extensible/mcp-curl-server.test.ts`
+- `docs/work/handoff-feat-curl-execute-description-append.md`
+
+Full suite after the change: `npx vitest run --reporter=json` gives 1527 total, 1520 passed,
+0 failed, 7 skipped. This is not a certified verdict; `npm test` remains the operator's.
