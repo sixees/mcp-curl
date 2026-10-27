@@ -64,11 +64,11 @@ function configureServerFromSchema(
         // Set after the spread so a generatorConfig cannot opt the YAML tools
         // out of spotlighting the built-in tools apply.
         enableSpotlighting: mergedConfig.enableSpotlighting,
-        // Authoritative for the same reason: derived from the config the server
-        // itself enforces, so a generatorConfig cannot open the YAML tools wider
-        // than curl_execute. A generatorConfig.baseUrl on another host does not
-        // widen it either; that embedder sets allowedHosts.
-        hostPolicy: deriveHostPolicy(server.getConfig()),
+        // Cleared for the same reason: the YAML tools take the server's own
+        // policy, passed per call below, so a generatorConfig cannot open them
+        // wider than curl_execute. A generatorConfig.baseUrl on another host
+        // does not widen it either; that embedder sets allowedHosts.
+        allowedHosts: undefined,
     };
 
     const toolDefs = generateToolDefinitions(schema, generatorConfig);
@@ -82,7 +82,10 @@ function configureServerFromSchema(
                 inputSchema: toolDef.inputSchema,
                 annotations: getMethodAnnotations(toolDef.method),
             },
-            toolDef.handler
+            // Derived per call, not here: the server still accepts configure()
+            // until start(), and getConfig() is the frozen config by the time a
+            // tool can be called, which start() has already validated.
+            (params, extra) => toolDef.handler(params, { ...extra, hostPolicy: deriveHostPolicy(server.getConfig()) })
         );
     }
 }

@@ -159,6 +159,26 @@ describe("the host list in executeCurlRequest", () => {
         expect(security.validateUrlAndResolveDns).not.toHaveBeenCalled();
     });
 
+    describe("a generator config's allowedHosts", () => {
+        const toolWith = (allowedHosts: readonly string[] | "any") =>
+            generateToolDefinitions(loadApiSchemaFromString(YAML), { allowedHosts })[0];
+
+        it("refuses a host off the list, over the caller's \"any\"", async () => {
+            const result = await toolWith(["api.test"]).handler({}, { hostPolicy: ANY_HOST_POLICY });
+            expect(textOf(result)).toContain("(LOCAL_HOST_NOT_ALLOWED)");
+            expect(security.validateUrlAndResolveDns).not.toHaveBeenCalled();
+        });
+
+        it("canonicalises its entries, so a mixed-case, trailing-dot entry reaches its own host", async () => {
+            await toolWith(["OTHER.test."]).handler({});
+            expect(security.validateUrlAndResolveDns).toHaveBeenCalledOnce();
+        });
+
+        it("throws at generation for an entry that is not a bare host", () => {
+            expect(() => toolWith(["https://api.test"])).toThrow(/allowedHosts\[0\]/);
+        });
+    });
+
     describe("on every path a request takes", () => {
         let tools: Map<string, CapturedTool>;
         let server: McpCurlServer;
@@ -181,6 +201,13 @@ describe("the host list in executeCurlRequest", () => {
         it("utilities().executeRequest on a baseUrl server", async () => {
             server = new McpCurlServer().configure({ baseUrl: "https://api.test" });
             expectRefusedBeforeDns(await server.utilities().executeRequest({ url: "https://other.test/x" }));
+        });
+
+        it("a YAML tool, under the list configure() sets after createApiServer", async () => {
+            server = createApiServerSync(loadApiSchemaFromString(YAML), { config: { allowedHosts: "any" } });
+            server.configure({ allowedHosts: [] });
+            await server.start("stdio");
+            expectRefusedBeforeDns(await tools.get("get_thing")!.handler({}, {}));
         });
 
         it("a YAML tool whose baseUrl host the list leaves out", async () => {

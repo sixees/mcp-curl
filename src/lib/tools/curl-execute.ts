@@ -45,8 +45,9 @@ export interface CurlExecuteExtra {
     /**
      * The hosts this call may reach. `executeWithHooks` and
      * `InstanceUtilities.executeRequest` pass `deriveHostPolicy(config)`; a
-     * generated YAML tool passes its generator config's policy, else the
-     * caller's, else `"any"`. `executor-call-sites.test.ts` checks only that
+     * generated YAML tool passes its generator config's `allowedHosts`, else
+     * the caller's policy, else `"any"`; `createApiServer` supplies the
+     * server's policy as that caller. `executor-call-sites.test.ts` checks only that
      * every call names a defined `hostPolicy` — what it evaluates to is the
      * behavioural tests' to show. A direct caller that passes none gets
      * `"any"`: that is the documented library default, and the SSRF gate

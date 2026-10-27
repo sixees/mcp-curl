@@ -25,7 +25,7 @@ import type {
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
 import { hasDotSegment, resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
-import { applyDefaultHeaders, ANY_HOST_POLICY, type HostPolicy } from "../config/index.js";
+import { applyDefaultHeaders, ANY_HOST_POLICY, deriveHostPolicy } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";
 
 /**
@@ -69,14 +69,15 @@ export interface GeneratorConfig {
      */
     enableSpotlighting?: boolean;
     /**
-     * The hosts these tools may reach. `createApiServer` and
-     * `createApiServerSync` set it from the server's config, and it wins over
-     * the caller's `extra.hostPolicy`. Unset, a tool takes the caller's
-     * `extra.hostPolicy`; with neither it may reach any host, which is the
-     * library default for a caller that builds tools without a server; the
-     * SSRF gate still runs.
+     * The hosts these tools may reach, in `McpCurlConfig.allowedHosts`'s form
+     * and validated the same way: an invalid entry throws when the tools are
+     * generated. Set, it wins over the caller's `extra.hostPolicy`; unset, a
+     * tool takes the caller's, and with neither it may reach any host, which
+     * is the library default for a caller that builds tools without a server.
+     * `createApiServer` leaves it unset and passes the server's own policy at
+     * call time. The SSRF gate still runs either way.
      */
-    hostPolicy?: HostPolicy;
+    allowedHosts?: readonly string[] | "any";
 }
 
 /**
@@ -372,6 +373,8 @@ function createToolHandler(
     // and identical across every invocation. The closure is cheap; this just
     // skips re-allocating it on every tool call.
     const wrap = createWrapper({ enableSpotlighting: config?.enableSpotlighting });
+    const configPolicy =
+        config?.allowedHosts === undefined ? undefined : deriveHostPolicy({ allowedHosts: config.allowedHosts });
 
     return async (params: Record<string, unknown>, extra?: CurlExecuteExtra): Promise<CurlExecuteResult> => {
         try {
@@ -408,12 +411,12 @@ function createToolHandler(
 
             const timeout = config?.timeout ?? schema.defaults?.timeout;
 
-            // The generator config's allowLocalhost and hostPolicy win; the caller's
+            // The generator config's allowLocalhost and allowedHosts win; the caller's
             // extra applies only where the config leaves them unset.
             const execExtra: CurlExecuteExtra = {
                 ...extra,
                 allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost,
-                hostPolicy: config?.hostPolicy ?? extra?.hostPolicy ?? ANY_HOST_POLICY,
+                hostPolicy: configPolicy ?? extra?.hostPolicy ?? ANY_HOST_POLICY,
             };
             const result = await executeCurlRequest(
                 {
