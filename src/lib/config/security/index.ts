@@ -31,6 +31,7 @@ export {
 export {
     ANY_HOST_POLICY,
     canonicalHost,
+    baseUrlHost,
     parseAllowedHosts,
     deriveHostPolicy,
     isHostAllowed,

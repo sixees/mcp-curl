@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import { isAllowedUrlScheme } from "../config/security/url-schemes.js";
+import { baseUrlHost } from "../config/security/host-policy.js";
 
 /**
  * Strip trailing slash from a base URL and prepend it to a path,
@@ -82,7 +83,7 @@ export function resolveRequestUrl(baseUrl: string | undefined, url: string): Res
     // Everything that can throw is inside the try: the caller runs this before
     // the wrap, so a throw would reach the model unwrapped (invariant 1).
     try {
-        if (isAllowedUrlScheme(new URL(baseUrl).protocol)) {
+        if (baseUrlHost(baseUrl) !== undefined) {
             return { ok: true, url: resolveBaseUrl(baseUrl, url) };
         }
     } catch {

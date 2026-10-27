@@ -1,6 +1,8 @@
 // src/lib/config/security/host-policy.ts
 // Which hosts a server may send a request to: the allowedHosts list, its default, and the match
 
+import { isAllowedUrlScheme } from "./url-schemes.js";
+
 /**
  * The hosts a request may go to. `"any"` is the explicit opt-out; a list is
  * matched exactly after {@link canonicalHost}, and an empty list refuses every
@@ -75,6 +77,24 @@ export function parseAllowedHosts(value: unknown): readonly string[] | "any" {
 }
 
 /**
+ * The host a `baseUrl` sends requests to, in canonical form, or `undefined`
+ * when it is not an absolute URL with an allowlisted scheme and a host. The
+ * one answer to "is this baseUrl usable": `start()` derives the default host
+ * list from it and `resolveRequestUrl` refuses to resolve against a `baseUrl`
+ * it rejects, so the two cannot disagree about the same value.
+ */
+export function baseUrlHost(baseUrl: string): string | undefined {
+    try {
+        const base = new URL(baseUrl);
+        if (!isAllowedUrlScheme(base.protocol)) return undefined;
+        const host = canonicalHost(base.hostname);
+        return host === "" ? undefined : host;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
  * The policy a server enforces. An explicit `allowedHosts` wins; left unset,
  * a server with a `baseUrl` may reach only that host, and one without a
  * `baseUrl` may reach any host. A `baseUrl` that cannot give a host throws
@@ -91,14 +111,8 @@ export function deriveHostPolicy(config: {
         return Object.freeze({ kind: "list" as const, hosts: new Set(parsed) });
     }
     if (config.baseUrl === undefined) return ANY_HOST_POLICY;
-    let host = "";
-    try {
-        const base = new URL(config.baseUrl);
-        if (base.protocol === "http:" || base.protocol === "https:") host = canonicalHost(base.hostname);
-    } catch {
-        // Falls through to the refusal below.
-    }
-    if (host === "") {
+    const host = baseUrlHost(config.baseUrl);
+    if (host === undefined) {
         throw new Error(
             "baseUrl is not an absolute http(s) URL, so the default allowedHosts cannot be derived from it; " +
                 'fix baseUrl or set allowedHosts explicitly ("any" allows every host)'

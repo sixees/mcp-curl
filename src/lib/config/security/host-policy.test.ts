@@ -6,6 +6,7 @@ import {
     isHostAllowed,
     parseAllowedHosts,
 } from './host-policy.js';
+import { resolveRequestUrl } from '../../utils/url.js';
 
 const list = (...hosts: string[]) => deriveHostPolicy({ allowedHosts: hosts });
 
@@ -133,5 +134,26 @@ describe('deriveHostPolicy', () => {
 
     it('does not read a bad baseUrl when allowedHosts is "any"', () => {
         expect(deriveHostPolicy({ baseUrl: 'not a url', allowedHosts: 'any' })).toBe(ANY_HOST_POLICY);
+    });
+
+    // start() and the request path answer "is this baseUrl usable" the same way.
+    it.each([
+        'https://api.test',
+        'http://API.test:8080/v1/',
+        'https://api.test./',
+        'http://./',
+        'not a url',
+        'ftp://api.test',
+        'file:///etc',
+        'mailto:a@b.test',
+        'https://[::1]/',
+    ])('throws exactly when resolveRequestUrl refuses %s', (baseUrl) => {
+        let threw = false;
+        try {
+            deriveHostPolicy({ baseUrl });
+        } catch {
+            threw = true;
+        }
+        expect(threw).toBe(!resolveRequestUrl(baseUrl, '/x').ok);
     });
 });
