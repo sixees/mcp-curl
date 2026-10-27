@@ -25,7 +25,7 @@ import type {
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
 import { hasDotSegment, resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
-import { applyDefaultHeaders } from "../config/index.js";
+import { applyDefaultHeaders, ANY_HOST_POLICY, type HostPolicy } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";
 
 /**
@@ -68,6 +68,13 @@ export interface GeneratorConfig {
      * knob.
      */
     enableSpotlighting?: boolean;
+    /**
+     * The hosts these tools may reach. `createApiServer` sets it from the
+     * server's config. Unset, a tool may reach any host, which is the library
+     * default for a caller that builds tools without a server; the SSRF gate
+     * still runs.
+     */
+    hostPolicy?: HostPolicy;
 }
 
 /**
@@ -404,6 +411,7 @@ function createToolHandler(
             const execExtra: CurlExecuteExtra = {
                 ...extra,
                 allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost,
+                hostPolicy: config?.hostPolicy ?? ANY_HOST_POLICY,
             };
             const result = await executeCurlRequest(
                 {

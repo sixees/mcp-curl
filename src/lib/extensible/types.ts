@@ -9,6 +9,7 @@ import type {
     CurlExecuteInput,
     JqQueryInput,
 } from "../types/public.js";
+import type { CurlExecuteExtra } from "../tools/curl-execute.js";
 
 /**
  * Result returned by tool executor functions.
@@ -45,12 +46,10 @@ export interface Hooks {
 }
 
 /**
- * Extra context passed to tool executor.
+ * Extra context passed to tool executor: the executor's own type, so a field
+ * added there cannot be dropped on the way through the hooks.
  */
-export interface ToolExtra {
-    sessionId?: string;
-    allowLocalhost?: boolean;
-}
+export type ToolExtra = CurlExecuteExtra;
 
 /**
  * Tool executor function signature for curl_execute.

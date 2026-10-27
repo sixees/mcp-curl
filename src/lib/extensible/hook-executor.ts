@@ -8,7 +8,8 @@ import type {
     CurlExecuteInput,
     JqQueryInput,
 } from "../types/public.js";
-import type { Hooks, ToolResult, ToolName } from "./types.js";
+import type { Hooks, ToolResult, ToolName, ToolExtra } from "./types.js";
+import { deriveHostPolicy } from "../config/index.js";
 import type { WrappableResult } from "../response/post-processor.js";
 
 /**
@@ -71,7 +72,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
     config: Readonly<McpCurlConfig>,
     hooks: Hooks,
     sessionId: string | undefined,
-    executor: (p: T, extra: { sessionId?: string; allowLocalhost?: boolean }) => Promise<ToolResult>,
+    executor: (p: T, extra: ToolExtra) => Promise<ToolResult>,
     wrap: WrapFn,
     hostnameOf: HostnameExtractor<T>
 ): Promise<ToolResult> {
@@ -113,7 +114,11 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
 
     try {
         // Execute the tool with potentially modified params
-        const response = await executor(ctx.params, { sessionId, allowLocalhost: config.allowLocalhost });
+        const response = await executor(ctx.params, {
+            sessionId,
+            allowLocalhost: config.allowLocalhost,
+            hostPolicy: deriveHostPolicy(config),
+        });
 
         // Run afterResponse hooks sequentially.
         //

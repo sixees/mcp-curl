@@ -2,7 +2,7 @@
 // The curl_execute executor and its tool metadata; registration is tools/index.ts::registerAllTools
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
-import { TEMP_DIR, LIMITS, SERVER } from "../config/index.js";
+import { TEMP_DIR, LIMITS, SERVER, type HostPolicy } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
@@ -42,6 +42,14 @@ export interface CurlExecuteExtra {
     sessionId?: string;
     /** Override env var for allowing localhost requests (from McpCurlConfig) */
     allowLocalhost?: boolean;
+    /**
+     * The hosts this call may reach. Every caller inside the library passes
+     * the policy `deriveHostPolicy` gives its config, and
+     * `executor-call-sites.test.ts` holds them to it. A direct caller that
+     * passes none gets `"any"`: that is the documented library default, and
+     * the SSRF gate still runs.
+     */
+    hostPolicy?: HostPolicy;
 }
 
 /**

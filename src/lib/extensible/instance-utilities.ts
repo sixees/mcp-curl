@@ -4,7 +4,7 @@
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
 import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
 import { executeJqQuery, type JqQueryResult } from "../tools/jq-query.js";
-import { LIMITS, applyDefaultHeaders } from "../config/index.js";
+import { LIMITS, applyDefaultHeaders, deriveHostPolicy } from "../config/index.js";
 import { resolveRequestUrl } from "../utils/index.js";
 
 /**
@@ -109,7 +109,10 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 output_dir: params.output_dir ?? config.outputDir,
             };
 
-            return executeCurlRequest(fullParams, { allowLocalhost: config.allowLocalhost });
+            return executeCurlRequest(fullParams, {
+                allowLocalhost: config.allowLocalhost,
+                hostPolicy: deriveHostPolicy(config),
+            });
         },
 
         async queryFile(filepath: string, jqFilter: string): Promise<JqQueryResult> {

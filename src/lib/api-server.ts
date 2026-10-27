@@ -7,6 +7,7 @@ import { validateApiSchema } from "./schema/validator.js";
 import { generateToolDefinitions, getMethodAnnotations } from "./schema/generator.js";
 import type { GeneratorConfig } from "./schema/generator.js";
 import type { McpCurlConfig } from "./types/public.js";
+import { deriveHostPolicy } from "./config/index.js";
 import type { ApiSchema } from "./schema/types.js";
 
 /**
@@ -63,6 +64,11 @@ function configureServerFromSchema(
         // Set after the spread so the asymmetry it closes (built-in tools
         // spotlight; YAML tools opt out via generatorConfig) cannot reappear.
         enableSpotlighting: mergedConfig.enableSpotlighting,
+        // Authoritative for the same reason: derived from the config the server
+        // itself enforces, so a generatorConfig cannot open the YAML tools wider
+        // than curl_execute. A generatorConfig.baseUrl on another host does not
+        // widen it either; that embedder sets allowedHosts.
+        hostPolicy: deriveHostPolicy(server.getConfig()),
     };
 
     const toolDefs = generateToolDefinitions(schema, generatorConfig);
