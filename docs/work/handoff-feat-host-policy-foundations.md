@@ -73,3 +73,19 @@ The builder disclosed the redirect-hop gap as PR-3's job, but not that the new d
 **Classes open without a todo (escalated or investigate-first):** none.
 
 **Blockers:** P1 todos 024, 025 and 026. `/sixees-workflow:work` treats every P1 as an escalation, so all three wait for the operator's decision: fix them on this branch, or defer them.
+
+## P1 fixes — 2026-10-27
+
+The operator chose to fix all three P1s on this branch and to delete their todos once fixed.
+
+| Todo | Disposition | Commit |
+|---|---|---|
+| 024 | Fixed: `executeCurlRequest` replaces `params.url` with `new URL(params.url).href` before the host list, so the list, the SSRF gate and cURL's argv all see one host. A URL that does not parse is left to the SSRF gate. | 7f12adc |
+| 025 | Fixed: `createToolHandler` resolves `hostPolicy` as `config ?? extra ?? "any"`, the precedence `allowLocalhost` already used. The call-site test's header now states what it checks. | 7f12adc |
+| 026 | Fixed: the `allowedHosts` doc and the check's comment say the list bounds the request URL's host and not yet redirect hops. PR-3 restates the claim when the hop loop lands. | a772b8c |
+
+Todos 024, 025 and 026 are deleted. Todos 027–031 remain `pending`.
+
+**Tests:** new tests cover the parsed href reaching argv, the reverse-order refusal and the generated handler keeping the caller's list. Reverting either code fix fails its test. Full suite: 45 files, 1588 passed, 7 skipped, read from vitest's summary line, so not a certified verdict. `tsc --noEmit` shows the same 12 pre-existing test-file errors.
+
+**Not re-reviewed:** these fixes are newer than the Surface-2 review above (K-16).
