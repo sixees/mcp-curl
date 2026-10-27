@@ -8,7 +8,11 @@ export {
     createFileError,
     createConfigError,
     assertPositiveInteger,
+    LOCAL_REFUSAL_CODES,
+    LocalRefusalError,
+    formatLocalRefusal,
 } from "./error.js";
+export type { LocalRefusalCode, LocalRefusalReason, LocalRefusal } from "./error.js";
 
 // `rawJson` is deliberately absent — see `json-lexeme.ts`.
 export { isRawNumber, keepNumberLexeme } from "./json-lexeme.js";
