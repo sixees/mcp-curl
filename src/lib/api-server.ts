@@ -59,10 +59,10 @@ function configureServerFromSchema(
         defaultUserAgent: mergedConfig.defaultUserAgent,
         defaultReferer: mergedConfig.defaultReferer,
         ...options.generatorConfig,
-        // PR-6b: server-level enableSpotlighting is authoritative across all
+        // Server-level enableSpotlighting is authoritative across all
         // tool paths and must NOT be overridable via options.generatorConfig.
-        // Set after the spread so the asymmetry it closes (built-in tools
-        // spotlight; YAML tools opt out via generatorConfig) cannot reappear.
+        // Set after the spread so a generatorConfig cannot opt the YAML tools
+        // out of spotlighting the built-in tools apply.
         enableSpotlighting: mergedConfig.enableSpotlighting,
         // Authoritative for the same reason: derived from the config the server
         // itself enforces, so a generatorConfig cannot open the YAML tools wider
@@ -193,7 +193,7 @@ export async function createApiServer(
         // Re-run the validator on caller-supplied schemas. The plain
         // `ApiSchema` type can be constructed/cast without ever passing
         // through `ApiSchemaValidator`, so without this call the runtime
-        // sanitisation invariant (PR-6a) would have a public bypass —
+        // sanitisation invariant would have a public bypass —
         // bidi/zero-width bytes in the supplied schema would flow into MCP
         // tool advertisement unchecked.
         schema = validateApiSchema(options.schema);

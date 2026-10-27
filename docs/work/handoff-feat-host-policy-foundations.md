@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-27 | **Branch:** feat/host-policy-foundations | **Plan:** docs/plans/2026-10-27-feat-host-policy-redirect-hops-plan.md | **Status:** in-review
 
-Created during review, not by the work run's Step 6. `/sixees-workflow:work --pr-key=PR-1` stopped at its Step 5 because the review raised P1 findings. The work-handoff schema is still to be written once the operator decides on those findings.
+Created during review, not by the work run's Step 6. `/sixees-workflow:work --pr-key=PR-1` stopped at its Step 5 because the review raised P1 findings. The operator has since decided them (see *P1 fixes — 2026-10-27*); the work-handoff schema has not yet been written.
 
 ## Code Review — 2026-10-27
 

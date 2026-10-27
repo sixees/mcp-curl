@@ -69,10 +69,12 @@ export interface GeneratorConfig {
      */
     enableSpotlighting?: boolean;
     /**
-     * The hosts these tools may reach. `createApiServer` sets it from the
-     * server's config. Unset, a tool may reach any host, which is the library
-     * default for a caller that builds tools without a server; the SSRF gate
-     * still runs.
+     * The hosts these tools may reach. `createApiServer` and
+     * `createApiServerSync` set it from the server's config, and it wins over
+     * the caller's `extra.hostPolicy`. Unset, a tool takes the caller's
+     * `extra.hostPolicy`; with neither it may reach any host, which is the
+     * library default for a caller that builds tools without a server; the
+     * SSRF gate still runs.
      */
     hostPolicy?: HostPolicy;
 }

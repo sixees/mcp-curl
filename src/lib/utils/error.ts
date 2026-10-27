@@ -27,7 +27,6 @@ export function createValidationError(field: string, reason: string, suggestion?
     let message = `Invalid ${field}: ${reason}.`;
     if (suggestion) {
         message += ` ${suggestion}`;
-        // Ensure suggestion ends with period
         if (!suggestion.endsWith(".")) {
             message += ".";
         }
@@ -163,8 +162,10 @@ export function formatLocalRefusal(refusal: LocalRefusal): string {
 }
 
 /**
- * A request refused before cURL sent it. The message is
- * {@link formatLocalRefusal}'s text, so whatever reads it reads that.
+ * A refusal this server made locally: a request refused before cURL sent it,
+ * or, as `LOCAL_REDIRECT_REFUSED`, a redirect hop refused after `requestsSent`
+ * requests went out. The message is {@link formatLocalRefusal}'s text, so
+ * whatever reads it reads that.
  */
 export class LocalRefusalError extends Error {
     readonly code: LocalRefusalCode;

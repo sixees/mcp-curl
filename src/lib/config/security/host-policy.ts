@@ -17,9 +17,10 @@ export const ANY_HOST_POLICY: HostPolicy = Object.freeze({ kind: "any" });
  * The key a host is compared and counted under. A trailing dot names the same
  * DNS host (`api.example.com.` is the fully-qualified spelling of
  * `api.example.com`), and the URL parser keeps it, so without this a trailing
- * dot would buy a second rate-limit budget or slip past the host list. Every
- * trailing dot goes, not just one: the rate limiter has keyed on this since it
- * was written. A loop rather than a regex: the hostname is model-chosen.
+ * dot would buy a second rate-limit budget, and the host list would refuse a
+ * listed host spelled with one. Every trailing dot goes, not just one, so the
+ * host list and `checkRateLimits` share one key. A loop rather than a regex:
+ * the hostname is model-chosen.
  */
 export function canonicalHost(hostname: string): string {
     let end = hostname.length;

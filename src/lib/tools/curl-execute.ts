@@ -43,18 +43,23 @@ export interface CurlExecuteExtra {
     /** Override env var for allowing localhost requests (from McpCurlConfig) */
     allowLocalhost?: boolean;
     /**
-     * The hosts this call may reach. Every caller inside the library passes
-     * the policy `deriveHostPolicy` gives its config, and
-     * `executor-call-sites.test.ts` holds them to it. A direct caller that
-     * passes none gets `"any"`: that is the documented library default, and
-     * the SSRF gate still runs.
+     * The hosts this call may reach. `executeWithHooks` and
+     * `InstanceUtilities.executeRequest` pass `deriveHostPolicy(config)`; a
+     * generated YAML tool passes its generator config's policy, else the
+     * caller's, else `"any"`. `executor-call-sites.test.ts` checks only that
+     * every call names a defined `hostPolicy` — what it evaluates to is the
+     * behavioural tests' to show. A direct caller that passes none gets
+     * `"any"`: that is the documented library default, and the SSRF gate
+     * still runs.
      */
     hostPolicy?: HostPolicy;
 }
 
 /**
- * Tool metadata for curl_execute.
- * Exported for use by McpCurlServer to register with hooks.
+ * Tool metadata for curl_execute. Exported for
+ * `tool-wrapper.ts::registerCurlToolWithHooks`, which every path serving the
+ * tool goes through — the shipped binary's `registerAllTools` and
+ * `McpCurlServer` alike.
  *
  * The description's last line is the version token, so a model can read the
  * version from inside a session; line 1 stays the summary because some clients
@@ -183,12 +188,16 @@ mcp-curl v${SERVER.VERSION}`,
 };
 
 /**
- * Execute a cURL request with the given parameters.
- * This is the core handler logic extracted for reuse by McpCurlServer.
+ * Execute a cURL request with the given parameters. The one executor every
+ * entry point reaches: the registered `curl_execute` tool (through
+ * `executeWithHooks`), `InstanceUtilities.executeRequest`, and generated
+ * YAML tools.
  *
  * @param params - Validated curl_execute parameters
  * @param extra - Additional context (sessionId for rate limiting; allowLocalhost
- *   overrides the localhost SSRF guard for this call, from McpCurlConfig)
+ *   overrides the localhost SSRF guard for this call, from McpCurlConfig;
+ *   hostPolicy is the host list checked on the request URL's host before
+ *   DNS, `"any"` when absent)
  * @returns Tool result with response content
  */
 export async function executeCurlRequest(

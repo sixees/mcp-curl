@@ -14,12 +14,14 @@ import type { WrappableResult } from "../response/post-processor.js";
 
 /**
  * Per-call wrap closure injected by the caller (built in `tool-wrapper.ts`
- * via `createWrapper(config)`). The hook-executor calls this once at the
- * pipeline exit (after `afterResponse` hooks run, or when a hook
+ * via `createWrapper(config)`). The hook-executor calls this at its two
+ * returning exits (after `afterResponse` hooks run, or when a hook
  * short-circuits) so that:
  *
- *   1. No `beforeRequest` hook can bypass the wrap, including one that
- *      short-circuits by returning a `CallToolResult`.
+ *   1. A `beforeRequest` hook that short-circuits by returning a
+ *      `CallToolResult` cannot bypass the wrap. A hook that THROWS is not
+ *      covered: the `beforeRequest` loop sits outside the `try`, and the
+ *      `catch` re-throws, so either throw leaves unwrapped.
  *   2. The hostname passed to wrap is derived from the **final** `ctx.params`,
  *      after every `beforeRequest` hook has had its turn. A hook that rewrites
  *      `params.url` — routing through a proxy, say — decides the host the
@@ -59,7 +61,7 @@ type HostnameExtractor<T> = (params: T) => string;
  *   Subsequent onError hooks continue to run, and the original tool error is re-thrown.
  *
  * @param tool - Name of the tool being executed
- * @param params - Tool parameters (will be modified by hooks)
+ * @param params - Tool parameters; copied into the hook context, so hooks modify the copy and never the caller's object
  * @param config - Frozen server configuration
  * @param hooks - Registered hook functions
  * @param sessionId - Session ID for HTTP transport
@@ -91,11 +93,11 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         if (result) {
             // Check for short-circuit
             if ("shortCircuit" in result && result.shortCircuit) {
-                // Defence-in-depth: a hook that returns synthesised text
-                // bypasses the cURL pipeline (and therefore `processor.ts`'s
-                // sanitise+detect pass). Route the synthesised result through
-                // the same wrap the executor's return value would hit, so the
-                // LLM never receives unsanitised hook output. Hostname comes
+                // Defence-in-depth: a hook that returns synthesised text skips
+                // the executor, so route it through the same wrap the executor's
+                // return value would hit. It gets exactly the response defence: the
+                // full `defendText` pipeline on non-JSON text, detection alone on a
+                // JSON document, which passes through unchanged. Hostname comes
                 // from the post-mutation params so a proxy-rewriting hook is
                 // attributed to the rewritten host, not the original.
                 const shortCircuitResult: ToolResult = {
@@ -135,8 +137,8 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         // **Guarded, because the declaration cannot be trusted here.**
         // `ToolResult.content` is `Array<…>`, so `[]` type-checks, and
         // `CurlRegisterToolOptions.executor` is published API — a custom tool
-        // returning no entries for "no data" turned this read into a
-        // `TypeError` and failed the whole call. `ToolResult`'s own docblock
+        // returning no entries for "no data" would otherwise turn this read into
+        // a `TypeError` and fail the whole call. `ToolResult`'s own docblock
         // requires a consumer to runtime-check the entry it reads rather than
         // trusting the type; this is that check.
         //
@@ -152,11 +154,11 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
             });
         }
 
-        // PR-6b: wrap fires at the pipeline exit so the hostname reflects
+        // The wrap fires at the pipeline exit so the hostname reflects
         // the final (post-hook) params. The wrap is idempotent on
-        // already-wrapped results (e.g. when the inner curl pipeline already
-        // sanitised), so the caller may still pass the result through outer
-        // wraps without double-processing.
+        // already-wrapped results (an executor that wrapped its own result
+        // passes through untouched), so the caller may still pass the result
+        // through outer wraps without double-processing.
         return wrap(response, hostnameOf(ctx.params));
     } catch (error) {
         // Run onError hooks sequentially

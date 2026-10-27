@@ -13,8 +13,9 @@ vi.mock("../security/index.js", async () => {
     const actual = await vi.importActual<typeof import("../security/index.js")>("../security/index.js");
     return {
         ...actual,
-        // A refusal from here would read as "no request was sent" too, so the
-        // assertions below check this was never reached rather than its text.
+        // The refusal text is the same whether the host list ran before or after
+        // DNS, so the assertions below check this was never reached rather than
+        // reading the text.
         validateUrlAndResolveDns: vi.fn().mockRejectedValue(new Error("validator reached")),
         checkRateLimits: vi.fn(),
     };

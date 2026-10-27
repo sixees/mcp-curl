@@ -461,7 +461,7 @@ describe("McpCurlServer.registerCustomTool()", () => {
         // Sanitized length = MAX (exactly at limit), so no truncation warning.
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const handler = vi.fn().mockResolvedValue({ content: [] });
-        // MAX printable chars + 1 zero-width space (U+200B stripped to empty by sanitizeDescription)
+        // MAX printable chars + 1 trailing zero-width space: sanitizeDescription turns U+200B into a space, and only its final trim removes it
         const descWithAttackChar = "a".repeat(MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) + "\u200B";
         server.registerCustomTool(
             "my_tool",
@@ -961,8 +961,8 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         clearInjectionDetectionMap();
 
         // Captures every registerTool call so the test can invoke the wrapped
-        // handler synchronously. The lifecycle methods touched by
-        // start("stdio") are no-ops.
+        // handler directly, without an MCP client. The lifecycle methods touched
+        // by start("stdio") are no-ops.
         tools = stubServerFactory().tools;
         // Avoid noisy stderr in tests.
         vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1152,8 +1152,8 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         expect(result.content[0].text).not.toContain("ignore previous instructions");
     });
 
-    // Positive control. Every assertion above is an absence, and a handler
-    // whose output was replaced with "" would satisfy all three at once.
+    // Positive control. The script-block and markup-comment cases above assert
+    // only absences, which a handler whose output was replaced with "" would satisfy.
     it("leaves legitimate user-handler text byte-identical", async () => {
         const legit = "Lookup complete: 3 matches for 'alpha' (12ms).";
         const wrapped = await startWithCustomTool("legit", async () => ({

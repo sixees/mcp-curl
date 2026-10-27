@@ -14,7 +14,9 @@ export interface McpCurlConfig {
     /**
      * Base URL that a `url` starting with a single `/` is resolved against, in
      * `curl_execute` and `utilities().executeRequest`. An absolute URL passes
-     * through unchanged, so this is a convenience, not a host restriction.
+     * through unchanged: resolving against this URL does not limit hosts. But
+     * with `allowedHosts` unset, the host list defaults to this URL's host alone,
+     * so setting `baseUrl` refuses absolute URLs to any other host.
      */
     baseUrl?: string;
     /** Default headers for `curl_execute` and `utilities().executeRequest`; a request's own header of the same name wins */
@@ -45,7 +47,7 @@ export interface McpCurlConfig {
      * `start()` throws if the `baseUrl` cannot give one; a server without a
      * `baseUrl` may reach any host. The list is checked against the request
      * URL's host before DNS, so a refused host is never resolved or contacted;
-     * it does not yet bound the hosts a followed redirect reaches. The SSRF
+     * it does not bound the hosts a followed redirect reaches. The SSRF
      * gate applies on top of this list either way.
      */
     allowedHosts?: readonly string[] | "any";

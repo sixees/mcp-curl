@@ -18,7 +18,7 @@ pr: ""
 - Instances (confirmed):
   - `src/lib/config/security/host-policy.ts::deriveHostPolicy` — inline scheme literals (in diff)
   - `src/lib/utils/url.ts::resolveRequestUrl` — `isAllowedUrlScheme(new URL(baseUrl).protocol)` (existing)
-- Sweep: `rg -n '"https?:"' src/lib -g '!*.test.ts'` → 1 candidate outside `url-schemes.ts` and comments → 1 confirmed; `rg -n "new URL\(" src/lib -g '!*.test.ts'` → 7 → 2 confirmed as "is baseUrl usable".
+- Sweep: `rg -n '"https?:"' src/lib -g '!*.test.ts'` → 2 candidates outside `url-schemes.ts` and comments → 1 confirmed (`security/ssrf.ts::validateUrlAndResolveDns` compares `"https:"` only to pick a default port, not to admit a scheme); `rg -n "new URL\(" src/lib -g '!*.test.ts'` → 7 → 2 confirmed as "is baseUrl usable".
 - Reviewer: pattern-recognition-specialist (P3).
 
 ## Proposed Solutions

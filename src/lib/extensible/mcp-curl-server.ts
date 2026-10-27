@@ -91,7 +91,7 @@ interface CustomToolDef {
  * Extensible MCP cURL server with fluent builder API.
  *
  * Provides hooks for request interception, configuration options,
- * and tool management while maintaining backward compatibility.
+ * and tool management.
  *
  * @example
  * ```typescript
@@ -233,7 +233,7 @@ export class McpCurlServer {
 
     /**
      * Register an afterResponse hook.
-     * Hooks run sequentially after successful tool execution.
+     * Hooks run sequentially once the tool returns, an isError result included; a hook that throws is passed to the onError hooks.
      * Useful for logging, metrics, caching.
      *
      * @param hook - Hook function
@@ -248,7 +248,7 @@ export class McpCurlServer {
 
     /**
      * Register an onError hook.
-     * Hooks run sequentially when tool execution throws.
+     * Hooks run sequentially when tool execution or an afterResponse hook throws; the original error is still rethrown.
      * Useful for error logging and reporting.
      *
      * @param hook - Hook function
@@ -267,13 +267,16 @@ export class McpCurlServer {
      * Use this to add API-specific tools generated from schema definitions.
      *
      * Note: Custom tools are NOT wrapped with beforeRequest/afterResponse/onError hooks.
-     * They are registered directly on the MCP server. If you need hook-like behavior,
-     * implement it within the handler function itself.
+     * If you need hook-like behavior, implement it within the handler function itself.
+     * Their results do pass through the response defence wrap at start(): text parts are
+     * sanitised and scanned for injection (a JSON part is scanned only), and spotlighted
+     * when `enableSpotlighting` is set, under the "custom" hostname label.
      *
      * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
      * @param meta - Tool metadata (title, description, inputSchema). title and description
-     *   are sanitized automatically. **inputSchema field descriptions are also
-     *   sanitised at every depth** at registration time via the
+     *   are sanitized automatically, and the description is truncated (with a warning) to
+     *   `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH` chars. **inputSchema field descriptions are also
+     *   sanitised at every depth, to the walker's 100-level cap,** at registration time via the
      *   `sanitizeFieldDescriptionsDeep` helper. Recursion descends into
      *   `ZodObject` (`.shape` values), `ZodArray` (`.element`),
      *   `ZodUnion` (including `ZodDiscriminatedUnion`, which `instanceof
@@ -350,9 +353,10 @@ export class McpCurlServer {
         //   `z.globalRegistry` description entries on the caller's schema
         //   instance (see `./schema-sanitizer.ts` for the side-effect
         //   contract). The same instance is then placed in `sanitizedMeta`.
-        // Net effect: every `.describe()` string at every depth, plus title
-        // and description, is free of Unicode-attack chars (bidi, zero-width,
-        // variation selectors, …) before the tool is registered with the SDK.
+        // Net effect: every `.describe()` string the walker reaches (100 levels
+        // deep), plus title and description, is free of Unicode-attack chars
+        // (bidi, zero-width, variation selectors, …) before the tool is
+        // registered with the SDK.
         const sanitizedTitle = sanitizeDescription(meta.title);
         const sanitizedDesc = sanitizeDescription(meta.description);
         const truncatedDesc = sanitizedDesc.slice(0, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH);
@@ -459,7 +463,10 @@ export class McpCurlServer {
      *
      * @param transport - Transport mode: "stdio" (default) or "http"
      * @throws Error if already started, or if `allowedHosts` is unset and `baseUrl`
-     *   is not an absolute http(s) URL (the default host list cannot be derived)
+     *   is not an absolute http(s) URL (the default host list cannot be derived);
+     *   and, after rolling back, if the HTTP auth token is invalid, another server in
+     *   the process already holds `rateLimit`, or the transport fails to come up
+     *   (e.g. the HTTP port is in use)
      */
     async start(transport: TransportMode = "stdio"): Promise<void> {
         if (this._started) {
@@ -583,7 +590,7 @@ export class McpCurlServer {
     private async teardown(): Promise<void> {
         console.error("Shutting down McpCurlServer...");
 
-        // Close HTTP server if running with timeout
+        // Bounded: close() waits for open connections to end, so a held keep-alive must not stall shutdown.
         if (this._httpServer) {
             const SHUTDOWN_TIMEOUT = 5000;
             let timeoutId: NodeJS.Timeout | undefined;
@@ -613,7 +620,6 @@ export class McpCurlServer {
             }
         }
 
-        // Close all active sessions (with error handling)
         if (this._sessionManager) {
             this._sessionManager.stopCleanup();
             try {
@@ -623,7 +629,6 @@ export class McpCurlServer {
             }
         }
 
-        // Close main MCP server
         if (this._server) {
             try {
                 await this._server.close();
@@ -722,7 +727,7 @@ export class McpCurlServer {
      * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
      *
      * @param authToken - Pre-resolved bearer token (already passed through
-     *   `validateAuthToken` in `start()`). Passing the snapshot down avoids
+     *   `validateAuthToken` in `launch()`). Passing the snapshot down avoids
      *   resolving the env var twice and guarantees the value the auth
      *   middleware closes over is the exact value that was validated.
      */
