@@ -2,6 +2,7 @@
 // Rate limiting with fixed time windows, an optional per-host sliding log, and periodic cleanup
 
 import { RATE_LIMIT } from "../config/session.js";
+import { canonicalHost } from "../config/security/index.js";
 import type { HostRateLimit, RateLimitEntry } from "../types/index.js";
 import { assertPositiveInteger } from "../utils/index.js";
 
@@ -246,19 +247,6 @@ export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.
         hostPrefix,
         "host"
     );
-}
-
-/**
- * The key both host gates count under. A trailing dot names the same DNS host
- * (`api.example.com.` is the fully-qualified spelling of `api.example.com`), and
- * the URL parser keeps it, so without this the model gets a second budget for
- * the same upstream by adding one. A loop rather than a regex: the hostname is
- * model-chosen.
- */
-function canonicalHost(hostname: string): string {
-    let end = hostname.length;
-    while (end > 0 && hostname[end - 1] === ".") end--;
-    return hostname.slice(0, end);
 }
 
 /**
