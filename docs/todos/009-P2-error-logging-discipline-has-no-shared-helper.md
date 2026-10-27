@@ -67,3 +67,12 @@ and the only one with a stated rationale.
       the discipline nothing currently enforces.
 - [ ] One fallback spelling across the whole tree, `wrap-error-logger.ts` included.
 - [ ] The architecture doc's "there is no central helper" paragraph is updated.
+
+## Work Log
+
+- 2026-10-27, `feat/host-policy-foundations` (5.2.0 PR-1): the `curl_execute`
+  site in `src/lib/tools/curl-execute.ts::executeCurlRequest` now appends a
+  refusal code after the class for a `LocalRefusalError`
+  (`curl_execute error: [<host>] LocalRefusalError <CODE>`). The code is
+  server-authored, so it is safe to log; the message still is not. The helper
+  this todo asks for should carry that optional code. Not absorbed here.

@@ -2,11 +2,11 @@
 // The curl_execute executor and its tool metadata; registration is tools/index.ts::registerAllTools
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
-import { TEMP_DIR, LIMITS, SERVER, type HostPolicy } from "../config/index.js";
+import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, type HostPolicy } from "../config/index.js";
 import { generateMetadataSeparator } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
-import { getErrorMessage, safeHostname, MARKDOWN_MIME } from "../utils/index.js";
+import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError } from "../utils/index.js";
 import { executeCommand, buildCurlArgs, platformSupportsHeaderDump } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
@@ -198,6 +198,15 @@ export async function executeCurlRequest(
     try {
         if (params.basic_auth && !params.basic_auth.includes(":")) {
             throw new Error("basic_auth must be in 'username:password' format");
+        }
+
+        // Before DNS, so a host off the list is never resolved, let alone sent
+        // the credentials in defaultHeaders. A URL that does not parse is left
+        // to the SSRF gate below, which refuses it with its own message.
+        const policy = extra.hostPolicy ?? ANY_HOST_POLICY;
+        const requestHost = safeHostname(params.url, "");
+        if (requestHost !== "" && !isHostAllowed(policy, requestHost)) {
+            throw new LocalRefusalError({ code: "LOCAL_HOST_NOT_ALLOWED", reason: "host-not-allowed" });
         }
 
         // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
@@ -400,18 +409,19 @@ export async function executeCurlRequest(
             ],
         };
     } catch (error) {
-        const rawMessage = getErrorMessage(error);
-        const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
         const hostname = safeHostname(params.url);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";
-        console.error(`curl_execute error: [${hostname}] ${errorClass}`);
+        // A refusal code is server-authored, so it can be logged; the message
+        // never is, because other errors' messages can echo remote content.
+        const code = error instanceof LocalRefusalError ? ` ${error.code}` : "";
+        console.error(`curl_execute error: [${hostname}] ${errorClass}${code}`);
+        // A local refusal is not an error executing a request: none was sent,
+        // and its own first line says so.
+        const text = error instanceof LocalRefusalError
+            ? error.message
+            : `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`;
         return {
-            content: [
-                {
-                    type: "text",
-                    text: `Error executing cURL request: ${errorMessage}`,
-                },
-            ],
+            content: [{ type: "text", text }],
             isError: true,
         };
     }
