@@ -89,3 +89,21 @@ Todos 024, 025 and 026 are deleted. Todos 027–031 remain `pending`.
 **Tests:** new tests cover the parsed href reaching argv, the reverse-order refusal and the generated handler keeping the caller's list. Reverting either code fix fails its test. Full suite: 45 files, 1588 passed, 7 skipped, read from vitest's summary line, so not a certified verdict. `tsc --noEmit` shows the same 12 pre-existing test-file errors.
 
 **Not re-reviewed:** these fixes are newer than the Surface-2 review above (K-16).
+
+## P2/P3 fixes — 2026-10-27
+
+The operator asked for todos 027–031 to be fixed and their files removed.
+
+| Todo | Disposition | Commit |
+|---|---|---|
+| 027 | Fixed: `createApiServer` clears the generator's own list and passes `deriveHostPolicy(server.getConfig())` into each YAML tool call, so a `configure()` before `start()` reaches them. | 047acbf |
+| 028 | Kept the rejection (plan M-12) and documented it on `InstanceUtilities.executeRequest`; a test pins it to the message `start()` raises. | d77bdfc |
+| 029 | Fixed: `baseUrlHost` is the one "is this baseUrl usable" check, used by `deriveHostPolicy` and `resolveRequestUrl`; a table test holds them to the same answer. | f8e72bc |
+| 030 | Fixed: `LOCAL_REFUSAL_CODE_REASONS` ties each code to its reasons in the type; the nothing-sent arm forbids `requestsSent`; narrowing is on `code`. `LOCAL_REFUSED_PATH` gained the `path-names-host` reason task 16 will render. | 9190eb7 |
+| 031 | Fixed: `GeneratorConfig.allowedHosts` replaces `hostPolicy`, in `McpCurlConfig`'s form; `mcp-curl/lib` exports `deriveHostPolicy` and `HostPolicy` beside `executeCurlRequest`. | 047acbf |
+
+Todos 027–031 are deleted. The comment sync (5db3080) ran before these and pushed with the branch; these commits are not yet pushed.
+
+**Tests:** full suite 45 files, 1604 passed, 7 skipped, read from vitest's summary line (not a certified verdict). `tsc --noEmit` shows the same 12 pre-existing test-file errors. Each fix's new test was probed by reverting the fix.
+
+**Not re-reviewed:** these fixes, and the P1 fixes above, are newer than the Surface-2 review (K-16).
