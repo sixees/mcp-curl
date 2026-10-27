@@ -43,8 +43,10 @@ export interface McpCurlConfig {
      *
      * Unset, a server with a `baseUrl` may reach only the `baseUrl` host, and
      * `start()` throws if the `baseUrl` cannot give one; a server without a
-     * `baseUrl` may reach any host. A refused host is never resolved or
-     * contacted. The SSRF gate applies on top of this list either way.
+     * `baseUrl` may reach any host. The list is checked against the request
+     * URL's host before DNS, so a refused host is never resolved or contacted;
+     * it does not yet bound the hosts a followed redirect reaches. The SSRF
+     * gate applies on top of this list either way.
      */
     allowedHosts?: readonly string[] | "any";
     /** Default User-Agent for all requests. Empty string disables. */
