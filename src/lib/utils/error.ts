@@ -135,13 +135,40 @@ export const LOCAL_REFUSAL_REASONS = {
     "rate-limited": "The rate limit for this target or session is exhausted; wait before retrying.",
     "redirect-limit": "The redirect chain reached max_redirects.",
     "unusable-redirect-target": "The redirect target is not a usable http(s) URL.",
+    "path-names-host": "A relative url that starts with two slashes or a backslash names a host, not a path; start it with a single forward slash.",
 } as const;
 export type LocalRefusalReason = keyof typeof LOCAL_REFUSAL_REASONS;
 
+/**
+ * The reasons each code may carry. A hop-1 code has the one reason that
+ * produces it; a redirect hop can be refused for any of the hop checks, so
+ * `LOCAL_REDIRECT_REFUSED` takes those. Typed per code so a contradictory
+ * pair does not compile.
+ */
+export const LOCAL_REFUSAL_CODE_REASONS = {
+    LOCAL_REFUSED_PATH: ["path-names-host"],
+    LOCAL_RATE_LIMITED: ["rate-limited"],
+    LOCAL_HOST_NOT_ALLOWED: ["host-not-allowed"],
+    LOCAL_REDIRECT_REFUSED: [
+        "host-not-allowed",
+        "address-blocked",
+        "rate-limited",
+        "redirect-limit",
+        "unusable-redirect-target",
+    ],
+} as const satisfies { readonly [C in LocalRefusalCode]: readonly LocalRefusalReason[] };
+
+type ReasonFor<C extends LocalRefusalCode> = (typeof LOCAL_REFUSAL_CODE_REASONS)[C][number];
+type NothingSentCode = Exclude<LocalRefusalCode, "LOCAL_REDIRECT_REFUSED">;
+
 /** What a refusal says: `requestsSent` exists only where requests were sent. */
 export type LocalRefusal =
-    | { readonly code: Exclude<LocalRefusalCode, "LOCAL_REDIRECT_REFUSED">; readonly reason: LocalRefusalReason }
-    | { readonly code: "LOCAL_REDIRECT_REFUSED"; readonly reason: LocalRefusalReason; readonly requestsSent: number };
+    | { [C in NothingSentCode]: { readonly code: C; readonly reason: ReasonFor<C>; readonly requestsSent?: never } }[NothingSentCode]
+    | {
+          readonly code: "LOCAL_REDIRECT_REFUSED";
+          readonly reason: ReasonFor<"LOCAL_REDIRECT_REFUSED">;
+          readonly requestsSent: number;
+      };
 
 const nothingSent = (refusal: LocalRefusal) => `Refused locally: no request was sent (${refusal.code}).`;
 
@@ -151,7 +178,7 @@ export const LOCAL_REFUSAL_FIRST_LINES: { readonly [C in LocalRefusalCode]: (ref
     LOCAL_RATE_LIMITED: nothingSent,
     LOCAL_HOST_NOT_ALLOWED: nothingSent,
     LOCAL_REDIRECT_REFUSED: (refusal) => {
-        const sent = "requestsSent" in refusal ? refusal.requestsSent : 0;
+        const sent = refusal.code === "LOCAL_REDIRECT_REFUSED" ? refusal.requestsSent : 0;
         return `Redirect refused locally: ${sent} request(s) were sent; hop ${sent + 1} was not (LOCAL_REDIRECT_REFUSED).`;
     },
 };
@@ -180,6 +207,6 @@ export class LocalRefusalError extends Error {
         this.name = "LocalRefusalError";
         this.code = refusal.code;
         this.reason = refusal.reason;
-        this.requestsSent = "requestsSent" in refusal ? refusal.requestsSent : 0;
+        this.requestsSent = refusal.code === "LOCAL_REDIRECT_REFUSED" ? refusal.requestsSent : 0;
     }
 }

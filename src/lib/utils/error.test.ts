@@ -6,6 +6,7 @@ import {
     createFileError,
     createConfigError,
     LOCAL_REFUSAL_CODES,
+    LOCAL_REFUSAL_CODE_REASONS,
     LOCAL_REFUSAL_FIRST_LINES,
     LOCAL_REFUSAL_REASONS,
     LocalRefusalError,
@@ -73,14 +74,34 @@ describe('createConfigError', () => {
 
 describe('LocalRefusalError', () => {
     const reasons = Object.keys(LOCAL_REFUSAL_REASONS) as LocalRefusalReason[];
-    const everyRefusal: LocalRefusal[] = LOCAL_REFUSAL_CODES.flatMap((code) =>
-        reasons.map((reason) =>
-            code === 'LOCAL_REDIRECT_REFUSED' ? { code, reason, requestsSent: 2 } : { code, reason }
+    const everyRefusal = LOCAL_REFUSAL_CODES.flatMap((code) =>
+        (LOCAL_REFUSAL_CODE_REASONS[code] as readonly LocalRefusalReason[]).map((reason) =>
+            (code === 'LOCAL_REDIRECT_REFUSED' ? { code, reason, requestsSent: 2 } : { code, reason }) as LocalRefusal
         )
     );
 
     it('has a first-line renderer for every code, and a code for every renderer', () => {
         expect(Object.keys(LOCAL_REFUSAL_FIRST_LINES).sort()).toEqual([...LOCAL_REFUSAL_CODES].sort());
+    });
+
+    it('gives every code an admissible reason, and every reason a code that admits it', () => {
+        expect(Object.keys(LOCAL_REFUSAL_CODE_REASONS).sort()).toEqual([...LOCAL_REFUSAL_CODES].sort());
+        for (const code of LOCAL_REFUSAL_CODES) {
+            expect(LOCAL_REFUSAL_CODE_REASONS[code].length).toBeGreaterThan(0);
+        }
+        const admitted = new Set<string>(Object.values(LOCAL_REFUSAL_CODE_REASONS).flat());
+        expect([...admitted].sort()).toEqual([...reasons].sort());
+    });
+
+    it('does not compile a reason its code does not admit, or requestsSent where nothing was sent', () => {
+        // @ts-expect-error -- host-not-allowed is not a rate-limit reason
+        const mismatched: LocalRefusal = { code: 'LOCAL_RATE_LIMITED', reason: 'host-not-allowed' };
+        // A variable, not a literal: a literal is caught by the excess-property
+        // check alone, so only this form shows `requestsSent?: never` holds.
+        const withCount = { code: 'LOCAL_HOST_NOT_ALLOWED', reason: 'host-not-allowed', requestsSent: 2 } as const;
+        // @ts-expect-error -- nothing was sent, so there is no count
+        const counted: LocalRefusal = withCount;
+        expect([mismatched, counted]).toHaveLength(2);
     });
 
     it('opens with the fixed first line when nothing was sent', () => {
