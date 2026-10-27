@@ -203,6 +203,15 @@ describe("the host list in executeCurlRequest", () => {
             expectRefusedBeforeDns(await server.utilities().executeRequest({ url: "https://other.test/x" }));
         });
 
+        it("utilities().executeRequest before start() rejects for a baseUrl start() would refuse", async () => {
+            server = new McpCurlServer().configure({ baseUrl: "api.test" });
+            await expect(server.utilities().executeRequest({ url: "https://api.test/x" })).rejects.toThrow(
+                /^baseUrl is not an absolute http\(s\) URL/
+            );
+            await expect(server.start("stdio")).rejects.toThrow(/^baseUrl is not an absolute http\(s\) URL/);
+            expect(execution.executeCommand).not.toHaveBeenCalled();
+        });
+
         it("a YAML tool, under the list configure() sets after createApiServer", async () => {
             server = createApiServerSync(loadApiSchemaFromString(YAML), { config: { allowedHosts: "any" } });
             server.configure({ allowedHosts: [] });
