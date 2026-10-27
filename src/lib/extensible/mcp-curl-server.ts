@@ -50,7 +50,14 @@ import {
     validateAuthToken,
 } from "../transports/http.js";
 import { SessionManager } from "../session/index.js";
-import { ENV, LIMITS, parsePort, CUSTOM_TOOL_HOSTNAME_LABEL } from "../config/index.js";
+import {
+    ENV,
+    LIMITS,
+    parsePort,
+    CUSTOM_TOOL_HOSTNAME_LABEL,
+    parseAllowedHosts,
+    deriveHostPolicy,
+} from "../config/index.js";
 
 /**
  * Metadata for a custom tool registration.
@@ -101,7 +108,7 @@ const KNOWN_CONFIG_KEYS_ARRAY = [
     "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
     "maxResultSize", "allowLocalhost", "port", "host",
     "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
-    "enableSpotlighting", "rateLimit", "curlExecuteDescriptionAppend",
+    "enableSpotlighting", "rateLimit", "curlExecuteDescriptionAppend", "allowedHosts",
 ] as const satisfies readonly (keyof McpCurlConfig)[];
 
 // Compile-time check: fails if any McpCurlConfig key is missing from the array
@@ -142,6 +149,7 @@ export class McpCurlServer {
      * @param config - Configuration options to merge
      * @returns this for chaining
      * @throws Error if called after start(), if `rateLimit` is not two positive integers,
+     *   if an `allowedHosts` entry is not a bare host name,
      *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
      *   once sanitised
      */
@@ -152,6 +160,9 @@ export class McpCurlServer {
         // Parsed before anything is merged, so a throw leaves the config as it was.
         if (config.rateLimit !== undefined) {
             config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
+        }
+        if (config.allowedHosts !== undefined) {
+            config = { ...config, allowedHosts: parseAllowedHosts(config.allowedHosts) };
         }
         if (config.curlExecuteDescriptionAppend !== undefined) {
             const append = sanitizeDescription(config.curlExecuteDescriptionAppend);
@@ -447,12 +458,17 @@ export class McpCurlServer {
      * Configuration is frozen after this call.
      *
      * @param transport - Transport mode: "stdio" (default) or "http"
-     * @throws Error if already started
+     * @throws Error if already started, or if `allowedHosts` is unset and `baseUrl`
+     *   is not an absolute http(s) URL (the default host list cannot be derived)
      */
     async start(transport: TransportMode = "stdio"): Promise<void> {
         if (this._started) {
             throw new Error("Server is already running. Call shutdown() before starting again.");
         }
+        // Only the merged config can say which host a baseUrl defaults the list
+        // to, so this is the first point it can be checked. Before `_started`,
+        // so a throw leaves nothing to roll back.
+        deriveHostPolicy(this._config);
         this._started = true;
         const config = this.freezeConfig();
         this._frozenConfig = config;
@@ -755,6 +771,9 @@ export class McpCurlServer {
             allowedOrigins: this._config.allowedOrigins
                 ? Object.freeze([...this._config.allowedOrigins]) as readonly string[]
                 : undefined,
+            allowedHosts: Array.isArray(this._config.allowedHosts)
+                ? Object.freeze([...this._config.allowedHosts]) as readonly string[]
+                : this._config.allowedHosts,
         });
     }
 

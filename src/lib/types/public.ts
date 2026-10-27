@@ -35,6 +35,18 @@ export interface McpCurlConfig {
     authToken?: string;
     /** Allowed origins for HTTP transport Origin header validation (default: localhost) */
     allowedOrigins?: readonly string[];
+    /**
+     * The hosts a request may go to, matched exactly, case-insensitively, with
+     * trailing dots ignored. Entries are bare host names or IP literals (IPv6 in
+     * brackets): no scheme, port, path, userinfo or wildcard, or `configure()`
+     * throws. `"any"` allows every host; `[]` refuses every request.
+     *
+     * Unset, a server with a `baseUrl` may reach only the `baseUrl` host, and
+     * `start()` throws if the `baseUrl` cannot give one; a server without a
+     * `baseUrl` may reach any host. A refused host is never resolved or
+     * contacted. The SSRF gate applies on top of this list either way.
+     */
+    allowedHosts?: readonly string[] | "any";
     /** Default User-Agent for all requests. Empty string disables. */
     defaultUserAgent?: string;
     /** Default Referer for all requests. Empty string disables. */
