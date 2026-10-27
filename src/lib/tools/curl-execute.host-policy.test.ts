@@ -6,7 +6,7 @@ import { CurlExecuteSchema } from "../server/schemas.js";
 import { McpCurlServer } from "../extensible/mcp-curl-server.js";
 import { stubServerFactory, type CapturedTool } from "../extensible/tool-capture.test-fixture.js";
 import { createApiServerSync } from "../api-server.js";
-import { loadApiSchemaFromString } from "../schema/index.js";
+import { generateToolDefinitions, loadApiSchemaFromString } from "../schema/index.js";
 import { ANY_HOST_POLICY, deriveHostPolicy } from "../config/index.js";
 
 vi.mock("../security/index.js", async () => {
@@ -118,6 +118,44 @@ describe("the host list in executeCurlRequest", () => {
         });
         expect(textOf(result)).toBe("Error executing cURL request: validator reached");
         expect(errorLog).toHaveBeenCalledWith("curl_execute error: [api.test] Error");
+    });
+
+    describe("a URL WHATWG and cURL parse to different hosts", () => {
+        const policy = deriveHostPolicy({ allowedHosts: ["allowed.test"] });
+
+        it("hands the SSRF gate and cURL the parsed href, not the raw URL", async () => {
+            vi.mocked(security.validateUrlAndResolveDns).mockResolvedValueOnce({
+                hostname: "allowed.test",
+                port: 80,
+                resolvedIp: "93.184.216.34",
+            });
+            vi.mocked(execution.executeCommand).mockRejectedValueOnce(new Error("cURL reached"));
+            const raw = "http://allowed.test\\@evil.test/";
+            const href = "http://allowed.test/@evil.test/";
+
+            const result = await executeCurlRequest(CurlExecuteSchema.parse({ url: raw }), { hostPolicy: policy });
+
+            expect(textOf(result)).toContain("cURL reached");
+            expect(security.validateUrlAndResolveDns).toHaveBeenCalledWith(href, expect.anything());
+            const argv = vi.mocked(execution.executeCommand).mock.calls[0][1];
+            expect(argv).toContain(href);
+            expect(argv).not.toContain(raw);
+        });
+
+        it("refuses the reverse order, whose parsed host is off the list", async () => {
+            const result = await executeCurlRequest(
+                CurlExecuteSchema.parse({ url: "http://other.test\\@allowed.test/" }),
+                { hostPolicy: policy }
+            );
+            expectRefusedBeforeDns(result);
+        });
+    });
+
+    it("a generated handler with no hostPolicy of its own keeps the caller's", async () => {
+        const [tool] = generateToolDefinitions(loadApiSchemaFromString(YAML));
+        const result = await tool.handler({}, { hostPolicy: deriveHostPolicy({ allowedHosts: [] }) });
+        expect(textOf(result)).toContain("(LOCAL_HOST_NOT_ALLOWED)");
+        expect(security.validateUrlAndResolveDns).not.toHaveBeenCalled();
     });
 
     describe("on every path a request takes", () => {

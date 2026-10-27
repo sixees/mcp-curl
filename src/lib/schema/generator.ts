@@ -406,12 +406,12 @@ function createToolHandler(
 
             const timeout = config?.timeout ?? schema.defaults?.timeout;
 
-            // The generator config's allowLocalhost wins; the caller's extra applies only
-            // where the config leaves it unset.
+            // The generator config's allowLocalhost and hostPolicy win; the caller's
+            // extra applies only where the config leaves them unset.
             const execExtra: CurlExecuteExtra = {
                 ...extra,
                 allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost,
-                hostPolicy: config?.hostPolicy ?? ANY_HOST_POLICY,
+                hostPolicy: config?.hostPolicy ?? extra?.hostPolicy ?? ANY_HOST_POLICY,
             };
             const result = await executeCurlRequest(
                 {

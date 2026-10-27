@@ -195,14 +195,24 @@ export async function executeCurlRequest(
     params: CurlExecuteInput,
     extra: CurlExecuteExtra = {}
 ): Promise<CurlExecuteResult> {
+    // WHATWG and cURL disagree on where some URLs' host is — a `\` before `@`
+    // ends the host for one and is userinfo for the other — so the host list,
+    // the SSRF gate and cURL all take the one parsed form. A URL that does not
+    // parse stays as given, for the SSRF gate to refuse.
+    try {
+        params = { ...params, url: new URL(params.url).href };
+    } catch {
+        // Left to validateUrlAndResolveDns.
+    }
     try {
         if (params.basic_auth && !params.basic_auth.includes(":")) {
             throw new Error("basic_auth must be in 'username:password' format");
         }
 
-        // Before DNS, so a host off the list is never resolved, let alone sent
-        // the credentials in defaultHeaders. A URL that does not parse is left
-        // to the SSRF gate below, which refuses it with its own message.
+        // Before DNS, so the request URL's host, when off the list, is never
+        // resolved or sent the credentials in defaultHeaders. Redirect hops are
+        // not checked here. A URL that does not parse is left to the SSRF gate
+        // below, which refuses it with its own message.
         const policy = extra.hostPolicy ?? ANY_HOST_POLICY;
         const requestHost = safeHostname(params.url, "");
         if (requestHost !== "" && !isHostAllowed(policy, requestHost)) {

@@ -1,5 +1,5 @@
 // src/lib/tools/executor-call-sites.test.ts
-// Every path into executeCurlRequest passes a host policy, so no in-library caller falls back to "any"
+// Every call into executeCurlRequest names a host policy in its extra; whether that expression can still evaluate to "any" is the behavioural tests' to show
 
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
