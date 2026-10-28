@@ -19,7 +19,6 @@ function configureServerFromSchema(
     schema: ApiSchema,
     options: ApiServerOptionsBase
 ): void {
-    // Apply schema-derived configuration
     const schemaConfig: Partial<McpCurlConfig> = {
         baseUrl: schema.api.baseUrl,
     };
@@ -38,7 +37,6 @@ function configureServerFromSchema(
         ...options.config,
     });
 
-    // Disable default tools if requested
     if (options.disableCurlExecute) {
         server.disableCurlExecute();
     }
@@ -189,7 +187,6 @@ export type CreateApiServerOptions =
 export async function createApiServer(
     options: CreateApiServerOptions
 ): Promise<McpCurlServer> {
-    // Load schema from the appropriate source
     let schema: ApiSchema;
 
     if (options.schema) {
@@ -210,7 +207,6 @@ export async function createApiServer(
         );
     }
 
-    // Create server instance and configure from schema
     const server = new McpCurlServer();
     configureServerFromSchema(server, schema, options);
 

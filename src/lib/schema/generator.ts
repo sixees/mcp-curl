@@ -402,7 +402,6 @@ function createToolHandler(
                 ...headerParams,
             };
 
-            // Apply default User-Agent and Referer
             const defaults = applyDefaultHeaders(mergedHeaders, undefined, config);
             const headers = defaults.headers;
             if (defaults.userAgent !== undefined) headers["User-Agent"] = defaults.userAgent;

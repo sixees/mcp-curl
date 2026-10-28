@@ -34,9 +34,12 @@ export interface InstanceUtilities {
      * result rather than requested.
      *
      * Rejects, rather than returning an error result, when `allowedHosts` is
-     * unset and `baseUrl` cannot give a host: the configuration `start()`
-     * refuses with the same error, so it is reachable only before `start()`,
-     * and a misconfigured server surfaces it to the embedder, not the model.
+     * unset, `baseUrl` cannot give a host and the call names an absolute `url`:
+     * the configuration `start()` refuses with the same error, so it is reachable
+     * only before `start()`, and a misconfigured server surfaces it to the
+     * embedder, not the model. A relative `url` or a `path` against that
+     * `baseUrl` gets `resolveRequestUrl`'s error result first and never reaches
+     * the rejection.
      *
      * NOTE: This method calls executeCurlRequest directly and bypasses the hook
      * system (beforeRequest, afterResponse, onError). Use MCP tool invocation

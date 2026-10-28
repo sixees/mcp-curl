@@ -86,12 +86,10 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         config,
     };
 
-    // Run beforeRequest hooks sequentially
     for (const hook of hooks.beforeRequest) {
         const result = (await hook(ctx)) as BeforeRequestResult<T> | undefined;
 
         if (result) {
-            // Check for short-circuit
             if ("shortCircuit" in result && result.shortCircuit) {
                 // Defence-in-depth: a hook that returns synthesised text skips
                 // the executor, so route it through the same wrap the executor's
@@ -107,7 +105,6 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
                 return wrap(shortCircuitResult, hostnameOf(ctx.params));
             }
 
-            // Merge params if provided
             if ("params" in result && result.params) {
                 ctx.params = { ...ctx.params, ...result.params };
             }
@@ -133,7 +130,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         // non-zero cURL exit it can see an empty body with `isError: false`
         // while the failure notice sits in an entry it was never handed.
         // Widening it changes what every existing hook receives, so it is the
-        // operator's call and is recorded as follow-up rather than taken here.
+        // operator's call, not a change to make in passing.
         // **Guarded, because the declaration cannot be trusted here.**
         // `ToolResult.content` is `Array<…>`, so `[]` type-checks, and
         // `CurlRegisterToolOptions.executor` is published API — a custom tool

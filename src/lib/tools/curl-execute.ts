@@ -1,5 +1,5 @@
 // src/lib/tools/curl-execute.ts
-// The curl_execute executor and its tool metadata; registration is tools/index.ts::registerAllTools
+// The curl_execute executor and its tool metadata; registration is extensible/tool-wrapper.ts::registerCurlToolWithHooks
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, type HostPolicy } from "../config/index.js";
@@ -447,8 +447,8 @@ export async function executeCurlRequest(
     }
 }
 
-// Registration lives in `tools/index.ts::registerAllTools`, which routes this
-// executor through `extensible/tool-wrapper.ts` so the post-processor wrap
-// (invariant 1) applies. A bare `registerTool` here would return unwrapped
-// output from the shipped binary while every unit test of the wrap stayed
-// green.
+// Registration lives in `extensible/tool-wrapper.ts::registerCurlToolWithHooks`,
+// reached from `tools/index.ts::registerAllTools` for the shipped binary and
+// from `McpCurlServer` for embedders, so the post-processor wrap (invariant 1)
+// applies on both. A bare `registerTool` here would return unwrapped output
+// from the shipped binary while every unit test of the wrap stayed green.

@@ -67,9 +67,9 @@ export function createFileError(filepath: string, reason: string): Error {
  *
  * `value` is sanitised before interpolation: CR, LF, and NUL bytes are
  * replaced with their visible escape forms (`\r`, `\n`, `\0`) so a
- * misconfigured operator value cannot forge log lines on stderr. Most
- * callers pass safe values already (paths, redaction markers); the
- * sanitisation is defence-in-depth for future callers.
+ * misconfigured operator value cannot forge log lines on stderr. Callers
+ * pass a raw environment value (the output-directory path) as well as
+ * redaction markers, so this is the guard on that value, not only a backstop.
  *
  * @param configName - The config or env var name (e.g., "MCP_CURL_OUTPUT_DIR")
  * @param value - The invalid value, OR a redaction marker like `[redacted]` /

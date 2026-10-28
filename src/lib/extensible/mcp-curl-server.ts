@@ -87,6 +87,19 @@ interface CustomToolDef {
     handler: ToolCallback<z.ZodObject<z.ZodRawShape>>;
 }
 
+const KNOWN_CONFIG_KEYS_ARRAY = [
+    "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
+    "maxResultSize", "allowLocalhost", "port", "host",
+    "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
+    "enableSpotlighting", "rateLimit", "curlExecuteDescriptionAppend", "allowedHosts",
+] as const satisfies readonly (keyof McpCurlConfig)[];
+
+// Compile-time check: fails if any McpCurlConfig key is missing from the array
+type _AssertExhaustive = [Exclude<keyof McpCurlConfig, (typeof KNOWN_CONFIG_KEYS_ARRAY)[number]>] extends [never] ? true : never;
+const _: _AssertExhaustive = true;
+
+const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set(KNOWN_CONFIG_KEYS_ARRAY);
+
 /**
  * Extensible MCP cURL server with fluent builder API.
  *
@@ -103,20 +116,6 @@ interface CustomToolDef {
  * await server.start("stdio");
  * ```
  */
-
-const KNOWN_CONFIG_KEYS_ARRAY = [
-    "baseUrl", "defaultHeaders", "defaultTimeout", "outputDir",
-    "maxResultSize", "allowLocalhost", "port", "host",
-    "authToken", "allowedOrigins", "defaultUserAgent", "defaultReferer",
-    "enableSpotlighting", "rateLimit", "curlExecuteDescriptionAppend", "allowedHosts",
-] as const satisfies readonly (keyof McpCurlConfig)[];
-
-// Compile-time check: fails if any McpCurlConfig key is missing from the array
-type _AssertExhaustive = [Exclude<keyof McpCurlConfig, (typeof KNOWN_CONFIG_KEYS_ARRAY)[number]>] extends [never] ? true : never;
-const _: _AssertExhaustive = true;
-
-const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set(KNOWN_CONFIG_KEYS_ARRAY);
-
 export class McpCurlServer {
     private _config: McpCurlConfig = {};
     private _frozenConfig: Readonly<McpCurlConfig> | null = null;

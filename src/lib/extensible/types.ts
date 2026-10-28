@@ -16,13 +16,15 @@ import type { CurlExecuteExtra } from "../tools/curl-execute.js";
  * Includes index signature for MCP SDK compatibility.
  *
  * **`content` carries one entry per remote-controlled region, and it is an
- * array rather than a single-element tuple.** `curl_execute` returns a second
- * entry for response header text and a third for server-authored notices, both
- * plain-branch only, because one entry spanning more than one region is what
- * ARCHITECTURE.md invariant 16 names as a violation — a defence pass whose input
- * spans more than one region — and the wrap defends each entry independently.
- * `content[0]` is the body on every branch, so a reader indexing it reads the
- * body.
+ * array rather than a single-element tuple.** `curl_execute` appends an entry
+ * for response header text and one for server-authored notices, each only when
+ * it has text and both plain-branch only — so with no header text the notices
+ * are `content[1]`. They are separate entries because one entry spanning more
+ * than one region is what ARCHITECTURE.md invariant 16 names as a violation —
+ * a defence pass whose input spans more than one region — and the wrap defends
+ * each entry independently. `content[0]` is the body on every branch, so a
+ * reader indexing it reads the body; a reader of the later entries matches on
+ * their content, not their index.
  *
  * The `[key: string]: unknown` index signature relaxes structural enforcement
  * regardless — a value reaching consumers via cast or spread from a
@@ -69,7 +71,9 @@ export type JqToolExecutor = (
 
 /**
  * Options for registering curl_execute tool with hooks.
- * Note: meta is not included because we use the canonical CURL_EXECUTE_TOOL_META
+ * Note: meta is not included because registration derives it from the canonical
+ * CURL_EXECUTE_TOOL_META, swapping in the baseUrl input schema and appending
+ * `curlExecuteDescriptionAppend` from `config` where those apply.
  */
 export interface CurlRegisterToolOptions {
     executor: CurlToolExecutor;
