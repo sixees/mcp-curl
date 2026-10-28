@@ -76,3 +76,21 @@ Created during review, not by the work run's Step 6. `/sixees-workflow:work --pr
 - `parseResponseWithMetadata`'s doc lists three invariant-13 rules; the local ARCHITECTURE.md lists four (architecture).
 - `HTTP_FIELD_NAME` is re-exported from `config/security/index.ts` but imported by path (typescript, simplicity).
 - `redirectUrl` admits C1 and bidi characters; PR-3 must run the full URL gate on it (security).
+
+## Review fixes — 2026-10-28
+
+The operator asked for todos 024–028 to be handled and their files removed.
+
+| Todo | Disposition | Commit |
+|---|---|---|
+| 024 | Fixed (Option 1): `buildCurlArgs` and `parseResponseWithMetadata` take one `MetadataBlock`; `types/common.ts::metadataDirectives` is the only statement of the layout. The name grammar is `WRITE_OUT_HEADER_NAME`, tchar without `%`. The sweep now returns one decision site. | 7e911b4 |
+| 025 | Fixed (Option 1): `processResponse` reads `contentTypeUndetermined` at the claim, and the saved message says the file may hold metadata written after the body. | 4d193b2 |
+| 026 | Fixed (Option 1): the parser returns `syncHeaderCount`, digits with optional SP/HTAB up to 2^31, else absent. Diverges from plan task 6's `syncHeaderValue` name; PR-4's task 14 parse is already done here. | 7e911b4 |
+| 027 | Fixed (Option 1): `utils/url.ts::URL_CONTROL_CHARACTER` builds both checks; a table test holds them to one answer. | 7e911b4 |
+| 028 | Fixed (Option 1, wider): both suites import `METADATA_SEPARATOR`. The RC-35 caveat did not bind `register-all-tools`: its factory reads the binding lazily, as `size-and-save`'s already did. | 7e911b4 |
+
+Todos 024–028 are deleted.
+
+**Tests:** full suite 45 files, 1620 passed, 7 skipped, read from vitest's summary line (not a certified verdict). `tsc --noEmit` clean. The four consumer suites each pass run alone (35, 55, 14, 54). Teeth probes: `%` accepted, a fixed field count, an unbounded count, a newline-trimming count, a narrowed control class and the claim ignoring the flag each failed a named test; files restored and `cmp`-verified.
+
+**Not re-reviewed:** these fixes are newer than the Surface-2 review above (K-16).
