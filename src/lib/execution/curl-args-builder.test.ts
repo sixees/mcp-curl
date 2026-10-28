@@ -193,6 +193,11 @@ describe("buildCurlArgs", () => {
         // `executeCurlRequest` follows redirects itself, one gated hop at a
         // time (ARCHITECTURE.md invariant 2). Any of these would let cURL
         // resolve and connect to a hop nothing validated.
+        it("passes -q first, so no .curlrc can turn redirect following back on", () => {
+            // cURL honours -q only as the first argument.
+            expect(buildCurlArgs(makeParams())[0]).toBe("-q");
+        });
+
         it("never emits -L, --location, --max-redirs or --proto-redir", () => {
             for (const follow_redirects of [true, false]) {
                 const args = buildCurlArgs(makeParams({ follow_redirects, max_redirects: 5 } as never));

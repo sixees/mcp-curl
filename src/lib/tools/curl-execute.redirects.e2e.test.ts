@@ -4,6 +4,9 @@
 // that passes the gate is really followed.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { ANY_HOST_POLICY } from "../config/index.js";
 import { serveResponses, closeLoopbackServers } from "../execution/loopback-server.test-fixture.js";
@@ -89,5 +92,35 @@ describe("todo 007: a redirect hop is validated like the first", () => {
         expect(origin.requests[0].split("\r\n")[0]).toBe("POST /form HTTP/1.1");
         expect(origin.requests[1].split("\r\n")[0]).toBe("GET /after HTTP/1.1");
         expect(origin.requests[1]).not.toContain('{"a":1}');
+    });
+});
+
+describe("cURL's own config file", () => {
+    let curlHome: string;
+    const savedCurlHome = process.env.CURL_HOME;
+
+    beforeEach(async () => {
+        curlHome = await mkdtemp(path.join(tmpdir(), "mcp-curl-curlrc-"));
+        await writeFile(path.join(curlHome, ".curlrc"), "location\n");
+        process.env.CURL_HOME = curlHome;
+    });
+
+    afterEach(async () => {
+        if (savedCurlHome === undefined) delete process.env.CURL_HOME;
+        else process.env.CURL_HOME = savedCurlHome;
+        await rm(curlHome, { recursive: true, force: true });
+    });
+
+    it("cannot make cURL follow a redirect past the gate", async () => {
+        // The target is a loopback IP literal: the gate refuses it as a
+        // hostname, but cURL following on its own would connect and return it.
+        const target = await serveResponses([ok('{"leak":"internal"}')]);
+        const origin = await serveResponses([found(`http://127.0.0.1:${target.port}/`)], "localhost");
+
+        const result = await executeCurlRequest(params({ url: `http://localhost:${origin.port}/start` }), EXTRA);
+
+        expect(textOf(result)).toContain("(LOCAL_REDIRECT_REFUSED)");
+        expect(textOf(result)).not.toContain("internal");
+        expect(target.requests).toHaveLength(0);
     });
 });

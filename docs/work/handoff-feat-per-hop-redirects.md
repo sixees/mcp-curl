@@ -101,3 +101,15 @@ This handoff was created during review, not by the work run's Step 6. `/sixees-w
 - The "Used by" list in `url-schemes.ts` omits `curl-execute.ts::redirectTarget` (architecture).
 - `LOCAL_RATE_LIMITED`/`LOCAL_REFUSED_PATH` have no producer yet (simplicity, architecture). The plan wires them in PR-4.
 - The `gateHop` comment's "(RC-19)" citation is loose (pattern). See Verified claims.
+
+## Escalation resolved — 2026-10-28
+
+The operator chose to grow this change and fix the P1 here ("100% please fix it here"). They also asked for todo 007 to be deleted.
+
+| Class | Disposition | Commit |
+|---|---|---|
+| `fail-open-default` (curlrc), P1 | **Fixed.** `buildCurlArgs` now emits `-q` as its first argument, so cURL reads no config file. A unit test pins `args[0] === "-q"`. An e2e test points `CURL_HOME` at a `.curlrc` holding `location`; a loopback 302 to a `127.0.0.1` literal is refused with `LOCAL_REDIRECT_REFUSED`, and the target receives no request. Teeth: removing `-q` fails both tests, and the e2e test returns the target's body. Source restored and `cmp`-verified. `architecture.md` names `-q`. | see below |
+
+Todo 007 has been deleted with `git rm`, at the operator's request. Its acceptance criteria are met by `curl-execute.redirects.e2e.test.ts`.
+
+**Not re-reviewed:** this fix was made after the Surface-2 review above (K-16).

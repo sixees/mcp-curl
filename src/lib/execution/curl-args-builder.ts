@@ -53,7 +53,8 @@ export interface CurlArgsParams {
      * `hostname`/`port` match `url` — a mismatched pin has cURL resolve the name
      * itself with no error, which is why provenance is asserted at the producer
      * in `curl-execute.headers.test.ts`. One spawn is one hop: no `-L` is ever
-     * emitted, so cURL never connects anywhere this pin does not cover, and
+     * emitted and `-q` stops a `.curlrc` adding one, so cURL never connects
+     * anywhere this pin does not cover, and
      * `executeCurlRequest` validates and pins each redirect hop itself
      * (`ARCHITECTURE.md` invariant 2).
      */
@@ -81,7 +82,12 @@ export interface CurlArgsParams {
  * @returns Array of command-line arguments for cURL
  */
 export function buildCurlArgs(params: CurlArgsParams): string[] {
-    const args: string[] = [];
+    // `-q` first, and only first counts: cURL reads no config file. A `.curlrc`
+    // is the one input that can change cURL's behaviour without appearing here,
+    // and `location` in one would follow redirects inside this spawn, past the
+    // per-hop gate (ARCHITECTURE.md invariant 2). It also stops a config-file
+    // `proxy`, `resolve` or `insecure` overriding the argv below.
+    const args: string[] = ["-q"];
 
     // Restrict initial request to the shared scheme allowlist (defense-in-depth alongside URL validation in ssrf.ts)
     args.push("--proto", ALLOWED_URL_SCHEMES_CURL_FLAG);
