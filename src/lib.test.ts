@@ -79,7 +79,7 @@ type _PinnedPublicTypes = [
     HostRateLimit,
     TransportMode,
     HookContext,
-    BeforeRequestResult,
+    BeforeRequestResult<unknown>,
     BeforeRequestHook,
     AfterResponseHook,
     OnErrorHook,

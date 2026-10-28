@@ -2,7 +2,7 @@
 // Tests for createWrapper — the defence-in-depth wrap (PR-6b).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createWrapper, isWrappedResult } from "./post-processor.js";
+import { createWrapper, isWrappedResult, type WrappableResult } from "./post-processor.js";
 import { formatResponse } from "./formatter.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
@@ -265,7 +265,7 @@ describe("createWrapper — error handling", () => {
 
         // Wrap-error log emitted, with the error class but not the message
         const calls = (console.error as ReturnType<typeof vi.spyOn>).mock.calls;
-        const errorLine = calls.find((c) =>
+        const errorLine = calls.find((c: unknown[]) =>
             String(c[0]).startsWith("[wrap-error]")
         );
         expect(errorLine).toBeDefined();
@@ -301,7 +301,7 @@ describe("createWrapper — frozen / non-extensible inputs (fail-open)", () => {
 
     it("does not throw when wrapping a frozen non-array-content result", () => {
         const wrap = createWrapper({});
-        const frozen = Object.freeze({ content: "not an array" });
+        const frozen = Object.freeze({ content: "not an array" }) as unknown as WrappableResult;
         expect(() => wrap(frozen, "host.com")).not.toThrow();
     });
 
@@ -398,7 +398,7 @@ describe("createWrapper — null/undefined content items (PR #29 round-2 hardeni
 describe("createWrapper — content-shape edge cases", () => {
     it("non-array content is passed through tagged (no throw)", () => {
         const wrap = createWrapper({ enableSpotlighting: true });
-        const result = { content: "not an array" };
+        const result = { content: "not an array" } as unknown as WrappableResult;
         const out = wrap(result, "host.com");
         expect(out).toBe(result);
         expect(isWrappedResult(out)).toBe(true);
@@ -406,7 +406,7 @@ describe("createWrapper — content-shape edge cases", () => {
 
     it("missing content is passed through tagged", () => {
         const wrap = createWrapper({});
-        const result = {} as { content?: unknown };
+        const result = {} as unknown as WrappableResult;
         const out = wrap(result, "host.com");
         expect(out).toBe(result);
         expect(isWrappedResult(out)).toBe(true);
