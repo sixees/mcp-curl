@@ -332,7 +332,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // **A content type the parser REJECTED arrives as `undefined` while
     // `contentTypeUndetermined` stays FALSE, so the two must be tested
     // separately.** `parseResponseWithMetadata` resolves anything failing
-    // `MEDIA_TYPE_HEAD` to `undefined`; only a missing `-w` block sets the flag.
+    // `MEDIA_TYPE_HEAD` to `undefined`; only an unlocated `-w` block sets the flag.
     // `LESSONS.md` RC-31.
     //
     // `isSniffableContentType` covers any type that neither declares a grammar
