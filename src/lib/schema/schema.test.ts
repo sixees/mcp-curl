@@ -886,7 +886,10 @@ import { vi, type Mock } from "vitest";
 import { generateToolDefinitions } from "./generator.js";
 import * as curlExecuteModule from "../tools/curl-execute.js";
 
-// Mock executeCurlRequest
+// Replace the executor so these handler tests assert the request the
+// generator builds without spawning cURL or touching the network. Vitest
+// hoists this above the imports, which is why `generator.ts`, imported at
+// the top of the file, still binds the mock.
 vi.mock("../tools/curl-execute.js", () => ({
     executeCurlRequest: vi.fn(),
 }));

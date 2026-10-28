@@ -278,15 +278,13 @@ describe("createWrapper — error handling", () => {
 
 describe("createWrapper — frozen / non-extensible inputs (fail-open)", () => {
     it("does not throw when wrapping a frozen isError result", () => {
-        // tag() uses Object.defineProperty which throws on frozen objects.
-        // The wrap must catch internally and pass the result through —
-        // defence-in-depth must never propagate exceptions to the handler.
-        // The wrap always returns a fresh spread with the processed content,
-        // so the freeze check here applies to `tag(spread)` rather than
-        // `tag(frozen)`; the spread is never frozen, so tag succeeds. The
-        // remaining failure mode this test exercises is downstream tag
-        // attempts on a result that flows through other layers — covered by
-        // the sanitiser-throws-on-frozen test below.
+        // tag() uses Object.defineProperty, which throws on a frozen object,
+        // and defence-in-depth must never propagate exceptions to the handler.
+        // This fixture never reaches that throw: an array-content result is
+        // returned as a fresh spread, which is never frozen, so `tag(spread)`
+        // succeeds. What this case pins is that a frozen input is still
+        // processed and keeps `isError`. `tag()` on the frozen original itself
+        // is the non-array and sanitiser-throws-on-frozen cases below.
         const wrap = createWrapper({});
         const frozen = Object.freeze({
             content: [{ type: "text", text: "boom" }],

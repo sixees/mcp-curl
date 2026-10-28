@@ -102,7 +102,7 @@ The operator asked for todos 027–031 to be fixed and their files removed.
 | 030 | Fixed: `LOCAL_REFUSAL_CODE_REASONS` ties each code to its reasons in the type; the nothing-sent arm forbids `requestsSent`; narrowing is on `code`. `LOCAL_REFUSED_PATH` gained the `path-names-host` reason task 16 will render. | 9190eb7 |
 | 031 | Fixed: `GeneratorConfig.allowedHosts` replaces `hostPolicy`, in `McpCurlConfig`'s form; `mcp-curl/lib` exports `deriveHostPolicy` and `HostPolicy` beside `executeCurlRequest`. | 047acbf |
 
-Todos 027–031 are deleted. The comment sync (5db3080) ran before these and pushed with the branch; these commits are not yet pushed.
+Todos 027–031 are deleted. The comment sync (5db3080) ran before these; all of these commits are on PR #50, reviewed under *Review Comments Addressed — 2026-10-28*.
 
 **Tests:** full suite 45 files, 1604 passed, 7 skipped, read from vitest's summary line (not a certified verdict). `tsc --noEmit` shows the same 12 pre-existing test-file errors. Each fix's new test was probed by reverting the fix.
 

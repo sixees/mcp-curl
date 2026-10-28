@@ -18,7 +18,7 @@ type BeforeRequestHook = (ctx: HookContext) =>
 
 ### afterResponse
 
-Called after successful tool execution. Receives the response for logging, metrics, or caching.
+Called whenever the tool returns a result rather than throwing. `curl_execute` and `jq_query` return their failures — a refused host, a request that could not be executed, a jq error — as a result with `isError: true`, so those reach this hook and not `onError`. Receives the response for logging, metrics, or caching.
 
 ```typescript
 type AfterResponseHook = (

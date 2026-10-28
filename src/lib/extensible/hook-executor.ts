@@ -132,8 +132,9 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         //
         // Empty rather than a throw: `afterResponse` is observational, and ""
         // is already what an empty body (a 204, a HEAD) hands a hook, so this
-        // adds no state a hook was not written to see. The copies are frozen
-        // because the same entries are about to be wrapped and returned.
+        // adds no state a hook was not written to see. Hooks get copies because
+        // the originals are about to be wrapped and returned, and the copies are
+        // frozen so one hook cannot alter what a later hook sees.
         const entries = Array.isArray(response.content) ? response.content : [];
         const responseText = entries[0]?.text ?? "";
         const content = Object.freeze(entries.map((entry) => Object.freeze({ ...entry })));

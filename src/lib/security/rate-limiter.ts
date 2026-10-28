@@ -224,8 +224,9 @@ export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.
     // grow on rejected requests.
     //
     // The mirror is accepted, not overlooked: a request the HOST gate rejects
-    // has already taken a client key. Client ids are server-generated and
-    // bounded by SESSION.MAX_SESSIONS, so that space cannot be driven the same way.
+    // has already taken a client key. Client ids are server-generated, never
+    // model-chosen, and SESSION.MAX_SESSIONS caps the sessions held at once, so
+    // that space cannot be driven the same way.
     checkRateLimitInternal(
         clientRateLimitMap,
         clientId,

@@ -1,7 +1,9 @@
 // src/lib/extensible/tool-wrapper.test.ts
 // Tests for applyConfigTransformsCurl default User-Agent and Referer behavior,
-// and the post-processor wrap (PR-6b) via registerCurlToolWithHooks. The
-// baseUrl path through the SDK's own input parse is in tool-wrapper.e2e.test.ts.
+// and for registerCurlToolWithHooks: the post-processor wrap (PR-6b), what
+// afterResponse hooks receive, input-schema selection, and a baseUrl
+// resolution refusal. The baseUrl path through the SDK's own input parse is
+// in tool-wrapper.e2e.test.ts.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { applyConfigTransformsCurl, registerCurlToolWithHooks } from "./tool-wrapper.js";

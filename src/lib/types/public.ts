@@ -178,7 +178,8 @@ export type BeforeRequestHook<T = CurlExecuteInput | JqQueryInput> = (
 ) => BeforeRequestResult<T> | Promise<BeforeRequestResult<T>>;
 
 /**
- * Hook called after successful tool execution.
+ * Hook called once the tool returns, an `isError` result included; a tool
+ * that throws reaches the onError hooks instead.
  * Receives the response for logging, metrics, caching, etc.
  *
  * `response` is the body, `content[0]`. `content` is every entry the tool
