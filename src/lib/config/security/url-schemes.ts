@@ -19,7 +19,7 @@
 export const ALLOWED_URL_SCHEMES = Object.freeze(["http:", "https:"] as const);
 
 /**
- * Scheme allowlist as cURL's `--proto` / `--proto-redir` flag value.
+ * Scheme allowlist as cURL's `--proto` flag value.
  *
  * Format: `=http,https` (the leading `=` resets and replaces the default
  * scheme set; `http,https` is the comma-joined list of bare scheme names).

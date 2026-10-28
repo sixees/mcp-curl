@@ -167,7 +167,7 @@ describe("buildCurlArgs", () => {
         });
     });
 
-    describe("--resolve emission (invariant 2, first hop, builder half)", () => {
+    describe("--resolve emission (invariant 2, builder half)", () => {
         // Scope: this asserts only that the builder EMITS the pin it is handed.
         // That the pin carries the address the SSRF check produced is asserted
         // at the producer in curl-execute.headers.test.ts; hops 2..N are
