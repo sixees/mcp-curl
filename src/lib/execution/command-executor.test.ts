@@ -3,53 +3,16 @@
 //
 // These spawn cURL against a loopback socket rather than mocking it, because
 // the property under test is one no mock can hold: that cURL writes the header
-// block to a descriptor the body never touches. Every other test in this repo
-// mocks `executeCommand` away, so the wiring added here — the fourth stdio
+// block to a descriptor the body never touches. Most other suites in this repo
+// mock `executeCommand` away, so the wiring added here — the fourth stdio
 // pipe, its drain, and the flag that opens it — would otherwise ship untested.
 
 import { describe, it, expect, afterEach } from "vitest";
-import net from "node:net";
 import { executeCommand, HEADER_DUMP_PATH } from "./command-executor.js";
 import { LIMITS } from "../config/limits.js";
+import { serveOnce, closeLoopbackServers } from "./loopback-server.test-fixture.js";
 
-// Every server this suite opens, not just the newest: a test that needs two
-// responses calls `serveOnce` twice, and a single reference would leave the
-// first listener alive for the rest of the worker with nothing holding a handle
-// to close it. Tracked here rather than at the call sites so a test added later
-// cannot forget. Accepted sockets are tracked for the same reason teardown needs
-// them — see below.
-const servers: net.Server[] = [];
-const sockets = new Set<net.Socket>();
-
-afterEach(() => {
-    // Sockets first, and nothing here is awaited. `close()` completes only once
-    // every accepted connection has ended, and a cURL run that gives up before
-    // sending its request leaves one that `serveOnce`'s "data" handler never
-    // ends — so a teardown that waited on `close()` would wait on that socket
-    // for the whole test timeout. Destroying first removes what it would wait
-    // for; not waiting at all removes the failure mode outright.
-    for (const socket of sockets) socket.destroy();
-    sockets.clear();
-    for (const server of servers.splice(0)) server.close();
-});
-
-/** Serve one raw HTTP response on loopback and return its port. */
-async function serveOnce(payload: string): Promise<number> {
-    const server = net.createServer((socket) => {
-        sockets.add(socket);
-        socket.once("close", () => sockets.delete(socket));
-        socket.once("data", () => socket.end(Buffer.from(payload, "utf8")));
-    });
-    servers.push(server);
-    // A bind failure emits "error" and never calls the listening callback, so
-    // without this arm the await is on an event that will not arrive and the
-    // setup failure surfaces as a test timeout instead of as itself.
-    await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => resolve());
-    });
-    return (server.address() as net.AddressInfo).port;
-}
+afterEach(closeLoopbackServers);
 
 const SIMPLE =
     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nX-Marker: header-side\r\n" +

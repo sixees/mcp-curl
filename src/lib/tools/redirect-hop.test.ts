@@ -130,8 +130,8 @@ describe("nextHopParams: cross-origin hops", () => {
 
     it("A → B → A: credentials stripped at B stay stripped back on A", () => {
         const atB = nextHopParams(CREDENTIALED, 302, true, "https://other.test/");
-        // The caller keeps the flag sticky; hop 3 is back on hop 1's origin.
-        const backOnA = nextHopParams(atB, 302, true, NEXT);
+        // Hop 3 is back on hop 1's origin, built from hop 2's params.
+        const backOnA = nextHopParams(atB, 302, false, NEXT);
         expect(backOnA.headers).not.toHaveProperty("X-Api-Key");
         expect(backOnA.headers).not.toHaveProperty("Authorization");
         expect(backOnA.bearer_token).toBeUndefined();

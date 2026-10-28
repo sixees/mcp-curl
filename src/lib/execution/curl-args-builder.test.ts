@@ -187,25 +187,19 @@ describe("buildCurlArgs", () => {
             expect(idx).toBeGreaterThanOrEqual(0);
             expect(args[idx + 1]).toBe("=http,https");
         });
-
-        it("includes --proto even when redirects are disabled", () => {
-            const args = buildCurlArgs(makeParams({ follow_redirects: false }));
-            expect(args).toContain("--proto");
-            expect(args[args.indexOf("--proto") + 1]).toBe("=http,https");
-        });
     });
 
-    describe("--proto-redir flag", () => {
-        it("includes --proto-redir when redirects are enabled (default)", () => {
-            const args = buildCurlArgs(makeParams());
-            const idx = args.indexOf("--proto-redir");
-            expect(idx).toBeGreaterThanOrEqual(0);
-            expect(args[idx + 1]).toBe("=http,https");
-        });
-
-        it("does not include --proto-redir when redirects are disabled", () => {
-            const args = buildCurlArgs(makeParams({ follow_redirects: false }));
-            expect(args).not.toContain("--proto-redir");
+    describe("redirects", () => {
+        // `executeCurlRequest` follows redirects itself, one gated hop at a
+        // time (ARCHITECTURE.md invariant 2). Any of these would let cURL
+        // resolve and connect to a hop nothing validated.
+        it("never emits -L, --location, --max-redirs or --proto-redir", () => {
+            for (const follow_redirects of [true, false]) {
+                const args = buildCurlArgs(makeParams({ follow_redirects, max_redirects: 5 } as never));
+                for (const flag of ["-L", "--location", "--location-trusted", "--max-redirs", "--proto-redir"]) {
+                    expect(args).not.toContain(flag);
+                }
+            }
         });
     });
 

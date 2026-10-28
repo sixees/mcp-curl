@@ -58,9 +58,9 @@ function dropsBody(status: number, method: string): boolean {
 /**
  * The params for the hop a followed redirect leads to.
  *
- * `crossOrigin` is whether this hop, or any hop before it, left hop 1's
- * origin: the caller keeps it sticky, so credentials dropped once stay dropped
- * even when the chain comes back. A cross-origin hop keeps only
+ * `crossOrigin` is whether the next hop's origin differs from hop 1's. The
+ * caller passes the previous hop's result as `params`, so credentials dropped
+ * once stay dropped even when the chain comes back. A cross-origin hop keeps only
  * {@link CROSS_ORIGIN_FORWARDED_HEADERS}, the body headers when the body is
  * kept, and `user_agent`; `basic_auth` and `bearer_token` go.
  *
