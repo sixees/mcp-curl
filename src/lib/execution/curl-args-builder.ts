@@ -4,8 +4,8 @@
 import { validateNoCRLF } from "../security/index.js";
 import { LIMITS } from "../config/index.js";
 import { ALLOWED_URL_SCHEMES_CURL_FLAG } from "../config/security/url-schemes.js";
-import { HTTP_FIELD_NAME } from "../config/security/validation.js";
 import { HEADER_DUMP_PATH, platformSupportsHeaderDump } from "./command-executor.js";
+import { metadataDirectives, type MetadataBlock } from "../types/common.js";
 
 /**
  * Parameters for building cURL command arguments.
@@ -49,7 +49,7 @@ export interface CurlArgsParams {
      *
      * **Required, because an optional defence has no failure mode.** An
      * argument list omitting it would be valid and spawnable, cURL would do its
-     * own DNS, and the pin would be off with nothing to fail. `metadataSeparator`
+     * own DNS, and the pin would be off with nothing to fail. `metadataBlock`
      * below is required for the same reason, on invariant 13's behalf.
      *
      * Required closes the *omission* route and nothing more. It cannot check
@@ -63,17 +63,10 @@ export interface CurlArgsParams {
      */
     dnsResolve: { hostname: string; port: number; resolvedIp: string };
     /**
-     * Unique per-request separator for extracting metadata.
-     * Prevents response injection attacks by using unpredictable separator.
+     * This request's `-w` metadata block. Its unique separator prevents
+     * response injection; the same value goes to `parseResponseWithMetadata`.
      */
-    metadataSeparator: string;
-    /**
-     * Response header whose value rides the `-w` block as its own field, for
-     * the rate-limit sync. Absent, the block carries no header field, and
-     * `parseResponseWithMetadata` must be told the same through its
-     * `syncHeader` option or the separator count will not match.
-     */
-    syncHeaderName?: string;
+    metadataBlock: MetadataBlock;
 }
 
 /**
@@ -200,17 +193,10 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
     // Three of the fields are remote-echoed, and that is safe because nothing
     // the remote writes can split them: the separator is unguessable per
     // request, so every occurrence on stdout is cURL's, and the parser rejects
-    // a block whose separator count is wrong. `parseResponseWithMetadata` reads
-    // the fields in this order (ARCHITECTURE.md invariant 13).
-    if (params.syncHeaderName !== undefined && !HTTP_FIELD_NAME.test(params.syncHeaderName)) {
-        throw new Error("Invalid sync header name: must be an HTTP field name (RFC 9110 token).");
-    }
-    const sep = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
-    const fields = ["%{http_code}", "%{redirect_url}"];
-    if (params.syncHeaderName !== undefined) {
-        fields.push(`%header{${params.syncHeaderName}}`);
-    }
-    fields.push("%{content_type}");
+    // a block whose separator count is wrong. `metadataDirectives` is the
+    // layout both sides read (ARCHITECTURE.md invariant 13).
+    const sep = params.metadataBlock.separator.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+    const fields = metadataDirectives(params.metadataBlock);
     args.push("-w", fields.map((field) => sep + field).join(""));
 
     // DNS pinning with --resolve to prevent DNS rebinding attacks

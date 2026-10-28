@@ -22,6 +22,7 @@ export {
     resolveRequestUrl,
     hasDotSegment,
     RELATIVE_PATH_PATTERN,
+    URL_CONTROL_CHARACTER,
     createHttpOnlyUrlSchema,
     safeHostname,
 } from "./url.js";

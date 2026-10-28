@@ -71,8 +71,9 @@ export const LIMITS = {
      */
     MAX_REDIRECT_URL_LENGTH: REDIRECT_URL_FIELD_BYTES,
     /**
-     * Byte bound on the `%header{…}` rate-limit sync field. The value is a
-     * count, so 64 bytes leaves room for whitespace and still refuses prose.
+     * Byte bound on the `%header{…}` rate-limit sync field. A count needs at
+     * most ten digits, so 64 bytes leaves room for whitespace; what refuses
+     * anything that is not a count is the parse, not this bound.
      */
     MAX_SYNC_HEADER_VALUE_LENGTH: SYNC_HEADER_FIELD_BYTES,
     /**

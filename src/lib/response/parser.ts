@@ -2,7 +2,8 @@
 // Parse cURL output and check content types
 
 import { LIMITS } from "../config/limits.js";
-import { parseMimeType } from "../utils/index.js";
+import { parseMimeType, URL_CONTROL_CHARACTER } from "../utils/index.js";
+import { metadataDirectives, type MetadataBlock } from "../types/common.js";
 
 /**
  * The type/subtype of a media type, anchored, with the parameter tail ignored.
@@ -117,12 +118,13 @@ export interface ParsedResponse {
      */
     redirectUrl?: string;
     /**
-     * The `%header{…}` sync field, unparsed. Present only when the caller asked
-     * for it through the `syncHeader` option and the origin sent a value within
-     * `LIMITS.MAX_SYNC_HEADER_VALUE_LENGTH`. Absent means no information, and
-     * the local count stands.
+     * The `%header{…}` sync field as a count: digits only, optionally padded
+     * with spaces or tabs, at most 2^31. Present only when the block names a
+     * `syncHeaderName` and the origin sent such a value. Absent — no header,
+     * empty, malformed, too large — means no information and the local count
+     * stands, **never 0**, which would fill the window on the remote's say-so.
      */
-    syncHeaderValue?: string;
+    syncHeaderCount?: number;
     /**
      * Whether the `-w` metadata block was located at all.
      *
@@ -135,18 +137,9 @@ export interface ParsedResponse {
     metadataFound: boolean;
 }
 
-/** Options for `parseResponseWithMetadata`. */
-export interface ParseMetadataOptions {
-    /**
-     * Whether the block carries the `%header{…}` sync field. Must match the
-     * `syncHeaderName` handed to `buildCurlArgs`: the field count decides how
-     * many separators a well-formed block holds.
-     */
-    syncHeader?: boolean;
-}
-
-/** C0 controls and DEL. cURL writes `%{redirect_url}` from the origin's `Location`. */
-const CONTROL_BYTE = /[\x00-\x1f\x7f]/;
+/** A sync count: decimal digits, with the optional whitespace HTTP allows around a value. */
+const SYNC_COUNT = /^[ \t]*(\d{1,10})[ \t]*$/;
+const MAX_SYNC_COUNT = 2 ** 31;
 
 /**
  * Check if a content-type indicates JSON response.
@@ -167,7 +160,8 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * Parse cURL output into the body and the `-w` metadata fields.
  *
  * The block is `<sep>http_code<sep>redirect_url[<sep>sync header]<sep>content_type`,
- * the order `curl-args-builder.ts::buildCurlArgs` writes. The separator is the
+ * the layout `metadataDirectives` states for both this function and
+ * `buildCurlArgs`, which must be handed the same `block`. The separator is the
  * same unique per-request value, which the remote cannot guess, so every
  * occurrence of it on stdout is cURL's. Three of the fields are remote-echoed
  * and may contain anything else; `ARCHITECTURE.md` invariant 13 states the
@@ -193,21 +187,19 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * `LESSONS.md` RC-33.
  *
  * @param rawResponse - The raw response from cURL including metadata suffix
- * @param separator - The unique per-request separator used in -w format
- * @param options - Which optional fields the block carries
+ * @param block - The request's metadata block, as handed to `buildCurlArgs`
  * @returns ParsedResponse carrying the body's octets and the metadata fields
  */
 export function parseResponseWithMetadata(
     rawResponse: Buffer,
-    separator: string,
-    options: ParseMetadataOptions = {}
+    block: MetadataBlock
 ): ParsedResponse {
     // Buffer only, deliberately. A `string | Buffer` union would leave the
     // lossy arm — the one RC-2 is about — one character away at every call
     // site, with no compiler objection. Tests convert at the call site instead.
     const raw = rawResponse;
-    const sep = Buffer.from(separator, "utf8");
-    const fieldCount = options.syncHeader ? 4 : 3;
+    const sep = Buffer.from(block.separator, "utf8");
+    const fieldCount = metadataDirectives(block).length;
 
     // The window is one separator per field PLUS the field allowance, not a
     // flat constant they share. One shared budget lets a long, entirely legal,
@@ -238,15 +230,18 @@ export function parseResponseWithMetadata(
         raw.subarray(start + sep.length, separatorIndexes[i + 1] ?? raw.length)
     );
     const [httpCodeField, redirectField] = fields;
-    const syncField = options.syncHeader ? fields[2] : undefined;
+    const syncField = block.syncHeaderName !== undefined ? fields[2] : undefined;
     const contentTypeField = fields[fieldCount - 1]!;
 
     const httpCode = httpCodeField!.toString("utf8");
     const redirect = redirectField!.length <= LIMITS.MAX_REDIRECT_URL_LENGTH
         ? redirectField!.toString("utf8")
         : undefined;
-    const syncValue = syncField && syncField.length > 0 && syncField.length <= LIMITS.MAX_SYNC_HEADER_VALUE_LENGTH
-        ? syncField.toString("utf8")
+    const syncDigits = syncField && syncField.length <= LIMITS.MAX_SYNC_HEADER_VALUE_LENGTH
+        ? SYNC_COUNT.exec(syncField.toString("utf8"))?.[1]
+        : undefined;
+    const syncCount = syncDigits !== undefined && Number(syncDigits) <= MAX_SYNC_COUNT
+        ? Number(syncDigits)
         : undefined;
 
     // An empty content type stays undefined rather than becoming "", so "the
@@ -273,8 +268,8 @@ export function parseResponseWithMetadata(
         bodyBytes: raw.subarray(0, separatorIndexes[0]),
         contentType: validContentType,
         httpStatus: /^\d{3}$/.test(httpCode) ? Number(httpCode) : undefined,
-        redirectUrl: redirect !== undefined && !CONTROL_BYTE.test(redirect) ? redirect : undefined,
-        syncHeaderValue: syncValue,
+        redirectUrl: redirect !== undefined && !URL_CONTROL_CHARACTER.test(redirect) ? redirect : undefined,
+        syncHeaderCount: syncCount,
         metadataFound: true,
     };
 }

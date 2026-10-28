@@ -11,7 +11,7 @@ import { metadataSuffix } from "../tools/curl-output.test-fixture.js";
 function makeParams(overrides: Partial<CurlArgsParams> = {}): CurlArgsParams {
     return {
         url: "https://example.com/api",
-        metadataSeparator: "\n---SEP---\n",
+        metadataBlock: { separator: "\n---SEP---\n" },
         dnsResolve: { hostname: "example.com", port: 443, resolvedIp: "93.184.216.34" },
         ...overrides,
     };
@@ -99,7 +99,7 @@ describe("buildCurlArgs", () => {
         });
 
         it("adds the sync header field before content_type only when asked", () => {
-            expect(formatOf(buildCurlArgs(makeParams({ syncHeaderName: "x-remaining" })))).toBe(
+            expect(formatOf(buildCurlArgs(makeParams({ metadataBlock: { separator: "\n---SEP---\n", syncHeaderName: "x-remaining" } })))).toBe(
                 "\\n---SEP---\\n%{http_code}\\n---SEP---\\n%{redirect_url}" +
                     "\\n---SEP---\\n%header{x-remaining}\\n---SEP---\\n%{content_type}"
             );
@@ -107,9 +107,11 @@ describe("buildCurlArgs", () => {
 
         it("refuses a sync header name that could reshape the format", () => {
             // `}` would close the directive early and let the rest of the name
-            // add a field; the others are not field names at all.
-            for (const name of ["", "a}%{redirect_url", "a{b", "a b", "a\r\nb", "a:b"]) {
-                expect(() => buildCurlArgs(makeParams({ syncHeaderName: name }))).toThrow(/sync header name/);
+            // add a field; `%` is cURL's write-out escape; the others are not
+            // field names at all.
+            for (const name of ["", "a}%{redirect_url", "a%b", "a{b", "a b", "a\r\nb", "a:b"]) {
+                const metadataBlock = { separator: "\n---SEP---\n", syncHeaderName: name };
+                expect(() => buildCurlArgs(makeParams({ metadataBlock }))).toThrow(/sync header name/);
             }
         });
 
@@ -121,7 +123,9 @@ describe("buildCurlArgs", () => {
                 content_type: "application/json",
             };
             for (const syncHeaderName of [undefined, "x-remaining"]) {
-                const written = expand(formatOf(buildCurlArgs(makeParams({ syncHeaderName }))), values);
+                // One value for both sides, as `executeCurlRequest` passes it.
+                const metadataBlock = { separator: "\n---SEP---\n", syncHeaderName };
+                const written = expand(formatOf(buildCurlArgs(makeParams({ metadataBlock }))), values);
                 expect(written).toBe(
                     metadataSuffix({
                         httpCode: values.http_code,
@@ -131,14 +135,12 @@ describe("buildCurlArgs", () => {
                         separator: "\n---SEP---\n",
                     })
                 );
-                const parsed = parseResponseWithMetadata(Buffer.from(`body${written}`), "\n---SEP---\n", {
-                    syncHeader: syncHeaderName !== undefined,
-                });
+                const parsed = parseResponseWithMetadata(Buffer.from(`body${written}`), metadataBlock);
                 expect(parsed).toMatchObject({
                     metadataFound: true,
                     httpStatus: 302,
                     redirectUrl: "https://example.com/next",
-                    syncHeaderValue: syncHeaderName ? "41" : undefined,
+                    syncHeaderCount: syncHeaderName ? 41 : undefined,
                     contentType: "application/json",
                 });
             }

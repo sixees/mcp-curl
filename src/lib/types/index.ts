@@ -1,7 +1,8 @@
 // src/lib/types/index.ts
 
-// Value export (function)
-export { generateMetadataSeparator } from "./common.js";
+// Value exports (functions)
+export { generateMetadataSeparator, metadataDirectives } from "./common.js";
+export type { MetadataBlock } from "./common.js";
 
 // Type-only exports (no runtime code emitted)
 export type * from "./session.js";
