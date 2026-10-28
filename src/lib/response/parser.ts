@@ -2,7 +2,8 @@
 // Parse cURL output and check content types
 
 import { LIMITS } from "../config/limits.js";
-import { parseMimeType } from "../utils/index.js";
+import { parseMimeType, URL_CONTROL_CHARACTER } from "../utils/index.js";
+import { metadataDirectives, type MetadataBlock } from "../types/common.js";
 
 /**
  * The type/subtype of a media type, anchored, with the parameter tail ignored.
@@ -56,11 +57,12 @@ export interface ParsedResponse {
      * The body's octets — the origin's, **on the arm where the boundary was
      * found**.
      *
-     * On `metadataFound: true` this is `raw.subarray(0, separatorIndex)`: the
-     * origin's body bytes and nothing else. On `metadataFound: false` it is the
-     * whole of cURL's stdout, which is normally all body — but is also what a
-     * `Content-Type` longer than `LIMITS.MAX_METADATA_TAIL_LENGTH` produces,
-     * because that evicts the separator from the search window. So on that arm
+     * On `metadataFound: true` this is stdout up to the block's first
+     * separator: the origin's body bytes and nothing else. On
+     * `metadataFound: false` it is the whole of cURL's stdout, which is normally
+     * all body — but is also what remote fields longer in total than
+     * `LIMITS.MAX_METADATA_TAIL_LENGTH` produce, because they evict a separator
+     * from the search window. So on that arm
      * the buffer may hold this server's own separator and remote header text
      * that was never body, and the field cannot tell you which case you have:
      * "not found" and "not present" are one value here.
@@ -99,6 +101,31 @@ export interface ParsedResponse {
      */
     contentType?: string;
     /**
+     * `%{http_code}`: the status of the response cURL received, or `0` where it
+     * received none (cURL writes `000`). Absent when the block was not located
+     * or the field is not exactly three digits — **undetermined**, which must
+     * never be read as "not a redirect, so return it".
+     */
+    httpStatus?: number;
+    /**
+     * `%{redirect_url}`: the absolute URL cURL would have followed, unvalidated.
+     *
+     * Three values, kept apart because each selects a different outcome:
+     * `""` means cURL named no target — **terminal**; a string is a target still
+     * to be parsed and gated like any request URL; `undefined` means the block
+     * was not located, or the field was over `LIMITS.MAX_REDIRECT_URL_LENGTH`
+     * or held a control byte — an **unusable** target, never the same as `""`.
+     */
+    redirectUrl?: string;
+    /**
+     * The `%header{…}` sync field as a count: digits only, optionally padded
+     * with spaces or tabs, at most 2^31. Present only when the block names a
+     * `syncHeaderName` and the origin sent such a value. Absent — no header,
+     * empty, malformed, too large — means no information and the local count
+     * stands, **never 0**, which would fill the window on the remote's say-so.
+     */
+    syncHeaderCount?: number;
+    /**
      * Whether the `-w` metadata block was located at all.
      *
      * **Distinct from `contentType === undefined`**, and the distinction is
@@ -109,6 +136,10 @@ export interface ParsedResponse {
      */
     metadataFound: boolean;
 }
+
+/** A sync count: decimal digits, with the optional whitespace HTTP allows around a value. */
+const SYNC_COUNT = /^[ \t]*(\d{1,10})[ \t]*$/;
+const MAX_SYNC_COUNT = 2 ** 31;
 
 /**
  * Check if a content-type indicates JSON response.
@@ -126,74 +157,96 @@ export function isJsonContentType(contentType: string | undefined): boolean {
 }
 
 /**
- * Parse cURL response to extract body and content-type.
+ * Parse cURL output into the body and the `-w` metadata fields.
  *
- * The separator must be the same unique value used in the -w format string.
- * As a defence-in-depth measure the search covers only the tail of the
- * response — the separator's own length plus MAX_METADATA_TAIL_LENGTH for the
- * fields, never a flat budget the two share (see the window below). The unique
- * per-request separator is the primary protection against injection.
+ * The block is `<sep>http_code<sep>redirect_url[<sep>sync header]<sep>content_type`,
+ * the layout `metadataDirectives` states for both this function and
+ * `buildCurlArgs`, which must be handed the same `block`. The separator is the
+ * same unique per-request value, which the remote cannot guess, so every
+ * occurrence of it on stdout is cURL's. Every field after `%{http_code}` is
+ * remote-echoed and may contain anything else; `ARCHITECTURE.md` invariant 13
+ * states the rules that keep them apart:
  *
- * The metadata block is `<separator><content_type>`. `%{content_type}` is
- * echoed from the remote and may contain anything, which is safe only because
- * it is the block's whole content: there is no field beside it to shift and no
- * trailing delimiter to spoof, and the separator ahead of it is unguessable per
- * request. A second field would end that, so a new field goes BEFORE the
- * content type, never after it — `ARCHITECTURE.md` invariant 13 states the rule
- * and `curl-args-builder.ts` is the writing half of it.
+ * - fields are split only by the separator;
+ * - each field has its own bound, and an over-bound field is absent, never
+ *   partial;
+ * - a block with the wrong separator count is undetermined
+ *   (`metadataFound: false`), which selects the strictest grammar downstream.
+ *
+ * As a defence-in-depth measure the search covers only the tail of stdout —
+ * one separator length per field plus `MAX_METADATA_TAIL_LENGTH` for the
+ * fields, never a flat budget the two share (see the window below).
  *
  * **Returns the body as octets and never as a string.** The decode belongs to
  * whoever needs text — `processResponse`, for the defence pipeline and the
  * inline body — so doing it here as well would decode a body up to 10 MB twice
- * per request. The metadata block IS decoded here, because it is a bounded field
- * this function parses itself.
+ * per request. The metadata fields ARE decoded here, because they are bounded
+ * fields this function parses itself.
  *
  * One representation also cannot disagree with itself about where the body ends.
  * `LESSONS.md` RC-33.
  *
  * @param rawResponse - The raw response from cURL including metadata suffix
- * @param separator - The unique per-request separator used in -w format
- * @returns ParsedResponse carrying the body's octets and the optional contentType
+ * @param block - The request's metadata block, as handed to `buildCurlArgs`
+ * @returns ParsedResponse carrying the body's octets and the metadata fields
  */
 export function parseResponseWithMetadata(
     rawResponse: Buffer,
-    separator: string
+    block: MetadataBlock
 ): ParsedResponse {
     // Buffer only, deliberately. A `string | Buffer` union would leave the
     // lossy arm — the one RC-2 is about — one character away at every call
     // site, with no compiler objection. Tests convert at the call site instead.
     const raw = rawResponse;
-    const sep = Buffer.from(separator, "utf8");
+    const sep = Buffer.from(block.separator, "utf8");
+    const fieldCount = metadataDirectives(block).length;
 
-    // The window is the separator's own length PLUS the field allowance, not a
-    // flat constant the two share. One shared budget lets a long, entirely
-    // legal, remote-chosen Content-Type push the separator out of the window —
-    // at which point the block reads as absent and the response falls back to
-    // the strictest grammar on a perfectly ordinary reply. The measured case is
+    // The window is one separator per field PLUS the field allowance, not a
+    // flat constant they share. One shared budget lets a long, entirely legal,
+    // remote-chosen field push a separator out of the window, and a perfectly
+    // ordinary reply falls back to the strictest grammar. The measured case is
     // in LIMITS.MAX_METADATA_TAIL_LENGTH, which owns the sizing.
-    const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
+    const windowBytes = fieldCount * sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
     const searchStart = Math.max(0, raw.length - windowBytes);
     // Search only the window, so the scan stays bounded rather than walking a
     // 10MB body to find something that can only ever be at the end.
-    const indexInWindow = raw.subarray(searchStart).lastIndexOf(sep);
-    const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
+    const window = raw.subarray(searchStart);
+    const separatorIndexes: number[] = [];
+    for (let i = window.indexOf(sep); i !== -1; i = window.indexOf(sep, i + sep.length)) {
+        separatorIndexes.push(searchStart + i);
+    }
 
-    if (separatorIndex === -1) {
-        // Either no metadata block, or one that fell outside the search window —
-        // the two are indistinguishable here, which is why `bodyBytes` on this
-        // arm is not attributable to the origin. See `ParsedResponse.bodyBytes`.
+    if (separatorIndexes.length !== fieldCount) {
+        // No block, a block partly outside the window, or one a field was added
+        // to or lost from — indistinguishable here, which is why `bodyBytes` on
+        // this arm is not attributable to the origin. See `ParsedResponse.bodyBytes`.
         return {
             bodyBytes: raw,
             metadataFound: false,
         };
     }
 
-    const bodyBytes = raw.subarray(0, separatorIndex);
-    const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
+    const fields = separatorIndexes.map((start, i) =>
+        raw.subarray(start + sep.length, separatorIndexes[i + 1] ?? raw.length)
+    );
+    const [httpCodeField, redirectField] = fields;
+    const syncField = block.syncHeaderName !== undefined ? fields[2] : undefined;
+    const contentTypeField = fields[fieldCount - 1]!;
 
-    // The whole block is %{content_type}. An empty one stays undefined rather
-    // than becoming "", so "the origin sent no Content-Type" keeps selecting the
-    // strictest grammar downstream instead of a falsy value nobody checks.
+    const httpCode = httpCodeField!.toString("utf8");
+    const redirect = redirectField!.length <= LIMITS.MAX_REDIRECT_URL_LENGTH
+        ? redirectField!.toString("utf8")
+        : undefined;
+    const syncDigits = syncField && syncField.length <= LIMITS.MAX_SYNC_HEADER_VALUE_LENGTH
+        ? SYNC_COUNT.exec(syncField.toString("utf8"))?.[1]
+        : undefined;
+    const syncCount = syncDigits !== undefined && Number(syncDigits) <= MAX_SYNC_COUNT
+        ? Number(syncDigits)
+        : undefined;
+
+    // An empty content type stays undefined rather than becoming "", so "the
+    // origin sent no Content-Type" keeps selecting the strictest grammar
+    // downstream instead of a falsy value nobody checks.
     //
     // A value failing MEDIA_TYPE_HEAD resolves to the SAME undefined, and
     // that is the whole defence: the origin writes these bytes, and downstream
@@ -202,7 +255,9 @@ export function parseResponseWithMetadata(
     // present or future — where fixing each composition site leaves the next
     // one to be written wrong. A header this rejects was never usable as a
     // media type, so nothing diagnostic is lost.
-    const contentType = metadata.trim();
+    const contentType = contentTypeField.length <= LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH
+        ? contentTypeField.toString("utf8").trim()
+        : "";
     // Keep the matched head and nothing else. The match proves there is a media
     // type here; discarding the tail is what stops the field carrying prose,
     // because the tail is the only region of the grammar that admits it and
@@ -210,8 +265,11 @@ export function parseResponseWithMetadata(
     const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
 
     return {
-        bodyBytes,
+        bodyBytes: raw.subarray(0, separatorIndexes[0]),
         contentType: validContentType,
+        httpStatus: /^\d{3}$/.test(httpCode) ? Number(httpCode) : undefined,
+        redirectUrl: redirect !== undefined && !URL_CONTROL_CHARACTER.test(redirect) ? redirect : undefined,
+        syncHeaderCount: syncCount,
         metadataFound: true,
     };
 }

@@ -3,7 +3,7 @@
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, type HostPolicy } from "../config/index.js";
-import { generateMetadataSeparator } from "../types/index.js";
+import { generateMetadataSeparator, type MetadataBlock } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
 import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError } from "../utils/index.js";
@@ -247,14 +247,15 @@ export async function executeCurlRequest(
             ? await validateOutputDir(resolvedOutputDir)
             : undefined;
 
-        // Generate unique separator for this request to prevent response injection
-        const metadataSeparator = generateMetadataSeparator();
+        // One block for the build and the parse; its separator is unique per
+        // request, to prevent response injection.
+        const metadataBlock: MetadataBlock = { separator: generateMetadataSeparator() };
 
         const args = buildCurlArgs({
             ...params,
             silent: true,
             dnsResolve: dnsResult,
-            metadataSeparator,
+            metadataBlock,
         });
         const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
         // `executeCommand` reads the header descriptor's presence off `args`,
@@ -268,7 +269,7 @@ export async function executeCurlRequest(
 
         // stdout is the body alone — cURL wrote the headers to their own
         // descriptor — so this strips the `-w` metadata suffix and nothing else.
-        const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
+        const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataBlock);
         const { contentType, metadataFound } = parsed;
 
         // Defending and bounding the header text is one concern with one home —

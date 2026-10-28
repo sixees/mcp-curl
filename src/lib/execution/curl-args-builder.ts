@@ -5,6 +5,7 @@ import { validateNoCRLF } from "../security/index.js";
 import { LIMITS } from "../config/index.js";
 import { ALLOWED_URL_SCHEMES_CURL_FLAG } from "../config/security/url-schemes.js";
 import { HEADER_DUMP_PATH, platformSupportsHeaderDump } from "./command-executor.js";
+import { metadataDirectives, type MetadataBlock } from "../types/common.js";
 
 /**
  * Parameters for building cURL command arguments.
@@ -48,7 +49,7 @@ export interface CurlArgsParams {
      *
      * **Required, because an optional defence has no failure mode.** An
      * argument list omitting it would be valid and spawnable, cURL would do its
-     * own DNS, and the pin would be off with nothing to fail. `metadataSeparator`
+     * own DNS, and the pin would be off with nothing to fail. `metadataBlock`
      * below is required for the same reason, on invariant 13's behalf.
      *
      * Required closes the *omission* route and nothing more. It cannot check
@@ -62,10 +63,10 @@ export interface CurlArgsParams {
      */
     dnsResolve: { hostname: string; port: number; resolvedIp: string };
     /**
-     * Unique per-request separator for extracting metadata.
-     * Prevents response injection attacks by using unpredictable separator.
+     * This request's `-w` metadata block. Its unique separator prevents
+     * response injection; the same value goes to `parseResponseWithMetadata`.
      */
-    metadataSeparator: string;
+    metadataBlock: MetadataBlock;
 }
 
 /**
@@ -187,18 +188,16 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
         args.push("-s");
     }
 
-    // Output format: unique per-request separator, then the metadata fields.
+    // Output format: the per-request separator ahead of EVERY field.
     //
-    // `%{content_type}` is the only field, and it is remote-echoed. That is
-    // safe here precisely because it is last with nothing after it: there is no
-    // delimiter for a crafted Content-Type to spoof, and the separator ahead of
-    // it is unguessable per request. A second field here would end that: it
-    // would give a crafted Content-Type a delimiter to spoof, so any addition
-    // goes BEFORE the content type (ARCHITECTURE.md invariant 13).
-    const metadataSuffix =
-        params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") +
-        "%{content_type}";
-    args.push("-w", metadataSuffix);
+    // Every field after `%{http_code}` is remote-echoed, and that is safe because
+    // nothing the remote writes can split them: the separator is unguessable per
+    // request, so every occurrence on stdout is cURL's, and the parser rejects
+    // a block whose separator count is wrong. `metadataDirectives` is the
+    // layout both sides read (ARCHITECTURE.md invariant 13).
+    const sep = params.metadataBlock.separator.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+    const fields = metadataDirectives(params.metadataBlock);
+    args.push("-w", fields.map((field) => sep + field).join(""));
 
     // DNS pinning with --resolve to prevent DNS rebinding attacks
     // Format: --resolve hostname:port:ip

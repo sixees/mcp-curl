@@ -332,7 +332,7 @@ export function defendText(text: string, options: DefendTextOptions): string {
     // **A content type the parser REJECTED arrives as `undefined` while
     // `contentTypeUndetermined` stays FALSE, so the two must be tested
     // separately.** `parseResponseWithMetadata` resolves anything failing
-    // `MEDIA_TYPE_HEAD` to `undefined`; only a missing `-w` block sets the flag.
+    // `MEDIA_TYPE_HEAD` to `undefined`; only an unlocated `-w` block sets the flag.
     // `LESSONS.md` RC-31.
     //
     // `isSniffableContentType` covers any type that neither declares a grammar
@@ -530,6 +530,12 @@ interface SavedMessageFacts {
      */
     originBytesExact: boolean;
     /**
+     * True when the caller could not locate the end of the body — the `-w`
+     * block was not found — so the bytes handed in may run on into metadata
+     * written after it, and `originBytesExact` cannot vouch for what they are.
+     */
+    boundaryUndetermined: boolean;
+    /**
      * Byte length of `content` as the inline gate measures it. On the over-cap
      * arm — the only one that quotes it — the content is JSON, and on disk as
      * the origin's octets unless a `jq_filter` produced it, in which case both
@@ -543,8 +549,8 @@ interface SavedMessageFacts {
 }
 
 /**
- * An object rather than six positional arguments, because two of them are
- * `number` and their meanings are not interchangeable. Transposing `diskBytes`
+ * An object rather than positional arguments, because several share a type
+ * (`number`, `boolean`) and their meanings are not interchangeable. Transposing `diskBytes`
  * and `maxSize` produced *"Response (500000 bytes on disk) … exceeds the
  * 9400000-byte inline limit"* — a sentence that tells a model to raise
  * `max_result_size` to clear a limit it never hit — and it compiled, and it
@@ -554,7 +560,7 @@ interface SavedMessageFacts {
 function savedMessage(facts: SavedMessageFacts): string {
     const {
         diskBytes, filepath, maxSize, overCap, filtered, rejection, originBytesExact,
-        measuredBytes, decodeWasLossy,
+        boundaryUndetermined, measuredBytes, decodeWasLossy,
     } = facts;
     const measured = measuredBytes === diskBytes ? "" : `, ${measuredBytes} once decoded`;
     const subject = filtered ? "Result of jq_filter" : "Response";
@@ -582,14 +588,20 @@ function savedMessage(facts: SavedMessageFacts): string {
     //
     // Withheld for a filter's output alone: there `scope` below already says the
     // file is not the response body, which is the stronger statement.
+    //
+    // An undetermined boundary withholds the exactness claim on both arms: the
+    // file may run on past the body into metadata, which the origin never sent.
+    const runOn = " The end of the body could not be located, so the file may also hold" +
+        " metadata written after it.";
     const exactness = filtered
         ? ""
         : originBytesExact
-        ? " The file holds the origin's exact bytes."
+        ? boundaryUndetermined ? runOn : " The file holds the origin's exact bytes."
         : " The file holds the body with attack codepoints removed and long whitespace" +
           " or newline runs collapsed" +
           (decodeWasLossy ? ", and each undecodable sequence replaced with U+FFFD" : "") +
-          ", so it is not byte-identical to what the origin sent.";
+          ", so it is not byte-identical to what the origin sent." +
+          (boundaryUndetermined ? runOn : "");
 
     // Two arms, and neither reads the declared content type. `rejection` is
     // present exactly when `classifyBody` said the body is not JSON, so the
@@ -931,6 +943,10 @@ export async function processResponse(
                 // non-JSON body writes sanitised text; every other arm is the
                 // origin's octets.
                 originBytesExact: !filterApplied && originOnDisk,
+                // Read here, at the claim, because `bodyBytes` cannot say it
+                // (`ParsedResponse.bodyBytes`). Omitted reads as located: a
+                // library caller passing its own body knows where it ends.
+                boundaryUndetermined: options.contentTypeUndetermined === true,
                 measuredBytes: Buffer.byteLength(content, "utf8"),
                 decodeWasLossy,
                 // Only where the body itself was the reason. An over-cap JSON

@@ -34,11 +34,7 @@ import {
     assertStraddlesStripCap,
 } from "../response/strip-cap-straddle.test-fixture.js";
 import { CURL_EXECUTE_TOOL_META } from "./curl-execute.js";
-import { savedPathFrom } from "./curl-output.test-fixture.js";
-
-// The real separator length, not a short stand-in: the metadata search window
-// is sized from it, so a shorter mock hides margin the production path lacks.
-const SEP = "\n---MCP-CURL-00000000-0000-4000-8000-000000000000---\n";
+import { METADATA_SEPARATOR as SEP, metadataSuffix, savedPathFrom } from "./curl-output.test-fixture.js";
 
 vi.mock("../types/index.js", async () => {
     const actual = await vi.importActual<typeof import("../types/index.js")>("../types/index.js");
@@ -96,7 +92,7 @@ function curlOutput(
     return {
         stdoutBytes: Buffer.concat([
             Buffer.from(body, "utf8"),
-            Buffer.from(`${SEP}${contentType}`, "utf8"),
+            Buffer.from(metadataSuffix({ contentType, separator: SEP }), "utf8"),
         ]),
         headerBytes: headerBlock === undefined ? undefined : Buffer.from(headerBlock, "utf8"),
         headerBytesReceived:

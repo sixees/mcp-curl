@@ -45,3 +45,18 @@ export function isWindowsReservedBasename(name: string): boolean {
  * `MCP_AUTH_TOKEN` / `McpCurlConfig.authToken` at startup.
  */
 export const PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
+
+// ============================================================================
+// HTTP Field Names
+// ============================================================================
+
+/**
+ * A header name cURL's `-w` format may carry as `%header{<name>}`: an RFC 9110
+ * `token` (one or more `tchar`) with `%` removed.
+ *
+ * `tchar` holds no `{`, `}`, whitespace or control byte, so a name cannot close
+ * the directive early and add a field of its own to the metadata block. `%` is
+ * a `tchar` but also cURL's write-out escape, and whether cURL expands it
+ * inside the braces is unmeasured, so it is refused rather than relied on.
+ */
+export const WRITE_OUT_HEADER_NAME = /^[!#$&'*+.^_`|~0-9A-Za-z-]+$/;

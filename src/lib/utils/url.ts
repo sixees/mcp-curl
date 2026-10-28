@@ -15,16 +15,27 @@ export function resolveBaseUrl(baseUrl: string, path: string): string {
     return `${base}${normalizedPath}`;
 }
 
+/** C0 controls and DEL, as a character-class body. */
+const URL_CONTROL_CLASS = "\\x00-\\x1f\\x7f";
+
+/**
+ * A C0 control character or DEL, anywhere in a URL bound for cURL.
+ *
+ * A WHATWG parser silently strips tab, CR and LF, which cURL is handed raw, so
+ * the URL the SSRF gate checks and the one cURL requests could differ. Every
+ * check refusing control bytes in such a URL is built from this one class.
+ */
+export const URL_CONTROL_CHARACTER = new RegExp(`[${URL_CONTROL_CLASS}]`);
+
 /**
  * A path that may stand in for an absolute URL on a server with a `baseUrl`:
- * one leading `/`, never `//` or `/\`, and no C0 control character or DEL
+ * one leading `/`, never `//` or `/\`, and no {@link URL_CONTROL_CHARACTER}
  * anywhere.
  *
  * A WHATWG parser reads a leading `//` or `/\` as scheme-relative — a host, not
- * a path. It also silently strips tab, CR and LF, which cURL is handed raw, so
- * the URL the SSRF gate checks and the one cURL requests could differ.
+ * a path.
  */
-export const RELATIVE_PATH_PATTERN = /^\/(?![/\\])[^\x00-\x1f\x7f]*$/;
+export const RELATIVE_PATH_PATTERN = new RegExp(`^/(?![/\\\\])[^${URL_CONTROL_CLASS}]*$`);
 
 /**
  * Whether the path part of `path` — everything before the first `?` or `#` —

@@ -12,17 +12,16 @@
 // or the barrel, so the name is the only thing distinguishing this file.
 // `CONVENTIONS.md` → *Naming* owns the rule.
 //
-// **Shared by three of the four suites that stub the executor**, because the
+// **Shared by every suite that stubs the executor**, because the
 // shape is what those suites assert against: the header block on its own field,
 // the `-w` metadata suffix on stdout, and a separator of the real length. A
 // per-suite copy drifts toward a fixture that passes against a handler inferring
 // the header/body boundary from the body, which `ARCHITECTURE.md` invariant 13
 // forbids.
 //
-// `register-all-tools.test.ts` keeps its own builder, so this module is not the
-// single source of that shape. What ties that suite to the contract instead is
-// `vi.mocked` on its executor stub plus an explicit `CommandResult` return type
-// on its builder — a compile error at one site rather than at 31 call sites.
+// `register-all-tools.test.ts` keeps its own `CommandResult` builder, typed
+// by its explicit `CommandResult` return type, but takes its metadata block
+// from `metadataSuffix` here — so the block has one spelling across every suite.
 //
 // The `vi.mock` declarations stay in each test file: vitest hoists them per
 // module, so they cannot live here.
@@ -38,17 +37,20 @@ import type { CommandResult } from "../execution/index.js";
  */
 export const METADATA_SEPARATOR = "\n---MCP-CURL-00000000-0000-4000-8000-000000000000---\n";
 
-// **No shared stub-hostname constant here, and it is a vitest constraint rather
-// than a preference.** `vi.mock` factories hoist above every import, so a factory
-// referencing an imported binding throws `Cannot access '__vi_import_N__' before
-// initialization`. `vi.hoisted` makes a value reachable from a factory but only
-// within one file, so it buys no sharing at all.
+// **No shared stub-hostname constant here.** `vi.mock` factories hoist above
+// every import, so a factory that READS an imported binding while it runs
+// throws `Cannot access '__vi_import_N__' before initialization` — and the
+// resolver stub's hostname is read then, as `mockResolvedValue`'s argument. A
+// binding read later, inside a function the factory returns, is initialised
+// by then: that is how `METADATA_SEPARATOR` reaches each suite's
+// `generateMetadataSeparator` stub. `vi.hoisted` makes a value reachable from
+// a factory but only within one file, so it buys no sharing at all.
 //
 // Each suite therefore spells its own hostname inside its own factory, and they
-// have drifted — `example.test` here, `api.example.test` in
-// `register-all-tools.test.ts`. Nothing branches on the hostname, so if anything
-// ever does, the fix is to assert the value rather than to share it.
-// `LESSONS.md` RC-35.
+// have drifted — `example.test` in the `curl-execute.*` suites,
+// `api.example.test` in `register-all-tools.test.ts`. Nothing branches on the
+// hostname, so if anything ever does, the fix is to assert the value rather
+// than to share it. `LESSONS.md` RC-35.
 
 /**
  * What `executeCommand` resolves with, as `executeCurlRequest` reads it.
@@ -59,8 +61,9 @@ export const METADATA_SEPARATOR = "\n---MCP-CURL-00000000-0000-4000-8000-0000000
  *
  * A new **required** field on `CommandResult` is then a compile error here. A new
  * **optional** one is not, and no type can close that — it arrives as `undefined`
- * with nothing erroring. What covers the gap, and the literals that bypass this
- * builder entirely, is `vi.mocked` at each suite's mock declaration.
+ * with nothing erroring. The literals that bypass this builder entirely are
+ * type-checked by `vi.mocked` at each suite's mock declaration, against the same
+ * `CommandResult` and with the same optional-field gap.
  */
 export type CurlOutputFixture = CommandResult & {
     headerBytes: Buffer | undefined;
@@ -72,6 +75,43 @@ type Bytes = Buffer | string;
 
 const toBuffer = (value: Bytes): Buffer =>
     Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
+
+/** The `-w` metadata fields, as cURL expands them. */
+export interface MetadataFields {
+    /** `%{content_type}` */
+    contentType: string;
+    /** `%{http_code}`; defaults to `200` */
+    httpCode?: number | string;
+    /** `%{redirect_url}`; defaults to `""`, cURL's value when there is no target */
+    redirectUrl?: string;
+    /** `%header{…}`; omit for a block that carries no sync field */
+    syncHeaderValue?: string;
+    /** defaults to `METADATA_SEPARATOR` */
+    separator?: string;
+}
+
+/**
+ * The `-w` metadata block in `buildCurlArgs`'s field order, as cURL writes it
+ * after the body.
+ *
+ * **The one place a test spells the block.** A suite that writes
+ * `${SEP}${contentType}` by hand produces a block with the wrong separator
+ * count, which parses as undetermined — so its assertions pass or fail against
+ * the strictest grammar rather than the path they name. `curl-args-builder.test.ts`
+ * holds this function to the builder's real format string.
+ */
+export function metadataSuffix({
+    contentType,
+    httpCode = 200,
+    redirectUrl = "",
+    syncHeaderValue,
+    separator = METADATA_SEPARATOR,
+}: MetadataFields): string {
+    const fields = [String(httpCode), redirectUrl];
+    if (syncHeaderValue !== undefined) fields.push(syncHeaderValue);
+    fields.push(contentType);
+    return fields.map((field) => separator + field).join("");
+}
 
 /**
  * Build cURL output as the real executor hands it back.
@@ -90,20 +130,18 @@ const toBuffer = (value: Bytes): Buffer =>
  * fixture could not express the size-guard cases at all.
  *
  * @param body - the response body's octets, before the metadata suffix
- * @param contentType - the value cURL's `-w` block carries
  * @param headerBlock - the response-header descriptor's content; omit for none
  */
 export function curlOutputFor({
     body,
-    contentType,
     headerBlock,
-}: {
+    ...fields
+}: Omit<MetadataFields, "separator"> & {
     body: Bytes;
-    contentType: string;
     headerBlock?: Bytes;
 }): CurlOutputFixture {
     const bodyBytes = toBuffer(body);
-    const meta = Buffer.from(`${METADATA_SEPARATOR}${contentType}`, "utf8");
+    const meta = Buffer.from(metadataSuffix(fields), "utf8");
     // **Empty and absent collapse to `undefined`, matching the executor** — a
     // fixture that can express a state the producer cannot is a fixture that can
     // give a test an unreachable branch to pass against.
