@@ -98,8 +98,12 @@ interface ApiServerOptionsBase {
     disableCurlExecute?: boolean;
     /** Disable the default jq_query tool */
     disableJqQuery?: boolean;
-    /** Generator configuration for tool creation */
-    generatorConfig?: GeneratorConfig;
+    /**
+     * Generator configuration for tool creation. Takes no `allowedHosts`: the
+     * YAML tools take the server's own `config.allowedHosts`, so a generator
+     * list here would be discarded rather than applied.
+     */
+    generatorConfig?: Omit<GeneratorConfig, "allowedHosts">;
 }
 
 /**

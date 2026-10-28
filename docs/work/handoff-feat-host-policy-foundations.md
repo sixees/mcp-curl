@@ -107,3 +107,34 @@ Todos 027–031 are deleted. The comment sync (5db3080) ran before these and pus
 **Tests:** full suite 45 files, 1604 passed, 7 skipped, read from vitest's summary line (not a certified verdict). `tsc --noEmit` shows the same 12 pre-existing test-file errors. Each fix's new test was probed by reverting the fix.
 
 **Not re-reviewed:** these fixes, and the P1 fixes above, are newer than the Surface-2 review (K-16).
+
+## Review Comments Addressed — 2026-10-28
+
+PR #50. Round 1: CodeRabbit (full review) and Codex (scoped `@codex review`). Codex reported no issues on `6c5cfdd`.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `generatorConfig.allowedHosts` is silently discarded by `createApiServer` | coderabbitai | Fix needed (P3, in scope) | `ApiServerOptionsBase.generatorConfig` is now `Omit<GeneratorConfig, "allowedHosts">`, so passing it does not compile; the runtime clear stays for untyped callers. A `@ts-expect-error` fixture in `api-server.test.ts` pins it (probed: unused directive with the `Omit` reverted). Chose a type error over the suggested `console.warn`: the field is new on this branch, so no caller passes it, and a log line nobody reads would not stop the surprise. |
+
+### Declined Findings
+
+None this round.
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None.
+
+### Outstanding Todos
+
+None.
+
+### Files Modified
+
+- `src/lib/api-server.ts`
+- `src/lib/api-server.test.ts`

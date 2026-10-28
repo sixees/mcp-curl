@@ -166,6 +166,16 @@ describe("createApiServerSync", () => {
         expect(weather!.meta.description).not.toMatch(/[‮]/);
     });
 
+    it("takes no generatorConfig.allowedHosts, which the server's own list would override", () => {
+        const schema = loadApiSchemaFromString(SAMPLE_YAML);
+        const server = createApiServerSync(schema, {
+            config: { allowedHosts: "any" },
+            // @ts-expect-error -- set config.allowedHosts instead
+            generatorConfig: { allowedHosts: ["api.weather.example.com"] },
+        });
+        expect(server.getConfig().allowedHosts).toBe("any");
+    });
+
     it("rejects caller-supplied schema with sanitised-to-empty title", () => {
         // A title of pure invisibles sanitises to "", which fails z.string().min(1).
         const schema = loadApiSchemaFromString(SAMPLE_YAML);
