@@ -42,7 +42,9 @@ export interface ProcessResponseOptions {
      * block was not located — as distinct from the origin sending none.
      *
      * Selects the strictest grammar in `defendText`, so that losing our own
-     * metadata can never be a way to switch a strip stage off.
+     * metadata can never be a way to switch a strip stage off. In
+     * `processResponse` it also means the end of the body is unknown, so a
+     * saved file is never described as the origin's exact bytes.
      */
     contentTypeUndetermined?: boolean;
     /**

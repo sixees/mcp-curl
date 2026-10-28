@@ -314,6 +314,31 @@ describe("curl_execute — a saved JSON body says which bytes reached disk", () 
         expect(text).toContain("The file holds the origin's exact bytes.");
     });
 
+    it("never calls the file the origin's exact bytes when the body's end was not found", async () => {
+        // A long Location and a long Content-Type, both legal, push the block's
+        // first separator out of the parser's window, so stdout is saved whole:
+        // body, separators, status and redirect URL. `LESSONS.md` RC-31.
+        const body = Buffer.from("plain body", "utf8");
+        mockedExecuteCommand.mockResolvedValue(
+            curlOutputFor({
+                body,
+                httpCode: 302,
+                redirectUrl: "https://example.test/next?" + "a".repeat(12_000),
+                contentType: `text/plain; p="${"x".repeat(5_000)}"`,
+            })
+        );
+
+        const text = (
+            await executeCurlRequest(params({ url: "https://example.test/moved" }))
+        ).content[0].text;
+
+        const onDisk = await readFile(savedPathFrom(text), "utf-8");
+        expect(onDisk.startsWith("plain body")).toBe(true);
+        expect(onDisk).toContain("MCP-CURL");
+        expect(text).not.toContain("The file holds the origin's exact bytes.");
+        expect(text).toContain("The end of the body could not be located");
+    });
+
     it("names every transform when a non-JSON body is saved sanitised", async () => {
         // The one arm that writes sanitised text: a non-JSON body Step 2
         // changed, read with the host's own tooling. The sanitiser collapses a
