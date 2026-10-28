@@ -20,8 +20,8 @@
 // forbids.
 //
 // `register-all-tools.test.ts` keeps its own `CommandResult` builder, typed
-// through `vi.mocked` on its executor stub, but takes its metadata block from
-// `metadataSuffix` here — so the block has one spelling across every suite.
+// by its explicit `CommandResult` return type, but takes its metadata block
+// from `metadataSuffix` here — so the block has one spelling across every suite.
 //
 // The `vi.mock` declarations stay in each test file: vitest hoists them per
 // module, so they cannot live here.
@@ -37,17 +37,20 @@ import type { CommandResult } from "../execution/index.js";
  */
 export const METADATA_SEPARATOR = "\n---MCP-CURL-00000000-0000-4000-8000-000000000000---\n";
 
-// **No shared stub-hostname constant here, and it is a vitest constraint rather
-// than a preference.** `vi.mock` factories hoist above every import, so a factory
-// referencing an imported binding throws `Cannot access '__vi_import_N__' before
-// initialization`. `vi.hoisted` makes a value reachable from a factory but only
-// within one file, so it buys no sharing at all.
+// **No shared stub-hostname constant here.** `vi.mock` factories hoist above
+// every import, so a factory that READS an imported binding while it runs
+// throws `Cannot access '__vi_import_N__' before initialization` — and the
+// resolver stub's hostname is read then, as `mockResolvedValue`'s argument. A
+// binding read later, inside a function the factory returns, is initialised
+// by then: that is how `METADATA_SEPARATOR` reaches each suite's
+// `generateMetadataSeparator` stub. `vi.hoisted` makes a value reachable from
+// a factory but only within one file, so it buys no sharing at all.
 //
 // Each suite therefore spells its own hostname inside its own factory, and they
-// have drifted — `example.test` here, `api.example.test` in
-// `register-all-tools.test.ts`. Nothing branches on the hostname, so if anything
-// ever does, the fix is to assert the value rather than to share it.
-// `LESSONS.md` RC-35.
+// have drifted — `example.test` in the `curl-execute.*` suites,
+// `api.example.test` in `register-all-tools.test.ts`. Nothing branches on the
+// hostname, so if anything ever does, the fix is to assert the value rather
+// than to share it. `LESSONS.md` RC-35.
 
 /**
  * What `executeCommand` resolves with, as `executeCurlRequest` reads it.
@@ -58,8 +61,9 @@ export const METADATA_SEPARATOR = "\n---MCP-CURL-00000000-0000-4000-8000-0000000
  *
  * A new **required** field on `CommandResult` is then a compile error here. A new
  * **optional** one is not, and no type can close that — it arrives as `undefined`
- * with nothing erroring. What covers the gap, and the literals that bypass this
- * builder entirely, is `vi.mocked` at each suite's mock declaration.
+ * with nothing erroring. The literals that bypass this builder entirely are
+ * type-checked by `vi.mocked` at each suite's mock declaration, against the same
+ * `CommandResult` and with the same optional-field gap.
  */
 export type CurlOutputFixture = CommandResult & {
     headerBytes: Buffer | undefined;

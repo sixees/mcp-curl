@@ -30,21 +30,22 @@ export interface ProcessResponseOptions {
      * The response's media type as **type/subtype only** — never its parameters.
      *
      * `parseResponseWithMetadata` is the producer and
-     * `ParsedResponse.contentType` owns the reason. Stated here too because this
-     * is the declaration a *caller* reads, and `processResponse`'s jq-filter
-     * error interpolates this value into model-facing text: a caller passing a
-     * raw header instead would widen that sentence into a remote-authored
-     * channel, which is the class `LESSONS.md` RC-30 is about.
+     * `ParsedResponse.contentType` owns the reason. `processResponse` does not
+     * read it: the artefact's form and the saved-file message are decided by
+     * `classifyBody`, never by the declared header, so no model-facing sentence
+     * carries it. Keep it type/subtype only regardless — a raw header here is a
+     * remote-authored channel waiting for its first reader (`LESSONS.md` RC-30).
      */
     contentType?: string;
     /**
      * True when the content type could not be DETERMINED — the `-w` metadata
      * block was not located — as distinct from the origin sending none.
      *
-     * Selects the strictest grammar in `defendText`, so that losing our own
-     * metadata can never be a way to switch a strip stage off. In
-     * `processResponse` it also means the end of the body is unknown, so a
-     * saved file is never described as the origin's exact bytes.
+     * `processResponse` reads it as "the end of the body is unknown", so a
+     * saved file is never described as the origin's exact bytes. Omitted reads
+     * as located: a library caller passing its own body knows where it ends.
+     * `defendText` takes a flag of the same name on its own options, where it
+     * selects the strictest grammar; this one does not reach it.
      */
     contentTypeUndetermined?: boolean;
     /**

@@ -141,8 +141,8 @@ describe("parseResponseWithMetadata", () => {
     it("does not reject a legal value for being long", () => {
         // No length precondition exists, and none is needed — the head match is
         // anchored and bounded, so the work is independent of the tail's size.
-        // An earlier design bounded the whole value at 1 KB, which would have
-        // rejected this and selected the strictest grammar for a real API.
+        // A bound on the whole value — 1 KB, say — would reject this and select
+        // the strictest grammar for a real API.
         const long = 'text/plain; a="' + "x".repeat(512) + '"; b="' + "x".repeat(512) + '"';
         expect(long.length).toBeGreaterThan(1024);
         expect(parseResponseWithMetadata(buf(`b${meta(long)}`), BLOCK).contentType).toBe("text/plain");
@@ -150,11 +150,10 @@ describe("parseResponseWithMetadata", () => {
 
     it("costs the same on a pathological tail as on a short one (invariant 15)", () => {
         // The head match is anchored at `^` with bounded quantifiers, so the
-        // attempt is O(1) in the input's length rather than merely linear. The
-        // grammar this replaced ended in two quantified runs over one alphabet
-        // separated by an optional element at a zero-width anchor, which made a
-        // failing suffix rescanned once per starting offset — measured quadratic
-        // at 27.4x for 8x input.
+        // attempt is O(1) in the input's length rather than merely linear. A
+        // grammar ending in two quantified runs over one alphabet, separated by an
+        // optional element at a zero-width anchor, rescans a failing suffix once
+        // per starting offset — measured quadratic at 27.4x for 8x input.
         //
         // A ratio over CPU time, never a wall-clock budget — `cpuMs` owns why,
         // and owns the pool precondition both rest on. Verified stable under 28
@@ -182,7 +181,7 @@ describe("parseResponseWithMetadata", () => {
         expect(small).toBeGreaterThan(0);
         const large = at(400);
 
-        // 8x the input. The head match measures ~1x; the replaced grammar
+        // 8x the input. The head match measures ~1x; the quadratic grammar above
         // measured 27.4x. 10x separates them with headroom on both sides.
         expect(large / small).toBeLessThan(10);
     });
@@ -192,9 +191,10 @@ describe("parseResponseWithMetadata — window sizing", () => {
     const meta = (contentType: string) => metadataSuffix({ contentType, separator: SEP });
 
     it("still finds the separator behind a long remote-chosen Content-Type", () => {
-        // A legal Content-Type this long used to evict the separator from a flat
-        // 200-byte window, at which point the block read as absent and the strip
-        // stages silently deselected on an ordinary reply.
+        // A legal Content-Type this long evicts the separator from a flat 200-byte
+        // window shared with it; the block then reads as absent and the strip
+        // stages silently deselect on an ordinary reply. The window is sized per
+        // field instead — `LIMITS.MAX_METADATA_TAIL_LENGTH` owns why.
         const longCt =
             'application/vnd.api+json; charset=utf-8; profile="' + "x".repeat(300) + '"';
         const raw = `{"id":1}${meta(longCt)}`;
@@ -393,8 +393,8 @@ describe("parseResponseWithMetadata — the multi-field block (invariant 13)", (
         expect(sync.contentType).toBe("text/plain");
 
         // An over-bound content type beside short fields is found and absent,
-        // where before this block it evicted the separator. Both select the
-        // strictest grammar; this way the body boundary is still exact.
+        // rather than evicting a separator from the window. Both select the
+        // strictest grammar; found, the body boundary is still exact.
         const ct = parse(
             `body${meta({ contentType: "text/plain; p=" + "x".repeat(LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH) })}`
         );

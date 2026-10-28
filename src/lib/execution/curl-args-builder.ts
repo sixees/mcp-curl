@@ -190,8 +190,8 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
 
     // Output format: the per-request separator ahead of EVERY field.
     //
-    // Three of the fields are remote-echoed, and that is safe because nothing
-    // the remote writes can split them: the separator is unguessable per
+    // Every field after `%{http_code}` is remote-echoed, and that is safe because
+    // nothing the remote writes can split them: the separator is unguessable per
     // request, so every occurrence on stdout is cURL's, and the parser rejects
     // a block whose separator count is wrong. `metadataDirectives` is the
     // layout both sides read (ARCHITECTURE.md invariant 13).

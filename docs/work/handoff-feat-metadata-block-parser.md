@@ -3,7 +3,7 @@
 **Date:** 2026-10-28 | **Branch:** feat/metadata-block-parser | **Plan:** docs/plans/2026-10-27-feat-host-policy-redirect-hops-plan.md | **Status:** in-review
 **Plan slice:** PR-2
 
-Created during review, not by the work run's Step 6. `/sixees-workflow:work --pr-key=PR-2` ran this review at its Step 5; the work-handoff schema follows once the operator has decided the escalation below.
+Created during review, not by the work run's Step 6. `/sixees-workflow:work --pr-key=PR-2` ran this review at its Step 5. The operator has decided the escalation below (Option 1, see *Review fixes*); the work-handoff schema has not been written yet.
 
 ## Code Review — 2026-10-28
 

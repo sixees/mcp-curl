@@ -549,8 +549,8 @@ interface SavedMessageFacts {
 }
 
 /**
- * An object rather than six positional arguments, because two of them are
- * `number` and their meanings are not interchangeable. Transposing `diskBytes`
+ * An object rather than positional arguments, because several share a type
+ * (`number`, `boolean`) and their meanings are not interchangeable. Transposing `diskBytes`
  * and `maxSize` produced *"Response (500000 bytes on disk) … exceeds the
  * 9400000-byte inline limit"* — a sentence that tells a model to raise
  * `max_result_size` to clear a limit it never hit — and it compiled, and it

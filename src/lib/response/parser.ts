@@ -163,9 +163,9 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * the layout `metadataDirectives` states for both this function and
  * `buildCurlArgs`, which must be handed the same `block`. The separator is the
  * same unique per-request value, which the remote cannot guess, so every
- * occurrence of it on stdout is cURL's. Three of the fields are remote-echoed
- * and may contain anything else; `ARCHITECTURE.md` invariant 13 states the
- * rules that keep them apart:
+ * occurrence of it on stdout is cURL's. Every field after `%{http_code}` is
+ * remote-echoed and may contain anything else; `ARCHITECTURE.md` invariant 13
+ * states the rules that keep them apart:
  *
  * - fields are split only by the separator;
  * - each field has its own bound, and an over-bound field is absent, never
