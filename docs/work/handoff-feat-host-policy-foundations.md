@@ -138,3 +138,34 @@ None.
 
 - `src/lib/api-server.ts`
 - `src/lib/api-server.test.ts`
+
+## Review Comments Addressed — 2026-10-28 (round 2)
+
+PR #50, after `8c70877` (test files brought in line with the types; `tsc --noEmit` now 0 errors), `92edf73` (`afterResponse` hooks receive every content entry as `ctx.content`) and `0590c82` (comment sync). CodeRabbit (full review) and Codex (scoped `@codex review`). Codex reported no issues on `0590c82`.
+
+### Changes Made
+
+None this round.
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Reason |
+|---|---|---|---|
+| Enforce the host policy on redirect destinations (`host-policy.ts`) | coderabbitai (Major) | P1, out of scope | The plan gives per-hop redirect validation to PR-3, which closes todo 007; nothing ships before 5.2.0. The docs and comments already say the list bounds only the request URL. |
+| Type `AfterResponseHook.content` for non-text entries (`public.ts`) | coderabbitai (Minor) | P3 | `content` mirrors `ToolResult.content`, which is text-only; an image entry needs an executor that breaks its own declared return type, and none in `src/` does. |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None.
+
+### Outstanding Todos
+
+None filed. Todo 007 (redirect hops) stays open for PR-3.
+
+### Files Modified
+
+- `docs/work/handoff-feat-host-policy-foundations.md`
