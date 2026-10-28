@@ -118,8 +118,8 @@ describe("createApiServer", () => {
     });
 
     it("throws when no schema source provided", async () => {
-        // Use type assertion to test runtime error handling for JavaScript users
-        // TypeScript's discriminated union now catches this at compile time
+        // Cast past the discriminated union, which rejects `{}` at compile time, to
+        // reach the runtime error a JavaScript caller gets.
         await expect(createApiServer({} as never)).rejects.toThrow(
             "Must provide one of: definitionPath, definitionContent, or schema"
         );
@@ -149,7 +149,7 @@ describe("createApiServerSync", () => {
     it("re-validates caller-supplied schema (PR-6a review fix — closes the bypass)", () => {
         // A consumer constructing an ApiSchema by hand (or by casting a
         // Record<string, unknown>) must not be able to skip the sanitiser.
-        // The factory now runs validateApiSchema() on the supplied schema,
+        // createApiServerSync runs validateApiSchema() on the supplied schema,
         // so bidi/zero-width bytes are stripped before tools are registered.
         const schema = loadApiSchemaFromString(SAMPLE_YAML);
         const poisoned = structuredClone(schema);
@@ -164,6 +164,16 @@ describe("createApiServerSync", () => {
         expect(weather).toBeDefined();
         expect(weather!.meta.title).not.toMatch(/[‮]/);
         expect(weather!.meta.description).not.toMatch(/[‮]/);
+    });
+
+    it("takes no generatorConfig.allowedHosts, which the server's own list would override", () => {
+        const schema = loadApiSchemaFromString(SAMPLE_YAML);
+        const server = createApiServerSync(schema, {
+            config: { allowedHosts: "any" },
+            // @ts-expect-error -- set config.allowedHosts instead
+            generatorConfig: { allowedHosts: ["api.weather.example.com"] },
+        });
+        expect(server.getConfig().allowedHosts).toBe("any");
     });
 
     it("rejects caller-supplied schema with sanitised-to-empty title", () => {

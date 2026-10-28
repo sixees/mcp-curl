@@ -32,6 +32,9 @@ export { CurlExecuteSchema, JqQuerySchema } from "./server/schemas.js";
 
 // Execution utilities
 export { executeCurlRequest } from "./tools/curl-execute.js";
+// What `executeCurlRequest`'s `extra.hostPolicy` takes, built from an
+// `allowedHosts`-shaped config so its entries are canonicalised.
+export { deriveHostPolicy, type HostPolicy } from "./config/security/host-policy.js";
 export { executeJqQuery } from "./tools/jq-query.js";
 
 // Server factory and registration

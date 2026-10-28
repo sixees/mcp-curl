@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import { isAllowedUrlScheme } from "../config/security/url-schemes.js";
+import { baseUrlHost } from "../config/security/host-policy.js";
 
 /**
  * Strip trailing slash from a base URL and prepend it to a path,
@@ -82,7 +83,7 @@ export function resolveRequestUrl(baseUrl: string | undefined, url: string): Res
     // Everything that can throw is inside the try: the caller runs this before
     // the wrap, so a throw would reach the model unwrapped (invariant 1).
     try {
-        if (isAllowedUrlScheme(new URL(baseUrl).protocol)) {
+        if (baseUrlHost(baseUrl) !== undefined) {
             return { ok: true, url: resolveBaseUrl(baseUrl, url) };
         }
     } catch {
@@ -186,10 +187,11 @@ export function createHttpOnlyUrlSchema(
 }
 
 /**
- * Extract a hostname from a URL string for use as a log label.
- * Returns the configured fallback (default: "unknown") if the URL is malformed
- * or missing — used in error paths where we still want a stable label without
- * letting URL-parse failures shadow the original error.
+ * Extract a hostname from a URL string, or `fallback` (default: "unknown")
+ * when the URL is malformed or missing. Never throws, so an error path keeps a
+ * stable log label without a URL-parse failure shadowing the original error.
+ * `executeCurlRequest` also reads it for the host-list check, passing `""` so
+ * an unparseable URL is told apart from a real host and left to the SSRF gate.
  *
  * Pure: depends only on its inputs.
  */

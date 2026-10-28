@@ -14,7 +14,9 @@ export interface McpCurlConfig {
     /**
      * Base URL that a `url` starting with a single `/` is resolved against, in
      * `curl_execute` and `utilities().executeRequest`. An absolute URL passes
-     * through unchanged, so this is a convenience, not a host restriction.
+     * through unchanged: resolving against this URL does not limit hosts. But
+     * with `allowedHosts` unset, the host list defaults to this URL's host alone,
+     * so setting `baseUrl` refuses absolute URLs to any other host.
      */
     baseUrl?: string;
     /** Default headers for `curl_execute` and `utilities().executeRequest`; a request's own header of the same name wins */
@@ -35,6 +37,20 @@ export interface McpCurlConfig {
     authToken?: string;
     /** Allowed origins for HTTP transport Origin header validation (default: localhost) */
     allowedOrigins?: readonly string[];
+    /**
+     * The hosts a request may go to, matched exactly, case-insensitively, with
+     * trailing dots ignored. Entries are bare host names or IP literals (IPv6 in
+     * brackets): no scheme, port, path, userinfo or wildcard, or `configure()`
+     * throws. `"any"` allows every host; `[]` refuses every request.
+     *
+     * Unset, a server with a `baseUrl` may reach only the `baseUrl` host, and
+     * `start()` throws if the `baseUrl` cannot give one; a server without a
+     * `baseUrl` may reach any host. The list is checked against the request
+     * URL's host before DNS, so a refused host is never resolved or contacted;
+     * it does not bound the hosts a followed redirect reaches. The SSRF
+     * gate applies on top of this list either way.
+     */
+    allowedHosts?: readonly string[] | "any";
     /** Default User-Agent for all requests. Empty string disables. */
     defaultUserAgent?: string;
     /** Default Referer for all requests. Empty string disables. */
@@ -162,11 +178,23 @@ export type BeforeRequestHook<T = CurlExecuteInput | JqQueryInput> = (
 ) => BeforeRequestResult<T> | Promise<BeforeRequestResult<T>>;
 
 /**
- * Hook called after successful tool execution.
+ * Hook called once the tool returns, an `isError` result included; a tool
+ * that throws reaches the onError hooks instead.
  * Receives the response for logging, metrics, caching, etc.
+ *
+ * `response` is the body, `content[0]`. `content` is every entry the tool
+ * returns: `curl_execute` adds response header text and server-authored
+ * notices as later entries, only when each has text, so a hook finds one by
+ * matching its text rather than its index. A non-zero cURL exit can leave the
+ * body empty with `isError` false, and its notice is in `content` alone. The
+ * entries are frozen copies, so a hook cannot change the result it observes.
  */
 export type AfterResponseHook<T = CurlExecuteInput | JqQueryInput> = (
-    ctx: HookContext<T> & { response: string; isError: boolean }
+    ctx: HookContext<T> & {
+        response: string;
+        content: ReadonlyArray<{ readonly type: "text"; readonly text: string }>;
+        isError: boolean;
+    }
 ) => void | Promise<void>;
 
 /**

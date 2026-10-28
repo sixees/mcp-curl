@@ -4,7 +4,7 @@
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
 import { executeCurlRequest, type CurlExecuteResult } from "../tools/curl-execute.js";
 import { executeJqQuery, type JqQueryResult } from "../tools/jq-query.js";
-import { LIMITS, applyDefaultHeaders } from "../config/index.js";
+import { LIMITS, applyDefaultHeaders, deriveHostPolicy } from "../config/index.js";
 import { resolveRequestUrl } from "../utils/index.js";
 
 /**
@@ -32,6 +32,14 @@ export interface InstanceUtilities {
      * value that starts `//`, `\` or `/\`, holds a control character, or holds
      * a `.` or `..` segment (literal or `%2e`-encoded) is refused with an error
      * result rather than requested.
+     *
+     * Rejects, rather than returning an error result, when `allowedHosts` is
+     * unset, `baseUrl` cannot give a host and the call names an absolute `url`:
+     * the configuration `start()` refuses with the same error, so it is reachable
+     * only before `start()`, and a misconfigured server surfaces it to the
+     * embedder, not the model. A relative `url` or a `path` against that
+     * `baseUrl` gets `resolveRequestUrl`'s error result first and never reaches
+     * the rejection.
      *
      * NOTE: This method calls executeCurlRequest directly and bypasses the hook
      * system (beforeRequest, afterResponse, onError). Use MCP tool invocation
@@ -109,7 +117,10 @@ export function createInstanceUtilities(config: Readonly<McpCurlConfig>): Instan
                 output_dir: params.output_dir ?? config.outputDir,
             };
 
-            return executeCurlRequest(fullParams, { allowLocalhost: config.allowLocalhost });
+            return executeCurlRequest(fullParams, {
+                allowLocalhost: config.allowLocalhost,
+                hostPolicy: deriveHostPolicy(config),
+            });
         },
 
         async queryFile(filepath: string, jqFilter: string): Promise<JqQueryResult> {

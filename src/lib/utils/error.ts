@@ -27,7 +27,6 @@ export function createValidationError(field: string, reason: string, suggestion?
     let message = `Invalid ${field}: ${reason}.`;
     if (suggestion) {
         message += ` ${suggestion}`;
-        // Ensure suggestion ends with period
         if (!suggestion.endsWith(".")) {
             message += ".";
         }
@@ -68,9 +67,9 @@ export function createFileError(filepath: string, reason: string): Error {
  *
  * `value` is sanitised before interpolation: CR, LF, and NUL bytes are
  * replaced with their visible escape forms (`\r`, `\n`, `\0`) so a
- * misconfigured operator value cannot forge log lines on stderr. Most
- * callers pass safe values already (paths, redaction markers); the
- * sanitisation is defence-in-depth for future callers.
+ * misconfigured operator value cannot forge log lines on stderr. Callers
+ * pass a raw environment value (the output-directory path) as well as
+ * redaction markers, so this is the guard on that value, not only a backstop.
  *
  * @param configName - The config or env var name (e.g., "MCP_CURL_OUTPUT_DIR")
  * @param value - The invalid value, OR a redaction marker like `[redacted]` /
@@ -107,5 +106,107 @@ export function createConfigError(configName: string, value: string, reason: str
 export function assertPositiveInteger(name: string, value: unknown): asserts value is number {
     if (!Number.isInteger(value) || (value as number) < 1) {
         throw new Error(`${name} must be a positive integer, got: ${String(value)}`);
+    }
+}
+
+/**
+ * The closed set of codes a local refusal carries: a request this server
+ * refused before cURL sent it. A model reads "no request was sent" as "a retry
+ * costs the upstream nothing", so a refusal partway through a redirect chain,
+ * where requests were sent, has its own code and its own first line.
+ */
+export const LOCAL_REFUSAL_CODES = [
+    "LOCAL_REFUSED_PATH",
+    "LOCAL_RATE_LIMITED",
+    "LOCAL_HOST_NOT_ALLOWED",
+    "LOCAL_REDIRECT_REFUSED",
+] as const;
+export type LocalRefusalCode = (typeof LOCAL_REFUSAL_CODES)[number];
+
+/**
+ * The one sentence after the first line, by reason. Each is server-authored
+ * and names no host, URL, `Location` or header value: the text reaches the
+ * model, and a remote chooses those values (RC-30). Slash-free, so
+ * `sanitizeErrorMessage`'s path rewrite leaves it alone.
+ */
+export const LOCAL_REFUSAL_REASONS = {
+    "host-not-allowed": "The target host is not in this server's allowedHosts list.",
+    "address-blocked": "The target address is blocked by this server's SSRF protection.",
+    "rate-limited": "The rate limit for this target or session is exhausted; wait before retrying.",
+    "redirect-limit": "The redirect chain reached max_redirects.",
+    "unusable-redirect-target": "The redirect target is not a usable http(s) URL.",
+    "path-names-host": "A relative url that starts with two slashes or a backslash names a host, not a path; start it with a single forward slash.",
+} as const;
+export type LocalRefusalReason = keyof typeof LOCAL_REFUSAL_REASONS;
+
+/**
+ * The reasons each code may carry. A hop-1 code has the one reason that
+ * produces it; a redirect hop can be refused for any of the hop checks, so
+ * `LOCAL_REDIRECT_REFUSED` takes those. Typed per code so a contradictory
+ * pair does not compile.
+ */
+export const LOCAL_REFUSAL_CODE_REASONS = {
+    LOCAL_REFUSED_PATH: ["path-names-host"],
+    LOCAL_RATE_LIMITED: ["rate-limited"],
+    LOCAL_HOST_NOT_ALLOWED: ["host-not-allowed"],
+    LOCAL_REDIRECT_REFUSED: [
+        "host-not-allowed",
+        "address-blocked",
+        "rate-limited",
+        "redirect-limit",
+        "unusable-redirect-target",
+    ],
+} as const satisfies { readonly [C in LocalRefusalCode]: readonly LocalRefusalReason[] };
+
+type ReasonFor<C extends LocalRefusalCode> = (typeof LOCAL_REFUSAL_CODE_REASONS)[C][number];
+type NothingSentCode = Exclude<LocalRefusalCode, "LOCAL_REDIRECT_REFUSED">;
+
+/** What a refusal says: `requestsSent` exists only where requests were sent. */
+export type LocalRefusal =
+    | { [C in NothingSentCode]: { readonly code: C; readonly reason: ReasonFor<C>; readonly requestsSent?: never } }[NothingSentCode]
+    | {
+          readonly code: "LOCAL_REDIRECT_REFUSED";
+          readonly reason: ReasonFor<"LOCAL_REDIRECT_REFUSED">;
+          readonly requestsSent: number;
+      };
+
+const nothingSent = (refusal: LocalRefusal) => `Refused locally: no request was sent (${refusal.code}).`;
+
+/** The first line, by code. One entry per member of {@link LOCAL_REFUSAL_CODES}. */
+export const LOCAL_REFUSAL_FIRST_LINES: { readonly [C in LocalRefusalCode]: (refusal: LocalRefusal) => string } = {
+    LOCAL_REFUSED_PATH: nothingSent,
+    LOCAL_RATE_LIMITED: nothingSent,
+    LOCAL_HOST_NOT_ALLOWED: nothingSent,
+    LOCAL_REDIRECT_REFUSED: (refusal) => {
+        const sent = refusal.code === "LOCAL_REDIRECT_REFUSED" ? refusal.requestsSent : 0;
+        return `Redirect refused locally: ${sent} request(s) were sent; hop ${sent + 1} was not (LOCAL_REDIRECT_REFUSED).`;
+    },
+};
+
+/** The model-facing text of a refusal: the first line, then the reason. */
+export function formatLocalRefusal(refusal: LocalRefusal): string {
+    return `${LOCAL_REFUSAL_FIRST_LINES[refusal.code](refusal)} ${LOCAL_REFUSAL_REASONS[refusal.reason]}`;
+}
+
+/**
+ * A refusal this server made locally: a request refused before cURL sent it,
+ * or, as `LOCAL_REDIRECT_REFUSED`, a redirect hop refused after `requestsSent`
+ * requests went out. The message is {@link formatLocalRefusal}'s text, so
+ * whatever reads it reads that.
+ */
+export class LocalRefusalError extends Error {
+    readonly code: LocalRefusalCode;
+    readonly reason: LocalRefusalReason;
+    readonly requestsSent: number;
+
+    constructor(refusal: LocalRefusal) {
+        if (refusal.code === "LOCAL_REDIRECT_REFUSED" && !(Number.isInteger(refusal.requestsSent) && refusal.requestsSent >= 1)) {
+            throw new TypeError("LOCAL_REDIRECT_REFUSED needs requestsSent, a positive integer");
+        }
+        super(formatLocalRefusal(refusal));
+        this.name = "LocalRefusalError";
+        this.code = refusal.code;
+        this.reason = refusal.reason;
+        this.requestsSent = refusal.code === "LOCAL_REDIRECT_REFUSED" ? refusal.requestsSent : 0;
     }
 }

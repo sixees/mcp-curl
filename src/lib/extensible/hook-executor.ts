@@ -8,17 +8,20 @@ import type {
     CurlExecuteInput,
     JqQueryInput,
 } from "../types/public.js";
-import type { Hooks, ToolResult, ToolName } from "./types.js";
+import type { Hooks, ToolResult, ToolName, ToolExtra } from "./types.js";
+import { deriveHostPolicy } from "../config/index.js";
 import type { WrappableResult } from "../response/post-processor.js";
 
 /**
  * Per-call wrap closure injected by the caller (built in `tool-wrapper.ts`
- * via `createWrapper(config)`). The hook-executor calls this once at the
- * pipeline exit (after `afterResponse` hooks run, or when a hook
+ * via `createWrapper(config)`). The hook-executor calls this at its two
+ * returning exits (after `afterResponse` hooks run, or when a hook
  * short-circuits) so that:
  *
- *   1. No `beforeRequest` hook can bypass the wrap, including one that
- *      short-circuits by returning a `CallToolResult`.
+ *   1. A `beforeRequest` hook that short-circuits by returning a
+ *      `CallToolResult` cannot bypass the wrap. A hook that THROWS is not
+ *      covered: the `beforeRequest` loop sits outside the `try`, and the
+ *      `catch` re-throws, so either throw leaves unwrapped.
  *   2. The hostname passed to wrap is derived from the **final** `ctx.params`,
  *      after every `beforeRequest` hook has had its turn. A hook that rewrites
  *      `params.url` — routing through a proxy, say — decides the host the
@@ -58,7 +61,7 @@ type HostnameExtractor<T> = (params: T) => string;
  *   Subsequent onError hooks continue to run, and the original tool error is re-thrown.
  *
  * @param tool - Name of the tool being executed
- * @param params - Tool parameters (will be modified by hooks)
+ * @param params - Tool parameters; copied into the hook context, so hooks modify the copy and never the caller's object
  * @param config - Frozen server configuration
  * @param hooks - Registered hook functions
  * @param sessionId - Session ID for HTTP transport
@@ -71,7 +74,7 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
     config: Readonly<McpCurlConfig>,
     hooks: Hooks,
     sessionId: string | undefined,
-    executor: (p: T, extra: { sessionId?: string; allowLocalhost?: boolean }) => Promise<ToolResult>,
+    executor: (p: T, extra: ToolExtra) => Promise<ToolResult>,
     wrap: WrapFn,
     hostnameOf: HostnameExtractor<T>
 ): Promise<ToolResult> {
@@ -83,18 +86,16 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         config,
     };
 
-    // Run beforeRequest hooks sequentially
     for (const hook of hooks.beforeRequest) {
         const result = (await hook(ctx)) as BeforeRequestResult<T> | undefined;
 
         if (result) {
-            // Check for short-circuit
             if ("shortCircuit" in result && result.shortCircuit) {
-                // Defence-in-depth: a hook that returns synthesised text
-                // bypasses the cURL pipeline (and therefore `processor.ts`'s
-                // sanitise+detect pass). Route the synthesised result through
-                // the same wrap the executor's return value would hit, so the
-                // LLM never receives unsanitised hook output. Hostname comes
+                // Defence-in-depth: a hook that returns synthesised text skips
+                // the executor, so route it through the same wrap the executor's
+                // return value would hit. It gets exactly the response defence: the
+                // full `defendText` pipeline on non-JSON text, detection alone on a
+                // JSON document, which passes through unchanged. Hostname comes
                 // from the post-mutation params so a proxy-rewriting hook is
                 // attributed to the rewritten host, not the original.
                 const shortCircuitResult: ToolResult = {
@@ -104,7 +105,6 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
                 return wrap(shortCircuitResult, hostnameOf(ctx.params));
             }
 
-            // Merge params if provided
             if ("params" in result && result.params) {
                 ctx.params = { ...ctx.params, ...result.params };
             }
@@ -113,45 +113,45 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
 
     try {
         // Execute the tool with potentially modified params
-        const response = await executor(ctx.params, { sessionId, allowLocalhost: config.allowLocalhost });
+        const response = await executor(ctx.params, {
+            sessionId,
+            allowLocalhost: config.allowLocalhost,
+            hostPolicy: deriveHostPolicy(config),
+        });
 
         // Run afterResponse hooks sequentially.
         //
-        // **`content[0]` is the BODY on every branch, and that is the whole
-        // guarantee, and it is not the only entry.** `ToolResult.content`
-        // is an array rather than a 1-tuple, and `curl_execute` appends header
-        // text and server-authored notices as further entries, so a hook sees
-        // the body alone. That is a known gap rather than a property: a
-        // logging or caching hook does not observe the headers, and on a
-        // non-zero cURL exit it can see an empty body with `isError: false`
-        // while the failure notice sits in an entry it was never handed.
-        // Widening it changes what every existing hook receives, so it is the
-        // operator's call and is recorded as follow-up rather than taken here.
         // **Guarded, because the declaration cannot be trusted here.**
         // `ToolResult.content` is `Array<…>`, so `[]` type-checks, and
         // `CurlRegisterToolOptions.executor` is published API — a custom tool
-        // returning no entries for "no data" turned this read into a
-        // `TypeError` and failed the whole call. `ToolResult`'s own docblock
-        // requires a consumer to runtime-check the entry it reads rather than
-        // trusting the type; this is that check.
+        // returning no entries for "no data", or no array at all, would
+        // otherwise turn these reads into a `TypeError` and fail the whole
+        // call. `ToolResult`'s own docblock requires a consumer to
+        // runtime-check the entry it reads rather than trusting the type; this
+        // is that check.
         //
-        // Empty string rather than a throw: `afterResponse` is observational,
-        // and "" is already what an empty body (a 204, a HEAD) hands a hook, so
-        // this adds no state a hook was not written to see.
-        const responseText = response.content[0]?.text ?? "";
+        // Empty rather than a throw: `afterResponse` is observational, and ""
+        // is already what an empty body (a 204, a HEAD) hands a hook, so this
+        // adds no state a hook was not written to see. Hooks get copies because
+        // the originals are about to be wrapped and returned, and the copies are
+        // frozen so one hook cannot alter what a later hook sees.
+        const entries = Array.isArray(response.content) ? response.content : [];
+        const responseText = entries[0]?.text ?? "";
+        const content = Object.freeze(entries.map((entry) => Object.freeze({ ...entry })));
         for (const hook of hooks.afterResponse) {
             await hook({
                 ...ctx,
                 response: responseText,
+                content,
                 isError: !!response.isError,
             });
         }
 
-        // PR-6b: wrap fires at the pipeline exit so the hostname reflects
+        // The wrap fires at the pipeline exit so the hostname reflects
         // the final (post-hook) params. The wrap is idempotent on
-        // already-wrapped results (e.g. when the inner curl pipeline already
-        // sanitised), so the caller may still pass the result through outer
-        // wraps without double-processing.
+        // already-wrapped results (an executor that wrapped its own result
+        // passes through untouched), so the caller may still pass the result
+        // through outer wraps without double-processing.
         return wrap(response, hostnameOf(ctx.params));
     } catch (error) {
         // Run onError hooks sequentially

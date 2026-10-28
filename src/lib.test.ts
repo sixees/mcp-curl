@@ -20,8 +20,9 @@ import * as publicApi from "./lib.js";
 // declarations are erased by TypeScript and leave no runtime trace. A future PR
 // dropping one of these `export type` lines from `lib.ts` would silently pass
 // the runtime frozen-surface check below. This `import type` pins each one: if
-// the symbol stops being re-exported from `./lib.js`, this file fails to
-// compile, and the test suite refuses to start.
+// the symbol stops being re-exported from `./lib.js`, `tsc --noEmit` reports an
+// error on this file. `npm test` does not catch it — vitest strips types
+// without checking them — so this guard holds only where the type check runs.
 //
 // Keep this list in lockstep with the `export type { … }` blocks in `src/lib.ts`.
 import type {
@@ -79,7 +80,7 @@ type _PinnedPublicTypes = [
     HostRateLimit,
     TransportMode,
     HookContext,
-    BeforeRequestResult,
+    BeforeRequestResult<unknown>,
     BeforeRequestHook,
     AfterResponseHook,
     OnErrorHook,

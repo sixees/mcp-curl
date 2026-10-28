@@ -7,6 +7,7 @@ import { validateApiSchema } from "./schema/validator.js";
 import { generateToolDefinitions, getMethodAnnotations } from "./schema/generator.js";
 import type { GeneratorConfig } from "./schema/generator.js";
 import type { McpCurlConfig } from "./types/public.js";
+import { deriveHostPolicy } from "./config/index.js";
 import type { ApiSchema } from "./schema/types.js";
 
 /**
@@ -18,7 +19,6 @@ function configureServerFromSchema(
     schema: ApiSchema,
     options: ApiServerOptionsBase
 ): void {
-    // Apply schema-derived configuration
     const schemaConfig: Partial<McpCurlConfig> = {
         baseUrl: schema.api.baseUrl,
     };
@@ -37,7 +37,6 @@ function configureServerFromSchema(
         ...options.config,
     });
 
-    // Disable default tools if requested
     if (options.disableCurlExecute) {
         server.disableCurlExecute();
     }
@@ -58,11 +57,16 @@ function configureServerFromSchema(
         defaultUserAgent: mergedConfig.defaultUserAgent,
         defaultReferer: mergedConfig.defaultReferer,
         ...options.generatorConfig,
-        // PR-6b: server-level enableSpotlighting is authoritative across all
+        // Server-level enableSpotlighting is authoritative across all
         // tool paths and must NOT be overridable via options.generatorConfig.
-        // Set after the spread so the asymmetry it closes (built-in tools
-        // spotlight; YAML tools opt out via generatorConfig) cannot reappear.
+        // Set after the spread so a generatorConfig cannot opt the YAML tools
+        // out of spotlighting the built-in tools apply.
         enableSpotlighting: mergedConfig.enableSpotlighting,
+        // Cleared for the same reason: the YAML tools take the server's own
+        // policy, passed per call below, so a generatorConfig cannot open them
+        // wider than curl_execute. A generatorConfig.baseUrl on another host
+        // does not widen it either; that embedder sets allowedHosts.
+        allowedHosts: undefined,
     };
 
     const toolDefs = generateToolDefinitions(schema, generatorConfig);
@@ -76,7 +80,10 @@ function configureServerFromSchema(
                 inputSchema: toolDef.inputSchema,
                 annotations: getMethodAnnotations(toolDef.method),
             },
-            toolDef.handler
+            // Derived per call, not here: the server still accepts configure()
+            // until start(), and getConfig() is the frozen config by the time a
+            // tool can be called, which start() has already validated.
+            (params, extra) => toolDef.handler(params, { ...extra, hostPolicy: deriveHostPolicy(server.getConfig()) })
         );
     }
 }
@@ -91,8 +98,12 @@ interface ApiServerOptionsBase {
     disableCurlExecute?: boolean;
     /** Disable the default jq_query tool */
     disableJqQuery?: boolean;
-    /** Generator configuration for tool creation */
-    generatorConfig?: GeneratorConfig;
+    /**
+     * Generator configuration for tool creation. Takes no `allowedHosts`: the
+     * YAML tools take the server's own `config.allowedHosts`, so a generator
+     * list here would be discarded rather than applied.
+     */
+    generatorConfig?: Omit<GeneratorConfig, "allowedHosts">;
 }
 
 /**
@@ -180,14 +191,13 @@ export type CreateApiServerOptions =
 export async function createApiServer(
     options: CreateApiServerOptions
 ): Promise<McpCurlServer> {
-    // Load schema from the appropriate source
     let schema: ApiSchema;
 
     if (options.schema) {
         // Re-run the validator on caller-supplied schemas. The plain
         // `ApiSchema` type can be constructed/cast without ever passing
         // through `ApiSchemaValidator`, so without this call the runtime
-        // sanitisation invariant (PR-6a) would have a public bypass —
+        // sanitisation invariant would have a public bypass —
         // bidi/zero-width bytes in the supplied schema would flow into MCP
         // tool advertisement unchecked.
         schema = validateApiSchema(options.schema);
@@ -201,7 +211,6 @@ export async function createApiServer(
         );
     }
 
-    // Create server instance and configure from schema
     const server = new McpCurlServer();
     configureServerFromSchema(server, schema, options);
 

@@ -2,7 +2,7 @@
 // Tests for createWrapper — the defence-in-depth wrap (PR-6b).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createWrapper, isWrappedResult } from "./post-processor.js";
+import { createWrapper, isWrappedResult, type WrappableResult } from "./post-processor.js";
 import { formatResponse } from "./formatter.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
@@ -265,7 +265,7 @@ describe("createWrapper — error handling", () => {
 
         // Wrap-error log emitted, with the error class but not the message
         const calls = (console.error as ReturnType<typeof vi.spyOn>).mock.calls;
-        const errorLine = calls.find((c) =>
+        const errorLine = calls.find((c: unknown[]) =>
             String(c[0]).startsWith("[wrap-error]")
         );
         expect(errorLine).toBeDefined();
@@ -278,15 +278,13 @@ describe("createWrapper — error handling", () => {
 
 describe("createWrapper — frozen / non-extensible inputs (fail-open)", () => {
     it("does not throw when wrapping a frozen isError result", () => {
-        // tag() uses Object.defineProperty which throws on frozen objects.
-        // The wrap must catch internally and pass the result through —
-        // defence-in-depth must never propagate exceptions to the handler.
-        // The wrap always returns a fresh spread with the processed content,
-        // so the freeze check here applies to `tag(spread)` rather than
-        // `tag(frozen)`; the spread is never frozen, so tag succeeds. The
-        // remaining failure mode this test exercises is downstream tag
-        // attempts on a result that flows through other layers — covered by
-        // the sanitiser-throws-on-frozen test below.
+        // tag() uses Object.defineProperty, which throws on a frozen object,
+        // and defence-in-depth must never propagate exceptions to the handler.
+        // This fixture never reaches that throw: an array-content result is
+        // returned as a fresh spread, which is never frozen, so `tag(spread)`
+        // succeeds. What this case pins is that a frozen input is still
+        // processed and keeps `isError`. `tag()` on the frozen original itself
+        // is the non-array and sanitiser-throws-on-frozen cases below.
         const wrap = createWrapper({});
         const frozen = Object.freeze({
             content: [{ type: "text", text: "boom" }],
@@ -301,7 +299,7 @@ describe("createWrapper — frozen / non-extensible inputs (fail-open)", () => {
 
     it("does not throw when wrapping a frozen non-array-content result", () => {
         const wrap = createWrapper({});
-        const frozen = Object.freeze({ content: "not an array" });
+        const frozen = Object.freeze({ content: "not an array" }) as unknown as WrappableResult;
         expect(() => wrap(frozen, "host.com")).not.toThrow();
     });
 
@@ -398,7 +396,7 @@ describe("createWrapper — null/undefined content items (PR #29 round-2 hardeni
 describe("createWrapper — content-shape edge cases", () => {
     it("non-array content is passed through tagged (no throw)", () => {
         const wrap = createWrapper({ enableSpotlighting: true });
-        const result = { content: "not an array" };
+        const result = { content: "not an array" } as unknown as WrappableResult;
         const out = wrap(result, "host.com");
         expect(out).toBe(result);
         expect(isWrappedResult(out)).toBe(true);
@@ -406,7 +404,7 @@ describe("createWrapper — content-shape edge cases", () => {
 
     it("missing content is passed through tagged", () => {
         const wrap = createWrapper({});
-        const result = {} as { content?: unknown };
+        const result = {} as unknown as WrappableResult;
         const out = wrap(result, "host.com");
         expect(out).toBe(result);
         expect(isWrappedResult(out)).toBe(true);

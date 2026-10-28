@@ -757,6 +757,7 @@ describe("getAuthConfig", () => {
                 type: "header",
                 name: "X-API-Key",
                 envVar: "MY_API_KEY",
+                required: true,
             },
         });
 
@@ -772,6 +773,7 @@ describe("getAuthConfig", () => {
                 type: "query",
                 name: "api_key",
                 envVar: "MY_API_KEY",
+                required: true,
             },
         });
 
@@ -785,6 +787,7 @@ describe("getAuthConfig", () => {
         const result = getAuthConfig({
             bearer: {
                 envVar: "MY_TOKEN",
+                required: true,
             },
         });
 
@@ -824,6 +827,7 @@ describe("getAuthConfig", () => {
                     type: "header",
                     name: "X-API-Key",
                     envVar: "MY_API_KEY",
+                    required: true,
                 },
             },
             { MY_API_KEY: "override-value" }
@@ -841,9 +845,11 @@ describe("getAuthConfig", () => {
                 type: "header",
                 name: "X-API-Key",
                 envVar: "MY_API_KEY",
+                required: true,
             },
             bearer: {
                 envVar: "MY_TOKEN",
+                required: true,
             },
         });
 
@@ -880,7 +886,10 @@ import { vi, type Mock } from "vitest";
 import { generateToolDefinitions } from "./generator.js";
 import * as curlExecuteModule from "../tools/curl-execute.js";
 
-// Mock executeCurlRequest
+// Replace the executor so these handler tests assert the request the
+// generator builds without spawning cURL or touching the network. Vitest
+// hoists this above the imports, which is why `generator.ts`, imported at
+// the top of the file, still binds the mock.
 vi.mock("../tools/curl-execute.js", () => ({
     executeCurlRequest: vi.fn(),
 }));
@@ -1914,6 +1923,7 @@ describe("PR-6a sanitisation invariant", () => {
                         name: "q",
                         in: "query" as const,
                         type: "string" as const,
+                        required: false,
                         description: "raw​desc",
                     },
                 ],

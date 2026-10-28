@@ -88,6 +88,23 @@ describe("McpCurlServer", () => {
             expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
         });
 
+        it("keeps allowedHosts in canonical form, and freezes the copy getConfig() returns", () => {
+            server.configure({ allowedHosts: ["API.example.com."] });
+            const hosts = server.getConfig().allowedHosts;
+            expect(hosts).toEqual(["api.example.com"]);
+            expect(Object.isFrozen(hosts)).toBe(true);
+            server.configure({ allowedHosts: "any" });
+            expect(server.getConfig().allowedHosts).toBe("any");
+        });
+
+        it("throws on a bad allowedHosts entry, and changes nothing", () => {
+            server.configure({ baseUrl: "https://api.example.com" });
+            expect(() =>
+                server.configure({ allowedHosts: ["https://api.example.com"], baseUrl: "https://other.example" })
+            ).toThrow(/allowedHosts\[0\]/);
+            expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
+        });
+
         it("should not warn on known config keys", () => {
             const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
             server.configure({ baseUrl: "https://api.example.com", defaultTimeout: 30 });
@@ -444,7 +461,7 @@ describe("McpCurlServer.registerCustomTool()", () => {
         // Sanitized length = MAX (exactly at limit), so no truncation warning.
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const handler = vi.fn().mockResolvedValue({ content: [] });
-        // MAX printable chars + 1 zero-width space (U+200B stripped to empty by sanitizeDescription)
+        // MAX printable chars + 1 trailing zero-width space: sanitizeDescription turns U+200B into a space, and only its final trim removes it
         const descWithAttackChar = "a".repeat(MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH) + "\u200B";
         server.registerCustomTool(
             "my_tool",
@@ -944,8 +961,8 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         clearInjectionDetectionMap();
 
         // Captures every registerTool call so the test can invoke the wrapped
-        // handler synchronously. The lifecycle methods touched by
-        // start("stdio") are no-ops.
+        // handler directly, without an MCP client. The lifecycle methods touched
+        // by start("stdio") are no-ops.
         tools = stubServerFactory().tools;
         // Avoid noisy stderr in tests.
         vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1135,8 +1152,8 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         expect(result.content[0].text).not.toContain("ignore previous instructions");
     });
 
-    // Positive control. Every assertion above is an absence, and a handler
-    // whose output was replaced with "" would satisfy all three at once.
+    // Positive control. The script-block and markup-comment cases above assert
+    // only absences, which a handler whose output was replaced with "" would satisfy.
     it("leaves legitimate user-handler text byte-identical", async () => {
         const legit = "Lookup complete: 3 matches for 'alpha' (12ms).";
         const wrapped = await startWithCustomTool("legit", async () => ({
@@ -1210,6 +1227,23 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         const second = await server.utilities().executeRequest({ url: URL });
         expect(second.isError).toBe(true);
         expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+    });
+
+    it("throws at start() for a baseUrl with no host and allowedHosts unset, before any launch side effect", async () => {
+        const bad = new McpCurlServer().configure({ baseUrl: "not a url" });
+        await expect(bad.start("stdio")).rejects.toThrow(/baseUrl is not an absolute http\(s\) URL/);
+        expect(bad.isStarted()).toBe(false);
+        expect(connect).not.toHaveBeenCalled();
+        // The rate limit was never claimed, so this suite's server can still take it.
+        await server.start("stdio");
+        expect(server.isStarted()).toBe(true);
+    });
+
+    it('starts with a bad baseUrl when allowedHosts is "any"', async () => {
+        const open = new McpCurlServer().configure({ baseUrl: "not a url", allowedHosts: "any" });
+        await open.start("stdio");
+        expect(open.isStarted()).toBe(true);
+        await open.shutdown();
     });
 
     it("restores the default limit at shutdown()", async () => {

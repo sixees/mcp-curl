@@ -1,11 +1,13 @@
 // src/lib/extensible/tool-wrapper.test.ts
 // Tests for applyConfigTransformsCurl default User-Agent and Referer behavior,
-// and the post-processor wrap (PR-6b) via registerCurlToolWithHooks. The
-// baseUrl path through the SDK's own input parse is in tool-wrapper.e2e.test.ts.
+// and for registerCurlToolWithHooks: the post-processor wrap (PR-6b), what
+// afterResponse hooks receive, input-schema selection, and a baseUrl
+// resolution refusal. The baseUrl path through the SDK's own input parse is
+// in tool-wrapper.e2e.test.ts.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { applyConfigTransformsCurl, registerCurlToolWithHooks } from "./tool-wrapper.js";
-import type { McpCurlConfig, CurlExecuteInput } from "../types/public.js";
+import type { AfterResponseHook, McpCurlConfig, CurlExecuteInput } from "../types/public.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { isWrappedResult } from "../response/post-processor.js";
@@ -289,6 +291,48 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
         expect(text).toBe("Synthesised by hook: malicious");
         // And tagged so the outer wrap is a no-op
         expect(isWrappedResult(result)).toBe(true);
+    });
+});
+
+describe("afterResponse hooks (registerCurlToolWithHooks integration)", () => {
+    const runWith = async (executorResult: unknown) => {
+        const { server: fakeServer, tools } = captureTools();
+        const seen: Parameters<AfterResponseHook>[0][] = [];
+        registerCurlToolWithHooks(fakeServer, {
+            executor: vi.fn().mockResolvedValue(executorResult) as never,
+            enabled: true,
+            config: { enableSpotlighting: false } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [(ctx) => void seen.push(ctx)], onError: [] },
+        });
+        const result = await tools.get("curl_execute")!.handler(makeParams(), { sessionId: undefined });
+        return { seen, result: result as { content: { text: string }[]; isError?: boolean } };
+    };
+
+    it("hands a hook the body as response and every entry as content", async () => {
+        const entries = [
+            { type: "text", text: "" },
+            { type: "text", text: "HTTP/1.1 200 OK" },
+            { type: "text", text: "[mcp-curl] cURL exited with code 28" },
+        ];
+        const { seen, result } = await runWith({ content: entries });
+
+        expect(seen).toHaveLength(1);
+        expect(seen[0].response).toBe("");
+        expect(seen[0].isError).toBe(false);
+        expect(seen[0].content).toEqual(entries);
+        // A hook cannot change the result it observes.
+        expect(Object.isFrozen(seen[0].content)).toBe(true);
+        expect(() => {
+            (seen[0].content[0] as { text: string }).text = "changed";
+        }).toThrow(TypeError);
+        expect(result.content.map((part) => part.text)).toEqual(entries.map((entry) => entry.text));
+    });
+
+    it("hands a hook empty values for a result with no content array", async () => {
+        const { seen, result } = await runWith({ content: undefined });
+        expect(seen[0].response).toBe("");
+        expect(seen[0].content).toEqual([]);
+        expect(result.isError).toBeFalsy();
     });
 });
 
