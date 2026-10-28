@@ -22,9 +22,18 @@ Called after successful tool execution. Receives the response for logging, metri
 
 ```typescript
 type AfterResponseHook = (
-    ctx: HookContext & { response: string; isError: boolean }
+    ctx: HookContext & {
+        response: string;  // the body: content[0]
+        content: ReadonlyArray<{ type: "text"; text: string }>;  // every entry
+        isError: boolean;
+    }
 ) => void;
 ```
+
+`content` holds every entry the tool returns. `curl_execute` adds the response
+header text and any `[mcp-curl]` notice as later entries, each only when it has
+text, so match an entry by its text rather than its position. A cURL failure
+can leave `response` empty with `isError` false; its notice is in `content`.
 
 ### onError
 
