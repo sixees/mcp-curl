@@ -12,17 +12,16 @@
 // or the barrel, so the name is the only thing distinguishing this file.
 // `CONVENTIONS.md` → *Naming* owns the rule.
 //
-// **Shared by three of the four suites that stub the executor**, because the
+// **Shared by every suite that stubs the executor**, because the
 // shape is what those suites assert against: the header block on its own field,
 // the `-w` metadata suffix on stdout, and a separator of the real length. A
 // per-suite copy drifts toward a fixture that passes against a handler inferring
 // the header/body boundary from the body, which `ARCHITECTURE.md` invariant 13
 // forbids.
 //
-// `register-all-tools.test.ts` keeps its own builder, so this module is not the
-// single source of that shape. What ties that suite to the contract instead is
-// `vi.mocked` on its executor stub plus an explicit `CommandResult` return type
-// on its builder — a compile error at one site rather than at 31 call sites.
+// `register-all-tools.test.ts` keeps its own `CommandResult` builder, typed
+// through `vi.mocked` on its executor stub, but takes its metadata block from
+// `metadataSuffix` here — so the block has one spelling across every suite.
 //
 // The `vi.mock` declarations stay in each test file: vitest hoists them per
 // module, so they cannot live here.
@@ -73,6 +72,43 @@ type Bytes = Buffer | string;
 const toBuffer = (value: Bytes): Buffer =>
     Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
 
+/** The `-w` metadata fields, as cURL expands them. */
+export interface MetadataFields {
+    /** `%{content_type}` */
+    contentType: string;
+    /** `%{http_code}`; defaults to `200` */
+    httpCode?: number | string;
+    /** `%{redirect_url}`; defaults to `""`, cURL's value when there is no target */
+    redirectUrl?: string;
+    /** `%header{…}`; omit for a block that carries no sync field */
+    syncHeaderValue?: string;
+    /** defaults to `METADATA_SEPARATOR` */
+    separator?: string;
+}
+
+/**
+ * The `-w` metadata block in `buildCurlArgs`'s field order, as cURL writes it
+ * after the body.
+ *
+ * **The one place a test spells the block.** A suite that writes
+ * `${SEP}${contentType}` by hand produces a block with the wrong separator
+ * count, which parses as undetermined — so its assertions pass or fail against
+ * the strictest grammar rather than the path they name. `curl-args-builder.test.ts`
+ * holds this function to the builder's real format string.
+ */
+export function metadataSuffix({
+    contentType,
+    httpCode = 200,
+    redirectUrl = "",
+    syncHeaderValue,
+    separator = METADATA_SEPARATOR,
+}: MetadataFields): string {
+    const fields = [String(httpCode), redirectUrl];
+    if (syncHeaderValue !== undefined) fields.push(syncHeaderValue);
+    fields.push(contentType);
+    return fields.map((field) => separator + field).join("");
+}
+
 /**
  * Build cURL output as the real executor hands it back.
  *
@@ -90,20 +126,18 @@ const toBuffer = (value: Bytes): Buffer =>
  * fixture could not express the size-guard cases at all.
  *
  * @param body - the response body's octets, before the metadata suffix
- * @param contentType - the value cURL's `-w` block carries
  * @param headerBlock - the response-header descriptor's content; omit for none
  */
 export function curlOutputFor({
     body,
-    contentType,
     headerBlock,
-}: {
+    ...fields
+}: Omit<MetadataFields, "separator"> & {
     body: Bytes;
-    contentType: string;
     headerBlock?: Bytes;
 }): CurlOutputFixture {
     const bodyBytes = toBuffer(body);
-    const meta = Buffer.from(`${METADATA_SEPARATOR}${contentType}`, "utf8");
+    const meta = Buffer.from(metadataSuffix(fields), "utf8");
     // **Empty and absent collapse to `undefined`, matching the executor** — a
     // fixture that can express a state the producer cannot is a fixture that can
     // give a test an unreachable branch to pass against.

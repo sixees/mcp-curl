@@ -22,7 +22,7 @@ import { savedPathFrom } from "./curl-output.test-fixture.js";
 // returns of its own for cases the builder cannot express (a missing metadata
 // block, a dropped stdout field) — `vi.mocked` below is what type-checks those
 // against `CommandResult`.
-import { METADATA_SEPARATOR as SEP, curlOutputFor } from "./curl-output.test-fixture.js";
+import { METADATA_SEPARATOR as SEP, curlOutputFor, metadataSuffix } from "./curl-output.test-fixture.js";
 
 vi.mock("../types/index.js", async () => {
     const actual = await vi.importActual<typeof import("../types/index.js")>("../types/index.js");
@@ -338,7 +338,7 @@ describe("curl_execute include_headers — no header block arrived", () => {
         return {
             stdoutBytes: Buffer.concat([
                 Buffer.from(body, "utf8"),
-                Buffer.from(`${SEP}${contentType}`, "utf8"),
+                Buffer.from(metadataSuffix({ contentType }), "utf8"),
             ]),
             headerBytes: undefined,
             headerBytesReceived: undefined,
@@ -442,7 +442,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
         // The positive control. Without it, deleting the reassurance entirely
         // would satisfy the assertion above.
         mockedExecuteCommand.mockResolvedValue({
-            stdoutBytes: Buffer.from(`body${SEP}text/plain`, "utf8"),
+            stdoutBytes: Buffer.from(`body${metadataSuffix({ contentType: "text/plain" })}`, "utf8"),
             headerBytes: undefined,
             headerBytesReceived: undefined,
             stderr: "",
@@ -553,7 +553,7 @@ describe("curl_execute include_headers — degraded results stay honest", () => 
     it("reports what the origin sent, not what the executor kept", async () => {
         const kept = Buffer.from("HTTP/2 200 \r\nx-a: 1\r\n\r\n", "utf8");
         mockedExecuteCommand.mockResolvedValue({
-            stdoutBytes: Buffer.from(`ok${SEP}text/plain`, "utf8"),
+            stdoutBytes: Buffer.from(`ok${metadataSuffix({ contentType: "text/plain" })}`, "utf8"),
             headerBytes: kept,
             headerBytesReceived: 2_500_000,
             stderr: "",
@@ -583,7 +583,7 @@ describe("curl_execute include_headers — an unsupported host says so", () => {
     it("reports a host limitation as a host limitation, not as origin behaviour", async () => {
         setPlatform("linux");
         mockedExecuteCommand.mockResolvedValue({
-            stdoutBytes: Buffer.from(`{"id":1}${SEP}application/json`, "utf8"),
+            stdoutBytes: Buffer.from(`{"id":1}${metadataSuffix({ contentType: "application/json" })}`, "utf8"),
             headerBytes: undefined,
             headerBytesReceived: undefined,
             stderr: "",
@@ -607,7 +607,7 @@ describe("curl_execute include_headers — an unsupported host says so", () => {
     it("says it in words on the plain branch too", async () => {
         setPlatform("linux");
         mockedExecuteCommand.mockResolvedValue({
-            stdoutBytes: Buffer.from(`body${SEP}text/plain`, "utf8"),
+            stdoutBytes: Buffer.from(`body${metadataSuffix({ contentType: "text/plain" })}`, "utf8"),
             headerBytes: undefined,
             headerBytesReceived: undefined,
             stderr: "",
@@ -629,7 +629,7 @@ describe("curl_execute include_headers — an unsupported host says so", () => {
         // Positive control: without it, always reporting "unsupported" passes.
         setPlatform("darwin");
         mockedExecuteCommand.mockResolvedValue({
-            stdoutBytes: Buffer.from(`body${SEP}text/plain`, "utf8"),
+            stdoutBytes: Buffer.from(`body${metadataSuffix({ contentType: "text/plain" })}`, "utf8"),
             headerBytes: undefined,
             headerBytesReceived: undefined,
             stderr: "",
@@ -783,6 +783,26 @@ describe("curl_execute include_headers — remaining channels", () => {
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.response).toContain("[docs](https://example.com/x)");
         expect(parsed.response).not.toContain("[link removed]");
+    });
+
+    it("treats a block with the wrong separator count as undetermined, at the consumer", async () => {
+        // The parser's verdict is only worth something where it is acted on
+        // (RC-31). Found, the saved artefact is the origin's body to the byte.
+        // A block one field short — the single-field shape this block replaced —
+        // must not be found: the artefact is then all of stdout, separator
+        // included, which is the undetermined arm `ParsedResponse.bodyBytes`
+        // describes. The positive control proves the difference is the count.
+        const body = "plain body";
+        const saved = async (stdout: string) => {
+            mockedExecuteCommand.mockResolvedValueOnce({ ...noMetadataStdout(""), stdoutBytes: Buffer.from(stdout, "utf8") });
+            const result = await executeCurlRequest(params({ url: "https://example.test/x", include_metadata: true }));
+            return savedArtefactBytes((JSON.parse(result.content[0].text) as { message: string }).message);
+        };
+
+        expect(await saved(`${body}${metadataSuffix({ contentType: "text/plain" })}`)).toBe(body);
+        const shortBlock = await saved(`${body}${SEP}text/plain`);
+        expect(shortBlock).toContain("MCP-CURL");
+        expect(shortBlock).toContain("text/plain");
     });
 });
 

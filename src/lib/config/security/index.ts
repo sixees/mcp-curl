@@ -15,6 +15,7 @@ export {
     WINDOWS_RESERVED_BASENAMES,
     isWindowsReservedBasename,
     PRINTABLE_ASCII,
+    HTTP_FIELD_NAME,
 } from "./validation.js";
 
 export {

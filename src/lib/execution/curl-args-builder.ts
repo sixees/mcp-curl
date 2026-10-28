@@ -4,6 +4,7 @@
 import { validateNoCRLF } from "../security/index.js";
 import { LIMITS } from "../config/index.js";
 import { ALLOWED_URL_SCHEMES_CURL_FLAG } from "../config/security/url-schemes.js";
+import { HTTP_FIELD_NAME } from "../config/security/validation.js";
 import { HEADER_DUMP_PATH, platformSupportsHeaderDump } from "./command-executor.js";
 
 /**
@@ -66,6 +67,13 @@ export interface CurlArgsParams {
      * Prevents response injection attacks by using unpredictable separator.
      */
     metadataSeparator: string;
+    /**
+     * Response header whose value rides the `-w` block as its own field, for
+     * the rate-limit sync. Absent, the block carries no header field, and
+     * `parseResponseWithMetadata` must be told the same through its
+     * `syncHeader` option or the separator count will not match.
+     */
+    syncHeaderName?: string;
 }
 
 /**
@@ -187,18 +195,23 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
         args.push("-s");
     }
 
-    // Output format: unique per-request separator, then the metadata fields.
+    // Output format: the per-request separator ahead of EVERY field.
     //
-    // `%{content_type}` is the only field, and it is remote-echoed. That is
-    // safe here precisely because it is last with nothing after it: there is no
-    // delimiter for a crafted Content-Type to spoof, and the separator ahead of
-    // it is unguessable per request. A second field here would end that: it
-    // would give a crafted Content-Type a delimiter to spoof, so any addition
-    // goes BEFORE the content type (ARCHITECTURE.md invariant 13).
-    const metadataSuffix =
-        params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") +
-        "%{content_type}";
-    args.push("-w", metadataSuffix);
+    // Three of the fields are remote-echoed, and that is safe because nothing
+    // the remote writes can split them: the separator is unguessable per
+    // request, so every occurrence on stdout is cURL's, and the parser rejects
+    // a block whose separator count is wrong. `parseResponseWithMetadata` reads
+    // the fields in this order (ARCHITECTURE.md invariant 13).
+    if (params.syncHeaderName !== undefined && !HTTP_FIELD_NAME.test(params.syncHeaderName)) {
+        throw new Error("Invalid sync header name: must be an HTTP field name (RFC 9110 token).");
+    }
+    const sep = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+    const fields = ["%{http_code}", "%{redirect_url}"];
+    if (params.syncHeaderName !== undefined) {
+        fields.push(`%header{${params.syncHeaderName}}`);
+    }
+    fields.push("%{content_type}");
+    args.push("-w", fields.map((field) => sep + field).join(""));
 
     // DNS pinning with --resolve to prevent DNS rebinding attacks
     // Format: --resolve hostname:port:ip

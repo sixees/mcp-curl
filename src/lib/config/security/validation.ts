@@ -45,3 +45,17 @@ export function isWindowsReservedBasename(name: string): boolean {
  * `MCP_AUTH_TOKEN` / `McpCurlConfig.authToken` at startup.
  */
 export const PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
+
+// ============================================================================
+// HTTP Field Names
+// ============================================================================
+
+/**
+ * An HTTP field name: RFC 9110 `token`, one or more `tchar`.
+ *
+ * Bounds what a configured header name may be before it is written into
+ * cURL's `-w` format as `%header{<name>}`. `tchar` holds no `{`, `}`, whitespace
+ * or control byte, so a name cannot close the directive early and add a field
+ * of its own to the metadata block.
+ */
+export const HTTP_FIELD_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;

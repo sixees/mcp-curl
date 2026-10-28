@@ -5,6 +5,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { buildCurlArgs, type CurlArgsParams } from "./curl-args-builder.js";
 import { HEADER_DUMP_PATH } from "./command-executor.js";
 import { LIMITS } from "../config/index.js";
+import { parseResponseWithMetadata } from "../response/parser.js";
+import { metadataSuffix } from "../tools/curl-output.test-fixture.js";
 
 function makeParams(overrides: Partial<CurlArgsParams> = {}): CurlArgsParams {
     return {
@@ -76,15 +78,70 @@ describe("buildCurlArgs", () => {
     });
 
     describe("-w metadata block", () => {
-        // %{content_type} is remote-echoed and is safe as the block's whole
-        // content only while nothing follows it. A second field appended here
-        // would give a crafted Content-Type a delimiter to spoof, so this
-        // asserts the shape rather than merely the presence.
-        it("emits content_type as the entire metadata block", () => {
-            const args = buildCurlArgs(makeParams());
-            const w = args[args.indexOf("-w") + 1];
-            expect(w).toContain("%{content_type}");
-            expect(w.endsWith("%{content_type}")).toBe(true);
+        const formatOf = (args: string[]) => args[args.indexOf("-w") + 1];
+
+        /**
+         * What cURL writes for a `-w` format: escapes unescaped, each variable
+         * replaced by its value. Tests the builder's REAL format string, so the
+         * fixture and parser below are held to what is spawned rather than to
+         * each other (K-17).
+         */
+        const expand = (format: string, values: Record<string, string>) =>
+            format
+                .replace(/\\n/g, "\n")
+                .replace(/\\r/g, "\r")
+                .replace(/%\{(\w+)\}|%header\{([^}]+)\}/g, (_m, v: string, h: string) => values[v ?? `header:${h}`] ?? "");
+
+        it("puts the per-request separator ahead of every field, content_type last", () => {
+            expect(formatOf(buildCurlArgs(makeParams()))).toBe(
+                "\\n---SEP---\\n%{http_code}\\n---SEP---\\n%{redirect_url}\\n---SEP---\\n%{content_type}"
+            );
+        });
+
+        it("adds the sync header field before content_type only when asked", () => {
+            expect(formatOf(buildCurlArgs(makeParams({ syncHeaderName: "x-remaining" })))).toBe(
+                "\\n---SEP---\\n%{http_code}\\n---SEP---\\n%{redirect_url}" +
+                    "\\n---SEP---\\n%header{x-remaining}\\n---SEP---\\n%{content_type}"
+            );
+        });
+
+        it("refuses a sync header name that could reshape the format", () => {
+            // `}` would close the directive early and let the rest of the name
+            // add a field; the others are not field names at all.
+            for (const name of ["", "a}%{redirect_url", "a{b", "a b", "a\r\nb", "a:b"]) {
+                expect(() => buildCurlArgs(makeParams({ syncHeaderName: name }))).toThrow(/sync header name/);
+            }
+        });
+
+        it("writes what the shared fixture writes, and the parser reads it back", () => {
+            const values = {
+                http_code: "302",
+                redirect_url: "https://example.com/next",
+                "header:x-remaining": "41",
+                content_type: "application/json",
+            };
+            for (const syncHeaderName of [undefined, "x-remaining"]) {
+                const written = expand(formatOf(buildCurlArgs(makeParams({ syncHeaderName }))), values);
+                expect(written).toBe(
+                    metadataSuffix({
+                        httpCode: values.http_code,
+                        redirectUrl: values.redirect_url,
+                        syncHeaderValue: syncHeaderName ? values["header:x-remaining"] : undefined,
+                        contentType: values.content_type,
+                        separator: "\n---SEP---\n",
+                    })
+                );
+                const parsed = parseResponseWithMetadata(Buffer.from(`body${written}`), "\n---SEP---\n", {
+                    syncHeader: syncHeaderName !== undefined,
+                });
+                expect(parsed).toMatchObject({
+                    metadataFound: true,
+                    httpStatus: 302,
+                    redirectUrl: "https://example.com/next",
+                    syncHeaderValue: syncHeaderName ? "41" : undefined,
+                    contentType: "application/json",
+                });
+            }
         });
 
         // The boundary is structural, so no byte count rides this channel. One
@@ -94,12 +151,6 @@ describe("buildCurlArgs", () => {
             const args = buildCurlArgs(makeParams({ include_headers: true }));
             const w = args[args.indexOf("-w") + 1];
             expect(w).not.toContain("%{size_header}");
-        });
-
-        it("puts the whole metadata block after the escaped separator", () => {
-            const args = buildCurlArgs(makeParams());
-            const w = args[args.indexOf("-w") + 1];
-            expect(w).toBe("\\n---SEP---\\n%{content_type}");
         });
     });
 
