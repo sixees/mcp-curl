@@ -115,6 +115,17 @@ describe("buildCurlArgs", () => {
             }
         });
 
+        it("refuses an empty separator on both sides, before the parser can scan with it", () => {
+            // A zero-length match never advances the parser's scan, so the guard
+            // must hold before the loop; it lives in `metadataDirectives`, which
+            // the builder and the parser both call.
+            const metadataBlock = { separator: "" };
+            expect(() => buildCurlArgs(makeParams({ metadataBlock }))).toThrow(/separator must not be empty/);
+            expect(() => parseResponseWithMetadata(Buffer.from("body"), metadataBlock)).toThrow(
+                /separator must not be empty/
+            );
+        });
+
         it("writes what the shared fixture writes, and the parser reads it back", () => {
             const values = {
                 http_code: "302",

@@ -30,10 +30,17 @@ export interface MetadataBlock {
  * the reader counts them, so this is the only statement of the layout
  * (`ARCHITECTURE.md` invariant 13).
  *
- * @throws when `syncHeaderName` is not a {@link WRITE_OUT_HEADER_NAME}
+ * An empty separator is refused here, for both sides: it splits nothing, and
+ * the parser's scan would never advance past a zero-length match.
+ *
+ * @throws when `separator` is empty, or `syncHeaderName` is not a
+ *   {@link WRITE_OUT_HEADER_NAME}
  */
 export function metadataDirectives(block: MetadataBlock): string[] {
-    const { syncHeaderName } = block;
+    const { separator, syncHeaderName } = block;
+    if (separator.length === 0) {
+        throw new Error("Invalid metadata block: separator must not be empty.");
+    }
     if (syncHeaderName === undefined) {
         return ["%{http_code}", "%{redirect_url}", "%{content_type}"];
     }

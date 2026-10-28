@@ -94,3 +94,37 @@ Todos 024–028 are deleted.
 **Tests:** full suite 45 files, 1620 passed, 7 skipped, read from vitest's summary line (not a certified verdict). `tsc --noEmit` clean. The four consumer suites each pass run alone (35, 55, 14, 54). Teeth probes: `%` accepted, a fixed field count, an unbounded count, a newline-trimming count, a narrowed control class and the claim ignoring the flag each failed a named test; files restored and `cmp`-verified.
 
 **Not re-reviewed:** these fixes are newer than the Surface-2 review above (K-16).
+
+## Review Comments Addressed — 2026-10-28
+
+PR #51, round 1. CodeRabbit (`full review`), Codex (scoped `@codex review`) and Copilot (review request). Baseline before the triggers: 1 open entry. The round's read returned 6 entries: 2 findings, CodeRabbit's command acknowledgement, Codex's summary and its "no major issues" receipt on `6ee4311`, and Copilot's review body ("Approval recommended", all 20 files covered, no comments).
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| An empty `MetadataBlock.separator` never advances the parser's scan loop (`parser.ts`) | coderabbitai | Fix needed (P3, in scope: the loop is new on this branch) | `metadataDirectives` refuses an empty separator, so the builder and the parser both throw before any scan. Regression test in `curl-args-builder.test.ts` covers both callers; removing the guard fails it. The parser is not on a public entry point, so only a direct caller could pass one. |
+| `architecture.md` → *Stage notes* → "Metadata separator" still says the separator splits the body from `%{content_type}` | coderabbitai (review body, outside the diff's hunks) | Documentation (P3, in scope: the file is in the diff and this PR made the line false) | Rewritten to describe a separator ahead of every field in `metadataDirectives`' order, split by separator only, with a wrong count undetermined. |
+
+### Declined Findings
+
+None this round.
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None.
+
+### Outstanding Todos
+
+None filed.
+
+### Files Modified
+
+- `src/lib/types/common.ts`
+- `src/lib/execution/curl-args-builder.test.ts`
+- `docs/architecture/architecture.md`
+- `docs/work/handoff-feat-metadata-block-parser.md`
