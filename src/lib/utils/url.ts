@@ -214,3 +214,15 @@ export function safeHostname(url: string | undefined, fallback = "unknown"): str
         return fallback;
     }
 }
+
+/**
+ * The port a parsed http(s) URL connects to: its explicit port, else the
+ * scheme's default. WHATWG drops a port equal to the default, so `url.port` is
+ * empty for both "no port" and ":443" on https, and both mean 443.
+ *
+ * Pure: depends only on its input.
+ */
+export function effectivePort(url: URL): number {
+    if (url.port) return parseInt(url.port, 10);
+    return url.protocol === "https:" ? 443 : 80;
+}

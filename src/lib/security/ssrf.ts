@@ -12,7 +12,7 @@ import {
 } from "../config/security/ssrf.js";
 import { isAllowedUrlScheme } from "../config/security/url-schemes.js";
 import type { UrlValidationResult } from "../types/index.js";
-import { getErrorMessage } from "../utils/index.js";
+import { getErrorMessage, effectivePort } from "../utils/index.js";
 
 /**
  * Check if localhost requests are allowed.
@@ -81,7 +81,7 @@ export async function validateUrlAndResolveDns(
         throw new Error(`Invalid URL format: ${getErrorMessage(error)}`);
     }
     const hostname = parsed.hostname.toLowerCase();
-    const port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === "https:" ? 443 : 80);
+    const port = effectivePort(parsed);
 
     // Only allow schemes from the shared allowlist (defense-in-depth alongside the schema-layer check in utils/url.ts)
     if (!isAllowedUrlScheme(parsed.protocol)) {
