@@ -75,7 +75,7 @@ This is not a CRUD application. The "domain" is request mediation; entities are 
 - cURL is pinned to the resolved IP via `--resolve hostname:port:ip`, which closes DNS rebinding
   **on every hop**. cURL never follows a redirect itself: `executeCurlRequest` takes the target from
   `%{redirect_url}` and sends each hop back through the host list, the SSRF check, its own pin and
-  the rate limit. A cross-origin hop forwards only `Accept*`, `User-Agent` and the body headers.
+  the rate limit. A cross-origin hop forwards only `Accept`, `Accept-Language`, `Accept-Encoding`, `User-Agent` and, where the body is kept, the body headers; `basic_auth` and `bearer_token` are dropped.
 - `include_headers` reports the header block out of the body — never into the saved file or the jq_filter input — so it composes
   with `jq_filter` and `save_to_file`; a saved file holds the body only. Header text is
   server-controlled and takes the **full** defence pipeline (`processor.ts::defendText` —

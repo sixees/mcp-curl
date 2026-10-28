@@ -12,7 +12,10 @@ dependencies: []
 
 An ordered safety check — host list, then SSRF/DNS pin, then rate limit — is spelled
 out twice: once for the first hop and once for redirect hops. The two copies differ
-only in how they report a refusal. A change made to one arm only (a new option to
+in how they report a refusal and in how the host-list check reads the host: hop 1
+reads it through `safeHostname(url, "")` and leaves an unparseable URL to the SSRF
+gate's own message, while a redirect hop's URL is already a parsed `href`. A change
+made to one arm only (a new option to
 `validateUrlAndResolveDns`, a reorder, a new check) leaves the other ungated, and
 redirect hops are the ones whose host the remote chose.
 
@@ -22,15 +25,16 @@ Class `duplicated-logic` (pattern-recognition-specialist, Surface-2 review of
 `feat/per-hop-redirects`, 2026-10-28). Confidence medium. Found with `rg`, confirmed by reading.
 
 **Failure:** an option threaded into the hop-1 arm's `validateUrlAndResolveDns`
-call only would leave redirect hops validating without it, breaking invariant 2's
-"every hop validated and pinned" with the suite green unless the redirect suite
+call only would leave redirect hops validating without it, breaking the guarantee
+that every redirect hop is validated and pinned like hop 1 (invariant 2;
+`architecture.md` → *Network / SSRF Defense — strategy*), with the suite green unless the redirect suite
 covers that option.
 
 **Instances:**
 - `src/lib/tools/curl-execute.ts::gateHop` (the `requestsSent === 0` arm) — `isHostAllowed`, `validateUrlAndResolveDns(url, { allowLocalhost })`, `checkRateLimits`, each throwing its own error — confirmed
-- `src/lib/tools/curl-execute.ts::gateHop` (the redirect arm) — the same three calls, same arguments and order, each mapped to `refuse(reason)` — confirmed
+- `src/lib/tools/curl-execute.ts::gateHop` (the redirect arm) — the same three calls in the same order, each mapped to `refuse(reason)`; the host-list check takes `new URL(url).hostname` where hop 1 takes `safeHostname(url, "")` — confirmed
 
-**Sweep:** `rg -n 'validateUrlAndResolveDns\(|checkRateLimits\(|isHostAllowed\(' src -g '*.ts' -g '!*.test.ts'` — 6 hits: 3 definitions, 3 call sites; 2 sequences confirmed.
+**Sweep:** `rg -n 'validateUrlAndResolveDns\(|checkRateLimits\(|isHostAllowed\(' src -g '*.ts' -g '!*.test.ts'` — 9 hits: 3 definitions, 6 call sites (all in `gateHop`); 2 sequences confirmed.
 
 ## Proposed Solutions
 

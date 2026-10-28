@@ -89,7 +89,7 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
     // `proxy`, `resolve` or `insecure` overriding the argv below.
     const args: string[] = ["-q"];
 
-    // Restrict initial request to the shared scheme allowlist (defense-in-depth alongside URL validation in ssrf.ts)
+    // Restrict the request to the shared scheme allowlist (defense-in-depth alongside URL validation in ssrf.ts); one spawn is one hop, so this covers every URL cURL connects to
     args.push("--proto", ALLOWED_URL_SCHEMES_CURL_FLAG);
 
     // Method

@@ -10,6 +10,8 @@
  * Used by:
  * - `createHttpOnlyUrlSchema` schema validator (rejects URLs whose `.protocol` is not in this set)
  * - `validateUrlAndResolveDns` (mirrors the rejection at DNS-resolution time)
+ * - `curl-execute.ts::redirectTarget` (a redirect to any other scheme is unusable, never followed)
+ * - `host-policy.ts::baseUrlHost` (a `baseUrl` with any other scheme yields no host)
  *
  * Keep schemes in trailing-colon form (matching `URL.protocol`, e.g. `http:`).
  * `ALLOWED_URL_SCHEMES_CURL_FLAG` is derived from this list at module init,

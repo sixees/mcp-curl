@@ -214,12 +214,13 @@ function redirectTarget(raw: string): URL | undefined {
 /**
  * The checks every hop passes before cURL is spawned for it: the host list
  * before DNS, then the SSRF check that yields the `--resolve` pin, then the
- * rate limit, last, so a refused hop costs no quota (RC-19).
+ * rate limit, last, because `checkRateLimits` records the request before it
+ * can throw, so a hop refused by an earlier check costs no quota.
  *
- * On hop 1 each check refuses in its own words, as it always has. On a
- * redirect hop every refusal is `LOCAL_REDIRECT_REFUSED` with a fixed reason,
- * because requests were already sent and because the checks' own messages
- * name the host, which on a redirect hop the remote chose (RC-30).
+ * On hop 1 each check refuses in its own words. On a redirect hop every
+ * refusal is `LOCAL_REDIRECT_REFUSED` with a fixed reason, because requests
+ * were already sent and because the checks' own messages name the host,
+ * which on a redirect hop the remote chose (RC-30).
  */
 async function gateHop(
     url: string,
@@ -540,8 +541,9 @@ export async function executeCurlRequest(
         // never is, because other errors' messages can echo remote content.
         const code = error instanceof LocalRefusalError ? ` ${error.code}` : "";
         console.error(`curl_execute error: [${hostname}] ${errorClass}${code}`);
-        // A local refusal is not an error executing a request: none was sent,
-        // and its own first line says so.
+        // A local refusal is not an error executing a request: its own first line
+        // says how many requests were sent — none, or for LOCAL_REDIRECT_REFUSED,
+        // the `requestsSent` before the refused hop.
         const text = error instanceof LocalRefusalError
             ? error.message
             : `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`;

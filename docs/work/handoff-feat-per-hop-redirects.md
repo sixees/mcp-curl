@@ -63,7 +63,7 @@ This handoff was created during review, not by the work run's Step 6. `/sixees-w
   - Without `-q`, one spawn followed a loopback 302 and printed the target's body (`TARGET|200|`).
   - With `-q` first, it stopped at the 302 (`|302|<target>`).
 - Fix proposed by the reviewer: put `-q` first in `buildCurlArgs`'s argv, add a unit test that pins `args[0]`, and add an e2e test with a curlrc that holds `location`.
-- Why it escalates: before this branch the argv always carried `-L --max-redirs --proto-redir`, so a curlrc `location` added nothing. After it, the curlrc is the only thing that can turn following on, and when it does, the loop cannot see it.
+- Why it escalates: before this branch the argv carried `-L --max-redirs --proto-redir` whenever `follow_redirects` was not `false`, so on that path a curlrc `location` added nothing (with `follow_redirects: false` it could already turn following on, unseen). After it, the curlrc is the only thing that can turn following on, on every request, and when it does, the loop cannot see it.
 
 ### Verified claims
 
@@ -120,7 +120,7 @@ Todo 007 has been deleted with `git rm`, at the operator's request. Its acceptan
 
 ## Summary
 
-mcp-curl now follows HTTP redirects itself rather than letting cURL do it. Previously only the first hop was validated, and a 302 to `169.254.169.254` or an RFC 1918 address reached the model (todo 007, P1). cURL now runs with no `-L` and with `-q` first, so it reads no config file, and each spawn is exactly one hop. `executeCurlRequest` reads the status and target from the `-w` block and sends every hop back through the host list, the SSRF check with its own `--resolve` pin, and the rate limit. A cross-origin hop keeps only `Accept*` and `User-Agent`, plus the body headers when the body is kept.
+mcp-curl now follows HTTP redirects itself rather than letting cURL do it. Previously only the first hop was validated, and a 302 to `169.254.169.254` or an RFC 1918 address reached the model (todo 007, P1). cURL now runs with no `-L` and with `-q` first, so it reads no config file, and each spawn is exactly one hop. `executeCurlRequest` reads the status and target from the `-w` block and sends every hop back through the host list, the SSRF check with its own `--resolve` pin, and the rate limit. A cross-origin hop keeps only `Accept`, `Accept-Language`, `Accept-Encoding` and `User-Agent`, plus the body headers when the body is kept.
 
 ## What was implemented
 

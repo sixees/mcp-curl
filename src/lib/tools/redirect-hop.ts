@@ -27,8 +27,8 @@ const BODY_HEADERS: ReadonlySet<string> = new Set(["content-type", "content-leng
 
 /**
  * Whether two parsed URLs share scheme, host and effective port. Hosts compare
- * through `canonicalHost`, so case and one trailing dot do not make a hop
- * cross-origin.
+ * through `canonicalHost`, so trailing dots do not make a hop cross-origin;
+ * case cannot either, because WHATWG lower-cases `hostname`.
  */
 export function sameOrigin(a: URL, b: URL): boolean {
     return (

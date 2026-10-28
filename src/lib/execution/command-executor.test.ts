@@ -4,8 +4,8 @@
 // These spawn cURL against a loopback socket rather than mocking it, because
 // the property under test is one no mock can hold: that cURL writes the header
 // block to a descriptor the body never touches. Most other suites in this repo
-// mock `executeCommand` away, so the wiring added here — the fourth stdio
-// pipe, its drain, and the flag that opens it — would otherwise ship untested.
+// mock `executeCommand` away, so the wiring covered here — the fourth stdio
+// pipe, its drain, and the flag that opens it — is exercised nowhere else.
 
 import { describe, it, expect, afterEach } from "vitest";
 import { executeCommand, HEADER_DUMP_PATH } from "./command-executor.js";
@@ -19,16 +19,15 @@ const SIMPLE =
     "Content-Length: 11\r\n\r\nbody-side!!";
 
 // A chunked response with a trailer section. `%{size_header}` does not count
-// trailers and `curl -i` wrote them to stdout after the body, so trailer text
-// landed inside `response` — LESSONS.md RC-17, the third failure of the
-// arithmetic this mechanism replaces.
+// trailers, and on a stdout shared with the body they follow it, so a
+// multiplexed channel puts trailer text inside `response` — LESSONS.md RC-17.
 const CHUNKED_WITH_TRAILER =
     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" +
     "Transfer-Encoding: chunked\r\nTrailer: X-Leak\r\n\r\n" +
     "5\r\nHELLO\r\n0\r\nX-Leak: TRAILER_TEXT_HERE\r\n\r\n";
 
 // cURL's own timeout must stay BELOW vitest's, or a genuine hang fails on the
-// test runner's clock before the abort path this suite exercises can fire.
+// test runner's clock before `executeCommand`'s timeout can fire and report it.
 const CURL_TIMEOUT_MS = 3_000;
 
 // cURL can only open `/dev/fd/3` where `platformSupportsHeaderDump()` is true.
@@ -105,9 +104,10 @@ describe("executeCommand — header descriptor", () => {
         expect(result.stdoutBytes.toString("utf8")).not.toContain("body-side");
     });
 
-    // The executor opens the pipe iff cURL was told to write to it. Two sites
-    // deciding this independently is what let a truthy non-boolean open one and
-    // not the other; deriving it means the test can assert the link directly.
+    // The executor opens the pipe iff cURL was told to write to it, reading that
+    // off the argv rather than a separate flag: two sites deciding it independently
+    // can disagree on a truthy non-boolean and point cURL at a descriptor nobody
+    // opened. Deriving it means the test can assert the link directly.
     itOnDarwin("opens the descriptor from the arguments, not from a separate flag", async () => {
         const port = await serveOnce(SIMPLE);
 

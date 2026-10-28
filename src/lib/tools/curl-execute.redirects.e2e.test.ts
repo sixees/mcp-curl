@@ -1,7 +1,7 @@
 // src/lib/tools/curl-execute.redirects.e2e.test.ts
 // Redirects through real cURL on loopback: a hostile origin's 302 to an internal
-// address returns a refusal and never the target's body (todo 007), and a hop
-// that passes the gate is really followed.
+// address returns a refusal and never the target's body (ARCHITECTURE.md
+// invariant 2), and a hop that passes the gate is really followed.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";

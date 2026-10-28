@@ -29,8 +29,8 @@ describe("sameOrigin", () => {
 });
 
 describe("nextHopParams: the method table", () => {
-    // [method as sent, has body] for each method the schema allows, plus the
-    // implicit POST cURL sends for a body with no -X.
+    // [method param, has body, method cURL sends] for each method the schema
+    // allows, plus the implicit POST cURL sends for a body with no -X.
     const METHODS: [CurlExecuteInput["method"], boolean, string][] = [
         [undefined, false, "GET"],
         [undefined, true, "POST"],

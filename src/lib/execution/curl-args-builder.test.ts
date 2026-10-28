@@ -26,10 +26,11 @@ describe("buildCurlArgs", () => {
     // failures this block turns into test failures.
     describe("--dump-header", () => {
         // `buildCurlArgs` reads the real `process.platform`, so on a Linux
-        // runner every assertion below would hold vacuously — no flag is
-        // emitted, so "does not contain `-i`" passes without the builder having
-        // decided anything. Pinning the platform is what makes each assertion
-        // about the branch it names.
+        // runner no flag is emitted: the negative assertions below would hold
+        // vacuously — "does not contain `-i`" passes without the builder having
+        // decided anything — and the positive ones would fail for a reason that
+        // is not the builder's. Pinning the platform is what makes each
+        // assertion about the branch it names.
         const real = process.platform;
         const setPlatform = (value: string) =>
             Object.defineProperty(process, "platform", { value, configurable: true });
@@ -170,8 +171,8 @@ describe("buildCurlArgs", () => {
     describe("--resolve emission (invariant 2, builder half)", () => {
         // Scope: this asserts only that the builder EMITS the pin it is handed.
         // That the pin carries the address the SSRF check produced is asserted
-        // at the producer in curl-execute.headers.test.ts; hops 2..N are
-        // docs/todos/007.
+        // at the producer in curl-execute.headers.test.ts, and for every redirect
+        // hop in curl-execute.redirects.test.ts.
         it("always emits a pin for the address it was given", () => {
             const args = buildCurlArgs(makeParams());
             const i = args.indexOf("--resolve");
