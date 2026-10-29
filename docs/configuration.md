@@ -19,7 +19,12 @@ interface McpCurlConfig {
     defaultUserAgent?: string;
     defaultReferer?: string;
     enableSpotlighting?: boolean;
-    rateLimit?: { readonly max: number; readonly windowMs: number };
+    allowedHosts?: readonly string[] | "any";
+    rateLimit?: {
+        readonly max: number;
+        readonly windowMs: number;
+        readonly syncFromHeaders?: { readonly remaining: string };
+    };
     curlExecuteDescriptionAppend?: string;
 }
 ```
@@ -30,6 +35,7 @@ interface McpCurlConfig {
 |----------------------|--------------------------|-------------|--------------------------------------------------------------------------|
 | `baseUrl`            | `string`                 | none        | Base URL that a `/`-path in `curl_execute` is resolved against           |
 | `defaultHeaders`     | `Record<string, string>` | none        | Headers added to all `curl_execute` requests                             |
+| `allowedHosts`       | `readonly string[] \| "any"` | `baseUrl`'s host, else any | Hosts a request or redirect hop may reach; see [allowedHosts](#allowedhosts) |
 | `defaultTimeout`     | `number`                 | 30          | Default timeout in seconds (1-300)                                       |
 | `outputDir`          | `string`                 | system temp | Directory for saved responses                                            |
 | `maxResultSize`      | `number`                 | 500000      | Max bytes before auto-saving to file (max 1MB)                           |
@@ -41,7 +47,7 @@ interface McpCurlConfig {
 | `defaultUserAgent`   | `string`                 | none        | User-Agent for all requests; empty string disables                       |
 | `defaultReferer`     | `string`                 | none        | Referer for all requests; empty string disables                          |
 | `enableSpotlighting` | `boolean`                | false       | Wrap response text in per-message sentinel envelopes (defence-in-depth)  |
-| `rateLimit`          | `{ max, windowMs }`      | 60/min      | Per-host limit as a sliding window; see [rateLimit](#ratelimit)          |
+| `rateLimit`          | `{ max, windowMs, syncFromHeaders? }` | 60/min | Per-host limit as a sliding window; see [rateLimit](#ratelimit) |
 | `curlExecuteDescriptionAppend` | `string`       | none        | Text added to the `curl_execute` description; see [curlExecuteDescriptionAppend](#curlexecutedescriptionappend) |
 
 ## Detailed Options
@@ -61,7 +67,8 @@ Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/use
 - On a server with `baseUrl`, the `curl_execute` input schema advertises `url` as an
   absolute http(s) URL **or** a path starting with `/`. Without `baseUrl`, a path is
   rejected at the schema.
-- An absolute URL passes through unchanged, to any host.
+- An absolute URL passes through unchanged. With `allowedHosts` unset, it may go
+  only to the `baseUrl`'s host; see [allowedHosts](#allowedhosts).
 - A relative value must start with a single `/` and contain no control characters
   (any C0 control, such as tab, CR, LF or NUL, or DEL). One starting `//`, `/\` or `\`
   is refused, because a URL parser reads it as a host; a control character is refused
@@ -76,19 +83,24 @@ Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/use
   `/v1.2/`, `/.well-known/` or the query string is fine. An absolute URL is not
   checked, because it names its own path.
 - The joined URL still goes through the SSRF check, like every other request.
-- If `baseUrl` is not an absolute http(s) URL, a relative call fails with an error
-  that names the `baseUrl` key without echoing its value.
+- If `baseUrl` is not an absolute http(s) URL and `allowedHosts` is unset, `start()`
+  throws, because the default host list cannot be derived from it. With
+  `allowedHosts` set, a relative call fails with an error that names the `baseUrl`
+  key without echoing its value.
 
-**`baseUrl` is a convenience, not a security boundary.** The model can still send an
-absolute URL to another host. Keep an API key in `defaultHeaders`, never in tool-call
-arguments, so it stays out of the transcript.
+**Setting `baseUrl` also sets the default host list.** With `allowedHosts` unset,
+requests and redirect hops may go only to the `baseUrl`'s host. Set
+`allowedHosts: "any"` to send absolute URLs elsewhere. Keep an API key in
+`defaultHeaders`, never in tool-call arguments, so it stays out of the transcript.
 
 ### defaultHeaders
 
-Added to all requests, whatever their host: an absolute URL the model sends to
-another host gets them too, `baseUrl` notwithstanding. A key kept here stays out of
-the transcript, but it is not scoped to one API. Merged with request-specific
-headers (request headers take precedence):
+Added to every request the host list lets through: with `allowedHosts` unset on a
+`baseUrl` server, that is the `baseUrl`'s host alone, but with `allowedHosts: "any"`
+or a longer list, every host on it gets them. A redirect to another origin forwards
+only `Accept`, `Accept-Language`, `Accept-Encoding` and `User-Agent` (see
+[allowedHosts](#allowedhosts)), so a key here is not sent to a host a redirect
+names. Merged with request-specific headers (request headers take precedence):
 
 ```typescript
 .
@@ -99,6 +111,45 @@ configure({
     }
 })
 ```
+
+### allowedHosts
+
+The hosts a request may go to. Set it to a list of host names, to `"any"`, or leave
+it unset:
+
+```typescript
+configure({
+    baseUrl: "https://api.example.com/v1",
+    allowedHosts: ["api.example.com", "uploads.example.com"],
+})
+```
+
+- **Unset.** A server with a `baseUrl` may reach only the `baseUrl`'s host. A
+  server without one may reach any host.
+- **`"any"`** allows every host. **`[]`** refuses every request.
+- **Matching.** Exact, case-insensitive, trailing dots ignored. An entry is a bare
+  host name or an IP literal, with IPv6 in brackets: no scheme, port, path,
+  userinfo or wildcard, or `configure()` throws.
+- **Checked before DNS.** A refused host is never resolved or contacted. The
+  refusal is `LOCAL_HOST_NOT_ALLOWED`; see [Local refusals](#local-refusals). The
+  SSRF check still applies to every allowed host.
+- **Every redirect hop is checked too.** mcp-curl follows 301, 302, 303, 307 and
+  308 itself, one hop at a time, and each hop passes the host list, the SSRF check
+  with its own `--resolve` pin, and the rate limit. A refused hop returns
+  `LOCAL_REDIRECT_REFUSED`, which says how many requests were sent. A chain longer
+  than `max_redirects` (default 10) is refused the same way.
+- **Cross-origin hops drop credentials.** A hop to an origin other than the first
+  request's keeps only `Accept`, `Accept-Language`, `Accept-Encoding` and
+  `User-Agent`, plus the body headers while the body is kept; every other header,
+  `basic_auth` and `bearer_token` are dropped, and stay dropped if the chain comes
+  back. 303 turns every method but `HEAD` into a body-less `GET`, and 301/302 do
+  the same to `POST`; 307 and 308 keep the method and body.
+- **YAML servers.** `createApiServer()` derives the default list from the schema's
+  `baseUrl`, and its YAML tools use the server's list. An embedder that overrides
+  `generatorConfig.baseUrl` with a URL on another host sets `allowedHosts`
+  explicitly, or every call to that host is refused.
+- **The shipped binary has no `allowedHosts` setting.** It sets no `baseUrl` either,
+  so it may reach any host the SSRF check allows.
 
 ### defaultTimeout
 
@@ -287,11 +338,13 @@ configure({rateLimit: {max: 200, windowMs: 3_600_000}}) // 200 per rolling hour
   session, or for the stdio process) is not configurable and still applies.
 - **Sliding, not fixed.** A request is admitted when fewer than `max` were made
   to that host in the last `windowMs`. A burst of `max` is allowed; the next
-  request waits until the oldest leaves the window. The refusal names `max`,
-  the window, and how long until the oldest request leaves it. Without
-  `rateLimit` the fixed 60/min window and its message are unchanged.
-- **Validated at `configure()`.** Both fields must be positive integers, or
-  `configure()` throws. There is no "off" value, so a typo or an unset
+  request waits until the oldest leaves the window. The refusal is
+  `LOCAL_RATE_LIMITED` and ends with how long to wait: `Retry in N s.` Without
+  `rateLimit` the fixed 60/min window applies, and its refusal takes the same
+  shape.
+- **Validated at `configure()`.** Both fields must be positive integers, and an
+  unknown key (a misspelt `syncFromHeaders`, say) is refused, or `configure()`
+  throws. There is no "off" value, so a typo or an unset
   environment variable cannot disable the limiter. `configure()` keeps its own
   copy, so changing your object afterwards changes nothing.
 - **Applied by `start()`, process-wide.** It counts `curl_execute`,
@@ -308,13 +361,29 @@ configure({rateLimit: {max: 200, windowMs: 3_600_000}}) // 200 per rolling hour
   window. A different `windowMs` starts the count from zero.
 - **One host, one count.** `api.example.com.` (with a trailing dot) counts
   against the same budget as `api.example.com`.
+- **Header sync.** `syncFromHeaders: { remaining: "<header name>" }` names a
+  response header carrying the requests the upstream will still admit in its
+  window. After each response, including each redirect hop, the host that
+  answered is counted as having used at least `max − remaining`. It only ever
+  tightens the count, and an absent, empty or malformed value changes nothing.
+  The name must be an HTTP field name without `%`, and `remaining` is the only
+  key; anything else makes `configure()` throw. Reading the header needs cURL
+  7.84 or later, and mcp-curl does not check the version: on an older cURL the
+  response's metadata cannot be read, which fails safe as undetermined.
+
+  ```typescript
+  configure({rateLimit: {max: 200, windowMs: 3_600_000, syncFromHeaders: {remaining: "X-RateLimit-Remaining"}}})
+  ```
 
 **This is local throttling, not quota accounting.** The counter lives in this
 process: a process restart, or an HTTP client reconnecting to a restarted process,
 starts it from zero while the upstream's window keeps running. It cannot see
 requests made by other processes, apps or clients on the same credential. For
-a hard upstream quota, set `max` below it and leave headroom for what this
-process cannot see (for example, 200 of a 240/hour quota).
+a hard upstream quota, use `syncFromHeaders` where the upstream reports its
+remaining count: the first response after a restart, or after another client
+spent quota, corrects the local count. Where it does not, set `max` below the
+quota and leave headroom for what this process cannot see (for example, 200 of a
+240/hour quota).
 
 ### curlExecuteDescriptionAppend
 
@@ -349,13 +418,30 @@ Lists page with ?page=N; a 429 means the hourly quota is spent: stop and tell th
   listed, but without your append, and `start()` warns that the append is set
   but never shown.
 
-**The version line.** The built-in description's last line is
+**The version line.** The built-in description carries a line
 `mcp-curl v<version>`, matching `^mcp-curl v\d+\.\d+\.\d+$`, so a model or
 an embedder can read the version from inside a session; line 1 stays the tool's
-summary. The token is the npm package name, which is what you pin. The MCP
+summary. Find it by searching for a line matching that pattern, not by taking the
+last line: with an append it is not the last line. The token is the npm package name, which is what you pin. The MCP
 `serverInfo.name` the server reports at initialisation is `curl-mcp-server`, a
 different string. Because the version is in the description, the description's
 bytes change with every release.
+
+## Local refusals
+
+A request this server refuses before cURL sends it returns an error result whose
+first line is `Refused locally: no request was sent (CODE).`, followed by one
+sentence giving the reason. The text never names a host, URL or header value.
+
+| Code | When |
+|---|---|
+| `LOCAL_HOST_NOT_ALLOWED` | The target host is not in `allowedHosts` |
+| `LOCAL_RATE_LIMITED` | The per-host or per-client limit is exhausted; the text ends `Retry in N s.` |
+| `LOCAL_REFUSED_PATH` | A relative `url` or a YAML path parameter would leave its path (`//`, `\`, a control character, a `.` or `..` segment) |
+| `LOCAL_REDIRECT_REFUSED` | A redirect hop was refused. Its first line is `Redirect refused locally: N request(s) were sent; hop N+1 was not (LOCAL_REDIRECT_REFUSED).`, because the earlier hops did reach the network |
+
+`curl_execute`'s stderr line for a refused request, `curl_execute error: [host]
+LocalRefusalError CODE`, carries the code and never the message.
 
 ## Environment Variables
 
