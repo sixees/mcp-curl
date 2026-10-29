@@ -70,3 +70,36 @@ The operator chose the run-length log for the P1 and asked for 025–028 to be f
 | 028 | fixed: the redirect arm is typed per reason, and `gateHop`'s `check` forwards a wait only for `rate-limited` | `b1f263c` |
 
 Every fix had a teeth probe: the guard was removed, a test failed, and the guard was restored. `npm test` passes, with 1766 passed and 7 skipped; the type-check is clean.
+
+## Review Comments Addressed — 2026-10-29
+
+**PR:** #53. One round. CodeRabbit (`full review`) and Codex (`@codex review`, with the scope written out) were requested, and both reviewed head `bace1e3`. The operator's stop rule was four or fewer comments and no P1s, and this round met it, so no second round was run.
+
+- **Returned:** 3 bot entries, all top-level and none a finding.
+  - Codex's review summary.
+  - Codex's receipt: "Didn't find any major issues".
+  - CodeRabbit's `Full review finished` acknowledgement. Its walkthrough summary says "No actionable comments were generated" across 20 processed files, with no nitpick or outside-diff sections.
+
+### Changes Made
+
+None. No finding needed a code change.
+
+### Declined Findings
+
+None. The round produced no findings to decline.
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None.
+
+### Outstanding Todos
+
+None filed this round. No open todo is linked to #53.
+
+### Files Modified
+
+- `docs/work/handoff-feat-header-sync-refusal-shape.md` (this section)
