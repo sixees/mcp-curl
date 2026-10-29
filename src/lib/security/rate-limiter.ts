@@ -29,11 +29,26 @@ const hostRateLimitMap = new Map<string, RateLimitEntry>();
 const clientRateLimitMap = new Map<string, RateLimitEntry>();
 
 /**
- * Admission timestamps per host, oldest first, recorded only while a host
- * limit is installed. A request is refused before it is recorded once the log
- * holds `max`, so a log never exceeds the largest `max` it was recorded under.
- * A re-install with the same window and a smaller `max` keeps the longer log,
- * which admits nothing until it drains below the new `max`.
+ * Requests stamped at one instant. An admission is a run of 1; a header-sync
+ * pad is one run of many, so a log's storage follows events, not `max`.
+ */
+interface LogRun {
+    readonly at: number;
+    readonly count: number;
+}
+
+/** A host's runs, oldest first, and the sum of their counts. */
+interface SlidingLog {
+    readonly runs: LogRun[];
+    total: number;
+}
+
+/**
+ * Admissions per host, recorded only while a host limit is installed. A
+ * request is refused before it is recorded once the log counts `max`, so a log
+ * never counts more than the largest `max` it was recorded under. A re-install
+ * with the same window and a smaller `max` keeps the larger count, which
+ * admits nothing until it drains below the new `max`.
  *
  * **Kept across a release**, so a server that restarts, or hands over to one
  * with the same window, does not get a fresh quota inside a window the
@@ -41,7 +56,7 @@ const clientRateLimitMap = new Map<string, RateLimitEntry>();
  * {@link logWindowMs}, and `McpCurlServer.shutdown` stops that server's sweep
  * along with its limit.
  */
-const hostSlidingLog = new Map<string, number[]>();
+const hostSlidingLog = new Map<string, SlidingLog>();
 
 /** The configured per-host limit; `undefined` selects the fixed default. */
 let hostLimit: Readonly<HostRateLimit> | undefined;
@@ -90,13 +105,32 @@ function leftWindow(timestamp: number, now: number, windowMs: number): boolean {
 }
 
 /**
- * Drop timestamps that have left the window. The log is oldest first, so the
+ * Drop runs that have left the window. The log is oldest first, so the
  * expired ones are a prefix.
  */
-function pruneLog(log: number[], now: number, windowMs: number): void {
+function pruneLog(log: SlidingLog, now: number, windowMs: number): void {
     let expired = 0;
-    while (expired < log.length && leftWindow(log[expired], now, windowMs)) expired++;
-    if (expired > 0) log.splice(0, expired);
+    while (expired < log.runs.length && leftWindow(log.runs[expired].at, now, windowMs)) {
+        log.total -= log.runs[expired].count;
+        expired++;
+    }
+    if (expired > 0) log.runs.splice(0, expired);
+}
+
+/**
+ * The host's log, pruned, or a new empty one. Throws if the map has no room
+ * for an untracked host.
+ */
+function slidingLogFor(key: string, now: number, windowMs: number): SlidingLog {
+    const log = hostSlidingLog.get(key);
+    if (log) {
+        pruneLog(log, now, windowMs);
+        return log;
+    }
+    ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
+    const created: SlidingLog = { runs: [], total: 0 };
+    hostSlidingLog.set(key, created);
+    return created;
 }
 
 /**
@@ -107,7 +141,8 @@ function cleanupExpiredLogs(): void {
     if (logWindowMs === undefined) return;
     const now = elapsedNow();
     for (const [key, log] of hostSlidingLog) {
-        if (log.length === 0 || leftWindow(log[log.length - 1], now, logWindowMs)) {
+        const newest = log.runs[log.runs.length - 1];
+        if (newest === undefined || leftWindow(newest.at, now, logWindowMs)) {
             hostSlidingLog.delete(key);
         }
     }
@@ -194,22 +229,15 @@ function checkRateLimitInternal(
  */
 function checkSlidingHostLimit(hostname: string, limit: HostRateLimit): void {
     const now = elapsedNow();
-    let log = hostSlidingLog.get(hostname);
+    const log = slidingLogFor(hostname, now, limit.windowMs);
 
-    if (log) {
-        pruneLog(log, now, limit.windowMs);
-    } else {
-        ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
-        log = [];
-        hostSlidingLog.set(hostname, log);
+    if (log.total >= limit.max) {
+        // The oldest run leaves the window first; that is when one more fits.
+        throw rateLimited(limit.windowMs - (now - log.runs[0].at));
     }
 
-    if (log.length >= limit.max) {
-        // The oldest entry leaves the window first; that is when one more fits.
-        throw rateLimited(limit.windowMs - (now - log[0]));
-    }
-
-    log.push(now);
+    log.runs.push({ at: now, count: 1 });
+    log.total++;
 }
 
 /**
@@ -265,12 +293,12 @@ export function hostRateLimitSyncHeader(): string | undefined {
  * where `remaining` is the upstream's own figure: the local log cannot see
  * other processes spending the same key.
  *
- * **Tighten only.** It appends pads stamped now and never removes an entry, so
- * a figure above the local remaining changes nothing, and the pads expire at
- * `windowMs` like any admission. One call writes at most `max − log.length`
- * pads, so a log never exceeds `max` whatever the remote sends. Pads add
- * entries to one host's log, not keys, so `RATE_LIMIT.MAX_TRACKED_KEYS` still
- * bounds the map.
+ * **Tighten only.** It appends one run stamped now and never removes one, so
+ * a figure above the local remaining changes nothing, and the pad expires at
+ * `windowMs` like any admission. The pad counts at most `max − total`, so a
+ * log never counts more than `max` whatever the remote sends. It is one run
+ * whatever its count, so a host's storage follows responses rather than
+ * `max`, and `RATE_LIMIT.MAX_TRACKED_KEYS` still bounds the hosts.
  *
  * Best-effort, because the response it follows has already arrived: with no
  * limit installed there is no window to tighten, and a host the map has no
@@ -284,21 +312,16 @@ export function hostRateLimitSyncHeader(): string | undefined {
 export function applyServerRemaining(hostname: string, remaining: number): void {
     if (!hostLimit) return;
     const now = elapsedNow();
-    const key = canonicalHost(hostname);
-    let log = hostSlidingLog.get(key);
-    if (log) {
-        pruneLog(log, now, hostLimit.windowMs);
-    } else {
-        try {
-            ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
-        } catch {
-            return;
-        }
-        log = [];
-        hostSlidingLog.set(key, log);
+    let log: SlidingLog;
+    try {
+        log = slidingLogFor(canonicalHost(hostname), now, hostLimit.windowMs);
+    } catch {
+        return;
     }
-    const used = hostLimit.max - remaining;
-    while (log.length < used) log.push(now);
+    const pad = hostLimit.max - remaining - log.total;
+    if (pad <= 0) return;
+    log.runs.push({ at: now, count: pad });
+    log.total += pad;
 }
 
 /**
@@ -445,10 +468,12 @@ export function rateLimitMapSizes(): { hosts: number; clients: number; slidingHo
 }
 
 /**
- * Test-only: entries in one host's sliding log, so a test can assert a writer's bound.
+ * Test-only: what one host's sliding log counts and how many runs it stores,
+ * so a test can assert a writer's bound on each.
  *
  * @internal
  */
-export function slidingLogLength(hostname: string): number {
-    return hostSlidingLog.get(canonicalHost(hostname))?.length ?? 0;
+export function slidingLogSize(hostname: string): { counted: number; stored: number } {
+    const log = hostSlidingLog.get(canonicalHost(hostname));
+    return { counted: log?.total ?? 0, stored: log?.runs.length ?? 0 };
 }

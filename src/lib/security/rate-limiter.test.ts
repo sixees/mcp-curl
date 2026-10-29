@@ -9,7 +9,7 @@ import {
     parseHostRateLimit,
     rateLimitMapSizes,
     releaseHostRateLimit,
-    slidingLogLength,
+    slidingLogSize,
     type HostRateLimitHandle,
     startRateLimitCleanup,
     stopRateLimitCleanup,
@@ -461,22 +461,41 @@ describe("applyServerRemaining", () => {
     it("leaves the log alone for a figure above the local remaining", () => {
         checkRateLimits(HOST, "first");
         applyServerRemaining(HOST, 10);
-        expect(slidingLogLength(HOST)).toBe(1);
+        expect(slidingLogSize(HOST).counted).toBe(1);
         expect(admittedBeforeRefusal()).toBe(4);
     });
 
     it("never removes entries", () => {
         for (let i = 0; i < 4; i++) checkRateLimits(HOST, `early-${i}`);
         applyServerRemaining(HOST, 5);
-        expect(slidingLogLength(HOST)).toBe(4);
+        expect(slidingLogSize(HOST).counted).toBe(4);
     });
 
     it("fills the window on 0, and never writes past max", () => {
         checkRateLimits(HOST, "first");
         applyServerRemaining(HOST, 0);
         applyServerRemaining(HOST, 0);
-        expect(slidingLogLength(HOST)).toBe(5);
+        expect(slidingLogSize(HOST).counted).toBe(5);
         expect(admittedBeforeRefusal()).toBe(0);
+    });
+
+    it("stores one run per pad, whatever max is", () => {
+        releaseHostRateLimit(handle);
+        installHostRateLimit({ max: 10_000_000, windowMs: WINDOW, syncFromHeaders: { remaining: "X-Remaining" } });
+        applyServerRemaining(HOST, 0);
+        applyServerRemaining("other.example.test", 0);
+        expect(slidingLogSize(HOST)).toEqual({ counted: 10_000_000, stored: 1 });
+        expect(slidingLogSize("other.example.test")).toEqual({ counted: 10_000_000, stored: 1 });
+        expect(() => checkRateLimits(HOST, "after-pad")).toThrow(/LOCAL_RATE_LIMITED/);
+    });
+
+    it("frees only the pad's share when an earlier admission expires", () => {
+        checkRateLimits(HOST, "first");
+        vi.advanceTimersByTime(WINDOW / 2);
+        applyServerRemaining(HOST, 0);
+        expect(slidingLogSize(HOST)).toEqual({ counted: 5, stored: 2 });
+        vi.advanceTimersByTime(WINDOW / 2);
+        expect(admittedBeforeRefusal()).toBe(1);
     });
 
     it("expires its pads at windowMs", () => {
