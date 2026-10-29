@@ -38,8 +38,9 @@ Execute HTTP requests with structured, validated parameters.
 | timeout | number | No | 30 | Request timeout in seconds (1-300) |
 | bearer_token | string | No | - | Bearer token for Authorization |
 | basic_auth | string | No | - | Basic auth as "username:password" |
-| follow_redirects | boolean | No | true | Follow HTTP redirects |
-| include_headers | boolean | No | false | Report response headers. Never written into the saved file or the jq_filter input; a separate \`headers\` key under include_metadata, otherwise prefixed to the returned text |
+| follow_redirects | boolean | No | true | Follow 301/302/303/307/308 one hop at a time; every hop passes the host list, the SSRF check and the rate limit. 303 makes every method but HEAD a body-less GET, 301/302 do so to POST. A hop to another origin keeps only Accept, Accept-Language, Accept-Encoding, User-Agent and the kept body's headers, and drops basic_auth and bearer_token |
+| max_redirects | number | No | 10 | Redirects to follow (0-50). A longer chain is refused as LOCAL_REDIRECT_REFUSED |
+| include_headers | boolean | No | false | Report response headers (macOS only; the final hop's after redirects). Never written into the saved file or the jq_filter input; a separate \`headers\` key under include_metadata, otherwise their own content entry after the body |
 | include_metadata | boolean | No | false | Return JSON with metadata |
 | jq_filter | string | No | - | JSON path filter (e.g., ".data.items[0]") |
 | max_result_size | number | No | 500KB | Max bytes inline before auto-save (max: 1MB) |
