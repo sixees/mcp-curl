@@ -2,7 +2,7 @@
 // Rate limiting with fixed time windows, an optional per-host sliding log, and periodic cleanup
 
 import { RATE_LIMIT } from "../config/session.js";
-import { canonicalHost } from "../config/security/index.js";
+import { canonicalHost, WRITE_OUT_HEADER_NAME } from "../config/security/index.js";
 import type { HostRateLimit, RateLimitEntry } from "../types/index.js";
 import { assertPositiveInteger } from "../utils/index.js";
 
@@ -251,6 +251,56 @@ export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.
 }
 
 /**
+ * The header `executeCurlRequest` reads the upstream's remaining count from,
+ * while a limit carrying `syncFromHeaders` is installed. The limit is
+ * process-global, so the name rides on it rather than on each caller.
+ */
+export function hostRateLimitSyncHeader(): string | undefined {
+    return hostLimit?.syncFromHeaders?.remaining;
+}
+
+/**
+ * Count `hostname` as having used at least `max − remaining` of the window,
+ * where `remaining` is the upstream's own figure: the local log cannot see
+ * other processes spending the same key.
+ *
+ * **Tighten only.** It appends pads stamped now and never removes an entry, so
+ * a figure above the local remaining changes nothing, and the pads expire at
+ * `windowMs` like any admission. One call writes at most `max − log.length`
+ * pads, so a log never exceeds `max` whatever the remote sends. Pads add
+ * entries to one host's log, not keys, so `RATE_LIMIT.MAX_TRACKED_KEYS` still
+ * bounds the map.
+ *
+ * Best-effort, because the response it follows has already arrived: with no
+ * limit installed there is no window to tighten, and a host the map has no
+ * room for keeps the local count rather than turning a received response
+ * into an error.
+ *
+ * @param remaining - A parsed count (`ParsedResponse.syncHeaderCount`); an
+ *   absent value is never passed as 0, which would fill the window on the
+ *   remote's say-so
+ */
+export function applyServerRemaining(hostname: string, remaining: number): void {
+    if (!hostLimit) return;
+    const now = elapsedNow();
+    const key = canonicalHost(hostname);
+    let log = hostSlidingLog.get(key);
+    if (log) {
+        pruneLog(log, now, hostLimit.windowMs);
+    } else {
+        try {
+            ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
+        } catch {
+            return;
+        }
+        log = [];
+        hostSlidingLog.set(key, log);
+    }
+    const used = hostLimit.max - remaining;
+    while (log.length < used) log.push(now);
+}
+
+/**
  * Read `{ max, windowMs }` once, reject anything but two positive integers, and
  * return a frozen copy of exactly what was checked. There is no "off" value, so
  * a typo or an unset variable (`Number(undefined)` is `NaN`, and
@@ -262,10 +312,34 @@ export function parseHostRateLimit(limit: unknown): Readonly<HostRateLimit> {
     if (typeof limit !== "object" || limit === null) {
         throw new Error(`rateLimit must be an object { max, windowMs }, got: ${String(limit)}`);
     }
-    const { max, windowMs } = limit as Record<string, unknown>;
+    const { max, windowMs, syncFromHeaders } = limit as Record<string, unknown>;
     assertPositiveInteger("rateLimit.max", max);
     assertPositiveInteger("rateLimit.windowMs", windowMs);
-    return Object.freeze({ max, windowMs });
+    if (syncFromHeaders === undefined) return Object.freeze({ max, windowMs });
+    return Object.freeze({ max, windowMs, syncFromHeaders: parseSyncFromHeaders(syncFromHeaders) });
+}
+
+/**
+ * `{ remaining }` and nothing else: an unknown key — `reset` among them — is a
+ * setting the operator expects to act and that nothing would read. The name
+ * reaches cURL's `-w` format, so it is held to {@link WRITE_OUT_HEADER_NAME}
+ * here, where a bad one fails `configure()` rather than a request.
+ */
+function parseSyncFromHeaders(value: unknown): { readonly remaining: string } {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error("rateLimit.syncFromHeaders must be an object { remaining }");
+    }
+    const unknownKeys = Object.keys(value).filter((key) => key !== "remaining");
+    if (unknownKeys.length > 0) {
+        throw new Error(`rateLimit.syncFromHeaders accepts only "remaining", got: ${unknownKeys.join(", ")}`);
+    }
+    const { remaining } = value as Record<string, unknown>;
+    if (typeof remaining !== "string" || !WRITE_OUT_HEADER_NAME.test(remaining)) {
+        throw new Error(
+            "rateLimit.syncFromHeaders.remaining must be an HTTP header name (RFC 9110 token) without %"
+        );
+    }
+    return Object.freeze({ remaining });
 }
 
 /**
@@ -367,4 +441,13 @@ export function clearRateLimitMaps(): void {
  */
 export function rateLimitMapSizes(): { hosts: number; clients: number; slidingHosts: number } {
     return { hosts: hostRateLimitMap.size, clients: clientRateLimitMap.size, slidingHosts: hostSlidingLog.size };
+}
+
+/**
+ * Test-only: entries in one host's sliding log, so a test can assert a writer's bound.
+ *
+ * @internal
+ */
+export function slidingLogLength(hostname: string): number {
+    return hostSlidingLog.get(canonicalHost(hostname))?.length ?? 0;
 }

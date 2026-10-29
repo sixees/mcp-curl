@@ -5,7 +5,7 @@ import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, type HostPolicy } from "../config/index.js";
 import { generateMetadataSeparator, type MetadataBlock, type UrlValidationResult } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
-import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
+import { validateUrlAndResolveDns, checkRateLimits, hostRateLimitSyncHeader, applyServerRemaining } from "../security/index.js";
 import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError, withTimeout } from "../utils/index.js";
 import { executeCommand, buildCurlArgs, platformSupportsHeaderDump, type CommandResult } from "../execution/index.js";
 import {
@@ -345,6 +345,8 @@ export async function executeCurlRequest(
         const deadline = Date.now() + (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
         let hop = params;
         let requestsSent = 0;
+        // Read once, so every hop of one chain asks for the same field.
+        const syncHeaderName = hostRateLimitSyncHeader();
 
         // cURL is spawned without `-L`, so each spawn is one hop and every hop
         // is gated before cURL sees it: host list (before DNS), SSRF check
@@ -366,7 +368,7 @@ export async function executeCurlRequest(
 
             // One block for the build and the parse; its separator is unique per
             // request, to prevent response injection.
-            const metadataBlock: MetadataBlock = { separator: generateMetadataSeparator() };
+            const metadataBlock: MetadataBlock = { separator: generateMetadataSeparator(), syncHeaderName };
             const args = buildCurlArgs({
                 ...hop,
                 timeout: remainingMs / 1000,
@@ -383,6 +385,11 @@ export async function executeCurlRequest(
             // stdout is the body alone — cURL wrote the headers to their own
             // descriptor — so this strips the `-w` metadata suffix and nothing else.
             parsed = parseResponseWithMetadata(result.stdoutBytes, metadataBlock);
+            // The host that answered, every hop: each hop was counted against
+            // its own host, so that is the count the upstream's figure corrects.
+            if (parsed.syncHeaderCount !== undefined) {
+                applyServerRemaining(dnsResult.hostname, parsed.syncHeaderCount);
+            }
 
             // Followed only on a determined block: an undetermined one has no
             // status to trust, and a non-zero exit makes this hop the result.

@@ -1,11 +1,15 @@
 // src/lib/security/rate-limiter.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
+    applyServerRemaining,
     checkRateLimits,
     clearRateLimitMaps,
+    hostRateLimitSyncHeader,
     installHostRateLimit,
+    parseHostRateLimit,
     rateLimitMapSizes,
     releaseHostRateLimit,
+    slidingLogLength,
     type HostRateLimitHandle,
     startRateLimitCleanup,
     stopRateLimitCleanup,
@@ -374,6 +378,127 @@ describe("installHostRateLimit — ownership", () => {
         releaseHostRateLimit(first);
         releaseHostRateLimit(Symbol("stranger"));
         expectLimitOfOneHeld();
+    });
+});
+
+describe("parseHostRateLimit — syncFromHeaders", () => {
+    const BASE = { max: 5, windowMs: 60_000 };
+
+    it("returns a frozen copy of the header name", () => {
+        const sync = { remaining: "X-RateLimit-Remaining" };
+        const parsed = parseHostRateLimit({ ...BASE, syncFromHeaders: sync });
+        sync.remaining = "Changed";
+        expect(parsed.syncFromHeaders).toEqual({ remaining: "X-RateLimit-Remaining" });
+        expect(Object.isFrozen(parsed.syncFromHeaders)).toBe(true);
+    });
+
+    it("leaves the field out when it is not set", () => {
+        expect(parseHostRateLimit(BASE)).not.toHaveProperty("syncFromHeaders");
+    });
+
+    it.each([
+        ["a reset key", { remaining: "X-Remaining", reset: "X-Reset" }, /accepts only "remaining", got: reset/],
+        ["no remaining", {}, /remaining must be an HTTP header name/],
+        ["an empty name", { remaining: "" }, /remaining must be an HTTP header name/],
+        ["a space", { remaining: "X Remaining" }, /remaining must be an HTTP header name/],
+        ["a %", { remaining: "X-%{url}" }, /remaining must be an HTTP header name/],
+        ["a brace", { remaining: "X}" }, /remaining must be an HTTP header name/],
+        ["a non-string", { remaining: 5 }, /remaining must be an HTTP header name/],
+        ["an array", ["X-Remaining"], /must be an object \{ remaining \}/],
+        ["a string", "X-Remaining", /must be an object \{ remaining \}/],
+        ["null", null, /must be an object \{ remaining \}/],
+    ])("throws on %s", (_label, syncFromHeaders, message) => {
+        expect(() => parseHostRateLimit({ ...BASE, syncFromHeaders })).toThrow(message);
+    });
+});
+
+describe("applyServerRemaining", () => {
+    const HOST = "api.example.test";
+    const WINDOW = 60_000;
+    let handle: HostRateLimitHandle;
+
+    beforeEach(() => {
+        handle = installHostRateLimit({ max: 5, windowMs: WINDOW, syncFromHeaders: { remaining: "X-Remaining" } });
+    });
+
+    /** Requests the gate still admits for HOST — a positive control that saturates it (RC-19). */
+    function admittedBeforeRefusal(): number {
+        let admitted = 0;
+        for (let i = 0; i < 10; i++) {
+            try {
+                checkRateLimits(HOST, `c-${i}`);
+                admitted++;
+            } catch {
+                return admitted;
+            }
+        }
+        throw new Error("the gate never refused");
+    }
+
+    it("exposes the configured header name while the limit is installed", () => {
+        expect(hostRateLimitSyncHeader()).toBe("X-Remaining");
+        releaseHostRateLimit(handle);
+        expect(hostRateLimitSyncHeader()).toBeUndefined();
+    });
+
+    it("tightens to the upstream's figure", () => {
+        checkRateLimits(HOST, "first");
+        applyServerRemaining(HOST, 2);
+        expect(admittedBeforeRefusal()).toBe(2);
+    });
+
+    it("leaves the log alone for a figure above the local remaining", () => {
+        checkRateLimits(HOST, "first");
+        applyServerRemaining(HOST, 10);
+        expect(slidingLogLength(HOST)).toBe(1);
+        expect(admittedBeforeRefusal()).toBe(4);
+    });
+
+    it("never removes entries", () => {
+        for (let i = 0; i < 4; i++) checkRateLimits(HOST, `early-${i}`);
+        applyServerRemaining(HOST, 5);
+        expect(slidingLogLength(HOST)).toBe(4);
+    });
+
+    it("fills the window on 0, and never writes past max", () => {
+        checkRateLimits(HOST, "first");
+        applyServerRemaining(HOST, 0);
+        applyServerRemaining(HOST, 0);
+        expect(slidingLogLength(HOST)).toBe(5);
+        expect(admittedBeforeRefusal()).toBe(0);
+    });
+
+    it("expires its pads at windowMs", () => {
+        applyServerRemaining(HOST, 0);
+        vi.advanceTimersByTime(WINDOW - 1);
+        expect(admittedBeforeRefusal()).toBe(0);
+        vi.advanceTimersByTime(1);
+        expect(admittedBeforeRefusal()).toBe(5);
+    });
+
+    it("expires its pads by elapsed time across a backward wall-clock step", () => {
+        applyServerRemaining(HOST, 0);
+        vi.setSystemTime(Date.now() - 30 * 60_000);
+        expect(admittedBeforeRefusal()).toBe(0);
+        vi.advanceTimersByTime(WINDOW);
+        expect(admittedBeforeRefusal()).toBe(5);
+    });
+
+    it("counts a trailing-dot spelling as the same host", () => {
+        applyServerRemaining(`${HOST}.`, 0);
+        expect(admittedBeforeRefusal()).toBe(0);
+    });
+
+    it("writes nothing when no limit is installed", () => {
+        releaseHostRateLimit(handle);
+        applyServerRemaining(HOST, 0);
+        expect(rateLimitMapSizes().slidingHosts).toBe(0);
+    });
+
+    it("keeps the local count, without throwing, for a host the map has no room for", () => {
+        fillHostSlidingLogToCap();
+        expect(() => applyServerRemaining("untracked.example.test", 0)).not.toThrow();
+        expect(rateLimitMapSizes().slidingHosts).toBe(CAP);
     });
 });
 

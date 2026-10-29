@@ -81,6 +81,23 @@ describe("McpCurlServer", () => {
             expect(() => server.configure({ rateLimit } as never)).toThrow(new Error(message));
         });
 
+        it("keeps rateLimit.syncFromHeaders", () => {
+            const rateLimit = { max: 240, windowMs: 3_600_000, syncFromHeaders: { remaining: "X-RateLimit-Remaining" } };
+            server.configure({ rateLimit });
+            expect(server.getConfig().rateLimit).toEqual(rateLimit);
+        });
+
+        it.each([
+            ["a reset key", { remaining: "X-Remaining", reset: "X-Reset" }],
+            ["a name that is not a header token", { remaining: "X Remaining" }],
+        ])("throws on rateLimit.syncFromHeaders with %s, and changes nothing", (_label, syncFromHeaders) => {
+            server.configure({ baseUrl: "https://api.example.com" });
+            expect(() =>
+                server.configure({ rateLimit: { max: 1, windowMs: 1000, syncFromHeaders } } as never)
+            ).toThrow(/rateLimit\.syncFromHeaders/);
+            expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
+        });
+
         it("throws on a rateLimit that is not an object, and changes nothing", () => {
             server.configure({ baseUrl: "https://api.example.com" });
             expect(() => server.configure({ rateLimit: null, baseUrl: "https://other.example" } as never))

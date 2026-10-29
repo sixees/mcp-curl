@@ -28,6 +28,8 @@ vi.mock("../security/index.js", async () => {
             };
         }),
         checkRateLimits: vi.fn(),
+        hostRateLimitSyncHeader: vi.fn(() => undefined),
+        applyServerRemaining: vi.fn(),
     };
 });
 
@@ -43,6 +45,8 @@ const { executeCurlRequest } = await import("./curl-execute.js");
 const validate = vi.mocked(security.validateUrlAndResolveDns);
 const rateCheck = vi.mocked(security.checkRateLimits);
 const spawnCurl = vi.mocked(execution.executeCommand);
+const syncHeader = vi.mocked(security.hostRateLimitSyncHeader);
+const applySync = vi.mocked(security.applyServerRemaining);
 
 const params = (p: Record<string, unknown>) => CurlExecuteSchema.parse(p);
 const textOf = (result: unknown) =>
@@ -66,6 +70,8 @@ beforeEach(() => {
     validate.mockClear();
     rateCheck.mockReset();
     spawnCurl.mockReset();
+    syncHeader.mockReset();
+    applySync.mockReset();
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
@@ -384,5 +390,51 @@ describe("what a followed hop sends", () => {
         const hop2 = spawnArgs(1);
         expect(hop2[hop2.indexOf("-X") + 1]).toBe("PUT");
         expect(hop2[hop2.indexOf("--data-raw") + 1]).toBe("{}");
+    });
+});
+
+describe("rate-limit header sync", () => {
+    const synced = (status: number, target: string, remaining: string | undefined) =>
+        curlOutputFor({
+            body: JSON.stringify({ body: "b" }),
+            httpCode: status,
+            redirectUrl: target,
+            syncHeaderValue: remaining,
+            contentType: "application/json",
+        });
+
+    it("asks every hop for the header and applies each figure to the host that answered", async () => {
+        syncHeader.mockReturnValue("X-Remaining");
+        spawnCurl
+            .mockResolvedValueOnce(synced(302, "https://cdn.test/b", "7"))
+            .mockResolvedValueOnce(synced(200, "", "3"));
+
+        const result = await executeCurlRequest(params({ url: "https://api.test/a" }), { hostPolicy: ANY_HOST_POLICY });
+
+        expect(isError(result)).toBe(false);
+        expect(spawnArgs(0).join(" ")).toContain("%header{X-Remaining}");
+        expect(spawnArgs(1).join(" ")).toContain("%header{X-Remaining}");
+        expect(applySync.mock.calls).toEqual([["api.test", 7], ["cdn.test", 3]]);
+    });
+
+    it.each([["empty", ""], ["malformed", "7 requests"], ["negative", "-1"]])(
+        "changes nothing on an %s value",
+        async (_label, remaining) => {
+            syncHeader.mockReturnValue("X-Remaining");
+            spawnCurl.mockResolvedValueOnce(synced(200, "", remaining));
+
+            await executeCurlRequest(params({ url: "https://api.test/a" }), { hostPolicy: ANY_HOST_POLICY });
+
+            expect(applySync).not.toHaveBeenCalled();
+        }
+    );
+
+    it("asks for no header when none is configured", async () => {
+        spawnCurl.mockResolvedValueOnce(final("plain"));
+
+        await executeCurlRequest(params({ url: "https://api.test/a" }), { hostPolicy: ANY_HOST_POLICY });
+
+        expect(spawnArgs(0).join(" ")).not.toContain("%header{");
+        expect(applySync).not.toHaveBeenCalled();
     });
 });
