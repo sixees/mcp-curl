@@ -139,10 +139,12 @@ describe('LocalRefusalError', () => {
         expect(hop2.message).toMatch(/^Redirect refused locally: 1 request\(s\) were sent.* Retry in 7 s\.$/);
     });
 
-    it('does not compile a wait on a code no rate limit produces', () => {
+    it('does not compile a wait on a refusal no rate limit made', () => {
         // @ts-expect-error -- a host-list refusal has no wait
         const waited: LocalRefusal = { code: 'LOCAL_HOST_NOT_ALLOWED', reason: 'host-not-allowed', retryAfterSeconds: 3 };
-        expect(waited).toBeDefined();
+        // @ts-expect-error -- nor does a redirect hop the host list refused
+        const hopWaited: LocalRefusal = { code: 'LOCAL_REDIRECT_REFUSED', reason: 'host-not-allowed', requestsSent: 1, retryAfterSeconds: 3 };
+        expect([waited, hopWaited]).toHaveLength(2);
     });
 
     it.each([0, -1, 1.5, NaN])('refuses a wait of %s', (retryAfterSeconds) => {

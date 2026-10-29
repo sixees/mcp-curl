@@ -275,8 +275,11 @@ async function gateHop(
         } catch (error) {
             // The rate limit's wait is the one figure carried across: the
             // server computed it, so it names nothing the remote chose.
-            const retryAfterSeconds = error instanceof LocalRefusalError ? error.retryAfterSeconds : undefined;
-            throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent, retryAfterSeconds });
+            throw new LocalRefusalError(
+                reason === "rate-limited" && error instanceof LocalRefusalError
+                    ? { code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent, retryAfterSeconds: error.retryAfterSeconds }
+                    : { code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent }
+            );
         }
     };
 

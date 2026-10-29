@@ -178,11 +178,13 @@ export type LocalRefusal =
           };
       }[NothingSentCode]
     | {
-          readonly code: "LOCAL_REDIRECT_REFUSED";
-          readonly reason: ReasonFor<"LOCAL_REDIRECT_REFUSED">;
-          readonly requestsSent: number;
-          readonly retryAfterSeconds?: number;
-      };
+          [R in ReasonFor<"LOCAL_REDIRECT_REFUSED">]: {
+              readonly code: "LOCAL_REDIRECT_REFUSED";
+              readonly reason: R;
+              readonly requestsSent: number;
+              readonly retryAfterSeconds?: R extends "rate-limited" ? number : never;
+          };
+      }[ReasonFor<"LOCAL_REDIRECT_REFUSED">];
 
 const nothingSent = (refusal: LocalRefusal) => `Refused locally: no request was sent (${refusal.code}).`;
 

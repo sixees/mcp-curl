@@ -38,7 +38,8 @@ npm install          # Install dependencies
 npm run build        # Compile TypeScript to dist/
 npm run dev          # Watch mode compilation
 npm start            # Run the server (stdio transport)
-npm test             # Run vitest tests
+npm test             # Type-check (tests included), then run vitest
+npm run typecheck    # Type-check only: the one gate that sees @ts-expect-error
 npm run test:watch   # Watch mode tests
 TRANSPORT=http PORT=3000 npm start  # Run with HTTP transport
 ```

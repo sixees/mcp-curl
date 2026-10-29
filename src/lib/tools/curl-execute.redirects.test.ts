@@ -161,6 +161,19 @@ describe("each hop is gated with its own URL", () => {
         );
     });
 
+    it("carries a wait only onto a rate-limit refusal", async () => {
+        spawnCurl.mockResolvedValueOnce(redirect(302, "http://metadata.test/"));
+        validate.mockImplementationOnce(async () => ({ hostname: "api.test", port: 443, resolvedIp: "93.184.216.34" }));
+        validate.mockRejectedValueOnce(
+            new LocalRefusalError({ code: "LOCAL_RATE_LIMITED", reason: "rate-limited", retryAfterSeconds: 12 })
+        );
+
+        const result = await executeCurlRequest(params({ url: "https://api.test/a" }), { hostPolicy: ANY_HOST_POLICY });
+
+        expect(textOf(result)).toContain(refusedAt(1));
+        expect(textOf(result)).not.toContain("Retry in");
+    });
+
     it("hands cURL the parsed href, so the host it checked is the host it reaches", async () => {
         // WHATWG reads the host as a.test; cURL, handed the raw text, reads
         // `a.test\` as userinfo and connects to b.test (measured, cURL 8.7.1).
