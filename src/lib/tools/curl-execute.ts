@@ -2,12 +2,12 @@
 // The curl_execute executor and its tool metadata; registration is extensible/tool-wrapper.ts::registerCurlToolWithHooks
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
-import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, type HostPolicy } from "../config/index.js";
-import { generateMetadataSeparator, type MetadataBlock } from "../types/index.js";
+import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, type HostPolicy } from "../config/index.js";
+import { generateMetadataSeparator, type MetadataBlock, type UrlValidationResult } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
-import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError } from "../utils/index.js";
-import { executeCommand, buildCurlArgs, platformSupportsHeaderDump } from "../execution/index.js";
+import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError, withTimeout } from "../utils/index.js";
+import { executeCommand, buildCurlArgs, platformSupportsHeaderDump, type CommandResult } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
     sanitizeErrorMessage,
@@ -16,7 +16,9 @@ import {
     processResponse,
     defendText,
     extractHeaderChannel,
+    type ParsedResponse,
 } from "../response/index.js";
+import { FOLLOWED_REDIRECT_STATUSES, nextHopParams, sameOrigin } from "./redirect-hop.js";
 
 /** Tool result type returned by executeCurlRequest */
 export interface CurlExecuteResult {
@@ -188,6 +190,117 @@ mcp-curl v${SERVER.VERSION}`,
     },
 };
 
+function safeUrl(url: string): URL | undefined {
+    try {
+        return new URL(url);
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * A redirect target cURL reported, parsed, or undefined where it is not one
+ * this server will follow: unparseable, not http(s), hostless, or carrying
+ * userinfo the remote chose. The parsed `href` is what every later check and
+ * cURL itself receive, because WHATWG and cURL disagree on where some URLs'
+ * host is.
+ *
+ * cURL writes the `-u` credentials it sent into the target it reports, so
+ * userinfo equal to `sentCredentials` is cURL's echo, not the remote's, and is
+ * stripped: the next hop's credentials come from `basic_auth`, which a
+ * cross-origin hop drops, never from the URL.
+ */
+function redirectTarget(raw: string, sentCredentials: string | undefined): URL | undefined {
+    const url = safeUrl(raw);
+    if (url === undefined || !isAllowedUrlScheme(url.protocol) || url.hostname === "") return undefined;
+    if (url.username !== "" || url.password !== "") {
+        if (`${percentDecoded(url.username)}:${percentDecoded(url.password)}` !== sentCredentials) return undefined;
+        url.username = "";
+        url.password = "";
+    }
+    return url;
+}
+
+/**
+ * Strips credentials from the request URL and returns them as `basic_auth`,
+ * so `redirectTarget` has one place to read what was sent. `-u` already wins
+ * over URL userinfo in cURL, so a `basic_auth` the caller set is kept and the
+ * URL's dropped: the credentials sent do not change. As `basic_auth` they are
+ * also what a cross-origin hop drops.
+ */
+function moveUserinfoToBasicAuth(url: URL, basicAuth: string | undefined): string | undefined {
+    if (url.username === "" && url.password === "") return basicAuth;
+    const credentials = basicAuth ?? `${percentDecoded(url.username)}:${percentDecoded(url.password)}`;
+    url.username = "";
+    url.password = "";
+    return credentials;
+}
+
+/** cURL percent-decodes URL userinfo; a malformed escape is sent as written. */
+function percentDecoded(value: string): string {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
+}
+
+/**
+ * The checks every hop passes before cURL is spawned for it: the host list
+ * before DNS, then the SSRF check that yields the `--resolve` pin, then the
+ * rate limit, last, because `checkRateLimits` records the request before it
+ * can throw, so a hop refused by an earlier check costs no quota.
+ *
+ * On hop 1 each check refuses in its own words. On a redirect hop every
+ * refusal is `LOCAL_REDIRECT_REFUSED` with a fixed reason, because requests
+ * were already sent and because the checks' own messages name the host,
+ * which on a redirect hop the remote chose (RC-30). A deadline that passes
+ * during DNS is the chain's timeout on every hop, never a refusal.
+ */
+async function gateHop(
+    url: string,
+    requestsSent: number,
+    deadline: number,
+    policy: HostPolicy,
+    extra: CurlExecuteExtra
+): Promise<UrlValidationResult> {
+    const check = async <T>(
+        reason: "host-not-allowed" | "address-blocked" | "rate-limited",
+        run: () => T | Promise<T>
+    ): Promise<T> => {
+        if (requestsSent === 0) return run();
+        try {
+            return await run();
+        } catch {
+            throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent });
+        }
+    };
+
+    // A URL that does not parse is left to the SSRF gate, which refuses it
+    // with its own message. A redirect hop's URL always parses.
+    const host = safeHostname(url, "");
+    await check("host-not-allowed", () => {
+        if (host !== "" && !isHostAllowed(policy, host)) {
+            throw new LocalRefusalError({ code: "LOCAL_HOST_NOT_ALLOWED", reason: "host-not-allowed" });
+        }
+    });
+    // The lookup is bounded by the chain's deadline: on a redirect hop the
+    // remote chose the host, and so its nameserver.
+    const dnsResult = await withTimeout(
+        check("address-blocked", () => validateUrlAndResolveDns(url, { allowLocalhost: extra.allowLocalhost })),
+        Math.max(0, deadline - Date.now()),
+        timedOut
+    );
+    // Per-host protects each target; per-client stops a client spreading
+    // requests across hosts. For stdio, sessionId is undefined (the default client).
+    await check("rate-limited", () => checkRateLimits(dnsResult.hostname, extra.sessionId));
+    return dnsResult;
+}
+
+function timedOut(): Error {
+    return new Error("Request timed out: the whole timeout was used up before the next request could be sent.");
+}
+
 /**
  * Execute a cURL request with the given parameters. The one executor every
  * entry point reaches: the registered `curl_execute` tool (through
@@ -197,8 +310,8 @@ mcp-curl v${SERVER.VERSION}`,
  * @param params - Validated curl_execute parameters
  * @param extra - Additional context (sessionId for rate limiting; allowLocalhost
  *   overrides the localhost SSRF guard for this call, from McpCurlConfig;
- *   hostPolicy is the host list checked on the request URL's host before
- *   DNS, `"any"` when absent)
+ *   hostPolicy is the host list checked on every hop's host before DNS,
+ *   `"any"` when absent)
  * @returns Tool result with response content
  */
 export async function executeCurlRequest(
@@ -210,67 +323,99 @@ export async function executeCurlRequest(
     // the SSRF gate and cURL all take the one parsed form. A URL that does not
     // parse stays as given, for the SSRF gate to refuse.
     try {
-        params = { ...params, url: new URL(params.url).href };
+        const url = new URL(params.url);
+        const basic_auth = moveUserinfoToBasicAuth(url, params.basic_auth);
+        params = { ...params, url: url.href, basic_auth };
     } catch {
         // Left to validateUrlAndResolveDns.
     }
+    // The final hop's output: intermediate hops' bodies are discarded, and
+    // `include_headers`, `verbose` stderr and hooks see this hop alone.
+    let result: CommandResult;
+    let parsed: ParsedResponse;
     try {
         if (params.basic_auth && !params.basic_auth.includes(":")) {
             throw new Error("basic_auth must be in 'username:password' format");
         }
 
-        // Before DNS, so the request URL's host, when off the list, is never
-        // resolved or sent the credentials in defaultHeaders. Redirect hops are
-        // not checked here. A URL that does not parse is left to the SSRF gate
-        // below, which refuses it with its own message.
         const policy = extra.hostPolicy ?? ANY_HOST_POLICY;
-        const requestHost = safeHostname(params.url, "");
-        if (requestHost !== "" && !isHostAllowed(policy, requestHost)) {
-            throw new LocalRefusalError({ code: "LOCAL_HOST_NOT_ALLOWED", reason: "host-not-allowed" });
-        }
+        const maxRedirects = params.max_redirects ?? LIMITS.MAX_REDIRECTS;
+        // One deadline for the whole chain, so a redirect cannot buy a hop a
+        // fresh timeout.
+        const deadline = Date.now() + (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
+        let hop = params;
+        let requestsSent = 0;
 
-        // SSRF protection: validate URL and resolve DNS to prevent rebinding attacks
-        // This returns the resolved IP which we pin with --resolve
-        const dnsResult = await validateUrlAndResolveDns(params.url, {
-            allowLocalhost: extra.allowLocalhost,
-        });
-
-        // Rate limit by both target host and client to prevent abuse
-        // Per-host: protects individual targets from being hammered
-        // Per-client: prevents spreading requests across many hosts to bypass limits
-        // For HTTP transport, extra.sessionId identifies the client; for stdio it's undefined (uses default)
-        checkRateLimits(dnsResult.hostname, extra.sessionId);
-
+        // cURL is spawned without `-L`, so each spawn is one hop and every hop
+        // is gated before cURL sees it: host list (before DNS), SSRF check
+        // and `--resolve` pin for that hop's host:port, rate limit last so a
+        // refused hop costs no quota (ARCHITECTURE.md invariant 2).
+        let dnsResult = await gateHop(hop.url, requestsSent, deadline, policy, extra);
+        // Hop 1's gate refuses a URL that does not parse, so this cannot throw.
+        const origin = new URL(params.url);
         // Resolve and validate output directory (returns real path with symlinks resolved)
         const resolvedOutputDir = resolveOutputDir(params.output_dir);
-        const validatedOutputDir = resolvedOutputDir
-            ? await validateOutputDir(resolvedOutputDir)
-            : undefined;
+        const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : undefined;
 
-        // One block for the build and the parse; its separator is unique per
-        // request, to prevent response injection.
-        const metadataBlock: MetadataBlock = { separator: generateMetadataSeparator() };
+        for (;;) {
+            // `executeCommand` treats a timeout of 0 or less as "use the
+            // default", and cURL treats `--max-time 0` as no limit, so a spent
+            // deadline is refused here rather than handed to either.
+            const remainingMs = Math.floor(deadline - Date.now());
+            if (remainingMs <= 0) throw timedOut();
 
-        const args = buildCurlArgs({
-            ...params,
-            silent: true,
-            dnsResolve: dnsResult,
-            metadataBlock,
-        });
-        const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
-        // `executeCommand` reads the header descriptor's presence off `args`,
-        // so nothing here has to agree with `buildCurlArgs` about it — one
-        // decision, taken from the argument list both sides already share.
-        const result = await executeCommand("curl", args, timeoutMs);
+            // One block for the build and the parse; its separator is unique per
+            // request, to prevent response injection.
+            const metadataBlock: MetadataBlock = { separator: generateMetadataSeparator() };
+            const args = buildCurlArgs({
+                ...hop,
+                timeout: remainingMs / 1000,
+                silent: true,
+                dnsResolve: dnsResult,
+                metadataBlock,
+            });
+            // `executeCommand` reads the header descriptor's presence off `args`,
+            // so nothing here has to agree with `buildCurlArgs` about it — one
+            // decision, taken from the argument list both sides already share.
+            result = await executeCommand("curl", args, remainingMs);
+            requestsSent++;
+
+            // stdout is the body alone — cURL wrote the headers to their own
+            // descriptor — so this strips the `-w` metadata suffix and nothing else.
+            parsed = parseResponseWithMetadata(result.stdoutBytes, metadataBlock);
+
+            // Followed only on a determined block: an undetermined one has no
+            // status to trust, and a non-zero exit makes this hop the result.
+            const status = parsed.httpStatus;
+            const followed = params.follow_redirects !== false &&
+                result.exitCode === 0 &&
+                parsed.metadataFound &&
+                status !== undefined &&
+                FOLLOWED_REDIRECT_STATUSES.has(status);
+            // An empty target on a followed status is terminal: there is
+            // nowhere to go, so the 3xx is the answer.
+            if (!followed || parsed.redirectUrl === "") break;
+
+            if (requestsSent > maxRedirects) {
+                throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason: "redirect-limit", requestsSent });
+            }
+            // An over-bound or control-bearing target arrives as undefined.
+            // It is unusable, never "empty, so terminal".
+            const next = parsed.redirectUrl === undefined ? undefined : redirectTarget(parsed.redirectUrl, hop.basic_auth);
+            if (next === undefined) {
+                throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason: "unusable-redirect-target", requestsSent });
+            }
+            // Each hop is built from the last, so what a cross-origin hop drops
+            // stays dropped when the chain comes back to hop 1's origin.
+            hop = nextHopParams(hop, status, !sameOrigin(origin, next), next.href);
+            dnsResult = await gateHop(hop.url, requestsSent, deadline, policy, extra);
+        }
+
+        const { contentType, metadataFound } = parsed;
 
         let headerTruncated = false;
         let headerBytesReceived: number | undefined;
         let headerBytesReturned: number | undefined;
-
-        // stdout is the body alone — cURL wrote the headers to their own
-        // descriptor — so this strips the `-w` metadata suffix and nothing else.
-        const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataBlock);
-        const { contentType, metadataFound } = parsed;
 
         // Defending and bounding the header text is one concern with one home —
         // see `extractHeaderChannel`. Every defect this channel has produced is
@@ -297,7 +442,7 @@ export async function executeCurlRequest(
             const channel = extractHeaderChannel(
                 result.headerBytes,
                 result.headerBytesReceived,
-                params.url,
+                hop.url,
                 params.max_result_size
             );
             responseHeaders = channel.responseHeaders;
@@ -312,7 +457,7 @@ export async function executeCurlRequest(
         // is what the size guard needs, because only wire octets give a byte
         // count the origin can be held to.
         const processed = await processResponse(parsed.bodyBytes, {
-            url: params.url,
+            url: hop.url,
             jqFilter: params.jq_filter,
             maxResultSize: params.max_result_size,
             saveToFile: params.save_to_file,
@@ -328,7 +473,7 @@ export async function executeCurlRequest(
             ? defendText(result.stderr, {
                   contentType: MARKDOWN_MIME,
                   contentTypeUndetermined: false,
-                  hostname: safeHostname(params.url),
+                  hostname: safeHostname(hop.url),
                   decodeEntities: false,
               })
             : result.stderr;
@@ -436,8 +581,9 @@ export async function executeCurlRequest(
         // never is, because other errors' messages can echo remote content.
         const code = error instanceof LocalRefusalError ? ` ${error.code}` : "";
         console.error(`curl_execute error: [${hostname}] ${errorClass}${code}`);
-        // A local refusal is not an error executing a request: none was sent,
-        // and its own first line says so.
+        // A local refusal is not an error executing a request: its own first line
+        // says how many requests were sent — none, or for LOCAL_REDIRECT_REFUSED,
+        // the `requestsSent` before the refused hop.
         const text = error instanceof LocalRefusalError
             ? error.message
             : `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`;

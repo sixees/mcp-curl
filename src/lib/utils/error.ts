@@ -131,7 +131,7 @@ export type LocalRefusalCode = (typeof LOCAL_REFUSAL_CODES)[number];
  */
 export const LOCAL_REFUSAL_REASONS = {
     "host-not-allowed": "The target host is not in this server's allowedHosts list.",
-    "address-blocked": "The target address is blocked by this server's SSRF protection.",
+    "address-blocked": "The redirect target failed this server's address check: it is blocked by SSRF protection or did not resolve.",
     "rate-limited": "The rate limit for this target or session is exhausted; wait before retrying.",
     "redirect-limit": "The redirect chain reached max_redirects.",
     "unusable-redirect-target": "The redirect target is not a usable http(s) URL.",

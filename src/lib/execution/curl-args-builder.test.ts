@@ -26,10 +26,11 @@ describe("buildCurlArgs", () => {
     // failures this block turns into test failures.
     describe("--dump-header", () => {
         // `buildCurlArgs` reads the real `process.platform`, so on a Linux
-        // runner every assertion below would hold vacuously — no flag is
-        // emitted, so "does not contain `-i`" passes without the builder having
-        // decided anything. Pinning the platform is what makes each assertion
-        // about the branch it names.
+        // runner no flag is emitted: the negative assertions below would hold
+        // vacuously — "does not contain `-i`" passes without the builder having
+        // decided anything — and the positive ones would fail for a reason that
+        // is not the builder's. Pinning the platform is what makes each
+        // assertion about the branch it names.
         const real = process.platform;
         const setPlatform = (value: string) =>
             Object.defineProperty(process, "platform", { value, configurable: true });
@@ -167,11 +168,11 @@ describe("buildCurlArgs", () => {
         });
     });
 
-    describe("--resolve emission (invariant 2, first hop, builder half)", () => {
+    describe("--resolve emission (invariant 2, builder half)", () => {
         // Scope: this asserts only that the builder EMITS the pin it is handed.
         // That the pin carries the address the SSRF check produced is asserted
-        // at the producer in curl-execute.headers.test.ts; hops 2..N are
-        // docs/todos/007.
+        // at the producer in curl-execute.headers.test.ts, and for every redirect
+        // hop in curl-execute.redirects.test.ts.
         it("always emits a pin for the address it was given", () => {
             const args = buildCurlArgs(makeParams());
             const i = args.indexOf("--resolve");
@@ -187,25 +188,28 @@ describe("buildCurlArgs", () => {
             expect(idx).toBeGreaterThanOrEqual(0);
             expect(args[idx + 1]).toBe("=http,https");
         });
-
-        it("includes --proto even when redirects are disabled", () => {
-            const args = buildCurlArgs(makeParams({ follow_redirects: false }));
-            expect(args).toContain("--proto");
-            expect(args[args.indexOf("--proto") + 1]).toBe("=http,https");
-        });
     });
 
-    describe("--proto-redir flag", () => {
-        it("includes --proto-redir when redirects are enabled (default)", () => {
-            const args = buildCurlArgs(makeParams());
-            const idx = args.indexOf("--proto-redir");
-            expect(idx).toBeGreaterThanOrEqual(0);
-            expect(args[idx + 1]).toBe("=http,https");
+    describe("redirects", () => {
+        // `executeCurlRequest` follows redirects itself, one gated hop at a
+        // time (ARCHITECTURE.md invariant 2). Any of these would let cURL
+        // resolve and connect to a hop nothing validated.
+        it("passes -q first, so no .curlrc can turn redirect following back on", () => {
+            // cURL honours -q only as the first argument.
+            expect(buildCurlArgs(makeParams())[0]).toBe("-q");
         });
 
-        it("does not include --proto-redir when redirects are disabled", () => {
-            const args = buildCurlArgs(makeParams({ follow_redirects: false }));
-            expect(args).not.toContain("--proto-redir");
+        it("passes --globoff, so a bracket range in a URL is one request", () => {
+            expect(buildCurlArgs(makeParams())).toContain("--globoff");
+        });
+
+        it("never emits -L, --location, --max-redirs or --proto-redir", () => {
+            for (const follow_redirects of [true, false]) {
+                const args = buildCurlArgs(makeParams({ follow_redirects, max_redirects: 5 } as never));
+                for (const flag of ["-L", "--location", "--location-trusted", "--max-redirs", "--proto-redir"]) {
+                    expect(args).not.toContain(flag);
+                }
+            }
         });
     });
 

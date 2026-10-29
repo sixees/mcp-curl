@@ -25,8 +25,11 @@ export {
     URL_CONTROL_CHARACTER,
     createHttpOnlyUrlSchema,
     safeHostname,
+    effectivePort,
 } from "./url.js";
 export type { CreateHttpOnlyUrlSchemaOptions, ResolvedRequestUrl } from "./url.js";
+
+export { withTimeout } from "./timeout.js";
 
 export {
     isBinaryContentType,

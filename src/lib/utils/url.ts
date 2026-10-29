@@ -21,9 +21,11 @@ const URL_CONTROL_CLASS = "\\x00-\\x1f\\x7f";
 /**
  * A C0 control character or DEL, anywhere in a URL bound for cURL.
  *
- * A WHATWG parser silently strips tab, CR and LF, which cURL is handed raw, so
- * the URL the SSRF gate checks and the one cURL requests could differ. Every
- * check refusing control bytes in such a URL is built from this one class.
+ * A WHATWG parser silently strips tab, CR and LF. `executeCurlRequest` hands
+ * the SSRF gate and cURL the same parsed `href`, so a URL carrying one would
+ * be requested as something other than what was written; it is refused rather
+ * than silently rewritten. Every check refusing control bytes in such a URL is
+ * built from this one class.
  */
 export const URL_CONTROL_CHARACTER = new RegExp(`[${URL_CONTROL_CLASS}]`);
 
@@ -213,4 +215,16 @@ export function safeHostname(url: string | undefined, fallback = "unknown"): str
     } catch {
         return fallback;
     }
+}
+
+/**
+ * The port a parsed http(s) URL connects to: its explicit port, else the
+ * scheme's default. WHATWG drops a port equal to the default, so `url.port` is
+ * empty for both "no port" and ":443" on https, and both mean 443.
+ *
+ * Pure: depends only on its input.
+ */
+export function effectivePort(url: URL): number {
+    if (url.port) return parseInt(url.port, 10);
+    return url.protocol === "https:" ? 443 : 80;
 }

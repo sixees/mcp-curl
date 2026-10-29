@@ -21,8 +21,6 @@ export interface CurlArgsParams {
     data?: string;
     /** Form data as key-value pairs (multipart/form-data) */
     form?: Record<string, string>;
-    /** Follow HTTP redirects (default: true) */
-    follow_redirects?: boolean;
     /** Skip SSL certificate verification */
     insecure?: boolean;
     /** Request timeout in seconds */
@@ -37,8 +35,6 @@ export interface CurlArgsParams {
     verbose?: boolean;
     /** Report response headers, dumped to their own descriptor */
     include_headers?: boolean;
-    /** Maximum number of redirects to follow */
-    max_redirects?: number;
     /** Request compressed response and automatically decompress */
     compressed?: boolean;
     /** Silent mode - no progress output */
@@ -56,10 +52,11 @@ export interface CurlArgsParams {
      * that the pin came from `validateUrlAndResolveDns`, nor that
      * `hostname`/`port` match `url` — a mismatched pin has cURL resolve the name
      * itself with no error, which is why provenance is asserted at the producer
-     * in `curl-execute.headers.test.ts`. And it covers the first hop only: with
-     * `-L`, hops 2..N carry no `--resolve` of their own. `ARCHITECTURE.md`
-     * invariant 2 does not record that limit, so the redirect path violates it
-     * rather than falling outside it; `docs/todos/007` tracks closing the gap.
+     * in `curl-execute.headers.test.ts`. One spawn is one hop: no `-L` is ever
+     * emitted and `-q` stops a `.curlrc` adding one, so cURL never connects
+     * anywhere this pin does not cover, and
+     * `executeCurlRequest` validates and pins each redirect hop itself
+     * (`ARCHITECTURE.md` invariant 2).
      */
     dnsResolve: { hostname: string; port: number; resolvedIp: string };
     /**
@@ -85,9 +82,17 @@ export interface CurlArgsParams {
  * @returns Array of command-line arguments for cURL
  */
 export function buildCurlArgs(params: CurlArgsParams): string[] {
-    const args: string[] = [];
+    // `-q` first, and only first counts: cURL reads no config file. A `.curlrc`
+    // is the one input that can change cURL's behaviour without appearing here,
+    // and `location` in one would follow redirects inside this spawn, past the
+    // per-hop gate (ARCHITECTURE.md invariant 2). It also stops a config-file
+    // `proxy`, `resolve` or `insecure` overriding the argv below.
+    // `--globoff` keeps one spawn one request: without it a `[1-3]` in the
+    // path, which WHATWG leaves as written and a redirect target can carry,
+    // makes cURL send three requests for one gated, rate-counted hop.
+    const args: string[] = ["-q", "--globoff"];
 
-    // Restrict initial request to the shared scheme allowlist (defense-in-depth alongside URL validation in ssrf.ts)
+    // Restrict the request to the shared scheme allowlist (defense-in-depth alongside URL validation in ssrf.ts); one spawn is one hop, so this covers every URL cURL connects to
     args.push("--proto", ALLOWED_URL_SCHEMES_CURL_FLAG);
 
     // Method
@@ -119,20 +124,13 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
         }
     }
 
-    // Follow redirects with default max redirects
-    if (params.follow_redirects !== false) {
-        args.push("-L");
-        args.push("--max-redirs", String(params.max_redirects ?? LIMITS.MAX_REDIRECTS));
-        // Restrict redirect protocols to the shared scheme allowlist (prevents file://, ftp://, etc. via redirects)
-        args.push("--proto-redir", ALLOWED_URL_SCHEMES_CURL_FLAG);
-    }
-
     // Insecure (skip SSL verification)
     if (params.insecure) {
         args.push("-k");
     }
 
-    // Timeout
+    // Timeout, in seconds; may be fractional (a redirect hop gets what is left
+    // of the chain's deadline). Never 0: cURL reads `--max-time 0` as no limit.
     if (params.timeout) {
         args.push("--max-time", params.timeout.toString());
     }
