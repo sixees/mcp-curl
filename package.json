@@ -52,7 +52,8 @@
     "prepublishOnly": "npm test && npm run build",
     "start": "node dist/index.js",
     "dev": "tsup --watch",
-    "test": "vitest run",
+    "test": "npm run typecheck && vitest run",
+    "typecheck": "tsc --noEmit",
     "test:watch": "vitest",
     "redos:matrix": "node scripts/redos-teeth-matrix.mjs"
   },

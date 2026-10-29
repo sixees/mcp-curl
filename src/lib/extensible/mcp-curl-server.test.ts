@@ -81,6 +81,33 @@ describe("McpCurlServer", () => {
             expect(() => server.configure({ rateLimit } as never)).toThrow(new Error(message));
         });
 
+        it("keeps rateLimit.syncFromHeaders", () => {
+            const rateLimit = { max: 240, windowMs: 3_600_000, syncFromHeaders: { remaining: "X-RateLimit-Remaining" } };
+            server.configure({ rateLimit });
+            expect(server.getConfig().rateLimit).toEqual(rateLimit);
+        });
+
+        it.each([
+            ["a reset key", { remaining: "X-Remaining", reset: "X-Reset" }],
+            ["a name that is not a header token", { remaining: "X Remaining" }],
+        ])("throws on rateLimit.syncFromHeaders with %s, and changes nothing", (_label, syncFromHeaders) => {
+            server.configure({ baseUrl: "https://api.example.com" });
+            expect(() =>
+                server.configure({ rateLimit: { max: 1, windowMs: 1000, syncFromHeaders } } as never)
+            ).toThrow(/rateLimit\.syncFromHeaders/);
+            expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
+        });
+
+        it("throws on a misspelt rateLimit key, and changes nothing", () => {
+            server.configure({ baseUrl: "https://api.example.com" });
+            expect(() =>
+                server.configure({
+                    rateLimit: { max: 240, windowMs: 3_600_000, syncFromHeader: { remaining: "X-RateLimit-Remaining" } },
+                } as never)
+            ).toThrow(/rateLimit accepts only .*got: syncFromHeader$/);
+            expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
+        });
+
         it("throws on a rateLimit that is not an object, and changes nothing", () => {
             server.configure({ baseUrl: "https://api.example.com" });
             expect(() => server.configure({ rateLimit: null, baseUrl: "https://other.example" } as never))
@@ -296,10 +323,10 @@ describe("McpCurlServer utilities", () => {
             ["path", { path: "/\\users" }],
             ["path", { path: "/users\r\nX-Injected: 1" }],
             ["url", { url: "//users" }],
-        ])("refuses a %s a parser would read as a host, naming the rule", async (_field, params) => {
+        ])("refuses a %s a parser would read as a host, as LOCAL_REFUSED_PATH", async (_field, params) => {
             const result = await loopback().executeRequest(params);
             expect(result.isError).toBe(true);
-            expect(textOf(result)).toContain("must start with a single /");
+            expect(textOf(result)).toMatch(/^Refused locally: no request was sent \(LOCAL_REFUSED_PATH\)\. /);
             expect(textOf(result)).not.toContain(JOINED);
         });
 
@@ -1193,7 +1220,10 @@ describe("McpCurlServer rateLimit lifecycle", () => {
     // admitted call is asserted to have reached cURL, because an earlier
     // refusal would make every "not limited" assertion here pass vacuously.
     const URL = "http://localhost:65000/x";
-    const LIMITED = "Rate limit exceeded for host";
+    // The configured one-per-hour limit, told apart from the 60/min default by its wait.
+    const LIMITED =
+        "Refused locally: no request was sent (LOCAL_RATE_LIMITED). " +
+        "The rate limit for this target or session is exhausted; wait before retrying. Retry in 3600 s.";
     const REACHED_CURL = /cURL exited \d+/;
     let server: McpCurlServer;
     let connect: ReturnType<typeof vi.fn>;
@@ -1226,7 +1256,7 @@ describe("McpCurlServer rateLimit lifecycle", () => {
 
         const second = await server.utilities().executeRequest({ url: URL });
         expect(second.isError).toBe(true);
-        expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        expect(textOf(second)).toContain(LIMITED);
     });
 
     it("throws at start() for a baseUrl with no host and allowedHosts unset, before any launch side effect", async () => {
@@ -1265,7 +1295,7 @@ describe("McpCurlServer rateLimit lifecycle", () => {
             await mutated.start("stdio");
             expect(textOf(await mutated.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
             const second = await mutated.utilities().executeRequest({ url: URL });
-            expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+            expect(textOf(second)).toContain(LIMITED);
         } finally {
             await mutated.shutdown();
         }
@@ -1280,7 +1310,7 @@ describe("McpCurlServer rateLimit lifecycle", () => {
             await parsed.start("stdio");
             expect(textOf(await parsed.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
             const second = await parsed.utilities().executeRequest({ url: URL });
-            expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+            expect(textOf(second)).toContain(LIMITED);
         } finally {
             await parsed.shutdown();
         }
@@ -1292,7 +1322,7 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         await server.shutdown();
         await server.start("stdio");
         const again = await server.utilities().executeRequest({ url: URL });
-        expect(textOf(again)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        expect(textOf(again)).toContain(LIMITED);
     });
 
     it("shares one teardown between concurrent shutdown() calls, so a late one cannot release a restart's limit", async () => {
@@ -1312,7 +1342,7 @@ describe("McpCurlServer rateLimit lifecycle", () => {
         close.mockResolvedValue(undefined);
         expect(textOf(await server.utilities().executeRequest({ url: URL }))).toMatch(REACHED_CURL);
         const second = await server.utilities().executeRequest({ url: URL });
-        expect(textOf(second)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+        expect(textOf(second)).toContain(LIMITED);
     });
 
     it("waits for a start() in progress before tearing down, so the server does not come up without its limit", async () => {
@@ -1362,7 +1392,7 @@ describe("McpCurlServer rateLimit lifecycle", () => {
 
         async function expectFirstLimitHeld(): Promise<void> {
             const again = await server.utilities().executeRequest({ url: URL });
-            expect(textOf(again)).toContain(`${LIMITED} "localhost". Maximum 1 requests per 3600 s`);
+            expect(textOf(again)).toContain(LIMITED);
         }
 
         it("keeps the first server's limit when one without rateLimit starts", async () => {

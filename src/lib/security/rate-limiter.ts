@@ -2,9 +2,9 @@
 // Rate limiting with fixed time windows, an optional per-host sliding log, and periodic cleanup
 
 import { RATE_LIMIT } from "../config/session.js";
-import { canonicalHost } from "../config/security/index.js";
+import { canonicalHost, WRITE_OUT_HEADER_NAME } from "../config/security/index.js";
 import type { HostRateLimit, RateLimitEntry } from "../types/index.js";
-import { assertPositiveInteger } from "../utils/index.js";
+import { assertPositiveInteger, LocalRefusalError } from "../utils/index.js";
 
 /**
  * Rate limiting with fixed time windows and periodic cleanup.
@@ -18,7 +18,7 @@ import { assertPositiveInteger } from "../utils/index.js";
  *
  * The per-host gate is a fixed 60/min window by default. An embedder's
  * `rateLimit` (installed through {@link installHostRateLimit}) replaces it with a
- * sliding log of timestamps. A long fixed window cannot serve that case: the
+ * sliding log of timestamped runs. A long fixed window cannot serve that case: the
  * 10 s sweep deletes any entry whose window has closed, and a fixed window
  * admits `2 × max` across its boundary — a burst the upstream quota it is meant
  * to sit under would refuse. The client gate is never configurable.
@@ -29,11 +29,26 @@ const hostRateLimitMap = new Map<string, RateLimitEntry>();
 const clientRateLimitMap = new Map<string, RateLimitEntry>();
 
 /**
- * Admission timestamps per host, oldest first, recorded only while a host
- * limit is installed. A request is refused before it is recorded once the log
- * holds `max`, so a log never exceeds the largest `max` it was recorded under.
- * A re-install with the same window and a smaller `max` keeps the longer log,
- * which admits nothing until it drains below the new `max`.
+ * Requests stamped at one instant. An admission is a run of 1; a header-sync
+ * pad is one run of many, so a log's storage follows events, not `max`.
+ */
+interface LogRun {
+    readonly at: number;
+    readonly count: number;
+}
+
+/** A host's runs, oldest first, and the sum of their counts. */
+interface SlidingLog {
+    readonly runs: LogRun[];
+    total: number;
+}
+
+/**
+ * Admissions per host, recorded only while a host limit is installed. A
+ * request is refused before it is recorded once the log counts `max`, so a log
+ * never counts more than the largest `max` it was recorded under. A re-install
+ * with the same window and a smaller `max` keeps the larger count, which
+ * admits nothing until it drains below the new `max`.
  *
  * **Kept across a release**, so a server that restarts, or hands over to one
  * with the same window, does not get a fresh quota inside a window the
@@ -41,7 +56,7 @@ const clientRateLimitMap = new Map<string, RateLimitEntry>();
  * {@link logWindowMs}, and `McpCurlServer.shutdown` stops that server's sweep
  * along with its limit.
  */
-const hostSlidingLog = new Map<string, number[]>();
+const hostSlidingLog = new Map<string, SlidingLog>();
 
 /** The configured per-host limit; `undefined` selects the fixed default. */
 let hostLimit: Readonly<HostRateLimit> | undefined;
@@ -90,13 +105,32 @@ function leftWindow(timestamp: number, now: number, windowMs: number): boolean {
 }
 
 /**
- * Drop timestamps that have left the window. The log is oldest first, so the
+ * Drop runs that have left the window. The log is oldest first, so the
  * expired ones are a prefix.
  */
-function pruneLog(log: number[], now: number, windowMs: number): void {
+function pruneLog(log: SlidingLog, now: number, windowMs: number): void {
     let expired = 0;
-    while (expired < log.length && leftWindow(log[expired], now, windowMs)) expired++;
-    if (expired > 0) log.splice(0, expired);
+    while (expired < log.runs.length && leftWindow(log.runs[expired].at, now, windowMs)) {
+        log.total -= log.runs[expired].count;
+        expired++;
+    }
+    if (expired > 0) log.runs.splice(0, expired);
+}
+
+/**
+ * The host's log, pruned, or a new empty one. Throws if the map has no room
+ * for an untracked host.
+ */
+function slidingLogFor(key: string, now: number, windowMs: number): SlidingLog {
+    const log = hostSlidingLog.get(key);
+    if (log) {
+        pruneLog(log, now, windowMs);
+        return log;
+    }
+    ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
+    const created: SlidingLog = { runs: [], total: 0 };
+    hostSlidingLog.set(key, created);
+    return created;
 }
 
 /**
@@ -107,7 +141,8 @@ function cleanupExpiredLogs(): void {
     if (logWindowMs === undefined) return;
     const now = elapsedNow();
     for (const [key, log] of hostSlidingLog) {
-        if (log.length === 0 || leftWindow(log[log.length - 1], now, logWindowMs)) {
+        const newest = log.runs[log.runs.length - 1];
+        if (newest === undefined || leftWindow(newest.at, now, logWindowMs)) {
             hostSlidingLog.delete(key);
         }
     }
@@ -137,9 +172,16 @@ function ensureCapacity(map: Map<string, unknown>, sweep: () => void, keyKind: "
     }
 }
 
-/** Whole seconds when exact, otherwise milliseconds. */
-function formatWindow(ms: number): string {
-    return ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`;
+/**
+ * The quota refusal. It names no host: on a redirect hop the remote chose it,
+ * and the text reaches the model (RC-30). The wait is server-computed.
+ */
+function rateLimited(retryMs: number): LocalRefusalError {
+    return new LocalRefusalError({
+        code: "LOCAL_RATE_LIMITED",
+        reason: "rate-limited",
+        retryAfterSeconds: Math.ceil(retryMs / 1000),
+    });
 }
 
 /**
@@ -164,7 +206,6 @@ function checkRateLimitInternal(
     map: Map<string, RateLimitEntry>,
     key: string,
     maxRequests: number,
-    errorPrefix: string,
     keyKind: "host" | "client"
 ): void {
     const now = elapsedNow();
@@ -177,7 +218,7 @@ function checkRateLimitInternal(
     }
 
     if (entry.count >= maxRequests) {
-        throw new Error(`${errorPrefix}. Maximum ${maxRequests} requests per minute.`);
+        throw rateLimited(RATE_LIMIT.WINDOW_MS - (now - entry.windowStart));
     }
 
     entry.count++;
@@ -186,27 +227,17 @@ function checkRateLimitInternal(
 /**
  * Per-host check against the configured sliding window.
  */
-function checkSlidingHostLimit(hostname: string, limit: HostRateLimit, errorPrefix: string): void {
+function checkSlidingHostLimit(hostname: string, limit: HostRateLimit): void {
     const now = elapsedNow();
-    let log = hostSlidingLog.get(hostname);
+    const log = slidingLogFor(hostname, now, limit.windowMs);
 
-    if (log) {
-        pruneLog(log, now, limit.windowMs);
-    } else {
-        ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
-        log = [];
-        hostSlidingLog.set(hostname, log);
+    if (log.total >= limit.max) {
+        // The oldest run leaves the window first; that is when one more fits.
+        throw rateLimited(limit.windowMs - (now - log.runs[0].at));
     }
 
-    if (log.length >= limit.max) {
-        const retryMs = limit.windowMs - (now - log[0]);
-        throw new Error(
-            `${errorPrefix}. Maximum ${limit.max} requests per ${formatWindow(limit.windowMs)}; ` +
-            `the oldest leaves the window in ${Math.ceil(retryMs / 1000)} s.`
-        );
-    }
-
-    log.push(now);
+    log.runs.push({ at: now, count: 1 });
+    log.total++;
 }
 
 /**
@@ -214,7 +245,8 @@ function checkSlidingHostLimit(hostname: string, limit: HostRateLimit, errorPref
  *
  * @param hostname - Target hostname (for per-host limit)
  * @param clientId - Client identifier (session ID for HTTP, default for stdio)
- * @throws Error if either rate limit is exceeded, or if the key is untracked and its map is at RATE_LIMIT.MAX_TRACKED_KEYS
+ * @throws LocalRefusalError (`LOCAL_RATE_LIMITED`) if either rate limit is exceeded
+ * @throws Error if the key is untracked and its map is at RATE_LIMIT.MAX_TRACKED_KEYS
  */
 export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.STDIO_CLIENT_ID): void {
     // **Client gate first, and the order is load-bearing.** Whichever map is
@@ -231,30 +263,85 @@ export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.
         clientRateLimitMap,
         clientId,
         RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE,
-        "Client rate limit exceeded",
         "client"
     );
 
-    const hostPrefix = `Rate limit exceeded for host "${hostname}"`;
     const hostKey = canonicalHost(hostname);
     if (hostLimit) {
-        checkSlidingHostLimit(hostKey, hostLimit, hostPrefix);
+        checkSlidingHostLimit(hostKey, hostLimit);
         return;
     }
     checkRateLimitInternal(
         hostRateLimitMap,
         hostKey,
         RATE_LIMIT.MAX_PER_HOST_PER_MINUTE,
-        hostPrefix,
         "host"
     );
 }
 
 /**
- * Read `{ max, windowMs }` once, reject anything but two positive integers, and
- * return a frozen copy of exactly what was checked. There is no "off" value, so
+ * The header `executeCurlRequest` reads the upstream's remaining count from,
+ * while a limit carrying `syncFromHeaders` is installed. The limit is
+ * process-global, so the name rides on it rather than on each caller.
+ */
+export function hostRateLimitSyncHeader(): string | undefined {
+    return hostLimit?.syncFromHeaders?.remaining;
+}
+
+/**
+ * Count `hostname` as having used at least `max − remaining` of the window,
+ * where `remaining` is the upstream's own figure: the local log cannot see
+ * other processes spending the same key.
+ *
+ * **Tighten only.** It appends one run stamped now and never removes one, so
+ * a figure above the local remaining changes nothing, and the pad expires at
+ * `windowMs` like any admission. The pad counts at most `max − total`, so a
+ * log never counts more than `max` whatever the remote sends. It is one run
+ * whatever its count, so a host's storage follows responses rather than
+ * `max`, and `RATE_LIMIT.MAX_TRACKED_KEYS` still bounds the hosts.
+ *
+ * Best-effort, because the response it follows has already arrived: with no
+ * limit installed there is no window to tighten, and a host the map has no
+ * room for keeps the local count rather than turning a received response
+ * into an error.
+ *
+ * @param remaining - A parsed count (`ParsedResponse.syncHeaderCount`); an
+ *   absent value is never passed as 0, which would fill the window on the
+ *   remote's say-so
+ */
+export function applyServerRemaining(hostname: string, remaining: number): void {
+    if (!hostLimit) return;
+    const now = elapsedNow();
+    let log: SlidingLog;
+    try {
+        log = slidingLogFor(canonicalHost(hostname), now, hostLimit.windowMs);
+    } catch {
+        return;
+    }
+    const pad = hostLimit.max - remaining - log.total;
+    if (pad <= 0) return;
+    log.runs.push({ at: now, count: pad });
+    log.total += pad;
+}
+
+/**
+ * Throw on a key outside `allowed`, at every level of `rateLimit`: an unknown
+ * key — a misspelt `syncFromHeaders`, or `reset` — is a setting the operator
+ * expects to act and that nothing would read.
+ */
+function assertOnlyKeys(name: string, value: object, allowed: readonly string[]): void {
+    const unknownKeys = Object.keys(value).filter((key) => !allowed.includes(key));
+    if (unknownKeys.length > 0) {
+        throw new Error(`${name} accepts only ${allowed.join(", ")}, got: ${unknownKeys.join(", ")}`);
+    }
+}
+
+/**
+ * Read `{ max, windowMs, syncFromHeaders? }` once, reject an unknown key or
+ * anything but two positive integers, and return a frozen copy of exactly
+ * what was checked. There is no "off" value, so
  * a typo or an unset variable (`Number(undefined)` is `NaN`, and
- * `length >= NaN` is always false) cannot disable the limit. Reading each field
+ * `total >= NaN` is always false) cannot disable the limit. Reading each field
  * once is the point: an accessor read a second time could return what the
  * check never saw.
  */
@@ -262,10 +349,31 @@ export function parseHostRateLimit(limit: unknown): Readonly<HostRateLimit> {
     if (typeof limit !== "object" || limit === null) {
         throw new Error(`rateLimit must be an object { max, windowMs }, got: ${String(limit)}`);
     }
-    const { max, windowMs } = limit as Record<string, unknown>;
+    assertOnlyKeys("rateLimit", limit, ["max", "windowMs", "syncFromHeaders"]);
+    const { max, windowMs, syncFromHeaders } = limit as Record<string, unknown>;
     assertPositiveInteger("rateLimit.max", max);
     assertPositiveInteger("rateLimit.windowMs", windowMs);
-    return Object.freeze({ max, windowMs });
+    if (syncFromHeaders === undefined) return Object.freeze({ max, windowMs });
+    return Object.freeze({ max, windowMs, syncFromHeaders: parseSyncFromHeaders(syncFromHeaders) });
+}
+
+/**
+ * `{ remaining }` and nothing else. The name reaches cURL's `-w` format, so it
+ * is held to {@link WRITE_OUT_HEADER_NAME} here, where a bad one fails
+ * `configure()` rather than a request.
+ */
+function parseSyncFromHeaders(value: unknown): { readonly remaining: string } {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error("rateLimit.syncFromHeaders must be an object { remaining }");
+    }
+    assertOnlyKeys("rateLimit.syncFromHeaders", value, ["remaining"]);
+    const { remaining } = value as Record<string, unknown>;
+    if (typeof remaining !== "string" || !WRITE_OUT_HEADER_NAME.test(remaining)) {
+        throw new Error(
+            "rateLimit.syncFromHeaders.remaining must be an HTTP header name (RFC 9110 token) without %"
+        );
+    }
+    return Object.freeze({ remaining });
 }
 
 /**
@@ -367,4 +475,15 @@ export function clearRateLimitMaps(): void {
  */
 export function rateLimitMapSizes(): { hosts: number; clients: number; slidingHosts: number } {
     return { hosts: hostRateLimitMap.size, clients: clientRateLimitMap.size, slidingHosts: hostSlidingLog.size };
+}
+
+/**
+ * Test-only: what one host's sliding log counts and how many runs it stores,
+ * so a test can assert a writer's bound on each.
+ *
+ * @internal
+ */
+export function slidingLogSize(hostname: string): { counted: number; stored: number } {
+    const log = hostSlidingLog.get(canonicalHost(hostname));
+    return { counted: log?.total ?? 0, stored: log?.runs.length ?? 0 };
 }

@@ -136,17 +136,21 @@ export const LOCAL_REFUSAL_REASONS = {
     "redirect-limit": "The redirect chain reached max_redirects.",
     "unusable-redirect-target": "The redirect target is not a usable http(s) URL.",
     "path-names-host": "A relative url that starts with two slashes or a backslash names a host, not a path; start it with a single forward slash.",
+    "path-control-character": "A relative url must not contain control characters, which a URL parser would strip or a header would carry.",
+    "path-dot-segment": "A relative url must not contain a . or .. path segment, literal or percent-encoded; it would resolve outside the path it was built from.",
+    "path-parameter-dot-segment": "A path parameter must not be . or ..; it would resolve outside the endpoint's path.",
 } as const;
 export type LocalRefusalReason = keyof typeof LOCAL_REFUSAL_REASONS;
 
 /**
- * The reasons each code may carry. A hop-1 code has the one reason that
- * produces it; a redirect hop can be refused for any of the hop checks, so
- * `LOCAL_REDIRECT_REFUSED` takes those. Typed per code so a contradictory
+ * The reasons each code may carry. A redirect hop can be refused for any of
+ * the hop checks, so `LOCAL_REDIRECT_REFUSED` takes those; a relative path is
+ * refused for any of the shapes `resolveRequestUrl` will not join, and a YAML
+ * tool's path parameter for a dot-segment. Typed per code so a contradictory
  * pair does not compile.
  */
 export const LOCAL_REFUSAL_CODE_REASONS = {
-    LOCAL_REFUSED_PATH: ["path-names-host"],
+    LOCAL_REFUSED_PATH: ["path-names-host", "path-control-character", "path-dot-segment", "path-parameter-dot-segment"],
     LOCAL_RATE_LIMITED: ["rate-limited"],
     LOCAL_HOST_NOT_ALLOWED: ["host-not-allowed"],
     LOCAL_REDIRECT_REFUSED: [
@@ -161,14 +165,29 @@ export const LOCAL_REFUSAL_CODE_REASONS = {
 type ReasonFor<C extends LocalRefusalCode> = (typeof LOCAL_REFUSAL_CODE_REASONS)[C][number];
 type NothingSentCode = Exclude<LocalRefusalCode, "LOCAL_REDIRECT_REFUSED">;
 
-/** What a refusal says: `requestsSent` exists only where requests were sent. */
+/**
+ * What a refusal says: `requestsSent` exists only where requests were sent.
+ * `retryAfterSeconds` is the server's own count of seconds until the rate
+ * limit admits again, so it exists only on `LOCAL_RATE_LIMITED` and on a
+ * `LOCAL_REDIRECT_REFUSED` whose reason is `rate-limited`.
+ */
 export type LocalRefusal =
-    | { [C in NothingSentCode]: { readonly code: C; readonly reason: ReasonFor<C>; readonly requestsSent?: never } }[NothingSentCode]
     | {
-          readonly code: "LOCAL_REDIRECT_REFUSED";
-          readonly reason: ReasonFor<"LOCAL_REDIRECT_REFUSED">;
-          readonly requestsSent: number;
-      };
+          [C in NothingSentCode]: {
+              readonly code: C;
+              readonly reason: ReasonFor<C>;
+              readonly requestsSent?: never;
+              readonly retryAfterSeconds?: C extends "LOCAL_RATE_LIMITED" ? number : never;
+          };
+      }[NothingSentCode]
+    | {
+          [R in ReasonFor<"LOCAL_REDIRECT_REFUSED">]: {
+              readonly code: "LOCAL_REDIRECT_REFUSED";
+              readonly reason: R;
+              readonly requestsSent: number;
+              readonly retryAfterSeconds?: R extends "rate-limited" ? number : never;
+          };
+      }[ReasonFor<"LOCAL_REDIRECT_REFUSED">];
 
 const nothingSent = (refusal: LocalRefusal) => `Refused locally: no request was sent (${refusal.code}).`;
 
@@ -183,9 +202,10 @@ export const LOCAL_REFUSAL_FIRST_LINES: { readonly [C in LocalRefusalCode]: (ref
     },
 };
 
-/** The model-facing text of a refusal: the first line, then the reason. */
+/** The model-facing text of a refusal: the first line, the reason, then any wait. */
 export function formatLocalRefusal(refusal: LocalRefusal): string {
-    return `${LOCAL_REFUSAL_FIRST_LINES[refusal.code](refusal)} ${LOCAL_REFUSAL_REASONS[refusal.reason]}`;
+    const text = `${LOCAL_REFUSAL_FIRST_LINES[refusal.code](refusal)} ${LOCAL_REFUSAL_REASONS[refusal.reason]}`;
+    return refusal.retryAfterSeconds === undefined ? text : `${text} Retry in ${refusal.retryAfterSeconds} s.`;
 }
 
 /**
@@ -198,15 +218,22 @@ export class LocalRefusalError extends Error {
     readonly code: LocalRefusalCode;
     readonly reason: LocalRefusalReason;
     readonly requestsSent: number;
+    readonly retryAfterSeconds?: number;
 
     constructor(refusal: LocalRefusal) {
         if (refusal.code === "LOCAL_REDIRECT_REFUSED" && !(Number.isInteger(refusal.requestsSent) && refusal.requestsSent >= 1)) {
             throw new TypeError("LOCAL_REDIRECT_REFUSED needs requestsSent, a positive integer");
+        }
+        // The figure lands in model-facing text, so it is held to the shape
+        // the sentence promises rather than trusted.
+        if (refusal.retryAfterSeconds !== undefined && !(Number.isInteger(refusal.retryAfterSeconds) && refusal.retryAfterSeconds >= 1)) {
+            throw new TypeError("retryAfterSeconds must be a positive integer");
         }
         super(formatLocalRefusal(refusal));
         this.name = "LocalRefusalError";
         this.code = refusal.code;
         this.reason = refusal.reason;
         this.requestsSent = refusal.code === "LOCAL_REDIRECT_REFUSED" ? refusal.requestsSent : 0;
+        this.retryAfterSeconds = refusal.retryAfterSeconds;
     }
 }

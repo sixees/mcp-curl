@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { isAllowedUrlScheme } from "../config/security/url-schemes.js";
 import { baseUrlHost } from "../config/security/host-policy.js";
+import { formatLocalRefusal, type LOCAL_REFUSAL_CODE_REASONS } from "./error.js";
 
 /**
  * Strip trailing slash from a base URL and prepend it to a path,
@@ -59,14 +60,21 @@ export type ResolvedRequestUrl =
     | { ok: true; url: string }
     | { ok: false; error: string };
 
+/** A relative path's refusal, in the shape every local refusal takes. */
+function refusedPath(reason: (typeof LOCAL_REFUSAL_CODE_REASONS)["LOCAL_REFUSED_PATH"][number]): ResolvedRequestUrl {
+    return { ok: false, error: formatLocalRefusal({ code: "LOCAL_REFUSED_PATH", reason }) };
+}
+
 /**
  * Resolve a request `url` against the configured `baseUrl`.
  *
  * Without a `baseUrl`, everything comes back unchanged. With one:
  * - input beginning `/` or `\` is a relative path. It is joined if it matches
  *   {@link RELATIVE_PATH_PATTERN} and has no {@link hasDotSegment} segment, and
- *   refused otherwise, never passed on: a parser would read it as a host, or
- *   resolve it outside the path a caller built it under;
+ *   otherwise refused as `LOCAL_REFUSED_PATH`, never passed on: a parser would
+ *   read it as a host, or resolve it outside the path a caller built it under.
+ *   The schema admits any `/` or `\` start, so this is the one place these
+ *   shapes are refused, and the refusal reaches the model as a tool result;
  * - anything else — an absolute URL — comes back unchanged. `baseUrl` is not a
  *   host restriction, and the executor's SSRF gate checks what it receives. Nor
  *   is its path checked for dot-segments: it names its own path, so it has no
@@ -77,21 +85,17 @@ export type ResolvedRequestUrl =
  * URL, appending a single-slash path cannot move its authority, so that parse
  * is the whole guard on the join. No error echoes a value: the input is
  * attacker-chosen on the tool path, and the base may carry credentials.
+ *
+ * A `baseUrl` that does not parse is a configuration fault, not a refusal of
+ * the caller's input, so it returns a plain error rather than a
+ * `LOCAL_REFUSED_PATH`: no change to `url` would get it joined.
  */
 export function resolveRequestUrl(baseUrl: string | undefined, url: string): ResolvedRequestUrl {
     if (!baseUrl || !/^[/\\]/.test(url)) return { ok: true, url };
     if (!RELATIVE_PATH_PATTERN.test(url)) {
-        return {
-            ok: false,
-            error: "Error: a relative url must start with a single / and contain no control characters; a leading // or \\ names a host, not a path",
-        };
+        return refusedPath(URL_CONTROL_CHARACTER.test(url) ? "path-control-character" : "path-names-host");
     }
-    if (hasDotSegment(url)) {
-        return {
-            ok: false,
-            error: "Error: a relative url must not contain a . or .. path segment (literal or %2e-encoded); it would resolve outside the path it was built from",
-        };
-    }
+    if (hasDotSegment(url)) return refusedPath("path-dot-segment");
 
     // Everything that can throw is inside the try: the caller runs this before
     // the wrap, so a throw would reach the model unwrapped (invariant 1).
@@ -100,7 +104,7 @@ export function resolveRequestUrl(baseUrl: string | undefined, url: string): Res
             return { ok: true, url: resolveBaseUrl(baseUrl, url) };
         }
     } catch {
-        // Falls through to the refusal below.
+        // Falls through to the configuration error below.
     }
     return {
         ok: false,

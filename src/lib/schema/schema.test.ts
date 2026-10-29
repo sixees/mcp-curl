@@ -720,7 +720,7 @@ describe("buildUrl", () => {
 
     it.each([".", ".."])("refuses a path parameter of %j, which would climb out of the endpoint", (id) => {
         expect(() => buildUrl("https://api.example.com", "/users/{id}", { id }, {})).toThrow(
-            /must not be \. or \.\./
+            /^Refused locally: no request was sent \(LOCAL_REFUSED_PATH\)\. A path parameter must not be \. or \.\./
         );
     });
 
@@ -1124,7 +1124,9 @@ describe("generateToolDefinitions", () => {
         const result = await generateToolDefinitions(schema)[0].handler({ id: ".." });
 
         expect(result.isError).toBe(true);
-        expect(result.content[0].text).toContain("must not be . or ..");
+        expect(result.content[0].text).toBe(
+            "Refused locally: no request was sent (LOCAL_REFUSED_PATH). A path parameter must not be . or ..; it would resolve outside the endpoint's path."
+        );
         expect(mockedExecuteCurlRequest).not.toHaveBeenCalled();
     });
 

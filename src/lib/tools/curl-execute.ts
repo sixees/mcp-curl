@@ -5,7 +5,7 @@ import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
 import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, type HostPolicy } from "../config/index.js";
 import { generateMetadataSeparator, type MetadataBlock, type UrlValidationResult } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
-import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
+import { validateUrlAndResolveDns, checkRateLimits, hostRateLimitSyncHeader, applyServerRemaining } from "../security/index.js";
 import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError, withTimeout } from "../utils/index.js";
 import { executeCommand, buildCurlArgs, platformSupportsHeaderDump, type CommandResult } from "../execution/index.js";
 import {
@@ -253,9 +253,10 @@ function percentDecoded(value: string): string {
  *
  * On hop 1 each check refuses in its own words. On a redirect hop every
  * refusal is `LOCAL_REDIRECT_REFUSED` with a fixed reason, because requests
- * were already sent and because the checks' own messages name the host,
- * which on a redirect hop the remote chose (RC-30). A deadline that passes
- * during DNS is the chain's timeout on every hop, never a refusal.
+ * were already sent and because the SSRF check's own message names the host,
+ * which on a redirect hop the remote chose (RC-30). The rate limit's wait is
+ * the one detail carried over. A deadline that passes during DNS is the
+ * chain's timeout on every hop, never a refusal.
  */
 async function gateHop(
     url: string,
@@ -271,8 +272,14 @@ async function gateHop(
         if (requestsSent === 0) return run();
         try {
             return await run();
-        } catch {
-            throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent });
+        } catch (error) {
+            // The rate limit's wait is the one figure carried across: the
+            // server computed it, so it names nothing the remote chose.
+            throw new LocalRefusalError(
+                reason === "rate-limited" && error instanceof LocalRefusalError
+                    ? { code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent, retryAfterSeconds: error.retryAfterSeconds }
+                    : { code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent }
+            );
         }
     };
 
@@ -345,6 +352,8 @@ export async function executeCurlRequest(
         const deadline = Date.now() + (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
         let hop = params;
         let requestsSent = 0;
+        // Read once, so every hop of one chain asks for the same field.
+        const syncHeaderName = hostRateLimitSyncHeader();
 
         // cURL is spawned without `-L`, so each spawn is one hop and every hop
         // is gated before cURL sees it: host list (before DNS), SSRF check
@@ -366,7 +375,7 @@ export async function executeCurlRequest(
 
             // One block for the build and the parse; its separator is unique per
             // request, to prevent response injection.
-            const metadataBlock: MetadataBlock = { separator: generateMetadataSeparator() };
+            const metadataBlock: MetadataBlock = { separator: generateMetadataSeparator(), syncHeaderName };
             const args = buildCurlArgs({
                 ...hop,
                 timeout: remainingMs / 1000,
@@ -383,6 +392,11 @@ export async function executeCurlRequest(
             // stdout is the body alone — cURL wrote the headers to their own
             // descriptor — so this strips the `-w` metadata suffix and nothing else.
             parsed = parseResponseWithMetadata(result.stdoutBytes, metadataBlock);
+            // The host that answered, every hop: each hop was counted against
+            // its own host, so that is the count the upstream's figure corrects.
+            if (parsed.syncHeaderCount !== undefined) {
+                applyServerRemaining(dnsResult.hostname, parsed.syncHeaderCount);
+            }
 
             // Followed only on a determined block: an undetermined one has no
             // status to trust, and a non-zero exit makes this hop the result.

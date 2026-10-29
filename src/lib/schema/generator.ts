@@ -24,7 +24,7 @@ import type {
     HttpMethod,
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
-import { hasDotSegment, resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
+import { hasDotSegment, LocalRefusalError, resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
 import { applyDefaultHeaders, ANY_HOST_POLICY, deriveHostPolicy } from "../config/index.js";
 import { createWrapper } from "../response/post-processor.js";
 
@@ -162,12 +162,6 @@ function createParamSchema(param: EndpointParameter): z.ZodTypeAny {
 }
 
 /**
- * A path parameter that would make a `.` or `..` path segment. Module-private:
- * `createToolHandler` turns it into an error result.
- */
-class DotSegmentError extends Error {}
-
-/**
  * Build the full URL with path parameter substitution and query params.
  *
  * @param baseUrl - API base URL
@@ -175,7 +169,7 @@ class DotSegmentError extends Error {}
  * @param pathParams - Values for path parameters
  * @param queryParams - Query parameters to append
  * @returns Fully constructed URL
- * @throws Error if a path parameter makes a `.` or `..` path segment.
+ * @throws LocalRefusalError (`LOCAL_REFUSED_PATH`) if a path parameter makes a `.` or `..` path segment.
  *   `encodeURIComponent` keeps a value inside one segment but leaves `.`
  *   alone, so `{id}` set to `..` would request the endpoint's parent.
  */
@@ -194,7 +188,7 @@ export function buildUrl(
     }
 
     if (hasDotSegment(resolvedPath)) {
-        throw new DotSegmentError("Error: a path parameter must not be . or ..; it would resolve outside the endpoint's path");
+        throw new LocalRefusalError({ code: "LOCAL_REFUSED_PATH", reason: "path-parameter-dot-segment" });
     }
 
     const url = resolveBaseUrl(baseUrl, resolvedPath);
@@ -456,7 +450,7 @@ function createToolHandler(
                 };
             }
 
-            if (error instanceof DotSegmentError) {
+            if (error instanceof LocalRefusalError) {
                 return {
                     content: [{ type: "text", text: error.message }],
                     isError: true,

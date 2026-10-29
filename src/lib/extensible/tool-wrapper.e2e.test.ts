@@ -78,8 +78,10 @@ describe("curl_execute with baseUrl, through a real MCP client", () => {
         expect(executor.mock.calls[0][0].url).toBe("https://other.example/x");
     });
 
-    it.each(["//evil.com", "/\\evil.com", "\\\\evil.com", "/a\tb", "/a\r\nHost: evil.com", "ftp://x"])(
-        "rejects %j at the schema",
+    // A refusal the model can read: a tool result naming the code, where a
+    // schema rejection would be a protocol error it never sees.
+    it.each(["//evil.com", "/\\evil.com", "\\\\evil.com", "\\evil.com", "/a\tb", "/a\r\nHost: evil.com"])(
+        "refuses %j as a LOCAL_REFUSED_PATH tool result",
         async (url) => {
             const executor = okExecutor();
             const client = await connectCurl({ baseUrl: BASE }, executor);
@@ -87,9 +89,23 @@ describe("curl_execute with baseUrl, through a real MCP client", () => {
             const result = await client.callTool({ name: "curl_execute", arguments: { url } });
 
             expect(result.isError).toBe(true);
+            expect(textOf(result)).toContain("Refused locally: no request was sent (LOCAL_REFUSED_PATH).");
+            expect(textOf(result)).not.toContain("evil.com");
             expect(executor).not.toHaveBeenCalled();
         }
     );
+
+    it("still rejects an absolute non-http(s) url at the schema", async () => {
+        const executor = okExecutor();
+        const client = await connectCurl({ baseUrl: BASE }, executor);
+
+        const result = await client.callTool({ name: "curl_execute", arguments: { url: "ftp://x" } });
+
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).not.toContain("LOCAL_REFUSED_PATH");
+        expect(textOf(result)).toMatch(/validation/i);
+        expect(executor).not.toHaveBeenCalled();
+    });
 
     it("refuses a relative url with a dot-segment before the executor runs", async () => {
         const executor = okExecutor();
