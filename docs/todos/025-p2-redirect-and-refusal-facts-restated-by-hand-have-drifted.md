@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 effort: m
 tags: [code-review, docs, tool-description, schema, redirects, refusals, documentation-resource, k-8]
 dependencies: []
@@ -59,14 +59,14 @@ Interpolate `LIMITS.MAX_HEADER_TEXT_BYTES` and `LIMITS.MAX_RESPONSE_SIZE`; rende
 
 ## Recommended Action
 
-_To be decided at triage._
+Option 1, chosen by the operator on 2026-10-29 ("Fix 025+026, then ready PR"): correct the drifted copies and cut the documentation resource's second copy. Option 2 (interpolating constants, moving the sets to `config/`, a pin test) was not taken; the literal "64KB"/"10MB" in the schema and description remain.
 
 ## Acceptance Criteria
 
-- [ ] The README and `docs/configuration.md` name the exact forwarded headers, and scope the refusal shape and the stderr line to where the code applies them.
-- [ ] The *Local refusals* table says which refusals carry `Retry in N s.`.
-- [ ] Exactly one model-facing surface states each per-parameter redirect and header fact, or a test pins each copy to its constant.
-- [ ] Re-running the sweeps above finds no drifted copy.
+- [x] The README and `docs/configuration.md` name the exact forwarded headers, and scope the refusal shape and the stderr line to where the code applies them.
+- [x] The *Local refusals* table says which refusals carry `Retry in N s.`.
+- [x] Exactly one model-facing surface states each per-parameter redirect and header fact, or a test pins each copy to its constant.
+- [x] Re-running the sweeps above finds no drifted copy.
 
 ## Work Log
 
@@ -74,3 +74,8 @@ _To be decided at triage._
 **By:** Claude Code
 **Actions:** merged four reviewers' classes on shared confirmed instances; escalated P3→P2 on the RC-36 alias join.
 **Learnings:** the plan's own K-8 instruction for the documentation row was unmet on the day the row was written.
+
+### 2026-10-29 - Resolved on docs/release-5.2.0
+**By:** Claude Code
+**Actions:** commit `1d846a1`. `README.md` Security bullets, `docs/configuration.md` → *defaultHeaders* and *Local refusals*, the `CHANGELOG.md` `[5.2.0]` *Added* entry, and `src/lib/resources/documentation.ts::registerDocumentationResource` (rows now defer to the input schema; the notice is no longer "leading"). Re-ran the sweep for `Accept*`, "one sentence", "leading [mcp-curl]" and `Retry in`: no drifted copy remains. `npm test`: 1766 passed, 0 failed.
+**Learnings:** the schema describes remain the one model-facing copy; nothing pins them to `CROSS_ORIGIN_FORWARDED_HEADERS` or `FOLLOWED_REDIRECT_STATUSES` (option 2, not taken).

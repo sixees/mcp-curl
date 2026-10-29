@@ -1,5 +1,5 @@
 # Work Handoff: 5.2.0 release — description trim, docs, CHANGELOG, version
-**Date:** 2026-10-29 | **Branch:** docs/release-5.2.0 | **Plan:** docs/plans/2026-10-27-feat-host-policy-redirect-hops-plan.md | **Status:** complete — all five tasks landed. The Surface 2 review filed four todos (two P2, two P3) for the operator; none is fixed on this branch.
+**Date:** 2026-10-29 | **Branch:** docs/release-5.2.0 | **Plan:** docs/plans/2026-10-27-feat-host-policy-redirect-hops-plan.md | **Status:** complete — all five tasks landed. The Surface 2 review filed four todos; the operator had 025 and 026 fixed on this branch, and 024 and 027 stay open.
 **Plan slice:** PR-5 (tasks 17, 18, 19, 20, 21)
 
 ## Summary
@@ -68,7 +68,7 @@ The `curl_execute` description lost the text the input schema already carries. T
 
 ## Known issues and limitations
 
-- Todos 024–027 are open from the Surface 2 review (below). Todo 025 means the release docs, as committed, contain statements that are slightly wrong. Fixing 025 and 026 before merge is cheap.
+- Todos 024 and 027 are open from the Surface 2 review (below). 025 and 026 were fixed in `1d846a1`, after the review ran, so no review pass has read that commit (K-16). Surface 3 is the next reader.
 - **The two staged RCs are untracked**, in `docs/work/RC/`. They reach the ledger only when `/sixees-workflow:file-lessons --flush` runs, ideally before the merge. Todo 024's first option is exactly that flush.
 - The plan's statement that a test pins RC-63's sentence order in the description was false. Only `processor.ts` carries the order. This is a plan error and gets no RC.
 - `CHANGELOG.md`'s date is 2026-10-29, the day of writing. If the merge lands later, adjust it.
@@ -76,7 +76,7 @@ The `curl_execute` description lost the text the input schema already carries. T
 ## Testing summary
 
 - No tests were added. Every change is prose, a version number or a rebuild. The existing pins on the description held: `register-all-tools.test.ts` (three phrases) and `tool-wrapper.e2e.test.ts` (line 1, last line, append).
-- **Verdict:** `npm test -- --reporter=json --outputFile=<scratchpad>/vitest.json` (the declared `npm test`: `tsc --noEmit`, then `vitest run`). The artefact shows `success: true`, 1773 total, 1766 passed, 0 failed, 7 pending, and 0 failed suites.
+- **Verdict** (re-run after `1d846a1`, same result): `npm test -- --reporter=json --outputFile=<scratchpad>/vitest.json` (the declared `npm test`: `tsc --noEmit`, then `vitest run`). The artefact shows `success: true`, 1773 total, 1766 passed, 0 failed, 7 pending, and 0 failed suites.
 - `npm run build` succeeds.
 - `src/lib/release-guards.test.ts` passes (14 tests), including the BREAKING guard and the tarball doc list.
 - **Gaps:** nothing ties the schema describes or the documentation resource to `CROSS_ORIGIN_FORWARDED_HEADERS`, `FOLLOWED_REDIRECT_STATUSES` or `LIMITS` (todo 025).
@@ -84,6 +84,8 @@ The `curl_execute` description lost the text the input schema already carries. T
 ## Commit history
 
 ```
+1d846a1 Bring the 5.2.0 docs back in line with the code they describe
+102f27f Record the 5.2.0 work handoff and the Surface 2 review's todos
 8522ae0 Release 5.2.0: version bump and rebuilt dist
 1ccae6b Write the 5.2.0 CHANGELOG entry
 67ccc62 Document the host list, per-hop redirects, header sync and refusals
@@ -109,7 +111,7 @@ Every commit was made with `git -c core.hooksPath=/dev/null`; no hooks are confi
 ## Follow-up work
 
 - [ ] Flush the staged RCs (`/sixees-workflow:file-lessons --flush`) before the merge.
-- [ ] Decide todos 024–027; 025 and 026 are small enough to fix on this branch.
+- [ ] Decide todos 024 and 027.
 - [ ] After the merge: a signed, annotated tag `5.2.0` (bare number), on the operator's say.
 
 ### Outstanding Todos
@@ -117,13 +119,16 @@ Every commit was made with `git -c core.hooksPath=/dev/null`; no hooks are confi
 | File | Priority | Description | Source |
 |---|---|---|---|
 | docs/todos/024-p2-minor-override-of-invariant-11-recorded-only-in-changelog.md | P2 | Invariant 11 still reads as absolute | architecture-strategist |
-| docs/todos/025-p2-redirect-and-refusal-facts-restated-by-hand-have-drifted.md | P2 (P3→P2 via the RC-36 alias) | Copies of redirect and refusal facts already disagree with the code | pattern, simplicity, architecture, security |
-| docs/todos/026-p3-host-policy-docblocks-say-redirect-hops-are-not-checked.md | P3 | `HostPolicy` JSDoc contradicts per-hop gating, shipped in `dist/` | security-sentinel |
 | docs/todos/027-p3-description-temp-file-lifecycle-promises-deletion-it-does-not-do.md | P3 | Description promises deletion `output_dir` does not get | data-integrity, simplicity |
 
 ### Resolved Todos
 
-None. The input was a plan slice. Todo 007, which this release's CHANGELOG lists as fixed, was closed by PR-3.
+| Id | Title | Summary | By | Date |
+|---|---|---|---|---|
+| 025 | Redirect and refusal facts restated by hand have drifted | Option 1: drifted copies corrected; the documentation resource defers to the schema | Claude Code, operator-authorised | 2026-10-29 |
+| 026 | Host-policy docblocks say redirect hops are not checked | Three docblocks reworded; `dist/` rebuilt | Claude Code, operator-authorised | 2026-10-29 |
+
+Todo 007, which this release's CHANGELOG lists as fixed, was closed by PR-3.
 
 ## Code Review — 2026-10-29
 

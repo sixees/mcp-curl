@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 effort: s
 tags: [code-review, docs, security, host-policy, config-security, typings, dist]
 dependencies: []
@@ -36,12 +36,12 @@ Catches this and any sibling the sweep missed, at the cost of a wider pass.
 
 ## Recommended Action
 
-_To be decided at triage._
+Option 1, chosen by the operator on 2026-10-29.
 
 ## Acceptance Criteria
 
-- [ ] `rg -i "not checked" src/lib/config/security/host-policy.ts dist/*.d.ts` returns nothing.
-- [ ] `dist/` is rebuilt after the change.
+- [x] `rg -i "not checked" src/lib/config/security/host-policy.ts dist/*.d.ts` returns nothing.
+- [x] `dist/` is rebuilt after the change.
 
 ## Work Log
 
@@ -49,3 +49,8 @@ _To be decided at triage._
 **By:** Claude Code
 **Actions:** filed security-sentinel's `stale-comment` class (P3); in scope through the added `dist/generator-DHAfrcwD.d.ts`.
 **Learnings:** fixing one docblock of a fact without sweeping its siblings is the K-8 shape; the rebuild made the pair ship together.
+
+### 2026-10-29 - Resolved on docs/release-5.2.0
+**By:** Claude Code
+**Actions:** commit `1d846a1`. Reworded the file header, `HostPolicy` and `deriveHostPolicy` in `src/lib/config/security/host-policy.ts` to say every followed hop is checked; rebuilt `dist/`. `rg -i 'not checked against it|not the redirect hops' dist src/lib/config/security/host-policy.ts` returns nothing.
+**Learnings:** —
