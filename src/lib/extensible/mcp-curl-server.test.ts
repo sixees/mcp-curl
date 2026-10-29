@@ -313,10 +313,10 @@ describe("McpCurlServer utilities", () => {
             ["path", { path: "/\\users" }],
             ["path", { path: "/users\r\nX-Injected: 1" }],
             ["url", { url: "//users" }],
-        ])("refuses a %s a parser would read as a host, naming the rule", async (_field, params) => {
+        ])("refuses a %s a parser would read as a host, as LOCAL_REFUSED_PATH", async (_field, params) => {
             const result = await loopback().executeRequest(params);
             expect(result.isError).toBe(true);
-            expect(textOf(result)).toContain("must start with a single /");
+            expect(textOf(result)).toMatch(/^Refused locally: no request was sent \(LOCAL_REFUSED_PATH\)\. /);
             expect(textOf(result)).not.toContain(JOINED);
         });
 

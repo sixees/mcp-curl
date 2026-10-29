@@ -136,17 +136,19 @@ export const LOCAL_REFUSAL_REASONS = {
     "redirect-limit": "The redirect chain reached max_redirects.",
     "unusable-redirect-target": "The redirect target is not a usable http(s) URL.",
     "path-names-host": "A relative url that starts with two slashes or a backslash names a host, not a path; start it with a single forward slash.",
+    "path-control-character": "A relative url must not contain control characters, which a URL parser would strip or a header would carry.",
+    "path-dot-segment": "A relative url must not contain a . or .. path segment, literal or percent-encoded; it would resolve outside the path it was built from.",
 } as const;
 export type LocalRefusalReason = keyof typeof LOCAL_REFUSAL_REASONS;
 
 /**
- * The reasons each code may carry. A hop-1 code has the one reason that
- * produces it; a redirect hop can be refused for any of the hop checks, so
- * `LOCAL_REDIRECT_REFUSED` takes those. Typed per code so a contradictory
+ * The reasons each code may carry. A redirect hop can be refused for any of
+ * the hop checks, so `LOCAL_REDIRECT_REFUSED` takes those; a relative path is
+ * refused for any of the shapes `resolveRequestUrl` will not join. Typed per code so a contradictory
  * pair does not compile.
  */
 export const LOCAL_REFUSAL_CODE_REASONS = {
-    LOCAL_REFUSED_PATH: ["path-names-host"],
+    LOCAL_REFUSED_PATH: ["path-names-host", "path-control-character", "path-dot-segment"],
     LOCAL_RATE_LIMITED: ["rate-limited"],
     LOCAL_HOST_NOT_ALLOWED: ["host-not-allowed"],
     LOCAL_REDIRECT_REFUSED: [

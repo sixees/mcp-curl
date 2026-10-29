@@ -8,6 +8,7 @@ import {
     resolveRequestUrl,
     safeHostname,
 } from "./url.js";
+import { LOCAL_REFUSAL_REASONS } from "./error.js";
 
 describe("resolveBaseUrl", () => {
     describe("slash normalisation", () => {
@@ -139,25 +140,21 @@ describe("resolveRequestUrl", () => {
     });
 
     describe("refuses, rather than passes on, a relative input a parser would misread", () => {
-        it.each([
-            ["a scheme-relative host", "//evil.com/x"],
-            ["a slash-backslash host", "/\\evil.com/x"],
-            ["a backslash-led host", "\\\\evil.com/x"],
-            ["a tab WHATWG would strip", "/a\t/b"],
-            ["CR/LF", "/a\r\nHost: evil.com"],
-        ])("%s", (_label, url) => {
-            const result = resolveRequestUrl(BASE, url);
-            expect(result.ok).toBe(false);
-            if (result.ok) return;
-            expect(result.error).toContain("single /");
-            expect(result.error).not.toContain("evil.com");
-        });
+        const FIRST_LINE = "Refused locally: no request was sent (LOCAL_REFUSED_PATH). ";
 
-        it("a dot-segment", () => {
-            const result = resolveRequestUrl(BASE, "/users/%2e%2e/admin");
-            expect(result.ok).toBe(false);
-            if (result.ok) return;
-            expect(result.error).toContain(". or .. path segment");
+        it.each([
+            ["a scheme-relative host", "//evil.com/x", "path-names-host"],
+            ["a slash-backslash host", "/\\evil.com/x", "path-names-host"],
+            ["a backslash-led host", "\\\\evil.com/x", "path-names-host"],
+            ["a single leading backslash", "\\evil.com/x", "path-names-host"],
+            ["a tab WHATWG would strip", "/a\t/b", "path-control-character"],
+            ["CR/LF", "/a\r\nHost: evil.com", "path-control-character"],
+            ["a dot-segment", "/users/%2e%2e/admin", "path-dot-segment"],
+        ] as const)("%s", (_label, url, reason) => {
+            expect(resolveRequestUrl(BASE, url)).toEqual({
+                ok: false,
+                error: `${FIRST_LINE}${LOCAL_REFUSAL_REASONS[reason]}`,
+            });
         });
 
         it("still passes them through when no baseUrl is configured", () => {

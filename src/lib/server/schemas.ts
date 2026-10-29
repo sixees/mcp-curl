@@ -2,7 +2,7 @@
 // Zod schemas for tool input validation
 
 import { z } from "zod";
-import { createHttpOnlyUrlSchema, RELATIVE_PATH_PATTERN } from "../utils/index.js";
+import { createHttpOnlyUrlSchema } from "../utils/index.js";
 
 /**
 * Input schema for the curl_execute tool on a server with no `baseUrl`.
@@ -114,6 +114,11 @@ export const CurlExecuteSchema = z.object({
  * `CurlExecuteSchema` for a server with a `baseUrl`: `url` also accepts a path
  * starting with `/`, which the handler resolves against the base.
  *
+ * The relative branch admits anything starting `/` or `\`. Which of those
+ * may be joined is `resolveRequestUrl`'s to decide, and its refusal reaches
+ * the model as a tool result; a schema rejection is a protocol error the model
+ * never reads. An absolute non-http(s) URL still fails here, at parse.
+ *
  * Registered only when `baseUrl` is set, so every other server advertises the
  * strict schema byte for byte. A union rather than `z.preprocess(..., z.url())`:
  * the union advertises `anyOf: [format uri | pattern]`, where a preprocess
@@ -123,9 +128,9 @@ export const CurlExecuteBaseUrlSchema = CurlExecuteSchema.extend({
     url: z.union([
         createHttpOnlyUrlSchema({ description: "An absolute http(s) URL" }),
         z.string()
-            .regex(RELATIVE_PATH_PATTERN, "Must be an absolute http(s) URL, or a path starting with a single / with no control characters")
+            .regex(/^[/\\]/, "Must be an absolute http(s) URL, or a path starting with /")
             .describe("A path starting with /, resolved against the configured base URL"),
-    ]).describe("The URL to request: an absolute http(s) URL, or a path starting with a single / (no control characters) resolved against the configured base"),
+    ]).describe("The URL to request: an absolute http(s) URL, or a path starting with a single / resolved against the configured base"),
 });
 
 /** Inferred TypeScript type from CurlExecuteSchema */
