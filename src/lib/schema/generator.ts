@@ -162,10 +162,6 @@ function createParamSchema(param: EndpointParameter): z.ZodTypeAny {
 }
 
 /**
- * A path parameter that would make a `.` or `..` path segment. Module-private:
- * `createToolHandler` turns it into an error result.
- */
-/**
  * Build the full URL with path parameter substitution and query params.
  *
  * @param baseUrl - API base URL

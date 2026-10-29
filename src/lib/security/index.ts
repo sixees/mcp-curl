@@ -17,7 +17,7 @@ export {
     hostRateLimitSyncHeader,
     applyServerRemaining,
     type HostRateLimitHandle,
-    // Note: clearRateLimitMaps and rateLimitMapSizes intentionally not exported here (test-only).
+    // Note: clearRateLimitMaps, rateLimitMapSizes and slidingLogSize intentionally not exported here (test-only).
     // Tests should import directly from "./rate-limiter.js" if needed.
 } from "./rate-limiter.js";
 

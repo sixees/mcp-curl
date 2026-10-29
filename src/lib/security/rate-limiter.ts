@@ -18,7 +18,7 @@ import { assertPositiveInteger, LocalRefusalError } from "../utils/index.js";
  *
  * The per-host gate is a fixed 60/min window by default. An embedder's
  * `rateLimit` (installed through {@link installHostRateLimit}) replaces it with a
- * sliding log of timestamps. A long fixed window cannot serve that case: the
+ * sliding log of timestamped runs. A long fixed window cannot serve that case: the
  * 10 s sweep deletes any entry whose window has closed, and a fixed window
  * admits `2 × max` across its boundary — a burst the upstream quota it is meant
  * to sit under would refuse. The client gate is never configurable.
@@ -341,7 +341,7 @@ function assertOnlyKeys(name: string, value: object, allowed: readonly string[])
  * anything but two positive integers, and return a frozen copy of exactly
  * what was checked. There is no "off" value, so
  * a typo or an unset variable (`Number(undefined)` is `NaN`, and
- * `length >= NaN` is always false) cannot disable the limit. Reading each field
+ * `total >= NaN` is always false) cannot disable the limit. Reading each field
  * once is the point: an accessor read a second time could return what the
  * check never saw.
  */

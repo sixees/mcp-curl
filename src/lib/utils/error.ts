@@ -168,7 +168,8 @@ type NothingSentCode = Exclude<LocalRefusalCode, "LOCAL_REDIRECT_REFUSED">;
 /**
  * What a refusal says: `requestsSent` exists only where requests were sent.
  * `retryAfterSeconds` is the server's own count of seconds until the rate
- * limit admits again, so it exists only on the codes a rate limit produces.
+ * limit admits again, so it exists only on `LOCAL_RATE_LIMITED` and on a
+ * `LOCAL_REDIRECT_REFUSED` whose reason is `rate-limited`.
  */
 export type LocalRefusal =
     | {

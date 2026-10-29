@@ -104,7 +104,7 @@ export function resolveRequestUrl(baseUrl: string | undefined, url: string): Res
             return { ok: true, url: resolveBaseUrl(baseUrl, url) };
         }
     } catch {
-        // Falls through to the refusal below.
+        // Falls through to the configuration error below.
     }
     return {
         ok: false,
