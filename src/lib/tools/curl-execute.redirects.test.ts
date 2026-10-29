@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CurlExecuteSchema } from "../server/schemas.js";
 import { LIMITS, deriveHostPolicy, ANY_HOST_POLICY } from "../config/index.js";
 import { METADATA_SEPARATOR as SEP, curlOutputFor } from "./curl-output.test-fixture.js";
+import { LocalRefusalError } from "../utils/index.js";
 
 vi.mock("../types/index.js", async () => {
     const actual = await vi.importActual<typeof import("../types/index.js")>("../types/index.js");
@@ -144,6 +145,20 @@ describe("each hop is gated with its own URL", () => {
         expect(textOf(result)).toContain("rate limit");
         expect(textOf(result)).not.toContain("busy.test");
         expect(spawnCurl).toHaveBeenCalledTimes(1);
+    });
+
+    it("carries the rate limit's wait onto a redirect hop's refusal", async () => {
+        spawnCurl.mockResolvedValueOnce(redirect(302, "https://busy.test/"));
+        rateCheck.mockImplementationOnce(() => undefined);
+        rateCheck.mockImplementationOnce(() => {
+            throw new LocalRefusalError({ code: "LOCAL_RATE_LIMITED", reason: "rate-limited", retryAfterSeconds: 12 });
+        });
+
+        const result = await executeCurlRequest(params({ url: "https://api.test/a" }), { hostPolicy: ANY_HOST_POLICY });
+
+        expect(textOf(result)).toBe(
+            `${refusedAt(1)} The rate limit for this target or session is exhausted; wait before retrying. Retry in 12 s.`
+        );
     });
 
     it("hands cURL the parsed href, so the host it checked is the host it reaches", async () => {

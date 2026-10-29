@@ -75,9 +75,11 @@ describe('createConfigError', () => {
 describe('LocalRefusalError', () => {
     const reasons = Object.keys(LOCAL_REFUSAL_REASONS) as LocalRefusalReason[];
     const everyRefusal = LOCAL_REFUSAL_CODES.flatMap((code) =>
-        (LOCAL_REFUSAL_CODE_REASONS[code] as readonly LocalRefusalReason[]).map((reason) =>
-            (code === 'LOCAL_REDIRECT_REFUSED' ? { code, reason, requestsSent: 2 } : { code, reason }) as LocalRefusal
-        )
+        (LOCAL_REFUSAL_CODE_REASONS[code] as readonly LocalRefusalReason[]).flatMap((reason) => {
+            const refusal = (code === 'LOCAL_REDIRECT_REFUSED' ? { code, reason, requestsSent: 2 } : { code, reason }) as LocalRefusal;
+            // A rate-limit refusal is rendered with and without its wait.
+            return reason === 'rate-limited' ? [refusal, { ...refusal, retryAfterSeconds: 42 } as LocalRefusal] : [refusal];
+        })
     );
 
     it('has a first-line renderer for every code, and a code for every renderer', () => {
@@ -125,6 +127,26 @@ describe('LocalRefusalError', () => {
 
     it.each([0, -1, 1.5, NaN])('refuses a redirect refusal with requestsSent %s', (requestsSent) => {
         expect(() => new LocalRefusalError({ code: 'LOCAL_REDIRECT_REFUSED', reason: 'redirect-limit', requestsSent })).toThrow(TypeError);
+    });
+
+    it('ends a rate-limit refusal with its wait, on hop 1 and on a redirect hop', () => {
+        const hop1 = new LocalRefusalError({ code: 'LOCAL_RATE_LIMITED', reason: 'rate-limited', retryAfterSeconds: 42 });
+        expect(hop1.message).toBe(
+            'Refused locally: no request was sent (LOCAL_RATE_LIMITED). The rate limit for this target or session is exhausted; wait before retrying. Retry in 42 s.'
+        );
+        expect(hop1.retryAfterSeconds).toBe(42);
+        const hop2 = new LocalRefusalError({ code: 'LOCAL_REDIRECT_REFUSED', reason: 'rate-limited', requestsSent: 1, retryAfterSeconds: 7 });
+        expect(hop2.message).toMatch(/^Redirect refused locally: 1 request\(s\) were sent.* Retry in 7 s\.$/);
+    });
+
+    it('does not compile a wait on a code no rate limit produces', () => {
+        // @ts-expect-error -- a host-list refusal has no wait
+        const waited: LocalRefusal = { code: 'LOCAL_HOST_NOT_ALLOWED', reason: 'host-not-allowed', retryAfterSeconds: 3 };
+        expect(waited).toBeDefined();
+    });
+
+    it.each([0, -1, 1.5, NaN])('refuses a wait of %s', (retryAfterSeconds) => {
+        expect(() => new LocalRefusalError({ code: 'LOCAL_RATE_LIMITED', reason: 'rate-limited', retryAfterSeconds })).toThrow(TypeError);
     });
 
     it('renders the message formatLocalRefusal renders', () => {

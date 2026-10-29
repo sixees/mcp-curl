@@ -4,7 +4,7 @@
 import { RATE_LIMIT } from "../config/session.js";
 import { canonicalHost, WRITE_OUT_HEADER_NAME } from "../config/security/index.js";
 import type { HostRateLimit, RateLimitEntry } from "../types/index.js";
-import { assertPositiveInteger } from "../utils/index.js";
+import { assertPositiveInteger, LocalRefusalError } from "../utils/index.js";
 
 /**
  * Rate limiting with fixed time windows and periodic cleanup.
@@ -137,9 +137,16 @@ function ensureCapacity(map: Map<string, unknown>, sweep: () => void, keyKind: "
     }
 }
 
-/** Whole seconds when exact, otherwise milliseconds. */
-function formatWindow(ms: number): string {
-    return ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`;
+/**
+ * The quota refusal. It names no host: on a redirect hop the remote chose it,
+ * and the text reaches the model (RC-30). The wait is server-computed.
+ */
+function rateLimited(retryMs: number): LocalRefusalError {
+    return new LocalRefusalError({
+        code: "LOCAL_RATE_LIMITED",
+        reason: "rate-limited",
+        retryAfterSeconds: Math.ceil(retryMs / 1000),
+    });
 }
 
 /**
@@ -164,7 +171,6 @@ function checkRateLimitInternal(
     map: Map<string, RateLimitEntry>,
     key: string,
     maxRequests: number,
-    errorPrefix: string,
     keyKind: "host" | "client"
 ): void {
     const now = elapsedNow();
@@ -177,7 +183,7 @@ function checkRateLimitInternal(
     }
 
     if (entry.count >= maxRequests) {
-        throw new Error(`${errorPrefix}. Maximum ${maxRequests} requests per minute.`);
+        throw rateLimited(RATE_LIMIT.WINDOW_MS - (now - entry.windowStart));
     }
 
     entry.count++;
@@ -186,7 +192,7 @@ function checkRateLimitInternal(
 /**
  * Per-host check against the configured sliding window.
  */
-function checkSlidingHostLimit(hostname: string, limit: HostRateLimit, errorPrefix: string): void {
+function checkSlidingHostLimit(hostname: string, limit: HostRateLimit): void {
     const now = elapsedNow();
     let log = hostSlidingLog.get(hostname);
 
@@ -199,11 +205,8 @@ function checkSlidingHostLimit(hostname: string, limit: HostRateLimit, errorPref
     }
 
     if (log.length >= limit.max) {
-        const retryMs = limit.windowMs - (now - log[0]);
-        throw new Error(
-            `${errorPrefix}. Maximum ${limit.max} requests per ${formatWindow(limit.windowMs)}; ` +
-            `the oldest leaves the window in ${Math.ceil(retryMs / 1000)} s.`
-        );
+        // The oldest entry leaves the window first; that is when one more fits.
+        throw rateLimited(limit.windowMs - (now - log[0]));
     }
 
     log.push(now);
@@ -214,7 +217,8 @@ function checkSlidingHostLimit(hostname: string, limit: HostRateLimit, errorPref
  *
  * @param hostname - Target hostname (for per-host limit)
  * @param clientId - Client identifier (session ID for HTTP, default for stdio)
- * @throws Error if either rate limit is exceeded, or if the key is untracked and its map is at RATE_LIMIT.MAX_TRACKED_KEYS
+ * @throws LocalRefusalError (`LOCAL_RATE_LIMITED`) if either rate limit is exceeded
+ * @throws Error if the key is untracked and its map is at RATE_LIMIT.MAX_TRACKED_KEYS
  */
 export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.STDIO_CLIENT_ID): void {
     // **Client gate first, and the order is load-bearing.** Whichever map is
@@ -231,21 +235,18 @@ export function checkRateLimits(hostname: string, clientId: string = RATE_LIMIT.
         clientRateLimitMap,
         clientId,
         RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE,
-        "Client rate limit exceeded",
         "client"
     );
 
-    const hostPrefix = `Rate limit exceeded for host "${hostname}"`;
     const hostKey = canonicalHost(hostname);
     if (hostLimit) {
-        checkSlidingHostLimit(hostKey, hostLimit, hostPrefix);
+        checkSlidingHostLimit(hostKey, hostLimit);
         return;
     }
     checkRateLimitInternal(
         hostRateLimitMap,
         hostKey,
         RATE_LIMIT.MAX_PER_HOST_PER_MINUTE,
-        hostPrefix,
         "host"
     );
 }

@@ -15,6 +15,7 @@ import {
     stopRateLimitCleanup,
 } from "./rate-limiter.js";
 import { RATE_LIMIT } from "../config/session.js";
+import { LocalRefusalError } from "../utils/index.js";
 
 const CAP = RATE_LIMIT.MAX_TRACKED_KEYS;
 
@@ -53,7 +54,7 @@ describe("checkRateLimits — quotas", () => {
             checkRateLimits("target.example.test", `client-${i}`);
         }
         expect(() => checkRateLimits("target.example.test", "client-final"))
-            .toThrow(/Rate limit exceeded for host/);
+            .toThrow(/LOCAL_RATE_LIMITED/);
     });
 
     it("throws once a client passes its per-minute ceiling", () => {
@@ -61,7 +62,7 @@ describe("checkRateLimits — quotas", () => {
             checkRateLimits(`host-${i}.example.test`, "one-client");
         }
         expect(() => checkRateLimits("another.example.test", "one-client"))
-            .toThrow(/Client rate limit exceeded/);
+            .toThrow(/LOCAL_RATE_LIMITED/);
     });
 });
 
@@ -95,7 +96,7 @@ describe("checkRateLimits — tracking capacity", () => {
         // The victim's counter survived the flood: one more admits, the next does not.
         checkRateLimits(victim, "victim-client");
         expect(() => checkRateLimits(victim, "victim-client"))
-            .toThrow(/Rate limit exceeded for host/);
+            .toThrow(/LOCAL_RATE_LIMITED/);
     });
 
     it("frees capacity once the window has passed", () => {
@@ -122,7 +123,7 @@ describe("checkRateLimits — a backward wall-clock step", () => {
         vi.setSystemTime(Date.now() - 30 * 60_000);
 
         expect(() => checkRateLimits(host, "client-after-backstep"))
-            .toThrow(/Rate limit exceeded for host/);
+            .toThrow(/LOCAL_RATE_LIMITED/);
     });
 
     it("does not wedge tracking capacity", () => {
@@ -149,20 +150,35 @@ describe("checkRateLimits — check order", () => {
         const before = rateLimitMapSizes().hosts;
 
         expect(() => checkRateLimits("never-tracked.example.test", "noisy-client"))
-            .toThrow(/Client rate limit exceeded/);
+            .toThrow(/LOCAL_RATE_LIMITED/);
 
         expect(rateLimitMapSizes().hosts).toBe(before);
     });
 });
 
-describe("checkRateLimits — default error text", () => {
-    it("is byte-identical to the fixed-window message", () => {
+describe("checkRateLimits — refusal text", () => {
+    it("is a LOCAL_RATE_LIMITED refusal naming the wait and no host", () => {
         for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) {
             checkRateLimits("target.example.test", `client-${i}`);
         }
+        vi.advanceTimersByTime(15_500);
         expect(() => checkRateLimits("target.example.test", "client-final")).toThrow(
-            new Error('Rate limit exceeded for host "target.example.test". Maximum 60 requests per minute.')
+            "Refused locally: no request was sent (LOCAL_RATE_LIMITED). The rate limit for this target or session is exhausted; wait before retrying. Retry in 45 s."
         );
+    });
+
+    it("carries the code and the wait on the error", () => {
+        for (let i = 0; i < RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE; i++) {
+            checkRateLimits(`host-${i}.example.test`, "one-client");
+        }
+        let refusal: unknown;
+        try {
+            checkRateLimits("another.example.test", "one-client");
+        } catch (error) {
+            refusal = error;
+        }
+        expect(refusal).toBeInstanceOf(LocalRefusalError);
+        expect(refusal).toMatchObject({ code: "LOCAL_RATE_LIMITED", reason: "rate-limited", retryAfterSeconds: 60 });
     });
 });
 
@@ -184,7 +200,7 @@ describe("checkRateLimits — configured sliding window", () => {
     it("admits max back to back and refuses the next", () => {
         checkRateLimits(HOST, "c1");
         checkRateLimits(HOST, "c2");
-        expect(() => checkRateLimits(HOST, "c3")).toThrow(/Rate limit exceeded for host/);
+        expect(() => checkRateLimits(HOST, "c3")).toThrow(/LOCAL_RATE_LIMITED/);
     });
 
     it("keeps its state across a cleanup sweep", () => {
@@ -195,7 +211,7 @@ describe("checkRateLimits — configured sliding window", () => {
             // Six sweeps, and past the fixed window's 60 s: neither may reset a log.
             vi.advanceTimersByTime(61_000);
             expect(rateLimitMapSizes().slidingHosts).toBe(1);
-            expect(() => checkRateLimits(HOST, "c3")).toThrow(/Rate limit exceeded for host/);
+            expect(() => checkRateLimits(HOST, "c3")).toThrow(/LOCAL_RATE_LIMITED/);
         } finally {
             stopRateLimitCleanup(interval);
         }
@@ -209,19 +225,14 @@ describe("checkRateLimits — configured sliding window", () => {
         vi.advanceTimersByTime(HOUR / 2 + 1);
         // The first request has left the window; the second has not.
         expect(() => checkRateLimits(HOST, "c3")).not.toThrow();
-        expect(() => checkRateLimits(HOST, "c4")).toThrow(/Rate limit exceeded for host/);
+        expect(() => checkRateLimits(HOST, "c4")).toThrow(/LOCAL_RATE_LIMITED/);
     });
 
-    it("names max, the window, and the time until the oldest request leaves", () => {
+    it("names the time until the oldest request leaves, and no host", () => {
         checkRateLimits(HOST, "c1");
         vi.advanceTimersByTime(600_000);
         checkRateLimits(HOST, "c2");
-        expect(() => checkRateLimits(HOST, "c3")).toThrow(
-            new Error(
-                `Rate limit exceeded for host "${HOST}". Maximum 2 requests per 3600 s; ` +
-                "the oldest leaves the window in 3000 s."
-            )
-        );
+        expect(() => checkRateLimits(HOST, "c3")).toThrow("Refused locally: no request was sent (LOCAL_RATE_LIMITED). The rate limit for this target or session is exhausted; wait before retrying. Retry in 3000 s.");
     });
 
     it("counts each host separately and leaves the fixed host map untouched", () => {
@@ -237,7 +248,7 @@ describe("checkRateLimits — configured sliding window", () => {
             checkRateLimits(`host-${i}.example.test`, "one-client");
         }
         expect(() => checkRateLimits("another.example.test", "one-client"))
-            .toThrow(/Client rate limit exceeded/);
+            .toThrow(/LOCAL_RATE_LIMITED/);
     });
 
     it("refuses an untracked host at the tracking cap, and the sweep frees it once the window passes", () => {
@@ -262,7 +273,7 @@ describe("checkRateLimits — configured sliding window", () => {
             checkRateLimits(HOST, "c1");
             vi.advanceTimersByTime(119_999);
             expect(rateLimitMapSizes().slidingHosts).toBe(1);
-            expect(() => checkRateLimits(HOST, "c2")).toThrow(/Rate limit exceeded for host/);
+            expect(() => checkRateLimits(HOST, "c2")).toThrow(/LOCAL_RATE_LIMITED/);
 
             // The sweep at 120 000 ms deletes the log, and the check would admit too.
             vi.advanceTimersByTime(1);
@@ -276,7 +287,7 @@ describe("checkRateLimits — configured sliding window", () => {
     it("counts a trailing-dot spelling of a host against the same budget", () => {
         checkRateLimits(HOST, "c1");
         checkRateLimits(`${HOST}.`, "c2");
-        expect(() => checkRateLimits(`${HOST}..`, "c3")).toThrow(/Rate limit exceeded for host/);
+        expect(() => checkRateLimits(`${HOST}..`, "c3")).toThrow(/LOCAL_RATE_LIMITED/);
         expect(rateLimitMapSizes().slidingHosts).toBe(1);
     });
 
@@ -284,7 +295,7 @@ describe("checkRateLimits — configured sliding window", () => {
         checkRateLimits(HOST, "c1");
         checkRateLimits(HOST, "c2");
         reinstall({ max: 2, windowMs: HOUR });
-        expect(() => checkRateLimits(HOST, "c3")).toThrow(/Rate limit exceeded for host/);
+        expect(() => checkRateLimits(HOST, "c3")).toThrow(/LOCAL_RATE_LIMITED/);
     });
 
     it("drops the log on a re-install with a different window", () => {
@@ -318,7 +329,7 @@ describe("checkRateLimits — configured sliding window", () => {
             checkRateLimits(HOST, `client-${i}`);
         }
         expect(() => checkRateLimits(HOST, "client-final"))
-            .toThrow(/Maximum 60 requests per minute\.$/);
+            .toThrow(/Retry in 60 s\.$/);
     });
 
     it("copies the limit, so mutating the caller's object changes nothing", () => {
@@ -326,7 +337,7 @@ describe("checkRateLimits — configured sliding window", () => {
         reinstall(limit);
         limit.max = 100;
         checkRateLimits(HOST, "c1");
-        expect(() => checkRateLimits(HOST, "c2")).toThrow(/Maximum 1 requests/);
+        expect(() => checkRateLimits(HOST, "c2")).toThrow(/LOCAL_RATE_LIMITED/);
     });
 });
 
@@ -336,7 +347,7 @@ describe("checkRateLimits — host key", () => {
             checkRateLimits(i % 2 ? "api.example.test." : "api.example.test", `c-${i}`);
         }
         expect(() => checkRateLimits("api.example.test.", "c-final"))
-            .toThrow('Rate limit exceeded for host "api.example.test.". Maximum 60 requests per minute.');
+            .toThrow(/LOCAL_RATE_LIMITED.*Retry in 60 s\.$/);
         expect(rateLimitMapSizes().hosts).toBe(1);
     });
 });
@@ -347,7 +358,7 @@ describe("installHostRateLimit — ownership", () => {
 
     /** Prove a `max: 1` limit still holds: the caller has spent its one request, so the next is refused. */
     function expectLimitOfOneHeld(): void {
-        expect(() => checkRateLimits(HOST, "probe")).toThrow(/Maximum 1 requests per 3600 s/);
+        expect(() => checkRateLimits(HOST, "probe")).toThrow(/Retry in 3600 s\./);
     }
 
     it.each([
@@ -357,7 +368,7 @@ describe("installHostRateLimit — ownership", () => {
     ])("refuses %o and installs nothing", (limit, message) => {
         expect(() => installHostRateLimit(limit as never)).toThrow(new Error(message));
         for (let i = 0; i < RATE_LIMIT.MAX_PER_HOST_PER_MINUTE; i++) checkRateLimits(HOST, `c-${i}`);
-        expect(() => checkRateLimits(HOST, "c-final")).toThrow(/Maximum 60 requests per minute\.$/);
+        expect(() => checkRateLimits(HOST, "c-final")).toThrow(/Retry in 60 s\.$/);
     });
 
     it("refuses a second install while the first is held, and keeps the first", () => {

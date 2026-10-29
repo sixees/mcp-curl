@@ -253,9 +253,10 @@ function percentDecoded(value: string): string {
  *
  * On hop 1 each check refuses in its own words. On a redirect hop every
  * refusal is `LOCAL_REDIRECT_REFUSED` with a fixed reason, because requests
- * were already sent and because the checks' own messages name the host,
- * which on a redirect hop the remote chose (RC-30). A deadline that passes
- * during DNS is the chain's timeout on every hop, never a refusal.
+ * were already sent and because the SSRF check's own message names the host,
+ * which on a redirect hop the remote chose (RC-30). The rate limit's wait is
+ * the one detail carried over. A deadline that passes during DNS is the
+ * chain's timeout on every hop, never a refusal.
  */
 async function gateHop(
     url: string,
@@ -271,8 +272,11 @@ async function gateHop(
         if (requestsSent === 0) return run();
         try {
             return await run();
-        } catch {
-            throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent });
+        } catch (error) {
+            // The rate limit's wait is the one figure carried across: the
+            // server computed it, so it names nothing the remote chose.
+            const retryAfterSeconds = error instanceof LocalRefusalError ? error.retryAfterSeconds : undefined;
+            throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent, retryAfterSeconds });
         }
     };
 
