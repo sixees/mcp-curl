@@ -2996,3 +2996,25 @@ merged when the correction was made.
   consumer is a rewrite of the payload by another name. Sharpens RC-44: "classify the bytes
   the passes read" holds, and the bytes they read should be the origin's whenever every
   reader can be made to accept them.
+
+### RC-65 — A disabled built-in tool is still listed; `enabled` gates only the handler
+
+**Date:** 2026-10-23 · **PR:** #48
+
+**Class:** K-3 — *class-id:* `misplaced-decision`
+
+- **The plan said:** with `curl_execute` disabled, `curlExecuteDescriptionAppend` "does nothing", so `start()` should warn that it is never shown (plan `2026-10-20-feat-embedder-persona-gaps-plan.md` → *Item 3*). The premise was not checked against HEAD.
+- **Reality was:** `src/lib/extensible/tool-wrapper.ts::registerCurlToolWithHooks` registers `curl_execute` unconditionally; `enabled` gates only the handler, so `tools/list` still carries the meta and the composed append. Caught pre-merge by architecture-strategist in the Surface 2 review.
+- **What changed:** todo 021 filed; the `McpCurlServer.start` warning and the `docs/configuration.md` sentence were left as written pending the operator's choice of fix.
+- **What this costs next time:** a claim that a disabled built-in tool is "not exposed" or "not shown" is checked against `src/lib/extensible/mcp-curl-server.ts::registerToolsOnServer` before it is written; `src/lib/api-server.ts::createApiServer`'s docblock already makes it.
+
+### RC-66 — Removing `-L` let the user's `.curlrc` decide whether cURL follows redirects
+
+**Date:** 2026-10-28 · **PR:** #52
+
+**Class:** K-20, K-2 — *class-id:* `fail-open-default`
+
+- **The plan said:** removing `-L`, `--max-redirs` and `--proto-redir` from `execution/curl-args-builder.ts::buildCurlArgs` means "one spawn is one hop", and the hop loop in `tools/curl-execute.ts::executeCurlRequest` gates every redirect (plan `2026-10-27-feat-host-policy-redirect-hops-plan.md` → task 10). The builder's own doc-comment claimed "cURL never connects anywhere this pin does not cover".
+- **Reality was:** cURL reads `.curlrc` (`$CURL_HOME`, `$XDG_CONFIG_HOME`, `$HOME`) unless `-q` is its first argument. With `location` in one, a single spawn followed a loopback 302 and returned the target's body (measured, cURL 8.7.1). The always-present `-L` had made this irrelevant, which was a second job it did by accident. Caught pre-merge by security-sentinel in the Surface 2 review.
+- **What changed:** `buildCurlArgs` emits `-q` as `args[0]`. `curl-args-builder.test.ts` pins it. `curl-execute.redirects.e2e.test.ts` points `CURL_HOME` at a `.curlrc` holding `location` and asserts `LOCAL_REDIRECT_REFUSED` with no request reaching the target. Removing `-q` fails both tests.
+- **What this costs next time:** a property of a spawned tool stated as "the argv never contains X" holds only once the tool's ambient inputs are disabled too. For cURL that means `-q` first. Environment variables (`http_proxy`, `ALL_PROXY`) are a separate ambient input, and `-q` does not cover them.

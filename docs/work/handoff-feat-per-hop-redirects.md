@@ -216,7 +216,7 @@ fa71245 docs(architecture): every redirect hop is validated and pinned
 4. The two redirect suites.
 5. `architecture.md`.
 
-**Related material:** plan PR-3 (tasks 8–12), invariants 2 and 13, RC-30, RC-31, RC-56. The staged RC is `docs/work/RC/curlrc-decides-redirect-following.md`.
+**Related material:** plan PR-3 (tasks 8–12), invariants 2 and 13, RC-30, RC-31, RC-56. The `.curlrc` lesson is RC-66 in `.sixees/LESSONS.md`.
 
 **Depends on:** PR-1 (#50, host policy) and PR-2 (#51, the `-w` parser).
 
@@ -225,7 +225,7 @@ fa71245 docs(architecture): every redirect hop is validated and pinned
 - [x] Todos 024–027 (P3): 024–026 fixed, 027 closed without a change, all four files deleted (operator, 2026-10-29).
 - [ ] PR-4: header sync, the rate-limit refusal shape, the `//` move.
 - [ ] PR-5: the CHANGELOG `**BREAKING:**` bullets. Include final-hop-only `include_headers`/`verbose`, the method rewrite and the cross-origin strip.
-- [ ] Run `/sixees-workflow:file-lessons --flush` before the merge.
+- [x] Run `/sixees-workflow:file-lessons --flush` before the merge: RC-65 (staged earlier from #48) and RC-66 written, 2026-10-29.
 
 ### Outstanding Todos
 
