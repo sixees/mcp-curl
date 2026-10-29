@@ -60,7 +60,7 @@ export type ResolvedRequestUrl =
     | { ok: true; url: string }
     | { ok: false; error: string };
 
-/** A relative path's refusal, in the one shape every local refusal takes. */
+/** A relative path's refusal, in the shape every local refusal takes. */
 function refusedPath(reason: (typeof LOCAL_REFUSAL_CODE_REASONS)["LOCAL_REFUSED_PATH"][number]): ResolvedRequestUrl {
     return { ok: false, error: formatLocalRefusal({ code: "LOCAL_REFUSED_PATH", reason }) };
 }
@@ -85,6 +85,10 @@ function refusedPath(reason: (typeof LOCAL_REFUSAL_CODE_REASONS)["LOCAL_REFUSED_
  * URL, appending a single-slash path cannot move its authority, so that parse
  * is the whole guard on the join. No error echoes a value: the input is
  * attacker-chosen on the tool path, and the base may carry credentials.
+ *
+ * A `baseUrl` that does not parse is a configuration fault, not a refusal of
+ * the caller's input, so it returns a plain error rather than a
+ * `LOCAL_REFUSED_PATH`: no change to `url` would get it joined.
  */
 export function resolveRequestUrl(baseUrl: string | undefined, url: string): ResolvedRequestUrl {
     if (!baseUrl || !/^[/\\]/.test(url)) return { ok: true, url };
