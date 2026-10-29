@@ -3,7 +3,7 @@
 
 import type { Session } from "../types/index.js";
 import { SESSION } from "../config/index.js";
-import { assertPositiveInteger } from "../utils/index.js";
+import { assertPositiveInteger, withTimeout } from "../utils/index.js";
 
 /**
  * Manages HTTP transport sessions with automatic cleanup.
@@ -183,24 +183,10 @@ async function closeWithTimeout(
     label: string,
     sessionId: string,
 ): Promise<void> {
-    let timer: NodeJS.Timeout | undefined;
     try {
-        await Promise.race([
-            op(),
-            new Promise<never>((_, reject) => {
-                timer = setTimeout(
-                    () => reject(new Error(`${label}_timeout`)),
-                    CLOSE_TIMEOUT_MS,
-                );
-                timer.unref?.();
-            }),
-        ]);
+        await withTimeout(op(), CLOSE_TIMEOUT_MS, () => new Error(`${label}_timeout`));
     } catch (error) {
         const errorClass = error instanceof Error ? error.constructor.name : "unknown";
         console.error(`${label} error: [${sessionId}] ${errorClass}`);
-    } finally {
-        if (timer) {
-            clearTimeout(timer);
-        }
     }
 }

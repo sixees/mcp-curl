@@ -6,7 +6,7 @@ import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlS
 import { generateMetadataSeparator, type MetadataBlock, type UrlValidationResult } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits } from "../security/index.js";
-import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError } from "../utils/index.js";
+import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError, withTimeout } from "../utils/index.js";
 import { executeCommand, buildCurlArgs, platformSupportsHeaderDump, type CommandResult } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
@@ -220,43 +220,51 @@ function redirectTarget(raw: string): URL | undefined {
  * On hop 1 each check refuses in its own words. On a redirect hop every
  * refusal is `LOCAL_REDIRECT_REFUSED` with a fixed reason, because requests
  * were already sent and because the checks' own messages name the host,
- * which on a redirect hop the remote chose (RC-30).
+ * which on a redirect hop the remote chose (RC-30). A deadline that passes
+ * during DNS is the chain's timeout on every hop, never a refusal.
  */
 async function gateHop(
     url: string,
     requestsSent: number,
+    deadline: number,
     policy: HostPolicy,
     extra: CurlExecuteExtra
 ): Promise<UrlValidationResult> {
-    if (requestsSent === 0) {
-        // A URL that does not parse is left to the SSRF gate, which refuses it
-        // with its own message.
-        const requestHost = safeHostname(url, "");
-        if (requestHost !== "" && !isHostAllowed(policy, requestHost)) {
+    const check = async <T>(
+        reason: "host-not-allowed" | "address-blocked" | "rate-limited",
+        run: () => T | Promise<T>
+    ): Promise<T> => {
+        if (requestsSent === 0) return run();
+        try {
+            return await run();
+        } catch {
+            throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent });
+        }
+    };
+
+    // A URL that does not parse is left to the SSRF gate, which refuses it
+    // with its own message. A redirect hop's URL always parses.
+    const host = safeHostname(url, "");
+    await check("host-not-allowed", () => {
+        if (host !== "" && !isHostAllowed(policy, host)) {
             throw new LocalRefusalError({ code: "LOCAL_HOST_NOT_ALLOWED", reason: "host-not-allowed" });
         }
-        const dnsResult = await validateUrlAndResolveDns(url, { allowLocalhost: extra.allowLocalhost });
-        // Per-host protects each target; per-client stops a client spreading
-        // requests across hosts. For stdio, sessionId is undefined (the default client).
-        checkRateLimits(dnsResult.hostname, extra.sessionId);
-        return dnsResult;
-    }
-
-    const refuse = (reason: "host-not-allowed" | "address-blocked" | "rate-limited") =>
-        new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent });
-    if (!isHostAllowed(policy, new URL(url).hostname)) throw refuse("host-not-allowed");
-    let dnsResult: UrlValidationResult;
-    try {
-        dnsResult = await validateUrlAndResolveDns(url, { allowLocalhost: extra.allowLocalhost });
-    } catch {
-        throw refuse("address-blocked");
-    }
-    try {
-        checkRateLimits(dnsResult.hostname, extra.sessionId);
-    } catch {
-        throw refuse("rate-limited");
-    }
+    });
+    // The lookup is bounded by the chain's deadline: on a redirect hop the
+    // remote chose the host, and so its nameserver.
+    const dnsResult = await withTimeout(
+        check("address-blocked", () => validateUrlAndResolveDns(url, { allowLocalhost: extra.allowLocalhost })),
+        Math.max(0, deadline - Date.now()),
+        timedOut
+    );
+    // Per-host protects each target; per-client stops a client spreading
+    // requests across hosts. For stdio, sessionId is undefined (the default client).
+    await check("rate-limited", () => checkRateLimits(dnsResult.hostname, extra.sessionId));
     return dnsResult;
+}
+
+function timedOut(): Error {
+    return new Error("Request timed out: the whole timeout was used up before the next request could be sent.");
 }
 
 /**
@@ -299,31 +307,26 @@ export async function executeCurlRequest(
         // One deadline for the whole chain, so a redirect cannot buy a hop a
         // fresh timeout.
         const deadline = Date.now() + (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1000) * 1000;
-        const origin = safeUrl(params.url);
-        let validatedOutputDir: string | undefined;
         let hop = params;
         let requestsSent = 0;
 
         // cURL is spawned without `-L`, so each spawn is one hop and every hop
-        // is gated here before cURL sees it: host list (before DNS), SSRF check
+        // is gated before cURL sees it: host list (before DNS), SSRF check
         // and `--resolve` pin for that hop's host:port, rate limit last so a
         // refused hop costs no quota (ARCHITECTURE.md invariant 2).
+        let dnsResult = await gateHop(hop.url, requestsSent, deadline, policy, extra);
+        // Hop 1's gate refuses a URL that does not parse, so this cannot throw.
+        const origin = new URL(params.url);
+        // Resolve and validate output directory (returns real path with symlinks resolved)
+        const resolvedOutputDir = resolveOutputDir(params.output_dir);
+        const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : undefined;
+
         for (;;) {
-            const dnsResult = await gateHop(hop.url, requestsSent, policy, extra);
-
-            if (requestsSent === 0) {
-                // Resolve and validate output directory (returns real path with symlinks resolved)
-                const resolvedOutputDir = resolveOutputDir(params.output_dir);
-                validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : undefined;
-            }
-
             // `executeCommand` treats a timeout of 0 or less as "use the
             // default", and cURL treats `--max-time 0` as no limit, so a spent
             // deadline is refused here rather than handed to either.
             const remainingMs = Math.floor(deadline - Date.now());
-            if (remainingMs <= 0) {
-                throw new Error("Request timed out: the redirect chain used up the whole timeout.");
-            }
+            if (remainingMs <= 0) throw timedOut();
 
             // One block for the build and the parse; its separator is unique per
             // request, to prevent response injection.
@@ -363,12 +366,13 @@ export async function executeCurlRequest(
             // An over-bound or control-bearing target arrives as undefined.
             // It is unusable, never "empty, so terminal".
             const next = parsed.redirectUrl === undefined ? undefined : redirectTarget(parsed.redirectUrl);
-            if (next === undefined || origin === undefined) {
+            if (next === undefined) {
                 throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason: "unusable-redirect-target", requestsSent });
             }
             // Each hop is built from the last, so what a cross-origin hop drops
             // stays dropped when the chain comes back to hop 1's origin.
             hop = nextHopParams(hop, status, !sameOrigin(origin, next), next.href);
+            dnsResult = await gateHop(hop.url, requestsSent, deadline, policy, extra);
         }
 
         const { contentType, metadataFound } = parsed;

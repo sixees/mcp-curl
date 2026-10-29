@@ -260,7 +260,35 @@ describe("one deadline for the chain", () => {
         expect(maxTimes).toEqual(["2", "0.75"]);
         expect(spawnCurl.mock.calls.map(([, , timeout]) => timeout)).toEqual([2_000, 750]);
         expect(isError(result)).toBe(true);
-        expect(textOf(result)).toContain("the redirect chain used up the whole timeout");
+        expect(textOf(result)).toContain("the whole timeout was used up");
+    });
+
+    it("bounds a redirect hop's DNS lookup by what is left, as a timeout and not a refusal", async () => {
+        spawnCurl.mockResolvedValueOnce(redirect(302, "https://black-hole.test/x"));
+        validate.mockImplementationOnce(async (url: string) => ({
+            hostname: new URL(url).hostname, port: 443, resolvedIp: "93.184.216.34",
+        }));
+        validate.mockImplementationOnce(() => new Promise(() => undefined));
+
+        const started = Date.now();
+        const result = await executeCurlRequest(params({ url: "https://api.test/a", timeout: 1 }), {});
+
+        expect(Date.now() - started).toBeLessThan(1_500);
+        expect(isError(result)).toBe(true);
+        expect(textOf(result)).toContain("the whole timeout was used up");
+        expect(textOf(result)).not.toContain("LOCAL_REDIRECT_REFUSED");
+        expect(spawnCurl).toHaveBeenCalledTimes(1);
+    });
+
+    it("bounds hop 1's DNS lookup too", async () => {
+        validate.mockImplementationOnce(() => new Promise(() => undefined));
+
+        const started = Date.now();
+        const result = await executeCurlRequest(params({ url: "https://api.test/a", timeout: 1 }), {});
+
+        expect(Date.now() - started).toBeLessThan(1_500);
+        expect(textOf(result)).toContain("the whole timeout was used up");
+        expect(spawnCurl).not.toHaveBeenCalled();
     });
 });
 

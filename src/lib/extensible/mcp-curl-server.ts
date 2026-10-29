@@ -40,6 +40,7 @@ import {
     sanitizeDescription,
     MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
     MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
+    withTimeout,
 } from "../utils/index.js";
 import { createWrapper } from "../response/post-processor.js";
 import {
@@ -592,29 +593,21 @@ export class McpCurlServer {
         // Bounded: close() waits for open connections to end, so a held keep-alive must not stall shutdown.
         if (this._httpServer) {
             const SHUTDOWN_TIMEOUT = 5000;
-            let timeoutId: NodeJS.Timeout | undefined;
 
             try {
-                await Promise.race([
+                await withTimeout(
                     new Promise<void>((resolve, reject) => {
                         this._httpServer!.close((err) => {
                             if (err) reject(err);
                             else resolve();
                         });
                     }),
-                    new Promise<void>((_, reject) => {
-                        timeoutId = setTimeout(
-                            () => reject(new Error("HTTP server shutdown timeout")),
-                            SHUTDOWN_TIMEOUT
-                        );
-                    }),
-                ]);
+                    SHUTDOWN_TIMEOUT,
+                    () => new Error("HTTP server shutdown timeout")
+                );
             } catch (error) {
                 logShutdownError("shutdown_http_server", error);
             } finally {
-                if (timeoutId !== undefined) {
-                    clearTimeout(timeoutId);
-                }
                 this._httpServer = null;
             }
         }

@@ -222,7 +222,7 @@ fa71245 docs(architecture): every redirect hop is validated and pinned
 
 ## Follow-up work
 
-- [ ] Todos 024–027 (P3, pending).
+- [x] Todos 024–027 (P3): 024–026 fixed, 027 closed without a change, all four files deleted (operator, 2026-10-29).
 - [ ] PR-4: header sync, the rate-limit refusal shape, the `//` move.
 - [ ] PR-5: the CHANGELOG `**BREAKING:**` bullets. Include final-hop-only `include_headers`/`verbose`, the method rewrite and the cross-origin strip.
 - [ ] Run `/sixees-workflow:file-lessons --flush` before the merge.
@@ -236,8 +236,14 @@ fa71245 docs(architecture): every redirect hop is validated and pinned
 | 026 | P3 | The "origin did not parse" arm in the redirect loop is unreachable | Surface 2, code-simplicity-reviewer |
 | 027 | P3 | The method table types `method` as `string` | Surface 2, typescript-reviewer |
 
+None of these is outstanding any more; see *Resolved Todos*.
+
 ### Resolved Todos
 
 | Id | Title | Summary | By | Date |
 |---|---|---|---|---|
 | 007 | SSRF validation covers the first hop only | Every hop is gated and pinned; cURL runs without `-L` and with `-q`. The file was deleted at the operator's request | Claude Code | 2026-10-28 |
+| 024 | Redirect-hop DNS lookup runs outside the chain deadline | `gateHop` races `validateUrlAndResolveDns` against the deadline via the new `utils/timeout.ts::withTimeout`, on every hop, as a timeout and never a refusal. The lookup itself is not cancelled. The two existing hand-rolled race-with-timer sites (`session-manager.ts::closeWithTimeout`, `McpCurlServer` HTTP shutdown) now use the same helper | Claude Code | 2026-10-29 |
+| 025 | Gate sequence written twice in `gateHop` | One sequence. A `check(reason, run)` wrapper rethrows on hop 1 and maps to `LOCAL_REDIRECT_REFUSED` on a redirect hop. Both arms read the host through `safeHostname` | Claude Code | 2026-10-29 |
+| 026 | Unreachable origin guard | Hop 1 is gated before the loop and `origin` is `new URL(params.url)` after it, so the type has no `undefined` and the unusable-target refusal names only the target | Claude Code | 2026-10-29 |
+| 027 | Method typed as `string` | Closed without a change at the operator's instruction | Claude Code | 2026-10-29 |
