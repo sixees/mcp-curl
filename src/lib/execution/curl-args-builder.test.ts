@@ -199,6 +199,10 @@ describe("buildCurlArgs", () => {
             expect(buildCurlArgs(makeParams())[0]).toBe("-q");
         });
 
+        it("passes --globoff, so a bracket range in a URL is one request", () => {
+            expect(buildCurlArgs(makeParams())).toContain("--globoff");
+        });
+
         it("never emits -L, --location, --max-redirs or --proto-redir", () => {
             for (const follow_redirects of [true, false]) {
                 const args = buildCurlArgs(makeParams({ follow_redirects, max_redirects: 5 } as never));

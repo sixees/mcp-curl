@@ -81,6 +81,46 @@ describe("todo 007: a redirect hop is validated like the first", () => {
         expect(target.requests[0]).toContain("Accept: application/json");
     });
 
+    it("follows a same-origin redirect from a URL carrying credentials, and keeps sending them", async () => {
+        // cURL reports a relative target with the request URL's userinfo
+        // carried over (measured, cURL 8.7.1), so credentials left in the URL
+        // would make this redirect look like one carrying userinfo.
+        const origin = await serveResponses([found("/next"), ok('{"hop":"second"}')], "localhost");
+
+        const result = await executeCurlRequest(
+            params({ url: `http://alice:pw@localhost:${origin.port}/start` }),
+            EXTRA
+        );
+
+        expect(textOf(result)).toContain('"hop":"second"');
+        const basic = `Authorization: Basic ${Buffer.from("alice:pw").toString("base64")}`;
+        expect(origin.requests.map((r) => r.includes(basic))).toEqual([true, true]);
+    });
+
+    it("follows a same-origin redirect with basic_auth, and keeps sending it", async () => {
+        const origin = await serveResponses([found("/next"), ok('{"hop":"second"}')], "localhost");
+
+        const result = await executeCurlRequest(
+            params({ url: `http://localhost:${origin.port}/start`, basic_auth: "alice:pw" }),
+            EXTRA
+        );
+
+        expect(textOf(result)).toContain('"hop":"second"');
+        const basic = `Authorization: Basic ${Buffer.from("alice:pw").toString("base64")}`;
+        expect(origin.requests.map((r) => r.includes(basic))).toEqual([true, true]);
+    });
+
+    it("sends a redirect target with a bracket range as one request", async () => {
+        const origin = await serveResponses([found("/item[1-3]"), ok("{}")], "localhost");
+
+        await executeCurlRequest(params({ url: `http://localhost:${origin.port}/start` }), EXTRA);
+
+        expect(origin.requests.map((r) => r.split("\r\n")[0])).toEqual([
+            "GET /start HTTP/1.1",
+            "GET /item[1-3] HTTP/1.1",
+        ]);
+    });
+
     it("sends a 302 after a POST as a body-less GET", async () => {
         const origin = await serveResponses([found("/after"), ok("{}")], "localhost");
 

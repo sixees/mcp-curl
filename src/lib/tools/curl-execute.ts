@@ -201,14 +201,48 @@ function safeUrl(url: string): URL | undefined {
 /**
  * A redirect target cURL reported, parsed, or undefined where it is not one
  * this server will follow: unparseable, not http(s), hostless, or carrying
- * userinfo. The parsed `href` is what every later check and cURL itself
- * receive, because WHATWG and cURL disagree on where some URLs' host is.
+ * userinfo the remote chose. The parsed `href` is what every later check and
+ * cURL itself receive, because WHATWG and cURL disagree on where some URLs'
+ * host is.
+ *
+ * cURL writes the `-u` credentials it sent into the target it reports, so
+ * userinfo equal to `sentCredentials` is cURL's echo, not the remote's, and is
+ * stripped: the next hop's credentials come from `basic_auth`, which a
+ * cross-origin hop drops, never from the URL.
  */
-function redirectTarget(raw: string): URL | undefined {
+function redirectTarget(raw: string, sentCredentials: string | undefined): URL | undefined {
     const url = safeUrl(raw);
     if (url === undefined || !isAllowedUrlScheme(url.protocol) || url.hostname === "") return undefined;
-    if (url.username !== "" || url.password !== "") return undefined;
+    if (url.username !== "" || url.password !== "") {
+        if (`${percentDecoded(url.username)}:${percentDecoded(url.password)}` !== sentCredentials) return undefined;
+        url.username = "";
+        url.password = "";
+    }
     return url;
+}
+
+/**
+ * Strips credentials from the request URL and returns them as `basic_auth`,
+ * so `redirectTarget` has one place to read what was sent. `-u` already wins
+ * over URL userinfo in cURL, so a `basic_auth` the caller set is kept and the
+ * URL's dropped: the credentials sent do not change. As `basic_auth` they are
+ * also what a cross-origin hop drops.
+ */
+function moveUserinfoToBasicAuth(url: URL, basicAuth: string | undefined): string | undefined {
+    if (url.username === "" && url.password === "") return basicAuth;
+    const credentials = basicAuth ?? `${percentDecoded(url.username)}:${percentDecoded(url.password)}`;
+    url.username = "";
+    url.password = "";
+    return credentials;
+}
+
+/** cURL percent-decodes URL userinfo; a malformed escape is sent as written. */
+function percentDecoded(value: string): string {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
 }
 
 /**
@@ -289,7 +323,9 @@ export async function executeCurlRequest(
     // the SSRF gate and cURL all take the one parsed form. A URL that does not
     // parse stays as given, for the SSRF gate to refuse.
     try {
-        params = { ...params, url: new URL(params.url).href };
+        const url = new URL(params.url);
+        const basic_auth = moveUserinfoToBasicAuth(url, params.basic_auth);
+        params = { ...params, url: url.href, basic_auth };
     } catch {
         // Left to validateUrlAndResolveDns.
     }
@@ -365,7 +401,7 @@ export async function executeCurlRequest(
             }
             // An over-bound or control-bearing target arrives as undefined.
             // It is unusable, never "empty, so terminal".
-            const next = parsed.redirectUrl === undefined ? undefined : redirectTarget(parsed.redirectUrl);
+            const next = parsed.redirectUrl === undefined ? undefined : redirectTarget(parsed.redirectUrl, hop.basic_auth);
             if (next === undefined) {
                 throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason: "unusable-redirect-target", requestsSent });
             }

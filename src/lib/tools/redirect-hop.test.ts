@@ -54,7 +54,16 @@ describe("nextHopParams: the method table", () => {
             it(`${status} with ${sent}${hasBody ? " and a body" : ""}`, () => {
                 const params = base({
                     method,
-                    ...(hasBody ? { data: "{}", headers: { "Content-Type": "application/json", "Content-Length": "2" } } : {}),
+                    ...(hasBody
+                        ? {
+                              data: "{}",
+                              headers: {
+                                  "Content-Type": "application/json",
+                                  "Content-Length": "2",
+                                  "Transfer-Encoding": "chunked",
+                              },
+                          }
+                        : {}),
                 });
                 const next = nextHopParams(params, status, false, NEXT);
                 expect(next.url).toBe(NEXT);

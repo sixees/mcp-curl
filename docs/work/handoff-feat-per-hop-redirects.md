@@ -247,3 +247,39 @@ None of these is outstanding any more; see *Resolved Todos*.
 | 025 | Gate sequence written twice in `gateHop` | One sequence. A `check(reason, run)` wrapper rethrows on hop 1 and maps to `LOCAL_REDIRECT_REFUSED` on a redirect hop. Both arms read the host through `safeHostname` | Claude Code | 2026-10-29 |
 | 026 | Unreachable origin guard | Hop 1 is gated before the loop and `origin` is `new URL(params.url)` after it, so the type has no `undefined` and the unusable-target refusal names only the target | Claude Code | 2026-10-29 |
 | 027 | Method typed as `string` | Closed without a change at the operator's instruction | Claude Code | 2026-10-29 |
+
+## Review Comments Addressed — 2026-10-29
+
+Surface 3, round 1 (CodeRabbit, Codex) on `16cf078`. Severities below are mine, re-derived from consequence; the bots' labels are noted.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| URL globbing turns one gated hop into several requests (two threads, one finding) | @coderabbitai (Major), @chatgpt-codex-connector (P2) | Fix needed, P2 in scope | `buildCurlArgs` passes `--globoff` after `-q`. Measured on cURL 8.7.1: `/item[1-3]` was 3 requests, now 1 literal request. Hop 1 is covered by the same flag |
+| Inherited URL credentials make a same-origin redirect refused | @chatgpt-codex-connector (P2) | Fix needed, P2 in scope | Measured: cURL writes the credentials it sent (`-u` or URL userinfo) into `%{redirect_url}`, so **every** `basic_auth` caller had same-origin redirects refused, not only URL-userinfo callers. `redirectTarget` strips userinfo equal to the hop's `basic_auth` and still refuses any other; request-URL userinfo is moved into `basic_auth` first (`-u` already won over it), so there is one source to compare and the cross-origin strip covers it |
+| `Transfer-Encoding` survives a body-dropping redirect | @coderabbitai (Minor, review body) | Fix needed, P3 one-liner in a new closed set | Added to `BODY_HEADERS` in `redirect-hop.ts` |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Document per-hop redirect handling in the `curl_execute` description | @coderabbitai (Trivial, review body on `379dcaf`) | P3 | In the plan, not this PR | Already decided: plan PR-5 task 17 owns the description trim and restates `follow_redirects`/`max_redirects` once in the schema `.describe()`; the CHANGELOG bullets for final-hop-only output are PR-5's too |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None this round.
+
+### Outstanding Todos
+
+None filed this round.
+
+### Files Modified
+
+`src/lib/execution/curl-args-builder.ts`, `src/lib/execution/curl-args-builder.test.ts`, `src/lib/tools/curl-execute.ts`, `src/lib/tools/curl-execute.redirects.test.ts`, `src/lib/tools/curl-execute.redirects.e2e.test.ts`, `src/lib/tools/redirect-hop.ts`, `src/lib/tools/redirect-hop.test.ts`, `docs/architecture/architecture.md`.
+
+Teeth: removing `--globoff` fails 2 tests; removing the echo strip fails 3; removing `transfer-encoding` fails 8; removing the userinfo move fails 2. Suite 1721 passed, 0 failed, 7 pending; `tsc` clean.

@@ -87,7 +87,10 @@ export function buildCurlArgs(params: CurlArgsParams): string[] {
     // and `location` in one would follow redirects inside this spawn, past the
     // per-hop gate (ARCHITECTURE.md invariant 2). It also stops a config-file
     // `proxy`, `resolve` or `insecure` overriding the argv below.
-    const args: string[] = ["-q"];
+    // `--globoff` keeps one spawn one request: without it a `[1-3]` in the
+    // path, which WHATWG leaves as written and a redirect target can carry,
+    // makes cURL send three requests for one gated, rate-counted hop.
+    const args: string[] = ["-q", "--globoff"];
 
     // Restrict the request to the shared scheme allowlist (defense-in-depth alongside URL validation in ssrf.ts); one spawn is one hop, so this covers every URL cURL connects to
     args.push("--proto", ALLOWED_URL_SCHEMES_CURL_FLAG);

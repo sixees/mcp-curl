@@ -23,7 +23,7 @@ export const CROSS_ORIGIN_FORWARDED_HEADERS: ReadonlySet<string> = new Set([
 ]);
 
 /** The headers that describe a body, and so go wherever the body goes. */
-const BODY_HEADERS: ReadonlySet<string> = new Set(["content-type", "content-length"]);
+const BODY_HEADERS: ReadonlySet<string> = new Set(["content-type", "content-length", "transfer-encoding"]);
 
 /**
  * Whether two parsed URLs share scheme, host and effective port. Hosts compare

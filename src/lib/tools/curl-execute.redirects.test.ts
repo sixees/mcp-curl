@@ -243,6 +243,38 @@ describe("how a chain ends", () => {
         expect(textOf(result)).toBe(`${refusedAt(1)} The redirect target is not a usable http(s) URL.`);
         expect(spawnCurl).toHaveBeenCalledTimes(1);
     });
+
+    // cURL writes the `-u` credentials it sent into `%{redirect_url}`
+    // (measured, cURL 8.7.1), so that userinfo is not the remote's.
+    it("follows a target carrying the credentials it sent, with them stripped from the URL", async () => {
+        spawnCurl
+            .mockResolvedValueOnce(redirect(302, "https://u:p@api.test/next"))
+            .mockResolvedValueOnce(final("done"));
+
+        const result = await executeCurlRequest(params({ url: "https://api.test/a", basic_auth: "u:p" }), {});
+
+        expect(isError(result)).toBe(false);
+        expect(spawnedUrls()).toEqual(["https://api.test/a", "https://api.test/next"]);
+        expect(spawnArgs(1)).toContain("u:p");
+    });
+
+    it("refuses a target carrying credentials other than the ones it sent", async () => {
+        spawnCurl.mockResolvedValue(redirect(302, "https://other:x@api.test/next"));
+
+        const result = await executeCurlRequest(params({ url: "https://api.test/a", basic_auth: "u:p" }), {});
+
+        expect(textOf(result)).toBe(`${refusedAt(1)} The redirect target is not a usable http(s) URL.`);
+        expect(spawnCurl).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends credentials from the request URL as basic_auth, not in the URL", async () => {
+        spawnCurl.mockResolvedValueOnce(final("done"));
+
+        await executeCurlRequest(params({ url: "https://alice:p%40ss@api.test/a" }), {});
+
+        expect(spawnedUrls()).toEqual(["https://api.test/a"]);
+        expect(spawnArgs(0)).toContain("alice:p@ss");
+    });
 });
 
 describe("one deadline for the chain", () => {
