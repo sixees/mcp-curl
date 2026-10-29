@@ -49,8 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP field name, on a `%`, and on any key but `remaining`. Needs cURL 7.84 or
   later.
 - **Local refusal codes.** A request refused before it is sent returns an error
-  result beginning `Refused locally: no request was sent (CODE).`, followed by one
-  sentence naming the reason, and never a host, URL or header value:
+  result beginning `Refused locally: no request was sent (CODE).`, followed by the
+  reason (and `Retry in N s.` where the reason is the rate limit), and never a
+  host, URL or header value:
   `LOCAL_HOST_NOT_ALLOWED`, `LOCAL_RATE_LIMITED`, `LOCAL_REFUSED_PATH`. A redirect
   hop refused after earlier hops were sent is `LOCAL_REDIRECT_REFUSED`, and its
   first line says how many requests went out. `curl_execute`'s stderr line logs

@@ -265,9 +265,9 @@ Alternatively, install `mcp-curl` as an npm dependency in a separate project —
 - **DNS rebinding prevention** — DNS resolved before validation, cURL pinned to validated IP via `--resolve`
 - **Protocol whitelist** — only `http://` and `https://` allowed; `file://`, `ftp://`, `data:`, `javascript:`, etc. blocked at the schema layer (`createHttpOnlyUrlSchema`), the SSRF layer, and via cURL `--proto`
 - **Host list** — `allowedHosts` names the hosts a request may reach, checked before DNS; a server with a `baseUrl` defaults to that host alone (`"any"` opts out)
-- **Per-hop redirects** — mcp-curl follows redirects itself, one hop at a time; every hop passes the host list, the SSRF check with its own `--resolve` pin and the rate limit, and a cross-origin hop keeps only the `Accept*` and `User-Agent` headers, dropping credentials
+- **Per-hop redirects** — mcp-curl follows redirects itself, one hop at a time; every hop passes the host list, the SSRF check with its own `--resolve` pin and the rate limit, and a hop to another origin keeps only `Accept`, `Accept-Language`, `Accept-Encoding`, `User-Agent` and, while the body is kept, its body headers, dropping every other header and the credentials
 - **Rate limiting** — 60 req/min per host by default (configurable as a sliding window, optionally tightened from the upstream's remaining-count header), 300 req/min per client
-- **Local refusals** — a request refused before it is sent says so, with a code (`LOCAL_HOST_NOT_ALLOWED`, `LOCAL_RATE_LIMITED`, `LOCAL_REFUSED_PATH`, `LOCAL_REDIRECT_REFUSED`) and no remote-chosen text
+- **Local refusals** — a request refused for its host, its rate limit or its path, or a redirect hop refused partway through a chain, says so with a code (`LOCAL_HOST_NOT_ALLOWED`, `LOCAL_RATE_LIMITED`, `LOCAL_REFUSED_PATH`, `LOCAL_REDIRECT_REFUSED`) and no remote-chosen text; an SSRF or DNS refusal of the first request keeps its own message
 - **Input validation** — Zod schemas, CRLF injection prevention, `--data-raw`/`--form-string` to block `@` file reads
 - **No shell execution** — commands spawned via `spawn()` without shell; allowlist permits only `curl`
 - **File access control** — `jq_query` restricted to temp dir, `MCP_CURL_OUTPUT_DIR`, and cwd; symlinks resolved

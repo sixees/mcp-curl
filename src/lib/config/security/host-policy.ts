@@ -1,12 +1,13 @@
 // src/lib/config/security/host-policy.ts
-// Which hosts a request URL may name (redirect hops are not checked): the allowedHosts list, its default, and the match
+// Which hosts a request may go to, on its first hop and every redirect hop: the allowedHosts list, its default, and the match
 
 import { isAllowedUrlScheme } from "./url-schemes.js";
 
 /**
  * The hosts a request URL may name. `"any"` is the explicit opt-out; a list is
  * matched exactly after {@link canonicalHost}, and an empty list refuses every
- * request. Redirect hops cURL follows are not checked against it.
+ * request. `executeCurlRequest` checks it on the request URL and on every
+ * followed redirect hop, before DNS.
  */
 export type HostPolicy =
     | { readonly kind: "any" }
@@ -97,8 +98,8 @@ export function baseUrlHost(baseUrl: string): string | undefined {
 /**
  * The policy a server enforces. An explicit `allowedHosts` wins; left unset,
  * a server with a `baseUrl` may name only that host in a request URL, and one
- * without a `baseUrl` may name any host. Only the request URL is checked, not
- * the redirect hops cURL follows. A `baseUrl` that cannot give a host throws
+ * without a `baseUrl` may name any host. The same list gates every followed
+ * redirect hop. A `baseUrl` that cannot give a host throws
  * rather than yielding an empty or open list. The message does not echo the
  * `baseUrl`, which may carry credentials.
  */

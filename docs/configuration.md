@@ -98,8 +98,8 @@ requests and redirect hops may go only to the `baseUrl`'s host. Set
 Added to every request the host list lets through: with `allowedHosts` unset on a
 `baseUrl` server, that is the `baseUrl`'s host alone, but with `allowedHosts: "any"`
 or a longer list, every host on it gets them. A redirect to another origin forwards
-only `Accept`, `Accept-Language`, `Accept-Encoding` and `User-Agent` (see
-[allowedHosts](#allowedhosts)), so a key here is not sent to a host a redirect
+only `Accept`, `Accept-Language`, `Accept-Encoding`, `User-Agent` and, while the
+body is kept, its body headers (see [allowedHosts](#allowedhosts)), so a key here is not sent to a host a redirect
 names. Merged with request-specific headers (request headers take precedence):
 
 ```typescript
@@ -429,19 +429,23 @@ bytes change with every release.
 
 ## Local refusals
 
-A request this server refuses before cURL sends it returns an error result whose
-first line is `Refused locally: no request was sent (CODE).`, followed by one
-sentence giving the reason. The text never names a host, URL or header value.
+A request refused for one of the reasons below returns an error result whose
+first line is `Refused locally: no request was sent (CODE).`, followed by the
+reason. A refusal whose reason is the rate limit then ends `Retry in N s.`
+The text never names a host, URL or header value. An SSRF or DNS refusal of the
+first request is not one of these: it keeps its own message.
 
 | Code | When |
 |---|---|
 | `LOCAL_HOST_NOT_ALLOWED` | The target host is not in `allowedHosts` |
-| `LOCAL_RATE_LIMITED` | The per-host or per-client limit is exhausted; the text ends `Retry in N s.` |
+| `LOCAL_RATE_LIMITED` | The per-host or per-client limit is exhausted |
 | `LOCAL_REFUSED_PATH` | A relative `url` or a YAML path parameter would leave its path (`//`, `\`, a control character, a `.` or `..` segment) |
-| `LOCAL_REDIRECT_REFUSED` | A redirect hop was refused. Its first line is `Redirect refused locally: N request(s) were sent; hop N+1 was not (LOCAL_REDIRECT_REFUSED).`, because the earlier hops did reach the network |
+| `LOCAL_REDIRECT_REFUSED` | A redirect hop was refused, for its host, its address, the rate limit, an unusable target or `max_redirects`. Its first line is `Redirect refused locally: N request(s) were sent; hop N+1 was not (LOCAL_REDIRECT_REFUSED).`, because the earlier hops did reach the network |
 
-`curl_execute`'s stderr line for a refused request, `curl_execute error: [host]
-LocalRefusalError CODE`, carries the code and never the message.
+When `curl_execute` refuses a host, a rate limit or a redirect hop, its stderr
+line, `curl_execute error: [host] LocalRefusalError CODE`, carries the code and
+never the message. A refused relative path is returned before that point and
+logs nothing.
 
 ## Environment Variables
 

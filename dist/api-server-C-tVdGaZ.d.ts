@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, s as CurlExecuteResult, G as GeneratorConfig, f as ApiSchema } from './generator-DHAfrcwD.js';
+import { C as CurlExecuteInput, J as JqQueryInput, s as CurlExecuteResult, G as GeneratorConfig, f as ApiSchema } from './generator-jrGWR0DG.js';
 
 /**
  * An embedder-configured per-host limit: at most `max` requests to one host in
