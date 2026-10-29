@@ -1,13 +1,16 @@
 import {
   McpCurlServer
-} from "./chunk-EPYU27WO.js";
+} from "./chunk-Z6UBMC5A.js";
 import {
   generateToolDefinitions,
   getMethodAnnotations,
   loadApiSchema,
   loadApiSchemaFromString,
   validateApiSchema
-} from "./chunk-25A5TVMN.js";
+} from "./chunk-KHJSIIWF.js";
+import {
+  deriveHostPolicy
+} from "./chunk-CVSUWVOF.js";
 
 // src/lib/api-server.ts
 function configureServerFromSchema(server, schema, options) {
@@ -39,11 +42,16 @@ function configureServerFromSchema(server, schema, options) {
     defaultUserAgent: mergedConfig.defaultUserAgent,
     defaultReferer: mergedConfig.defaultReferer,
     ...options.generatorConfig,
-    // PR-6b: server-level enableSpotlighting is authoritative across all
+    // Server-level enableSpotlighting is authoritative across all
     // tool paths and must NOT be overridable via options.generatorConfig.
-    // Set after the spread so the asymmetry it closes (built-in tools
-    // spotlight; YAML tools opt out via generatorConfig) cannot reappear.
-    enableSpotlighting: mergedConfig.enableSpotlighting
+    // Set after the spread so a generatorConfig cannot opt the YAML tools
+    // out of spotlighting the built-in tools apply.
+    enableSpotlighting: mergedConfig.enableSpotlighting,
+    // Cleared for the same reason: the YAML tools take the server's own
+    // policy, passed per call below, so a generatorConfig cannot open them
+    // wider than curl_execute. A generatorConfig.baseUrl on another host
+    // does not widen it either; that embedder sets allowedHosts.
+    allowedHosts: void 0
   };
   const toolDefs = generateToolDefinitions(schema, generatorConfig);
   for (const toolDef of toolDefs) {
@@ -55,7 +63,10 @@ function configureServerFromSchema(server, schema, options) {
         inputSchema: toolDef.inputSchema,
         annotations: getMethodAnnotations(toolDef.method)
       },
-      toolDef.handler
+      // Derived per call, not here: the server still accepts configure()
+      // until start(), and getConfig() is the frozen config by the time a
+      // tool can be called, which start() has already validated.
+      (params, extra) => toolDef.handler(params, { ...extra, hostPolicy: deriveHostPolicy(server.getConfig()) })
     );
   }
 }

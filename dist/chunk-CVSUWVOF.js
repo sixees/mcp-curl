@@ -1,6 +1,3 @@
-// src/lib/utils/url.ts
-import { z } from "zod";
-
 // src/lib/config/security/url-schemes.ts
 var ALLOWED_URL_SCHEMES = Object.freeze(["http:", "https:"]);
 var ALLOWED_URL_SCHEMES_CURL_FLAG = `=${ALLOWED_URL_SCHEMES.map((s) => s.replace(":", "")).join(",")}`;
@@ -8,33 +5,175 @@ function isAllowedUrlScheme(protocol) {
   return ALLOWED_URL_SCHEMES.includes(protocol);
 }
 
+// src/lib/config/security/host-policy.ts
+var ANY_HOST_POLICY = Object.freeze({ kind: "any" });
+function canonicalHost(hostname) {
+  let end = hostname.length;
+  while (end > 0 && hostname[end - 1] === ".") end--;
+  return hostname.slice(0, end);
+}
+var NON_HOST_CHARACTERS = /[/\\@?#*\s]/;
+var BRACKETED_IPV6 = /^\[[^\]]*\]$/;
+function parseAllowedHosts(value) {
+  if (value === "any") return "any";
+  if (!Array.isArray(value)) {
+    throw new Error('allowedHosts must be an array of host names or the string "any"');
+  }
+  const hosts = value.map((entry, index) => {
+    const refuse = (why) => new Error(`allowedHosts[${index}] ${why}; give a bare host name such as api.example.com`);
+    if (typeof entry !== "string") throw refuse("is not a string");
+    if (entry === "" || NON_HOST_CHARACTERS.test(entry)) {
+      throw refuse("is not a bare host name (no scheme, port, path, userinfo or wildcard)");
+    }
+    if (entry.includes(":") && !BRACKETED_IPV6.test(entry)) {
+      throw refuse("carries a port or scheme");
+    }
+    let hostname;
+    try {
+      hostname = new URL(`http://${entry}`).hostname;
+    } catch {
+      throw refuse("does not parse as a host name");
+    }
+    const canonical = canonicalHost(hostname);
+    if (canonical === "" || canonical.split(".").includes("")) {
+      throw refuse("has an empty label");
+    }
+    return canonical;
+  });
+  return Object.freeze(hosts);
+}
+function baseUrlHost(baseUrl) {
+  try {
+    const base = new URL(baseUrl);
+    if (!isAllowedUrlScheme(base.protocol)) return void 0;
+    const host = canonicalHost(base.hostname);
+    return host === "" ? void 0 : host;
+  } catch {
+    return void 0;
+  }
+}
+function deriveHostPolicy(config) {
+  if (config.allowedHosts !== void 0) {
+    const parsed = parseAllowedHosts(config.allowedHosts);
+    if (parsed === "any") return ANY_HOST_POLICY;
+    return Object.freeze({ kind: "list", hosts: new Set(parsed) });
+  }
+  if (config.baseUrl === void 0) return ANY_HOST_POLICY;
+  const host = baseUrlHost(config.baseUrl);
+  if (host === void 0) {
+    throw new Error(
+      'baseUrl is not an absolute http(s) URL, so the default allowedHosts cannot be derived from it; fix baseUrl or set allowedHosts explicitly ("any" allows every host)'
+    );
+  }
+  return Object.freeze({ kind: "list", hosts: /* @__PURE__ */ new Set([host]) });
+}
+function isHostAllowed(policy, hostname) {
+  if (policy.kind === "any") return true;
+  return policy.hosts.has(canonicalHost(hostname.toLowerCase()));
+}
+
+// src/lib/utils/url.ts
+import { z } from "zod";
+
+// src/lib/utils/error.ts
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+function createValidationError(field, reason, suggestion) {
+  let message = `Invalid ${field}: ${reason}.`;
+  if (suggestion) {
+    message += ` ${suggestion}`;
+    if (!suggestion.endsWith(".")) {
+      message += ".";
+    }
+  }
+  return new Error(message);
+}
+function createFileError(filepath, reason) {
+  return new Error(`File "${filepath}" ${reason}.`);
+}
+function createConfigError(configName, value, reason) {
+  const safeValue = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\0/g, "\\0");
+  return new Error(`Invalid ${configName} value "${safeValue}": ${reason}.`);
+}
+function assertPositiveInteger(name, value) {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer, got: ${String(value)}`);
+  }
+}
+var LOCAL_REFUSAL_REASONS = {
+  "host-not-allowed": "The target host is not in this server's allowedHosts list.",
+  "address-blocked": "The redirect target failed this server's address check: it is blocked by SSRF protection or did not resolve.",
+  "rate-limited": "The rate limit for this target or session is exhausted; wait before retrying.",
+  "redirect-limit": "The redirect chain reached max_redirects.",
+  "unusable-redirect-target": "The redirect target is not a usable http(s) URL.",
+  "path-names-host": "A relative url that starts with two slashes or a backslash names a host, not a path; start it with a single forward slash.",
+  "path-control-character": "A relative url must not contain control characters, which a URL parser would strip or a header would carry.",
+  "path-dot-segment": "A relative url must not contain a . or .. path segment, literal or percent-encoded; it would resolve outside the path it was built from.",
+  "path-parameter-dot-segment": "A path parameter must not be . or ..; it would resolve outside the endpoint's path."
+};
+var nothingSent = (refusal) => `Refused locally: no request was sent (${refusal.code}).`;
+var LOCAL_REFUSAL_FIRST_LINES = {
+  LOCAL_REFUSED_PATH: nothingSent,
+  LOCAL_RATE_LIMITED: nothingSent,
+  LOCAL_HOST_NOT_ALLOWED: nothingSent,
+  LOCAL_REDIRECT_REFUSED: (refusal) => {
+    const sent = refusal.code === "LOCAL_REDIRECT_REFUSED" ? refusal.requestsSent : 0;
+    return `Redirect refused locally: ${sent} request(s) were sent; hop ${sent + 1} was not (LOCAL_REDIRECT_REFUSED).`;
+  }
+};
+function formatLocalRefusal(refusal) {
+  const text = `${LOCAL_REFUSAL_FIRST_LINES[refusal.code](refusal)} ${LOCAL_REFUSAL_REASONS[refusal.reason]}`;
+  return refusal.retryAfterSeconds === void 0 ? text : `${text} Retry in ${refusal.retryAfterSeconds} s.`;
+}
+var LocalRefusalError = class extends Error {
+  code;
+  reason;
+  requestsSent;
+  retryAfterSeconds;
+  constructor(refusal) {
+    if (refusal.code === "LOCAL_REDIRECT_REFUSED" && !(Number.isInteger(refusal.requestsSent) && refusal.requestsSent >= 1)) {
+      throw new TypeError("LOCAL_REDIRECT_REFUSED needs requestsSent, a positive integer");
+    }
+    if (refusal.retryAfterSeconds !== void 0 && !(Number.isInteger(refusal.retryAfterSeconds) && refusal.retryAfterSeconds >= 1)) {
+      throw new TypeError("retryAfterSeconds must be a positive integer");
+    }
+    super(formatLocalRefusal(refusal));
+    this.name = "LocalRefusalError";
+    this.code = refusal.code;
+    this.reason = refusal.reason;
+    this.requestsSent = refusal.code === "LOCAL_REDIRECT_REFUSED" ? refusal.requestsSent : 0;
+    this.retryAfterSeconds = refusal.retryAfterSeconds;
+  }
+};
+
 // src/lib/utils/url.ts
 function resolveBaseUrl(baseUrl, path) {
   const base = baseUrl.replace(/\/$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${base}${normalizedPath}`;
 }
-var RELATIVE_PATH_PATTERN = /^\/(?![/\\])[^\x00-\x1f\x7f]*$/;
+var URL_CONTROL_CLASS = "\\x00-\\x1f\\x7f";
+var URL_CONTROL_CHARACTER = new RegExp(`[${URL_CONTROL_CLASS}]`);
+var RELATIVE_PATH_PATTERN = new RegExp(`^/(?![/\\\\])[^${URL_CONTROL_CLASS}]*$`);
 function hasDotSegment(path) {
   const pathPart = path.split(/[?#]/, 1)[0];
   return pathPart.split(/[/\\]/).some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment));
 }
+function refusedPath(reason) {
+  return { ok: false, error: formatLocalRefusal({ code: "LOCAL_REFUSED_PATH", reason }) };
+}
 function resolveRequestUrl(baseUrl, url) {
   if (!baseUrl || !/^[/\\]/.test(url)) return { ok: true, url };
   if (!RELATIVE_PATH_PATTERN.test(url)) {
-    return {
-      ok: false,
-      error: "Error: a relative url must start with a single / and contain no control characters; a leading // or \\ names a host, not a path"
-    };
+    return refusedPath(URL_CONTROL_CHARACTER.test(url) ? "path-control-character" : "path-names-host");
   }
-  if (hasDotSegment(url)) {
-    return {
-      ok: false,
-      error: "Error: a relative url must not contain a . or .. path segment (literal or %2e-encoded); it would resolve outside the path it was built from"
-    };
-  }
+  if (hasDotSegment(url)) return refusedPath("path-dot-segment");
   try {
-    if (isAllowedUrlScheme(new URL(baseUrl).protocol)) {
+    if (baseUrlHost(baseUrl) !== void 0) {
       return { ok: true, url: resolveBaseUrl(baseUrl, url) };
     }
   } catch {
@@ -65,10 +204,18 @@ function safeHostname(url, fallback = "unknown") {
     return fallback;
   }
 }
+function effectivePort(url) {
+  if (url.port) return parseInt(url.port, 10);
+  return url.protocol === "https:" ? 443 : 80;
+}
 
 // src/lib/config/limits.ts
 var BYTES_PER_MB = 1e6;
 var FIXED_POINT_MAX_ITERATIONS = 4;
+var HTTP_CODE_FIELD_BYTES = 3;
+var REDIRECT_URL_FIELD_BYTES = 8192;
+var SYNC_HEADER_FIELD_BYTES = 64;
+var CONTENT_TYPE_FIELD_BYTES = 8192;
 var LIMITS = {
   /** Maximum response size for processing (10MB) */
   MAX_RESPONSE_SIZE: 1e7,
@@ -96,24 +243,45 @@ var LIMITS = {
   // restating either number; four documents said "64KB" unconditionally and
   // were wrong for any caller who set a smaller max_result_size.
   /**
-   * Byte allowance for the `-w` metadata FIELDS, searched backwards from the
-   * end of stdout. **This is the budget for the fields only** — the window
-   * actually searched is this plus the separator's own length.
+   * Byte bound on the `%{content_type}` field of the `-w` metadata block.
    *
-   * It must not be a flat constant that the separator and a remote-controlled
-   * field share. `%{content_type}` is echoed verbatim from the origin and has
-   * no length limit, so when the three shared one 200-byte budget an origin
-   * could evict the separator simply by sending a long `Content-Type` — a
-   * legal `application/vnd.api+json; charset=utf-8; profile="…"` did it at
-   * ~144 characters. The parse then found no separator, reported every
-   * cURL-authored field as absent, and the caller silently lost both the
+   * `%{content_type}` is echoed verbatim from the origin with no length limit
+   * of its own. 8KB covers every realistic origin (cURL permits ~100KB per
+   * header line, but no real service approaches that in a Content-Type); a
+   * longer value is absent rather than truncated, which selects the strictest
+   * grammar downstream.
+   */
+  MAX_CONTENT_TYPE_FIELD_LENGTH: CONTENT_TYPE_FIELD_BYTES,
+  /**
+   * Byte bound on the `%{redirect_url}` field. A longer value is absent, never
+   * truncated: a cut URL would name a different target from the one the
+   * origin sent.
+   */
+  MAX_REDIRECT_URL_LENGTH: REDIRECT_URL_FIELD_BYTES,
+  /**
+   * Byte bound on the `%header{…}` rate-limit sync field. A count needs at
+   * most ten digits, so 64 bytes leaves room for whitespace; what refuses
+   * anything that is not a count is the parse, not this bound.
+   */
+  MAX_SYNC_HEADER_VALUE_LENGTH: SYNC_HEADER_FIELD_BYTES,
+  /**
+   * Byte allowance for the `-w` metadata FIELDS, searched backwards from the
+   * end of stdout: the sum of the per-field bounds. **This is the budget for
+   * the fields only** — the window actually searched adds one separator
+   * length per field.
+   *
+   * It must not be a flat constant that the separators and the
+   * remote-controlled fields share. When the separator and `%{content_type}`
+   * shared one 200-byte budget, a legal
+   * `application/vnd.api+json; charset=utf-8; profile="…"` evicted the
+   * separator at ~144 characters. The parse then found no separator, reported
+   * every cURL-authored field as absent, and the caller silently lost both the
    * header/body split and the content-type-driven strip stages.
    *
-   * 8KB covers every realistic origin (cURL permits ~100KB per header line,
-   * but no real service approaches that in a Content-Type). Beyond it the
-   * parse fails closed and the caller is told the metadata is undetermined.
+   * Beyond it the parse fails closed and the caller is told the metadata is
+   * undetermined.
    */
-  MAX_METADATA_TAIL_LENGTH: 8192,
+  MAX_METADATA_TAIL_LENGTH: HTTP_CODE_FIELD_BYTES + REDIRECT_URL_FIELD_BYTES + SYNC_HEADER_FIELD_BYTES + CONTENT_TYPE_FIELD_BYTES,
   /** Default request timeout in milliseconds (30 seconds) */
   DEFAULT_TIMEOUT_MS: 3e4,
   /** Maximum filename length for saved files */
@@ -311,36 +479,6 @@ ${content}
 ${end}`;
 }
 
-// src/lib/utils/error.ts
-function getErrorMessage(error) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-function createValidationError(field, reason, suggestion) {
-  let message = `Invalid ${field}: ${reason}.`;
-  if (suggestion) {
-    message += ` ${suggestion}`;
-    if (!suggestion.endsWith(".")) {
-      message += ".";
-    }
-  }
-  return new Error(message);
-}
-function createFileError(filepath, reason) {
-  return new Error(`File "${filepath}" ${reason}.`);
-}
-function createConfigError(configName, value, reason) {
-  const safeValue = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\0/g, "\\0");
-  return new Error(`Invalid ${configName} value "${safeValue}": ${reason}.`);
-}
-function assertPositiveInteger(name, value) {
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`${name} must be a positive integer, got: ${String(value)}`);
-  }
-}
-
 // src/lib/utils/json-lexeme.ts
 var { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON;
 if (typeof rawJsonImpl !== "function" || typeof isRawJsonImpl !== "function") {
@@ -352,6 +490,22 @@ var rawJson = rawJsonImpl;
 var isRawNumber = isRawJsonImpl;
 function keepNumberLexeme(_key, value, context) {
   return typeof value === "number" && typeof context?.source === "string" ? rawJson(context.source) : value;
+}
+
+// src/lib/utils/timeout.ts
+async function withTimeout(work, ms, onTimeout) {
+  let timer;
+  try {
+    return await Promise.race([
+      work,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(onTimeout()), ms);
+        timer.unref?.();
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // src/lib/utils/content-type.ts
@@ -609,8 +763,12 @@ var CurlExecuteSchema = z2.object({
   headers: z2.record(z2.string(), z2.string()).optional().describe('HTTP headers as key-value pairs (e.g., {"Content-Type": "application/json"})'),
   data: z2.string().optional().describe("Request body data (for POST/PUT/PATCH). Use JSON string for JSON payloads"),
   form: z2.record(z2.string(), z2.string()).optional().describe("Form data as key-value pairs (uses multipart/form-data)"),
-  follow_redirects: z2.boolean().default(true).describe("Follow HTTP redirects (default: true)"),
-  max_redirects: z2.number().int().min(0).max(50).optional().describe("Maximum number of redirects to follow"),
+  follow_redirects: z2.boolean().default(true).describe(
+    "Follow HTTP redirects (default: true). mcp-curl follows 301, 302, 303, 307 and 308 one hop at a time, and checks every hop as it checks the first: the host list, the SSRF check and the rate limit. A refused hop ends the chain with a refusal that says how many requests were sent. 303 turns every method but HEAD into a body-less GET, and 301/302 do the same to POST; 307 and 308 keep the method and body. A hop to an origin other than the first request's keeps only the Accept, Accept-Language, Accept-Encoding and User-Agent headers, plus the body headers while the body is kept, and drops basic_auth and bearer_token. Any other 3xx, or one with an empty Location, is returned as is"
+  ),
+  max_redirects: z2.number().int().min(0).max(50).optional().describe(
+    "Maximum number of redirects to follow (default: 10). A chain longer than this is refused as LOCAL_REDIRECT_REFUSED, not returned as its last 3xx"
+  ),
   insecure: z2.boolean().default(false).describe("Skip SSL certificate verification (default: false)"),
   /**
    * Request timeout in seconds.
@@ -627,7 +785,7 @@ var CurlExecuteSchema = z2.object({
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
   include_headers: z2.boolean().default(false).describe(
-    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as their OWN content entry after the body, so the body entry stays parseable on its own \u2014 never split content[0]. That entry is present only when headers were actually captured: where none were (see headers_undetermined and headers_unsupported below) it is omitted entirely, and a server notice may then occupy content[1]. Match on the entry's content rather than trusting its index. Capped at 64KB. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin)"
+    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as their OWN content entry after the body, so the body entry stays parseable on its own \u2014 never split content[0]. That entry is present only when headers were actually captured: where none were (see headers_undetermined and headers_unsupported below) it is omitted entirely, and a server notice may then occupy content[1]. Match on the entry's content rather than trusting its index. Capped at the smaller of 64KB and max_result_size. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin). Capture requires macOS, so every other host reports headers_unsupported. After followed redirects, these are the final hop's headers only. Header text is returned verbatim, and routinely carries credential material such as Set-Cookie"
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
@@ -639,8 +797,8 @@ var CurlExecuteSchema = z2.object({
 var CurlExecuteBaseUrlSchema = CurlExecuteSchema.extend({
   url: z2.union([
     createHttpOnlyUrlSchema({ description: "An absolute http(s) URL" }),
-    z2.string().regex(RELATIVE_PATH_PATTERN, "Must be an absolute http(s) URL, or a path starting with a single / with no control characters").describe("A path starting with /, resolved against the configured base URL")
-  ]).describe("The URL to request: an absolute http(s) URL, or a path starting with a single / (no control characters) resolved against the configured base")
+    z2.string().regex(/^[/\\]/, "Must be an absolute http(s) URL, or a path starting with /").describe("A path starting with /, resolved against the configured base URL")
+  ]).describe("The URL to request: an absolute http(s) URL, or a path starting with a single / resolved against the configured base")
 });
 var JqQuerySchema = z2.object({
   filepath: z2.string().describe("Path to a JSON file to query. Must be in temp directory, MCP_CURL_OUTPUT_DIR, or current working directory."),
@@ -1109,6 +1267,7 @@ function isWindowsReservedBasename(name) {
   return WINDOWS_RESERVED_BASENAMES_SET.has(name.toUpperCase());
 }
 var PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
+var WRITE_OUT_HEADER_NAME = /^[!#$&'*+.^_`|~0-9A-Za-z-]+$/;
 
 // src/lib/files/temp-manager.ts
 import { tmpdir } from "os";
@@ -1711,7 +1870,7 @@ async function validateUrlAndResolveDns(url, options) {
     throw new Error(`Invalid URL format: ${getErrorMessage(error)}`);
   }
   const hostname = parsed.hostname.toLowerCase();
-  const port = parsed.port ? parseInt(parsed.port, 10) : parsed.protocol === "https:" ? 443 : 80;
+  const port = effectivePort(parsed);
   if (!isAllowedUrlScheme(parsed.protocol)) {
     throw new Error(`Protocol "${parsed.protocol}" is not allowed - only http:// and https:// are supported`);
   }
@@ -1762,14 +1921,29 @@ function leftWindow(timestamp, now, windowMs) {
 }
 function pruneLog(log, now, windowMs) {
   let expired = 0;
-  while (expired < log.length && leftWindow(log[expired], now, windowMs)) expired++;
-  if (expired > 0) log.splice(0, expired);
+  while (expired < log.runs.length && leftWindow(log.runs[expired].at, now, windowMs)) {
+    log.total -= log.runs[expired].count;
+    expired++;
+  }
+  if (expired > 0) log.runs.splice(0, expired);
+}
+function slidingLogFor(key, now, windowMs) {
+  const log = hostSlidingLog.get(key);
+  if (log) {
+    pruneLog(log, now, windowMs);
+    return log;
+  }
+  ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
+  const created = { runs: [], total: 0 };
+  hostSlidingLog.set(key, created);
+  return created;
 }
 function cleanupExpiredLogs() {
   if (logWindowMs === void 0) return;
   const now = elapsedNow();
   for (const [key, log] of hostSlidingLog) {
-    if (log.length === 0 || leftWindow(log[log.length - 1], now, logWindowMs)) {
+    const newest = log.runs[log.runs.length - 1];
+    if (newest === void 0 || leftWindow(newest.at, now, logWindowMs)) {
       hostSlidingLog.delete(key);
     }
   }
@@ -1783,8 +1957,12 @@ function ensureCapacity(map, sweep, keyKind) {
     );
   }
 }
-function formatWindow(ms) {
-  return ms % 1e3 === 0 ? `${ms / 1e3} s` : `${ms} ms`;
+function rateLimited(retryMs) {
+  return new LocalRefusalError({
+    code: "LOCAL_RATE_LIMITED",
+    reason: "rate-limited",
+    retryAfterSeconds: Math.ceil(retryMs / 1e3)
+  });
 }
 function cleanupExpiredEntries(map) {
   const now = elapsedNow();
@@ -1794,7 +1972,7 @@ function cleanupExpiredEntries(map) {
     }
   }
 }
-function checkRateLimitInternal(map, key, maxRequests, errorPrefix, keyKind) {
+function checkRateLimitInternal(map, key, maxRequests, keyKind) {
   const now = elapsedNow();
   const entry = map.get(key);
   if (!entry || windowClosed(entry, now)) {
@@ -1803,63 +1981,84 @@ function checkRateLimitInternal(map, key, maxRequests, errorPrefix, keyKind) {
     return;
   }
   if (entry.count >= maxRequests) {
-    throw new Error(`${errorPrefix}. Maximum ${maxRequests} requests per minute.`);
+    throw rateLimited(RATE_LIMIT.WINDOW_MS - (now - entry.windowStart));
   }
   entry.count++;
 }
-function checkSlidingHostLimit(hostname, limit, errorPrefix) {
+function checkSlidingHostLimit(hostname, limit) {
   const now = elapsedNow();
-  let log = hostSlidingLog.get(hostname);
-  if (log) {
-    pruneLog(log, now, limit.windowMs);
-  } else {
-    ensureCapacity(hostSlidingLog, cleanupExpiredLogs, "host");
-    log = [];
-    hostSlidingLog.set(hostname, log);
+  const log = slidingLogFor(hostname, now, limit.windowMs);
+  if (log.total >= limit.max) {
+    throw rateLimited(limit.windowMs - (now - log.runs[0].at));
   }
-  if (log.length >= limit.max) {
-    const retryMs = limit.windowMs - (now - log[0]);
-    throw new Error(
-      `${errorPrefix}. Maximum ${limit.max} requests per ${formatWindow(limit.windowMs)}; the oldest leaves the window in ${Math.ceil(retryMs / 1e3)} s.`
-    );
-  }
-  log.push(now);
+  log.runs.push({ at: now, count: 1 });
+  log.total++;
 }
 function checkRateLimits(hostname, clientId = RATE_LIMIT.STDIO_CLIENT_ID) {
   checkRateLimitInternal(
     clientRateLimitMap,
     clientId,
     RATE_LIMIT.MAX_PER_CLIENT_PER_MINUTE,
-    "Client rate limit exceeded",
     "client"
   );
-  const hostPrefix = `Rate limit exceeded for host "${hostname}"`;
   const hostKey = canonicalHost(hostname);
   if (hostLimit) {
-    checkSlidingHostLimit(hostKey, hostLimit, hostPrefix);
+    checkSlidingHostLimit(hostKey, hostLimit);
     return;
   }
   checkRateLimitInternal(
     hostRateLimitMap,
     hostKey,
     RATE_LIMIT.MAX_PER_HOST_PER_MINUTE,
-    hostPrefix,
     "host"
   );
 }
-function canonicalHost(hostname) {
-  let end = hostname.length;
-  while (end > 0 && hostname[end - 1] === ".") end--;
-  return hostname.slice(0, end);
+function hostRateLimitSyncHeader() {
+  return hostLimit?.syncFromHeaders?.remaining;
+}
+function applyServerRemaining(hostname, remaining) {
+  if (!hostLimit) return;
+  const now = elapsedNow();
+  let log;
+  try {
+    log = slidingLogFor(canonicalHost(hostname), now, hostLimit.windowMs);
+  } catch {
+    return;
+  }
+  const pad = hostLimit.max - remaining - log.total;
+  if (pad <= 0) return;
+  log.runs.push({ at: now, count: pad });
+  log.total += pad;
+}
+function assertOnlyKeys(name, value, allowed) {
+  const unknownKeys = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (unknownKeys.length > 0) {
+    throw new Error(`${name} accepts only ${allowed.join(", ")}, got: ${unknownKeys.join(", ")}`);
+  }
 }
 function parseHostRateLimit(limit) {
   if (typeof limit !== "object" || limit === null) {
     throw new Error(`rateLimit must be an object { max, windowMs }, got: ${String(limit)}`);
   }
-  const { max, windowMs } = limit;
+  assertOnlyKeys("rateLimit", limit, ["max", "windowMs", "syncFromHeaders"]);
+  const { max, windowMs, syncFromHeaders } = limit;
   assertPositiveInteger("rateLimit.max", max);
   assertPositiveInteger("rateLimit.windowMs", windowMs);
-  return Object.freeze({ max, windowMs });
+  if (syncFromHeaders === void 0) return Object.freeze({ max, windowMs });
+  return Object.freeze({ max, windowMs, syncFromHeaders: parseSyncFromHeaders(syncFromHeaders) });
+}
+function parseSyncFromHeaders(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("rateLimit.syncFromHeaders must be an object { remaining }");
+  }
+  assertOnlyKeys("rateLimit.syncFromHeaders", value, ["remaining"]);
+  const { remaining } = value;
+  if (typeof remaining !== "string" || !WRITE_OUT_HEADER_NAME.test(remaining)) {
+    throw new Error(
+      "rateLimit.syncFromHeaders.remaining must be an HTTP header name (RFC 9110 token) without %"
+    );
+  }
+  return Object.freeze({ remaining });
 }
 function installHostRateLimit(limit) {
   const parsed = parseHostRateLimit(limit);
@@ -1925,7 +2124,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "5.1.0" : "0.0.0"
+  VERSION: true ? "5.2.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -2203,13 +2402,15 @@ function savedMessage(facts) {
     filtered,
     rejection,
     originBytesExact,
+    boundaryUndetermined,
     measuredBytes,
     decodeWasLossy
   } = facts;
   const measured = measuredBytes === diskBytes ? "" : `, ${measuredBytes} once decoded`;
   const subject = filtered ? "Result of jq_filter" : "Response";
   const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not JSON (${rejection.reason}), so no body is returned here.` : overCap ? `${subject} (${diskBytes} bytes on disk${measured}) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const exactness = filtered ? "" : originBytesExact ? " The file holds the origin's exact bytes." : " The file holds the body with attack codepoints removed and long whitespace or newline runs collapsed" + (decodeWasLossy ? ", and each undecodable sequence replaced with U+FFFD" : "") + ", so it is not byte-identical to what the origin sent.";
+  const runOn = " The end of the body could not be located, so the file may also hold metadata written after it.";
+  const exactness = filtered ? "" : originBytesExact ? boundaryUndetermined ? runOn : " The file holds the origin's exact bytes." : " The file holds the body with attack codepoints removed and long whitespace or newline runs collapsed" + (decodeWasLossy ? ", and each undecodable sequence replaced with U+FFFD" : "") + ", so it is not byte-identical to what the origin sent." + (boundaryUndetermined ? runOn : "");
   const narrowing = overCap ? ` To get the body inline instead, narrow the next request \u2014 fewer fields, a limit, or pagination${filtered ? ", or a tighter jq_filter" : ""}.` : "";
   const route = rejection !== void 0 ? " The body is not JSON; read the path with your own tooling." + exactness : (overCap ? " The saved file is valid to analyse." : "") + " Use the jq_query tool on that path to extract fields" + (overCap ? "; that costs no further request." : ".") + exactness + narrowing;
   const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
@@ -2282,6 +2483,10 @@ async function processResponse(responseBytes, options) {
         // non-JSON body writes sanitised text; every other arm is the
         // origin's octets.
         originBytesExact: !filterApplied && originOnDisk,
+        // Read here, at the claim, because `bodyBytes` cannot say it
+        // (`ParsedResponse.bodyBytes`). Omitted reads as located: a
+        // library caller passing its own body knows where it ends.
+        boundaryUndetermined: options.contentTypeUndetermined === true,
         measuredBytes: Buffer.byteLength(content, "utf8"),
         decodeWasLossy,
         // Only where the body itself was the reason. An over-cap JSON
@@ -2297,28 +2502,66 @@ async function processResponse(responseBytes, options) {
   };
 }
 
+// src/lib/types/common.ts
+import { randomUUID as randomUUID2 } from "crypto";
+function generateMetadataSeparator() {
+  return `
+---MCP-CURL-${randomUUID2()}---
+`;
+}
+function metadataDirectives(block) {
+  const { separator, syncHeaderName } = block;
+  if (separator.length === 0) {
+    throw new Error("Invalid metadata block: separator must not be empty.");
+  }
+  if (syncHeaderName === void 0) {
+    return ["%{http_code}", "%{redirect_url}", "%{content_type}"];
+  }
+  if (!WRITE_OUT_HEADER_NAME.test(syncHeaderName)) {
+    throw new Error("Invalid sync header name: must be an HTTP field name (RFC 9110 token) without %.");
+  }
+  return ["%{http_code}", "%{redirect_url}", `%header{${syncHeaderName}}`, "%{content_type}"];
+}
+
 // src/lib/response/parser.ts
 var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
-function parseResponseWithMetadata(rawResponse, separator) {
+var SYNC_COUNT = /^[ \t]*(\d{1,10})[ \t]*$/;
+var MAX_SYNC_COUNT = 2 ** 31;
+function parseResponseWithMetadata(rawResponse, block) {
   const raw = rawResponse;
-  const sep = Buffer.from(separator, "utf8");
-  const windowBytes = sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
+  const sep = Buffer.from(block.separator, "utf8");
+  const fieldCount = metadataDirectives(block).length;
+  const windowBytes = fieldCount * sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
   const searchStart = Math.max(0, raw.length - windowBytes);
-  const indexInWindow = raw.subarray(searchStart).lastIndexOf(sep);
-  const separatorIndex = indexInWindow === -1 ? -1 : searchStart + indexInWindow;
-  if (separatorIndex === -1) {
+  const window = raw.subarray(searchStart);
+  const separatorIndexes = [];
+  for (let i = window.indexOf(sep); i !== -1; i = window.indexOf(sep, i + sep.length)) {
+    separatorIndexes.push(searchStart + i);
+  }
+  if (separatorIndexes.length !== fieldCount) {
     return {
       bodyBytes: raw,
       metadataFound: false
     };
   }
-  const bodyBytes = raw.subarray(0, separatorIndex);
-  const metadata = raw.subarray(separatorIndex + sep.length).toString("utf8");
-  const contentType = metadata.trim();
+  const fields = separatorIndexes.map(
+    (start, i) => raw.subarray(start + sep.length, separatorIndexes[i + 1] ?? raw.length)
+  );
+  const [httpCodeField, redirectField] = fields;
+  const syncField = block.syncHeaderName !== void 0 ? fields[2] : void 0;
+  const contentTypeField = fields[fieldCount - 1];
+  const httpCode = httpCodeField.toString("utf8");
+  const redirect = redirectField.length <= LIMITS.MAX_REDIRECT_URL_LENGTH ? redirectField.toString("utf8") : void 0;
+  const syncDigits = syncField && syncField.length <= LIMITS.MAX_SYNC_HEADER_VALUE_LENGTH ? SYNC_COUNT.exec(syncField.toString("utf8"))?.[1] : void 0;
+  const syncCount = syncDigits !== void 0 && Number(syncDigits) <= MAX_SYNC_COUNT ? Number(syncDigits) : void 0;
+  const contentType = contentTypeField.length <= LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH ? contentTypeField.toString("utf8").trim() : "";
   const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
   return {
-    bodyBytes,
+    bodyBytes: raw.subarray(0, separatorIndexes[0]),
     contentType: validContentType,
+    httpStatus: /^\d{3}$/.test(httpCode) ? Number(httpCode) : void 0,
+    redirectUrl: redirect !== void 0 && !URL_CONTROL_CHARACTER.test(redirect) ? redirect : void 0,
+    syncHeaderCount: syncCount,
     metadataFound: true
   };
 }
@@ -2460,7 +2703,7 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo,
 }
 
 // src/lib/response/post-processor.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
 function hasOwnWrappedTag(result) {
   try {
@@ -2512,7 +2755,7 @@ function createWrapper(config) {
     if (isWrappedResult(result)) return result;
     try {
       if (!Array.isArray(result.content)) return tag(result);
-      const requestId = config.enableSpotlighting && !result.isError ? randomUUID2() : void 0;
+      const requestId = config.enableSpotlighting && !result.isError ? randomUUID3() : void 0;
       const newContent = result.content.map(
         (part) => processTextPart(part, hostname, requestId)
       );
@@ -2522,14 +2765,6 @@ function createWrapper(config) {
       return tag(result);
     }
   };
-}
-
-// src/lib/types/common.ts
-import { randomUUID as randomUUID3 } from "crypto";
-function generateMetadataSeparator() {
-  return `
----MCP-CURL-${randomUUID3()}---
-`;
 }
 
 // src/lib/execution/command-executor.ts
@@ -2698,7 +2933,7 @@ async function executeCommand(command, args, timeout = LIMITS.DEFAULT_TIMEOUT_MS
 
 // src/lib/execution/curl-args-builder.ts
 function buildCurlArgs(params) {
-  const args = [];
+  const args = ["-q", "--globoff"];
   args.push("--proto", ALLOWED_URL_SCHEMES_CURL_FLAG);
   if (params.method) {
     args.push("-X", params.method.toUpperCase());
@@ -2719,11 +2954,6 @@ function buildCurlArgs(params) {
       validateNoCRLF(value, `form field value for "${key}"`);
       args.push("--form-string", `${key}=${value}`);
     }
-  }
-  if (params.follow_redirects !== false) {
-    args.push("-L");
-    args.push("--max-redirs", String(params.max_redirects ?? LIMITS.MAX_REDIRECTS));
-    args.push("--proto-redir", ALLOWED_URL_SCHEMES_CURL_FLAG);
   }
   if (params.insecure) {
     args.push("-k");
@@ -2755,8 +2985,9 @@ function buildCurlArgs(params) {
   if (params.silent !== false) {
     args.push("-s");
   }
-  const metadataSuffix = params.metadataSeparator.replace(/\r/g, "\\r").replace(/\n/g, "\\n") + "%{content_type}";
-  args.push("-w", metadataSuffix);
+  const sep = params.metadataBlock.separator.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  const fields = metadataDirectives(params.metadataBlock);
+  args.push("-w", fields.map((field) => sep + field).join(""));
   const { hostname, port, resolvedIp } = params.dnsResolve;
   args.push("--resolve", `${hostname}:${port}:${resolvedIp}`);
   args.push("--max-filesize", String(LIMITS.MAX_RESPONSE_SIZE));
@@ -2764,13 +2995,54 @@ function buildCurlArgs(params) {
   return args;
 }
 
+// src/lib/tools/redirect-hop.ts
+var FOLLOWED_REDIRECT_STATUSES = /* @__PURE__ */ new Set([301, 302, 303, 307, 308]);
+var CROSS_ORIGIN_FORWARDED_HEADERS = /* @__PURE__ */ new Set([
+  "accept",
+  "accept-language",
+  "accept-encoding",
+  "user-agent"
+]);
+var BODY_HEADERS = /* @__PURE__ */ new Set(["content-type", "content-length", "transfer-encoding"]);
+function sameOrigin(a, b) {
+  return a.protocol === b.protocol && canonicalHost(a.hostname) === canonicalHost(b.hostname) && effectivePort(a) === effectivePort(b);
+}
+function effectiveMethod(params) {
+  if (params.method) return params.method;
+  return params.data !== void 0 || params.form !== void 0 ? "POST" : "GET";
+}
+function dropsBody(status, method) {
+  if (status === 303) return method !== "HEAD";
+  if (status === 301 || status === 302) return method === "POST";
+  return false;
+}
+function nextHopParams(params, status, crossOrigin, url) {
+  const next = { ...params, url };
+  const bodyDropped = dropsBody(status, effectiveMethod(params));
+  if (bodyDropped) {
+    next.method = void 0;
+    next.data = void 0;
+    next.form = void 0;
+  }
+  if (params.headers) {
+    const kept = Object.entries(params.headers).filter(([name]) => {
+      const key = name.toLowerCase();
+      if (BODY_HEADERS.has(key)) return !bodyDropped;
+      return !crossOrigin || CROSS_ORIGIN_FORWARDED_HEADERS.has(key);
+    });
+    next.headers = Object.fromEntries(kept);
+  }
+  if (crossOrigin) {
+    next.basic_auth = void 0;
+    next.bearer_token = void 0;
+  }
+  return next;
+}
+
 // src/lib/tools/curl-execute.ts
 var CURL_EXECUTE_TOOL_META = {
   title: "Execute cURL Request",
   description: `Execute an HTTP request using cURL with structured parameters.
-
-This tool provides a safe, structured way to make HTTP requests with common cURL options.
-It handles URL encoding, header formatting, and response processing automatically.
 
 Response contract: a body that parses as JSON is returned to you as the origin wrote it,
 whatever Content-Type it declared \u2014 duplicate names, number lexemes, key order, a leading
@@ -2791,56 +3063,6 @@ nothing is saved and you get an empty response, because there is nothing to reco
 A JSON body larger than max_result_size is also written to a file; use jq_query on that
 path. Above 10MB the request fails and you should narrow it with query parameters.
 
-Args:
-  - url (string, required): The URL to request
-  - method (string): HTTP method - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS
-  - headers (object): HTTP headers as key-value pairs
-  - data (string): Request body for POST/PUT/PATCH requests
-  - form (object): Form data as key-value pairs (multipart/form-data)
-  - follow_redirects (boolean): Follow HTTP redirects (default: true)
-  - max_redirects (number): Maximum redirects to follow (0-50)
-  - insecure (boolean): Skip SSL verification (default: false)
-  - timeout (number): Request timeout in seconds (1-300, default: 30)
-  - user_agent (string): Custom User-Agent header (a browser-like default is sent automatically if not set; empty string disables)
-  - basic_auth (string): Basic auth as "username:password"
-  - bearer_token (string): Bearer token for Authorization header
-  - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Report response headers. With include_metadata they
-    arrive under a separate "headers" key; without it they arrive as a SECOND content
-    entry after the body, so the body entry stays parseable on its own. Either way the
-    header text is never mixed into the body text. cURL writes the headers to their own
-    descriptor, so they are never part of the body: they cannot reach the saved file or
-    jq_filter, and combining this with save_to_file or jq_filter is safe
-    unconditionally. Header text is capped at
-    min(64KB, max_result_size); truncation is reported as headers_truncated under
-    include_metadata, and as an [mcp-curl] notice otherwise \u2014 in a THIRD content entry
-    after the body and the header entry, never prefixed to either. If headers were
-    asked for and none arrived, that is reported as headers_undetermined (or the same
-    [mcp-curl] notice) rather than guessed at. Requires macOS; elsewhere no headers are
-    captured and that is reported as headers_unsupported, which is a fact about the host
-    and NOT a statement that the origin sent none. Note that response headers routinely
-    carry credential material (Set-Cookie, and Authorization where an origin echoes it)
-    and this text is returned verbatim
-  - compressed (boolean): Request compressed response (default: true)
-  - include_metadata (boolean): Wrap response in JSON with metadata
-  - jq_filter (string): JSON path filter to extract specific data
-  - max_result_size (number): Max bytes to return inline (default: 500KB, max: 1MB). Auto-saves to file when exceeded
-  - save_to_file (boolean): Force save response to temp file. Returns filepath instead of content
-  - output_dir (string): Custom directory to save files (overrides MCP_CURL_OUTPUT_DIR env var)
-
-jq_filter Syntax:
-  - .key - Object property access
-  - .[n] or .n - Array index (non-negative only, e.g., .results.0)
-  - .[n:m] - Array slice from index n to m
-  - .["key"] - Bracket notation for special characters in keys
-  - .a,.b,.c - Multiple comma-separated paths (returns array of values, max 20)
-
-jq_filter Validation:
-  - Unclosed quotes and brackets throw clear errors
-  - Leading zeros in indices rejected (use .0 not .00)
-  - Negative indices not supported (unlike real jq)
-  - Indices must be within safe integer range
-
 Returns:
   The HTTP response body, or JSON with metadata if include_metadata is true:
   {
@@ -2855,13 +3077,7 @@ Returns:
 
 Examples:
   - Simple GET: { "url": "https://api.example.com/data" }
-  - POST JSON: { "url": "https://api.example.com/users", "method": "POST", "headers": {"Content-Type": "application/json"}, "data": "{\\"name\\": \\"John\\"}" }
-  - With auth: { "url": "https://api.example.com/secure", "bearer_token": "your-token-here" }
-  - Extract field: { "url": "https://api.github.com/repos/octocat/hello-world", "jq_filter": ".name" }
-  - Multiple fields: { "url": "https://api.example.com/user", "jq_filter": ".name,.email,.id" }
-  - Dot notation: { "url": "https://api.example.com/items", "jq_filter": ".results.0.name" }
-  - Array slice: { "url": "https://api.example.com/items", "jq_filter": ".results[0:10]" }
-  - Custom output: { "url": "https://api.example.com/large", "save_to_file": true, "output_dir": "/path/to/dir" }
+  - Extract fields: { "url": "https://api.example.com/user", "jq_filter": ".name,.email,.id" }
 
 Error Handling:
   - Returns error message if cURL fails or times out
@@ -2886,31 +3102,122 @@ mcp-curl v${SERVER.VERSION}`,
     openWorldHint: true
   }
 };
+function safeUrl(url) {
+  try {
+    return new URL(url);
+  } catch {
+    return void 0;
+  }
+}
+function redirectTarget(raw, sentCredentials) {
+  const url = safeUrl(raw);
+  if (url === void 0 || !isAllowedUrlScheme(url.protocol) || url.hostname === "") return void 0;
+  if (url.username !== "" || url.password !== "") {
+    if (`${percentDecoded(url.username)}:${percentDecoded(url.password)}` !== sentCredentials) return void 0;
+    url.username = "";
+    url.password = "";
+  }
+  return url;
+}
+function moveUserinfoToBasicAuth(url, basicAuth) {
+  if (url.username === "" && url.password === "") return basicAuth;
+  const credentials = basicAuth ?? `${percentDecoded(url.username)}:${percentDecoded(url.password)}`;
+  url.username = "";
+  url.password = "";
+  return credentials;
+}
+function percentDecoded(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+async function gateHop(url, requestsSent, deadline, policy, extra) {
+  const check = async (reason, run) => {
+    if (requestsSent === 0) return run();
+    try {
+      return await run();
+    } catch (error) {
+      throw new LocalRefusalError(
+        reason === "rate-limited" && error instanceof LocalRefusalError ? { code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent, retryAfterSeconds: error.retryAfterSeconds } : { code: "LOCAL_REDIRECT_REFUSED", reason, requestsSent }
+      );
+    }
+  };
+  const host = safeHostname(url, "");
+  await check("host-not-allowed", () => {
+    if (host !== "" && !isHostAllowed(policy, host)) {
+      throw new LocalRefusalError({ code: "LOCAL_HOST_NOT_ALLOWED", reason: "host-not-allowed" });
+    }
+  });
+  const dnsResult = await withTimeout(
+    check("address-blocked", () => validateUrlAndResolveDns(url, { allowLocalhost: extra.allowLocalhost })),
+    Math.max(0, deadline - Date.now()),
+    timedOut
+  );
+  await check("rate-limited", () => checkRateLimits(dnsResult.hostname, extra.sessionId));
+  return dnsResult;
+}
+function timedOut() {
+  return new Error("Request timed out: the whole timeout was used up before the next request could be sent.");
+}
 async function executeCurlRequest(params, extra = {}) {
+  try {
+    const url = new URL(params.url);
+    const basic_auth = moveUserinfoToBasicAuth(url, params.basic_auth);
+    params = { ...params, url: url.href, basic_auth };
+  } catch {
+  }
+  let result;
+  let parsed;
   try {
     if (params.basic_auth && !params.basic_auth.includes(":")) {
       throw new Error("basic_auth must be in 'username:password' format");
     }
-    const dnsResult = await validateUrlAndResolveDns(params.url, {
-      allowLocalhost: extra.allowLocalhost
-    });
-    checkRateLimits(dnsResult.hostname, extra.sessionId);
+    const policy = extra.hostPolicy ?? ANY_HOST_POLICY;
+    const maxRedirects = params.max_redirects ?? LIMITS.MAX_REDIRECTS;
+    const deadline = Date.now() + (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3) * 1e3;
+    let hop = params;
+    let requestsSent = 0;
+    const syncHeaderName = hostRateLimitSyncHeader();
+    let dnsResult = await gateHop(hop.url, requestsSent, deadline, policy, extra);
+    const origin = new URL(params.url);
     const resolvedOutputDir = resolveOutputDir(params.output_dir);
     const validatedOutputDir = resolvedOutputDir ? await validateOutputDir(resolvedOutputDir) : void 0;
-    const metadataSeparator = generateMetadataSeparator();
-    const args = buildCurlArgs({
-      ...params,
-      silent: true,
-      dnsResolve: dnsResult,
-      metadataSeparator
-    });
-    const timeoutMs = (params.timeout ?? LIMITS.DEFAULT_TIMEOUT_MS / 1e3) * 1e3;
-    const result = await executeCommand("curl", args, timeoutMs);
+    for (; ; ) {
+      const remainingMs = Math.floor(deadline - Date.now());
+      if (remainingMs <= 0) throw timedOut();
+      const metadataBlock = { separator: generateMetadataSeparator(), syncHeaderName };
+      const args = buildCurlArgs({
+        ...hop,
+        timeout: remainingMs / 1e3,
+        silent: true,
+        dnsResolve: dnsResult,
+        metadataBlock
+      });
+      result = await executeCommand("curl", args, remainingMs);
+      requestsSent++;
+      parsed = parseResponseWithMetadata(result.stdoutBytes, metadataBlock);
+      if (parsed.syncHeaderCount !== void 0) {
+        applyServerRemaining(dnsResult.hostname, parsed.syncHeaderCount);
+      }
+      const status = parsed.httpStatus;
+      const followed = params.follow_redirects !== false && result.exitCode === 0 && parsed.metadataFound && status !== void 0 && FOLLOWED_REDIRECT_STATUSES.has(status);
+      if (!followed || parsed.redirectUrl === "") break;
+      if (requestsSent > maxRedirects) {
+        throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason: "redirect-limit", requestsSent });
+      }
+      const next = parsed.redirectUrl === void 0 ? void 0 : redirectTarget(parsed.redirectUrl, hop.basic_auth);
+      if (next === void 0) {
+        throw new LocalRefusalError({ code: "LOCAL_REDIRECT_REFUSED", reason: "unusable-redirect-target", requestsSent });
+      }
+      hop = nextHopParams(hop, status, !sameOrigin(origin, next), next.href);
+      dnsResult = await gateHop(hop.url, requestsSent, deadline, policy, extra);
+    }
+    const { contentType, metadataFound } = parsed;
     let headerTruncated = false;
     let headerBytesReceived;
     let headerBytesReturned;
-    const parsed = parseResponseWithMetadata(result.stdoutBytes, metadataSeparator);
-    const { contentType, metadataFound } = parsed;
     let responseHeaders;
     let headersUndetermined = false;
     let headersUnsupported = false;
@@ -2920,7 +3227,7 @@ async function executeCurlRequest(params, extra = {}) {
       const channel = extractHeaderChannel(
         result.headerBytes,
         result.headerBytesReceived,
-        params.url,
+        hop.url,
         params.max_result_size
       );
       responseHeaders = channel.responseHeaders;
@@ -2930,7 +3237,7 @@ async function executeCurlRequest(params, extra = {}) {
       headerBytesReturned = channel.bytesReturned;
     }
     const processed = await processResponse(parsed.bodyBytes, {
-      url: params.url,
+      url: hop.url,
       jqFilter: params.jq_filter,
       maxResultSize: params.max_result_size,
       saveToFile: params.save_to_file,
@@ -2941,7 +3248,7 @@ async function executeCurlRequest(params, extra = {}) {
     const defendedStderr = result.stderr ? defendText(result.stderr, {
       contentType: MARKDOWN_MIME,
       contentTypeUndetermined: false,
-      hostname: safeHostname(params.url),
+      hostname: safeHostname(hop.url),
       decodeEntities: false
     }) : result.stderr;
     const inlineBody = processed.savedToFile ? "" : processed.content;
@@ -3000,18 +3307,13 @@ async function executeCurlRequest(params, extra = {}) {
       ]
     };
   } catch (error) {
-    const rawMessage = getErrorMessage(error);
-    const errorMessage = sanitizeErrorMessage(rawMessage, params.include_metadata);
     const hostname = safeHostname(params.url);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";
-    console.error(`curl_execute error: [${hostname}] ${errorClass}`);
+    const code = error instanceof LocalRefusalError ? ` ${error.code}` : "";
+    console.error(`curl_execute error: [${hostname}] ${errorClass}${code}`);
+    const text = error instanceof LocalRefusalError ? error.message : `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`;
     return {
-      content: [
-        {
-          type: "text",
-          text: `Error executing cURL request: ${errorMessage}`
-        }
-      ],
+      content: [{ type: "text", text }],
       isError: true
     };
   }
@@ -3022,11 +3324,16 @@ export {
   getErrorMessage,
   createConfigError,
   assertPositiveInteger,
+  LocalRefusalError,
+  ANY_HOST_POLICY,
+  parseAllowedHosts,
+  deriveHostPolicy,
   resolveBaseUrl,
   hasDotSegment,
   resolveRequestUrl,
   createHttpOnlyUrlSchema,
   safeHostname,
+  withTimeout,
   LIMITS,
   parsePort,
   MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
@@ -3036,12 +3343,12 @@ export {
   detectInjectionPattern,
   applySpotlighting,
   SESSION,
+  PRINTABLE_ASCII,
   parseHostRateLimit,
   installHostRateLimit,
   releaseHostRateLimit,
   startRateLimitCleanup,
   stopRateLimitCleanup,
-  PRINTABLE_ASCII,
   safeStringCompare,
   isValidSessionId,
   SERVER,

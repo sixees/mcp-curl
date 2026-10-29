@@ -19,12 +19,14 @@ import {
   createConfigError,
   createHttpOnlyUrlSchema,
   createWrapper,
+  deriveHostPolicy,
   detectJsonAndLog,
   executeCurlRequest,
   getErrorMessage,
   getOrCreateTempDir,
   installHostRateLimit,
   isValidSessionId,
+  parseAllowedHosts,
   parseHostRateLimit,
   parsePort,
   releaseHostRateLimit,
@@ -41,8 +43,9 @@ import {
   stopWrapErrorCleanup,
   validateFilePath,
   validateOutputDir,
+  withTimeout,
   writeUniqueFile
-} from "./chunk-LJQMSET7.js";
+} from "./chunk-CVSUWVOF.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -238,8 +241,9 @@ Execute HTTP requests with structured, validated parameters.
 | timeout | number | No | 30 | Request timeout in seconds (1-300) |
 | bearer_token | string | No | - | Bearer token for Authorization |
 | basic_auth | string | No | - | Basic auth as "username:password" |
-| follow_redirects | boolean | No | true | Follow HTTP redirects |
-| include_headers | boolean | No | false | Report response headers. Never written into the saved file or the jq_filter input; a separate \`headers\` key under include_metadata, otherwise prefixed to the returned text |
+| follow_redirects | boolean | No | true | Follow 301/302/303/307/308 one hop at a time; every hop passes the host list, the SSRF check and the rate limit. 303 makes every method but HEAD a body-less GET, 301/302 do so to POST. A hop to another origin keeps only Accept, Accept-Language, Accept-Encoding, User-Agent and the kept body's headers, and drops basic_auth and bearer_token |
+| max_redirects | number | No | 10 | Redirects to follow (0-50). A longer chain is refused as LOCAL_REDIRECT_REFUSED |
+| include_headers | boolean | No | false | Report response headers (macOS only; the final hop's after redirects). Never written into the saved file or the jq_filter input; a separate \`headers\` key under include_metadata, otherwise their own content entry after the body |
 | include_metadata | boolean | No | false | Return JSON with metadata |
 | jq_filter | string | No | - | JSON path filter (e.g., ".data.items[0]") |
 | max_result_size | number | No | 500KB | Max bytes inline before auto-save (max: 1MB) |
@@ -533,7 +537,10 @@ function createInstanceUtilities(config) {
         save_to_file: params.save_to_file,
         output_dir: params.output_dir ?? config.outputDir
       };
-      return executeCurlRequest(fullParams, { allowLocalhost: config.allowLocalhost });
+      return executeCurlRequest(fullParams, {
+        allowLocalhost: config.allowLocalhost,
+        hostPolicy: deriveHostPolicy(config)
+      });
     },
     async queryFile(filepath, jqFilter) {
       const params = {
@@ -691,25 +698,11 @@ var SessionManager = class {
 };
 var CLOSE_TIMEOUT_MS = 5e3;
 async function closeWithTimeout(op, label, sessionId) {
-  let timer;
   try {
-    await Promise.race([
-      op(),
-      new Promise((_, reject2) => {
-        timer = setTimeout(
-          () => reject2(new Error(`${label}_timeout`)),
-          CLOSE_TIMEOUT_MS
-        );
-        timer.unref?.();
-      })
-    ]);
+    await withTimeout(op(), CLOSE_TIMEOUT_MS, () => new Error(`${label}_timeout`));
   } catch (error) {
     const errorClass = error instanceof Error ? error.constructor.name : "unknown";
     console.error(`${label} error: [${sessionId}] ${errorClass}`);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
   }
 }
 
@@ -737,12 +730,19 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
     }
   }
   try {
-    const response = await executor(ctx.params, { sessionId, allowLocalhost: config.allowLocalhost });
-    const responseText = response.content[0]?.text ?? "";
+    const response = await executor(ctx.params, {
+      sessionId,
+      allowLocalhost: config.allowLocalhost,
+      hostPolicy: deriveHostPolicy(config)
+    });
+    const entries = Array.isArray(response.content) ? response.content : [];
+    const responseText = entries[0]?.text ?? "";
+    const content = Object.freeze(entries.map((entry) => Object.freeze({ ...entry })));
     for (const hook of hooks.afterResponse) {
       await hook({
         ...ctx,
         response: responseText,
+        content,
         isError: !!response.isError
       });
     }
@@ -991,7 +991,8 @@ var KNOWN_CONFIG_KEYS_ARRAY = [
   "defaultReferer",
   "enableSpotlighting",
   "rateLimit",
-  "curlExecuteDescriptionAppend"
+  "curlExecuteDescriptionAppend",
+  "allowedHosts"
 ];
 var KNOWN_CONFIG_KEYS = new Set(KNOWN_CONFIG_KEYS_ARRAY);
 var McpCurlServer = class {
@@ -1024,7 +1025,9 @@ var McpCurlServer = class {
    *
    * @param config - Configuration options to merge
    * @returns this for chaining
-   * @throws Error if called after start(), if `rateLimit` is not two positive integers,
+   * @throws Error if called after start(), if `rateLimit` holds an unknown key, a
+   *   `max` or `windowMs` that is not a positive integer, or a `syncFromHeaders`
+   *   that is not `{ remaining: <header name> }`, if an `allowedHosts` entry is not a bare host name,
    *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
    *   once sanitised
    */
@@ -1033,6 +1036,9 @@ var McpCurlServer = class {
     config = { ...config };
     if (config.rateLimit !== void 0) {
       config = { ...config, rateLimit: parseHostRateLimit(config.rateLimit) };
+    }
+    if (config.allowedHosts !== void 0) {
+      config = { ...config, allowedHosts: parseAllowedHosts(config.allowedHosts) };
     }
     if (config.curlExecuteDescriptionAppend !== void 0) {
       const append = sanitizeDescription(config.curlExecuteDescriptionAppend);
@@ -1097,7 +1103,7 @@ var McpCurlServer = class {
   }
   /**
    * Register an afterResponse hook.
-   * Hooks run sequentially after successful tool execution.
+   * Hooks run sequentially once the tool returns, an isError result included; a hook that throws is passed to the onError hooks.
    * Useful for logging, metrics, caching.
    *
    * @param hook - Hook function
@@ -1111,7 +1117,7 @@ var McpCurlServer = class {
   }
   /**
    * Register an onError hook.
-   * Hooks run sequentially when tool execution throws.
+   * Hooks run sequentially when tool execution or an afterResponse hook throws; the original error is still rethrown.
    * Useful for error logging and reporting.
    *
    * @param hook - Hook function
@@ -1129,13 +1135,16 @@ var McpCurlServer = class {
    * Use this to add API-specific tools generated from schema definitions.
    *
    * Note: Custom tools are NOT wrapped with beforeRequest/afterResponse/onError hooks.
-   * They are registered directly on the MCP server. If you need hook-like behavior,
-   * implement it within the handler function itself.
+   * If you need hook-like behavior, implement it within the handler function itself.
+   * Their results do pass through the response defence wrap at start(): text parts are
+   * sanitised and scanned for injection (a JSON part is scanned only), and spotlighted
+   * when `enableSpotlighting` is set, under the "custom" hostname label.
    *
    * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
    * @param meta - Tool metadata (title, description, inputSchema). title and description
-   *   are sanitized automatically. **inputSchema field descriptions are also
-   *   sanitised at every depth** at registration time via the
+   *   are sanitized automatically, and the description is truncated (with a warning) to
+   *   `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH` chars. **inputSchema field descriptions are also
+   *   sanitised at every depth, to the walker's 100-level cap,** at registration time via the
    *   `sanitizeFieldDescriptionsDeep` helper. Recursion descends into
    *   `ZodObject` (`.shape` values), `ZodArray` (`.element`),
    *   `ZodUnion` (including `ZodDiscriminatedUnion`, which `instanceof
@@ -1287,12 +1296,17 @@ var McpCurlServer = class {
    * Configuration is frozen after this call.
    *
    * @param transport - Transport mode: "stdio" (default) or "http"
-   * @throws Error if already started
+   * @throws Error if already started, or if `allowedHosts` is unset and `baseUrl`
+   *   is not an absolute http(s) URL (the default host list cannot be derived);
+   *   and, after rolling back, if the HTTP auth token is invalid, another server in
+   *   the process already holds `rateLimit`, or the transport fails to come up
+   *   (e.g. the HTTP port is in use)
    */
   async start(transport = "stdio") {
     if (this._started) {
       throw new Error("Server is already running. Call shutdown() before starting again.");
     }
+    deriveHostPolicy(this._config);
     this._started = true;
     const config = this.freezeConfig();
     this._frozenConfig = config;
@@ -1375,28 +1389,20 @@ var McpCurlServer = class {
     console.error("Shutting down McpCurlServer...");
     if (this._httpServer) {
       const SHUTDOWN_TIMEOUT = 5e3;
-      let timeoutId;
       try {
-        await Promise.race([
+        await withTimeout(
           new Promise((resolve, reject2) => {
             this._httpServer.close((err) => {
               if (err) reject2(err);
               else resolve();
             });
           }),
-          new Promise((_, reject2) => {
-            timeoutId = setTimeout(
-              () => reject2(new Error("HTTP server shutdown timeout")),
-              SHUTDOWN_TIMEOUT
-            );
-          })
-        ]);
+          SHUTDOWN_TIMEOUT,
+          () => new Error("HTTP server shutdown timeout")
+        );
       } catch (error) {
         logShutdownError("shutdown_http_server", error);
       } finally {
-        if (timeoutId !== void 0) {
-          clearTimeout(timeoutId);
-        }
         this._httpServer = null;
       }
     }
@@ -1487,7 +1493,7 @@ var McpCurlServer = class {
    * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
    *
    * @param authToken - Pre-resolved bearer token (already passed through
-   *   `validateAuthToken` in `start()`). Passing the snapshot down avoids
+   *   `validateAuthToken` in `launch()`). Passing the snapshot down avoids
    *   resolving the env var twice and guarantees the value the auth
    *   middleware closes over is the exact value that was validated.
    */
@@ -1525,7 +1531,8 @@ var McpCurlServer = class {
     return Object.freeze({
       ...this._config,
       defaultHeaders: this._config.defaultHeaders ? Object.freeze({ ...this._config.defaultHeaders }) : void 0,
-      allowedOrigins: this._config.allowedOrigins ? Object.freeze([...this._config.allowedOrigins]) : void 0
+      allowedOrigins: this._config.allowedOrigins ? Object.freeze([...this._config.allowedOrigins]) : void 0,
+      allowedHosts: Array.isArray(this._config.allowedHosts) ? Object.freeze([...this._config.allowedHosts]) : this._config.allowedHosts
     });
   }
   /**
