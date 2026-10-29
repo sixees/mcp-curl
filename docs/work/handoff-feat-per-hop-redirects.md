@@ -283,3 +283,23 @@ None filed this round.
 `src/lib/execution/curl-args-builder.ts`, `src/lib/execution/curl-args-builder.test.ts`, `src/lib/tools/curl-execute.ts`, `src/lib/tools/curl-execute.redirects.test.ts`, `src/lib/tools/curl-execute.redirects.e2e.test.ts`, `src/lib/tools/redirect-hop.ts`, `src/lib/tools/redirect-hop.test.ts`, `docs/architecture/architecture.md`.
 
 Teeth: removing `--globoff` fails 2 tests; removing the echo strip fails 3; removing `transfer-encoding` fails 8; removing the userinfo move fails 2. Suite 1721 passed, 0 failed, 7 pending; `tsc` clean.
+
+## Review Comments Addressed — 2026-10-29 (round 2)
+
+Surface 3, round 2 (CodeRabbit, Codex) on `b4f8f4d`. Codex: "Didn't find any major issues." Severities are mine.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| The per-hop pinning statement omits that a proxy bypasses `--resolve` | @coderabbitai (Minor) | Documentation, P3 in scope (the sentence was changed on this branch) | `architecture.md` → *Network / SSRF Defense — strategy* now states that cURL inherits the server's environment, that `http_proxy`/`https_proxy`/`ALL_PROXY` route through a proxy that resolves the host itself, and what an operator does about it |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| `InstanceUtilities.executeRequest({ timeout: 0 })` now times out at once instead of using 30 s | @coderabbitai (Minor) | P3 | In scope (the deadline is new) | No consequence for documented input. `timeout` is documented as 1–300 seconds (`CurlExecuteSchema`, `McpCurlConfig.defaultTimeout`, `docs/configuration.md`). 0 was never "use the default": it reached that only because the old builder skipped a falsy `--max-time`. Mapping it to 30 s would accept an invalid value silently (K-2); refusing it at once is the fail-closed direction |
+
+### Decisions Revised
+
+None. No todos filed or resolved.
