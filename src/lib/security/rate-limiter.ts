@@ -325,8 +325,21 @@ export function applyServerRemaining(hostname: string, remaining: number): void 
 }
 
 /**
- * Read `{ max, windowMs }` once, reject anything but two positive integers, and
- * return a frozen copy of exactly what was checked. There is no "off" value, so
+ * Throw on a key outside `allowed`, at every level of `rateLimit`: an unknown
+ * key — a misspelt `syncFromHeaders`, or `reset` — is a setting the operator
+ * expects to act and that nothing would read.
+ */
+function assertOnlyKeys(name: string, value: object, allowed: readonly string[]): void {
+    const unknownKeys = Object.keys(value).filter((key) => !allowed.includes(key));
+    if (unknownKeys.length > 0) {
+        throw new Error(`${name} accepts only ${allowed.join(", ")}, got: ${unknownKeys.join(", ")}`);
+    }
+}
+
+/**
+ * Read `{ max, windowMs, syncFromHeaders? }` once, reject an unknown key or
+ * anything but two positive integers, and return a frozen copy of exactly
+ * what was checked. There is no "off" value, so
  * a typo or an unset variable (`Number(undefined)` is `NaN`, and
  * `length >= NaN` is always false) cannot disable the limit. Reading each field
  * once is the point: an accessor read a second time could return what the
@@ -336,6 +349,7 @@ export function parseHostRateLimit(limit: unknown): Readonly<HostRateLimit> {
     if (typeof limit !== "object" || limit === null) {
         throw new Error(`rateLimit must be an object { max, windowMs }, got: ${String(limit)}`);
     }
+    assertOnlyKeys("rateLimit", limit, ["max", "windowMs", "syncFromHeaders"]);
     const { max, windowMs, syncFromHeaders } = limit as Record<string, unknown>;
     assertPositiveInteger("rateLimit.max", max);
     assertPositiveInteger("rateLimit.windowMs", windowMs);
@@ -344,19 +358,15 @@ export function parseHostRateLimit(limit: unknown): Readonly<HostRateLimit> {
 }
 
 /**
- * `{ remaining }` and nothing else: an unknown key — `reset` among them — is a
- * setting the operator expects to act and that nothing would read. The name
- * reaches cURL's `-w` format, so it is held to {@link WRITE_OUT_HEADER_NAME}
- * here, where a bad one fails `configure()` rather than a request.
+ * `{ remaining }` and nothing else. The name reaches cURL's `-w` format, so it
+ * is held to {@link WRITE_OUT_HEADER_NAME} here, where a bad one fails
+ * `configure()` rather than a request.
  */
 function parseSyncFromHeaders(value: unknown): { readonly remaining: string } {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
         throw new Error("rateLimit.syncFromHeaders must be an object { remaining }");
     }
-    const unknownKeys = Object.keys(value).filter((key) => key !== "remaining");
-    if (unknownKeys.length > 0) {
-        throw new Error(`rateLimit.syncFromHeaders accepts only "remaining", got: ${unknownKeys.join(", ")}`);
-    }
+    assertOnlyKeys("rateLimit.syncFromHeaders", value, ["remaining"]);
     const { remaining } = value as Record<string, unknown>;
     if (typeof remaining !== "string" || !WRITE_OUT_HEADER_NAME.test(remaining)) {
         throw new Error(

@@ -395,6 +395,12 @@ describe("installHostRateLimit — ownership", () => {
 describe("parseHostRateLimit — syncFromHeaders", () => {
     const BASE = { max: 5, windowMs: 60_000 };
 
+    it("throws on a misspelt syncFromHeaders rather than dropping it", () => {
+        expect(() => parseHostRateLimit({ ...BASE, syncFromHeader: { remaining: "X-Remaining" } })).toThrow(
+            "rateLimit accepts only max, windowMs, syncFromHeaders, got: syncFromHeader"
+        );
+    });
+
     it("returns a frozen copy of the header name", () => {
         const sync = { remaining: "X-RateLimit-Remaining" };
         const parsed = parseHostRateLimit({ ...BASE, syncFromHeaders: sync });
@@ -408,7 +414,7 @@ describe("parseHostRateLimit — syncFromHeaders", () => {
     });
 
     it.each([
-        ["a reset key", { remaining: "X-Remaining", reset: "X-Reset" }, /accepts only "remaining", got: reset/],
+        ["a reset key", { remaining: "X-Remaining", reset: "X-Reset" }, /syncFromHeaders accepts only remaining, got: reset/],
         ["no remaining", {}, /remaining must be an HTTP header name/],
         ["an empty name", { remaining: "" }, /remaining must be an HTTP header name/],
         ["a space", { remaining: "X Remaining" }, /remaining must be an HTTP header name/],

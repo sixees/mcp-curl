@@ -98,6 +98,16 @@ describe("McpCurlServer", () => {
             expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
         });
 
+        it("throws on a misspelt rateLimit key, and changes nothing", () => {
+            server.configure({ baseUrl: "https://api.example.com" });
+            expect(() =>
+                server.configure({
+                    rateLimit: { max: 240, windowMs: 3_600_000, syncFromHeader: { remaining: "X-RateLimit-Remaining" } },
+                } as never)
+            ).toThrow(/rateLimit accepts only .*got: syncFromHeader$/);
+            expect(server.getConfig()).toEqual({ baseUrl: "https://api.example.com" });
+        });
+
         it("throws on a rateLimit that is not an object, and changes nothing", () => {
             server.configure({ baseUrl: "https://api.example.com" });
             expect(() => server.configure({ rateLimit: null, baseUrl: "https://other.example" } as never))
