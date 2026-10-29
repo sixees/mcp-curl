@@ -56,3 +56,17 @@ Why the `stale-comment` class was declined:
 **Open classes without a todo:** none.
 
 **Blockers:** P1, todo 024. It is in scope and filed. The work run escalates it to the operator before writing its own handoff sections or offering a PR.
+
+### Todo resolution — 2026-10-29
+
+The operator chose the run-length log for the P1 and asked for 025–028 to be fixed on this branch, then the todo files deleted. All five are fixed and their files removed.
+
+| Todo | Disposition | Commit |
+|---|---|---|
+| 024 | fixed: the sliding log stores `{ at, count }` runs with a running total, so a pad is one run whatever `max` is | `194bd1c` |
+| 025 | fixed: `npm test` runs `npm run typecheck` (`tsc --noEmit`, tests included) before vitest | `b1f263c` (committed together with 028) |
+| 026 | fixed: `rateLimit` and `rateLimit.syncFromHeaders` throw on an unknown key through one `assertOnlyKeys` | `08d46ee` |
+| 027 | fixed: `buildUrl` throws `LOCAL_REFUSED_PATH` / `path-parameter-dot-segment`; an unusable `baseUrl` stays a plain configuration error, documented in `resolveRequestUrl` | `31667d6` |
+| 028 | fixed: the redirect arm is typed per reason, and `gateHop`'s `check` forwards a wait only for `rate-limited` | `b1f263c` |
+
+Every fix had a teeth probe: the guard was removed, a test failed, and the guard was restored. `npm test` passes, with 1766 passed and 7 skipped; the type-check is clean.
