@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: s
 tags: [code-review, simplification, post-processor, dead-code]
@@ -35,14 +35,21 @@ If todo 028 exports `markRemoteContent` (its Option 2), embedder code can hand i
 
 ## Recommended Action
 
+Option 1 in effect: todo 028's fix deleted `markRemoteContent`, and its replacement `markServerAuthored` has no try/catch.
+
 ## Acceptance Criteria
 
-- [ ] Decide after todo 028: whether `markRemoteContent` becomes public decides whether this guard has a caller.
-- [ ] The docblock states only what a caller can reach.
+- [x] Decide after todo 028: whether `markRemoteContent` becomes public decides whether this guard has a caller.
+- [x] The docblock states only what a caller can reach.
 
 ## Work Log
 
 ### 2026-10-30 - Filed from Surface 2 review
 **By:** Claude Code
 **Actions:** filed code-simplicity-reviewer's `dead-code` (P3).
+**Learnings:** —
+
+### 2026-10-30 - Resolved on fix/sync-quota-and-failed-exit
+**By:** Claude Code
+**Actions:** commit `761093c` deleted `markRemoteContent` and the frozen-input test. `post-processor.ts::markServerAuthored` calls `Object.defineProperty` directly; every caller passes a fresh literal.
 **Learnings:** —

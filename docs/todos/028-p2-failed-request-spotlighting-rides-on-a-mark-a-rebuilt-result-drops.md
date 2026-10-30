@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: medium
 effort: m
 tags: [code-review, security, post-processor, spotlighting, custom-tools, curl-execute, docs]
@@ -55,11 +55,13 @@ Change both handlers to `if (result.isError) return result;`, export `markRemote
 
 ## Recommended Action
 
+Option 1, chosen by the operator on 2026-10-30 ("Fix now, invert the mark"): with spotlighting on, spotlight every result unless a module-private server-authored mark says this repository wrote the text, so a lost mark fails safe. Accepted cost: an embedder's own custom-tool and hook short-circuit error text becomes spotlighted.
+
 ## Acceptance Criteria
 
-- [ ] A custom tool written as `docs/custom-tools.md` shows, with `enableSpotlighting: true` and an executor stubbed to exit 28 after a JSON body, returns text that starts with `---EXTERNAL-CONTENT-BEGIN-`.
-- [ ] The test fails with the fix removed.
-- [ ] `docs/custom-tools.md` says how a handler keeps a failed request spotlighted.
+- [x] A custom tool written as `docs/custom-tools.md` shows, with `enableSpotlighting: true` and an executor stubbed to exit 28 after a JSON body, returns text that starts with `---EXTERNAL-CONTENT-BEGIN-`.
+- [x] The test fails with the fix removed.
+- [x] `docs/custom-tools.md` says how a handler keeps a failed request spotlighted.
 
 ## Work Log
 
@@ -67,3 +69,8 @@ Change both handlers to `if (result.isError) return result;`, export `markRemote
 **By:** Claude Code
 **Actions:** merged typescript-reviewer's and pattern-recognition-specialist's `fail-open-default` (P2) and architecture-strategist's `fail-open-default` (P2, alias `misplaced-decision`) on the shared confirmed instances `post-processor.ts::createWrapper` and the two `docs/custom-tools.md` handlers.
 **Learnings:** a defence keyed on a mark that rides on object identity fails open at the first copy; the code's own docs taught the copy.
+
+### 2026-10-30 - Resolved on fix/sync-quota-and-failed-exit
+**By:** Claude Code
+**Actions:** commit `761093c`. `src/lib/response/post-processor.ts::createWrapper` now spotlights every result unless `markServerAuthored` set a module-private `SERVER_AUTHORED` symbol; `REMOTE_CONTENT` and `markRemoteContent` are deleted. Marked: the `LocalRefusalError` arm of `tools/curl-execute.ts::executeCurlRequest`, the `resolveRequestUrl` error in `extensible/tool-wrapper.ts::registerCurlToolWithHooks`, and the `AuthenticationError` and `LocalRefusalError` arms of `schema/generator.ts::createToolHandler`. Left unmarked on purpose: the generic cURL error, `jq_query` errors, the preset error, hook short-circuits, custom-tool results. `docs/custom-tools.md` → *Composing the Full Defence* step 2 says a tool's error results are spotlighted, so the documented handlers need no change. Acceptance test: `mcp-curl-server.test.ts` "spotlights a custom tool's error result, such as a rebuilt failed request"; it and five more fail with the wrap reverted to the `isError` rule (measured, restored from a `cp` backup). Each mark has a test at the wrap it reaches, and each fails with its mark removed.
+**Learnings:** the first pair of generator tests called the handler directly, skipping the custom-tool wrap where the mark is read; removing both marks failed nothing (K-1). They now run through `registerCustomTool`.

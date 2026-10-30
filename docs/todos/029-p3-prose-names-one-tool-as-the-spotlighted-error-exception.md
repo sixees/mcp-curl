@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: s
 tags: [code-review, docs, post-processor, spotlighting, schema-generator, changelog, k-8]
@@ -39,11 +39,13 @@ Reword each of the five sites.
 
 ## Recommended Action
 
+Option 1, carried out as part of todo 028's fix, which changed the rule this prose states; the operator chose 028's fix on 2026-10-30.
+
 ## Acceptance Criteria
 
-- [ ] No tracked prose outside `docs/architecture/architecture.md` restates which error results are spotlighted without citing it.
-- [ ] The `[5.3.0]` CHANGELOG bullet names the criterion, not one tool.
-- [ ] Settle this after todo 028: inverting the mark there changes what this prose has to say.
+- [x] No tracked prose outside `docs/architecture/architecture.md` restates which error results are spotlighted without citing it.
+- [x] The `[5.3.0]` CHANGELOG bullet names the criterion, not one tool.
+- [x] Settle this after todo 028: inverting the mark there changes what this prose has to say.
 
 ## Work Log
 
@@ -51,3 +53,8 @@ Reword each of the five sites.
 **By:** Claude Code
 **Actions:** filed pattern-recognition-specialist's `stale-comment` (P3); added architecture-strategist's out-of-lane `docs/configuration.md` instance.
 **Learnings:** a rule changed in code while its prose copies named the tool rather than the property.
+
+### 2026-10-30 - Resolved on fix/sync-quota-and-failed-exit
+**By:** Claude Code
+**Actions:** commit `761093c`. `docs/architecture/architecture.md` → *Spotlighting (opt-in)* states the rule once (every result but a server-authored one) and says it is the one statement; its *afterResponse + spotlighting* bullet, `docs/configuration.md` → *enableSpotlighting* step 3, `docs/custom-tools.md` → *Composing the Full Defence* step 2 and `schema/generator.ts::GeneratorConfig.enableSpotlighting` cite it. CHANGELOG `[5.3.0]` carries it as `**BREAKING:**` with "To adjust". `rg -n -i 'not an error|never on an error|markRemoteContent|REMOTE_CONTENT'` over src, docs, README and CHANGELOG returns only unrelated uses.
+**Learnings:** —
