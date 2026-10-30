@@ -26,9 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **BREAKING: a failed cURL request is an error result.** Any non-zero cURL exit
-  now sets `isError: true`, on both output shapes, and its notice reads
-  `[mcp-curl] cURL exited N: the request failed, and the response above may be
-  empty or incomplete`. 5.2.0 returned exit 7 (could not connect) with no flag and
+  now sets `isError: true`, on both output shapes. Without `include_metadata`
+  its notice reads `[mcp-curl] cURL exited N: the request failed, and the
+  response above may be empty or incomplete`; with it, the JSON carries
+  `success: false` and `exit_code`, and there is no notice. 5.2.0 returned exit 7 (could not connect) with no flag and
   an empty body, which read as an empty success. **To adjust:** an
   `afterResponse` hook now sees `isError: true` for a failed request, so one that
   filters with `!ctx.isError` no longer sees them, and one that counts failures

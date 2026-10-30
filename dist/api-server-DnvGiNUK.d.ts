@@ -16,8 +16,9 @@ interface HostRateLimit {
      * Tighten the per-host count from the upstream's own figure. `remaining`
      * names a response header carrying the requests the upstream will still
      * admit in its window; after each response, the host that answered is
-     * counted as having used at least `quota − remaining`. It only ever tightens,
-     * and an absent, empty or malformed value changes nothing.
+     * counted as having used at least `quota − remaining`, capped at `max`. It
+     * only ever tightens, and an absent, empty or malformed value changes
+     * nothing.
      *
      * `quota` is the upstream's own limit for the window, and defaults to
      * `max`. Set it when `max` sits below the upstream's limit on purpose: the
@@ -138,7 +139,9 @@ interface McpCurlConfig {
      *   4. **Re-sanitise and re-detect** the stripped text, so a phrase the
      *      strip stage joined still reaches the `[injection-defense]` log.
      *   5. **Spotlight** the defended text (only when this flag is `true`)
-     *      using a fresh per-message UUID.
+     *      using a fresh per-message UUID — on every result except one this
+     *      server wrote entirely itself, such as a local refusal
+     *      (`docs/architecture/architecture.md` → *Spotlighting*).
      *
      * Steps 1-4 run regardless of this flag — only step 5
      * (spotlighting sentinels) is gated — except above `STRIP_PATH_MAX_BYTES`
@@ -212,9 +215,11 @@ type BeforeRequestHook<T = CurlExecuteInput | JqQueryInput> = (ctx: HookContext<
  * `response` is the body, `content[0]`. `content` is every entry the tool
  * returns: `curl_execute` adds response header text and server-authored
  * notices as later entries, only when each has text, so a hook finds one by
- * matching its text rather than its index. A non-zero cURL exit sets `isError`;
- * its body may be empty, and its notice is in `content` alone. The
- * entries are frozen copies, so a hook cannot change the result it observes.
+ * matching its text rather than its index. A non-zero cURL exit sets `isError`.
+ * Without `include_metadata` its body may be empty and its notice is in
+ * `content` alone; with it, `response` is the JSON envelope, whose `exit_code`
+ * says how it failed. The entries are frozen copies, so a hook cannot change
+ * the result it observes.
  */
 type AfterResponseHook<T = CurlExecuteInput | JqQueryInput> = (ctx: HookContext<T> & {
     response: string;

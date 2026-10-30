@@ -91,7 +91,7 @@ The one consumer reported two defects in 5.2.0. The rate-limit header sync spent
 
 ## Testing summary
 
-- **Added:** `rate-limiter.test.ts` (quota parse cases; margin kept; stop at the margin; cap at `max`); `post-processor.test.ts` (a marked `isError` result is spotlighted; not when spotlighting is off; the mark does not serialise); `tool-wrapper.test.ts` (the mark survives `executeWithHooks`; a hook sees `isError: true`); `curl-execute.headers.test.ts` (exit 7 sets `isError` on both shapes; a clean exit does not; exit 28 after a JSON body is spotlighted through the real wrap); `mcp-curl-server.test.ts` (a real cURL exit 7 against a closed loopback port is an error).
+- **Added:** `rate-limiter.test.ts` (quota parse cases; margin kept; stop at the margin; cap at `max`); `post-processor.test.ts` (an `isError` result is spotlighted; not when spotlighting is off; the mark does not serialise); `tool-wrapper.test.ts` (the mark survives `executeWithHooks`; a hook sees `isError: true`); `curl-execute.headers.test.ts` (exit 7 sets `isError` on both shapes; a clean exit does not; exit 28 after a JSON body is spotlighted through the real wrap); `mcp-curl-server.test.ts` (a real cURL exit 7 against a closed loopback port is an error).
 - **Teeth:** reverting the pad to `max − remaining` fails 2 tests; removing the `Math.min` cap fails 1; removing `isError` fails 4; removing the executor's mark fails 1; the wrap ignoring the mark fails 3. Each mutation was restored from a `cp` backup and checked byte-identical.
 - **Verdict:** `npm test -- --reporter=json --outputFile=…` (the declared command, type-check included, with vitest's JSON reporter) → `success: true`, 1792 total, 1785 passed, 0 failed, 7 skipped. The work command lists vitest among runners whose structured mode it does not trust, so the operator's own run is the gate.
 - **Round 2 added:** `post-processor.test.ts` (an unmarked `isError` result is spotlighted; a copy of a marked result is spotlighted); `mcp-curl-server.test.ts` (todo 028's acceptance case, a custom tool's rebuilt error result is spotlighted; the generator's refusal and auth error keep their first lines through the custom-tool wrap); `tool-wrapper.test.ts` (the resolver's refusal is not spotlighted); `curl-execute.headers.test.ts` (a local refusal keeps its first line); `schema.test.ts` (`registerEndpointTools` wraps all three error arms).
@@ -135,3 +135,30 @@ Suggested order: `e3a8b3c` (self-contained), then `59c99b3` reading `post-proces
 | 028 | Spotlighting a failed request rides on a mark a rebuilt result drops | mark inverted to server-authored | Claude Code | 2026-10-30 |
 | 029 | Prose names one tool as the spotlighted error exception | rule stated once in architecture.md, cited elsewhere | Claude Code | 2026-10-30 |
 | 030 | `markRemoteContent` guards a frozen input its only caller cannot produce | subject deleted by 028's fix | Claude Code | 2026-10-30 |
+
+## Review Comments Addressed — 2026-10-30 (round 1)
+
+Reviewers requested: CodeRabbit (full review), Codex (`@codex review`), Copilot (review request). Codex found no major issues; Copilot recommended approval with no open issues; CodeRabbit filed 5 inline findings.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Handoff testing summary says a marked `isError` result is spotlighted | coderabbitai | Documentation (P3, in scope) | Reworded to "an `isError` result is spotlighted" |
+| CHANGELOG: the failure notice appears only without `include_metadata` | coderabbitai | Documentation (P3, in scope) | CHANGELOG, `public.ts::AfterResponseHook`, `docs/hooks.md` now distinguish the two shapes (notice vs `success: false` + `exit_code`) |
+| `documentation.ts`: same two-shape distinction | coderabbitai | Documentation (P3, in scope) | Same class as above; resource text updated |
+| `custom-tools.md`: "this server's own errors are not" spotlighted is too broad | coderabbitai | Documentation (P3, in scope) | Already corrected by `docs(comments)` commit `6dcbcf3` |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| `quota` accepts values above 2³¹ while the header parser ignores remaining counts above 2³¹ | coderabbitai | P3 | in scope (new field) | No population: the one consumer sets `quota: 240`, and an upstream quota in the billions is not a configuration anyone runs. `max` has carried the same 2³¹ ceiling unvalidated since 5.2.0; the failure is fail-safe (the sync stays a no-op and `max` still bounds the host). |
+
+### Decisions Revised
+
+None.
+
+### Files Modified
+
+`CHANGELOG.md`, `docs/hooks.md`, `docs/work/handoff-fix-sync-quota-and-failed-exit.md`, `src/lib/resources/documentation.ts`, `src/lib/types/public.ts`, `dist/` (rebuilt).
