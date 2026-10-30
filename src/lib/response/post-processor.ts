@@ -88,6 +88,9 @@ const WRAPPED = Symbol("mcp-curl.wrapped");
 // `isError`-keyed skip would let it switch the layer off for its own bytes by
 // stalling after the body. The mark only REMOVES spotlighting, so a result
 // that is rebuilt or copied loses it and is spotlighted: the safe direction.
+// One that is changed in place keeps it: the mark covers the object, not its
+// parts, and freezing the parts was declined because no path in this
+// repository mutates a marked result and the actor is the embedder's own code.
 // Module-private for the reason WRAPPED is.
 const SERVER_AUTHORED = Symbol("mcp-curl.server-authored");
 

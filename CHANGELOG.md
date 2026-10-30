@@ -35,8 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   should look for them there.
 - **BREAKING: with `enableSpotlighting` on, error results are spotlighted too.**
   Only text this server writes itself stays outside the sentinels, so its first
-  line reads as before: a local refusal, a URL-resolution error, and a YAML
-  endpoint's authentication error. A failed request's body, header text and
+  line reads as before: a local refusal, `curl_execute`'s URL-resolution error,
+  and a YAML endpoint's authentication error. A failed request's body, header text and
   stderr are the origin's, and so may be an error a custom tool or a hook
   short-circuit returns, for example a failed request's body rebuilt into a new
   result. 5.2.0 left error results unspotlighted. **To adjust:** a consumer

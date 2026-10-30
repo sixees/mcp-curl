@@ -439,11 +439,19 @@ function createToolHandler(
             return wrap(result, safeHostname(url));
         } catch (error) {
             // A missing required credential is configuration the model can report back, so it returns as an error result; anything unrecognised is rethrown.
-            // The authentication error and the refusal are server text, so they
-            // are marked and stay unspotlighted; the preset error echoes the
-            // model's own parameter and is spotlighted like any other result.
+            //
+            // Each arm takes this handler's own wrap, as the success arm does:
+            // `registerEndpointTools` registers the handler with no outer wrap,
+            // so relying on `registerCustomTool`'s would leave that path with
+            // none (invariant 1). There is no request URL here, so the base
+            // URL's host labels the call. The authentication error and the
+            // refusal are server text, so they are marked and stay
+            // unspotlighted; the preset error echoes the model's own parameter
+            // and is spotlighted like any other result.
+            const fail = (result: CurlExecuteResult) =>
+                wrap(result, safeHostname(config?.baseUrl ?? schema.api.baseUrl));
             if (error instanceof AuthenticationError) {
-                return markServerAuthored({
+                return fail(markServerAuthored({
                     content: [
                         {
                             type: "text" as const,
@@ -451,20 +459,20 @@ function createToolHandler(
                         },
                     ],
                     isError: true,
-                });
+                }));
             }
 
             if (error instanceof LocalRefusalError) {
-                return markServerAuthored({
+                return fail(markServerAuthored({
                     content: [{ type: "text" as const, text: error.message }],
                     isError: true,
-                });
+                }));
             }
 
             // Matched by message prefix, because `resolveJqFilter` throws a plain Error:
             // its "Unknown filter preset" wording is what this check depends on.
             if (error instanceof Error && error.message.startsWith("Unknown filter preset")) {
-                return {
+                return fail({
                     content: [
                         {
                             type: "text",
@@ -472,7 +480,7 @@ function createToolHandler(
                         },
                     ],
                     isError: true,
-                };
+                });
             }
 
             throw error;
