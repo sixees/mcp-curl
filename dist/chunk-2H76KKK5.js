@@ -3057,7 +3057,7 @@ A body that does NOT parse as JSON is not returned inline at all \u2014 it is wr
 file and you get the reason, the byte count and the path, to open with your own file
 tooling. That file holds the origin's exact bytes unless attack codepoints had to be
 removed or long whitespace or newline runs collapsed, and the message says which you
-have. An empty body is the exception:
+have. An empty body is the exception: unless save_to_file is set,
 nothing is saved and you get an empty response, because there is nothing to recover.
 
 A JSON body larger than max_result_size is also written to a file; use jq_query on that

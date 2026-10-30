@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns a tool result**, `LOCAL_REFUSED_PATH`, where 5.1.0 rejected it at the
   schema with a `-32602` protocol error the model never saw. **To adjust:** read
   the refusal from the tool result.
-- **The `curl_execute` description is shorter** (about 2.3 KB, from 6.7 KB). The
+- **The `curl_execute` description is shorter** (about 2.4 KB, from 6.7 KB). The
   parameter list and `jq_filter` syntax are in the input schema already; what
   only the description said about `include_headers` (macOS only, final hop,
   credentials in header text) and redirects moved into the schema. The version line

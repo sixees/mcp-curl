@@ -45,7 +45,7 @@ import {
   validateOutputDir,
   withTimeout,
   writeUniqueFile
-} from "./chunk-3ZH6LHDG.js";
+} from "./chunk-2H76KKK5.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -348,7 +348,7 @@ Files can only be read from:
 \`\`\`json
 {
   "filepath": "/path/to/saved_response.txt",
-  "jq_filter": ".users[0:5].name"
+  "jq_filter": ".users[0:5]"
 }
 \`\`\`
 
