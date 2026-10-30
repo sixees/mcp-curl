@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, s as CurlExecuteResult, G as GeneratorConfig, f as ApiSchema } from './generator-jrGWR0DG.js';
+import { C as CurlExecuteInput, J as JqQueryInput, s as CurlExecuteResult, G as GeneratorConfig, f as ApiSchema } from './generator-CBqqSfBB.js';
 
 /**
  * An embedder-configured per-host limit: at most `max` requests to one host in
@@ -16,14 +16,20 @@ interface HostRateLimit {
      * Tighten the per-host count from the upstream's own figure. `remaining`
      * names a response header carrying the requests the upstream will still
      * admit in its window; after each response, the host that answered is
-     * counted as having used at least `max − remaining`. It only ever tightens,
+     * counted as having used at least `quota − remaining`. It only ever tightens,
      * and an absent, empty or malformed value changes nothing.
+     *
+     * `quota` is the upstream's own limit for the window, and defaults to
+     * `max`. Set it when `max` sits below the upstream's limit on purpose: the
+     * upstream reports what is left of ITS quota, so measured against `max`
+     * that figure would hand the margin back.
      *
      * The name must be an HTTP field name (RFC 9110 token) without `%`. Reading
      * the header needs cURL 7.84 or later.
      */
     readonly syncFromHeaders?: {
         readonly remaining: string;
+        readonly quota?: number;
     };
 }
 
@@ -89,7 +95,8 @@ interface McpCurlConfig {
      * throttling, not quota accounting: the count starts again with the
      * process, and requests made elsewhere on the same credential are not seen
      * unless `syncFromHeaders` names the header carrying the upstream's own
-     * remaining count.
+     * remaining count. Give it the upstream's `quota` too when `max` is set
+     * below it, or the sync spends that margin.
      */
     rateLimit?: HostRateLimit;
     /**
@@ -205,8 +212,8 @@ type BeforeRequestHook<T = CurlExecuteInput | JqQueryInput> = (ctx: HookContext<
  * `response` is the body, `content[0]`. `content` is every entry the tool
  * returns: `curl_execute` adds response header text and server-authored
  * notices as later entries, only when each has text, so a hook finds one by
- * matching its text rather than its index. A non-zero cURL exit can leave the
- * body empty with `isError` false, and its notice is in `content` alone. The
+ * matching its text rather than its index. A non-zero cURL exit sets `isError`;
+ * its body may be empty, and its notice is in `content` alone. The
  * entries are frozen copies, so a hook cannot change the result it observes.
  */
 type AfterResponseHook<T = CurlExecuteInput | JqQueryInput> = (ctx: HookContext<T> & {
@@ -367,7 +374,8 @@ declare class McpCurlServer {
      * @returns this for chaining
      * @throws Error if called after start(), if `rateLimit` holds an unknown key, a
      *   `max` or `windowMs` that is not a positive integer, or a `syncFromHeaders`
-     *   that is not `{ remaining: <header name> }`, if an `allowedHosts` entry is not a bare host name,
+     *   that is not `{ remaining: <header name>, quota? }` with `quota` a positive
+     *   integer no smaller than `max`, if an `allowedHosts` entry is not a bare host name,
      *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
      *   once sanitised
      */

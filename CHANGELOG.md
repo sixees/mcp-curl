@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] - 2026-10-30
+
+### Notes
+
+- **Shipped in a MINOR release by decision**, as 5.2.0 was: the `**BREAKING:**`
+  change below goes out as 5.3.0 because mcp-curl has one consumer, who reported
+  both problems this release fixes. `LESSONS.md` RC-67.
+
+### Added
+
+- **`rateLimit.syncFromHeaders.quota`: the upstream's own limit.** The sync now
+  counts a host as having used at least `quota − remaining`, never more than
+  `max`. Set `quota` when `max` sits below the upstream's limit on purpose: with
+  `max: 200` under a 240/hour quota, "40 left" now stops the count at 200, where
+  5.2.0 read it as 160 used and spent the 40-request margin. Defaults to `max`,
+  which is the 5.2.0 behaviour. `configure()` throws on a `quota` that is not a
+  positive integer or is below `max`.
+
+### Changed
+
+- **BREAKING: a failed cURL request is an error result.** Any non-zero cURL exit
+  now sets `isError: true`, on both output shapes, and its notice reads
+  `[mcp-curl] cURL exited N: the request failed, and the response above may be
+  empty or incomplete`. 5.2.0 returned exit 7 (could not connect) with no flag and
+  an empty body, which read as an empty success. **To adjust:** an
+  `afterResponse` hook now sees `isError: true` for a failed request, so one that
+  filters with `!ctx.isError` no longer sees them, and one that counts failures
+  should look for them there.
+- **A failed request is still spotlighted.** With `enableSpotlighting` on, the
+  wrap skips spotlighting on error results, but not on a failed `curl_execute`
+  request: the origin chooses whether a transfer fails, so its body, header text
+  and verbose stderr stay inside the sentinels. Refusals, thrown errors and
+  custom-tool errors are unchanged.
+
 ## [5.2.0] - 2026-10-30
 
 ### Notes

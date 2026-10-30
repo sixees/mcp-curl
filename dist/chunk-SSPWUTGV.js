@@ -45,7 +45,7 @@ import {
   validateOutputDir,
   withTimeout,
   writeUniqueFile
-} from "./chunk-2H76KKK5.js";
+} from "./chunk-VKHLOMBQ.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -407,6 +407,10 @@ Files can only be read from:
 | 28 | Operation timeout |
 | 35 | SSL connect error |
 | 52 | Empty reply from server |
+
+Any non-zero exit returns a result with \`isError\` set and a notice naming the
+code. The request failed: an empty body there means no response arrived, not an
+empty one.
 `
       }]
     })
@@ -1036,7 +1040,8 @@ var McpCurlServer = class {
    * @returns this for chaining
    * @throws Error if called after start(), if `rateLimit` holds an unknown key, a
    *   `max` or `windowMs` that is not a positive integer, or a `syncFromHeaders`
-   *   that is not `{ remaining: <header name> }`, if an `allowedHosts` entry is not a bare host name,
+   *   that is not `{ remaining: <header name>, quota? }` with `quota` a positive
+   *   integer no smaller than `max`, if an `allowedHosts` entry is not a bare host name,
    *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
    *   once sanitised
    */

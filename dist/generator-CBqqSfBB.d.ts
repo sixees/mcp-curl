@@ -95,6 +95,7 @@ interface CurlExecuteResult {
         type: "text";
         text: string;
     }>;
+    /** Set on a non-zero cURL exit, a local refusal and a thrown error. */
     isError?: boolean;
 }
 /** Extra context passed to tool handler */
