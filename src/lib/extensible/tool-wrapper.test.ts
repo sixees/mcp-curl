@@ -56,6 +56,27 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
         expect(text).toMatch(/---EXTERNAL-CONTENT-END-[0-9a-f-]{36}---$/);
     });
 
+    // A failed request carries the origin's bytes, so it is spotlighted
+    // through the hook executor like any other result.
+    it("spotlights a failed request", async () => {
+        const { server: fakeServer, tools } = captureTools();
+        registerCurlToolWithHooks(fakeServer, {
+            executor: vi.fn().mockResolvedValue(
+                { content: [{ type: "text", text: '{"partial":true}' }], isError: true }
+            ) as never,
+            enabled: true,
+            config: { enableSpotlighting: true } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [() => undefined], onError: [] },
+        });
+
+        const result = (await tools.get("curl_execute")!.handler(makeParams(), { sessionId: undefined })) as {
+            content: { text: string }[];
+            isError?: boolean;
+        };
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-[0-9a-f-]{36}---/);
+    });
+
     it("does not wrap content when enableSpotlighting is false", async () => {
         const { server: fakeServer, tools } = captureTools();
 
@@ -85,34 +106,23 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
         expect(text).toBe("hello from api");
     });
 
-    it("does not wrap error results", async () => {
+    // The resolver's refusal is server text, marked so its first line stays
+    // readable; "spotlights a failed request" above is the unmarked control.
+    it("does not spotlight the resolver's own refusal", async () => {
         const { server: fakeServer, tools } = captureTools();
-
-        const mockExecutor = vi.fn().mockResolvedValue({
-            content: [{ type: "text", text: "Error: something went wrong" }],
-            isError: true,
-        });
-
         registerCurlToolWithHooks(fakeServer, {
-            executor: mockExecutor as never,
+            executor: vi.fn() as never,
             enabled: true,
-            config: { enableSpotlighting: true } as McpCurlConfig,
+            config: { baseUrl: "https://", enableSpotlighting: true } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        const result = await tools.get("curl_execute")!.handler({
-            url: "https://example.com",
-            follow_redirects: true,
-            insecure: false,
-            verbose: false,
-            include_headers: false,
-            compressed: true,
-            include_metadata: false,
-        }, { sessionId: undefined });
-
-        const text = (result as { content: { text: string }[] }).content[0].text;
-        expect(text).toBe("Error: something went wrong");
-        expect(text).not.toContain("<response");
+        const result = (await tools.get("curl_execute")!.handler({ url: "/users" }, { sessionId: undefined })) as {
+            content: { text: string }[];
+            isError?: boolean;
+        };
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).not.toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
     });
 
     it("non-text content parts are passed through unchanged (multi-part safe)", async () => {
@@ -312,13 +322,13 @@ describe("afterResponse hooks (registerCurlToolWithHooks integration)", () => {
         const entries = [
             { type: "text", text: "" },
             { type: "text", text: "HTTP/1.1 200 OK" },
-            { type: "text", text: "[mcp-curl] cURL exited with code 28" },
+            { type: "text", text: "[mcp-curl] cURL exited 28: the request failed, and the response above may be empty or incomplete" },
         ];
-        const { seen, result } = await runWith({ content: entries });
+        const { seen, result } = await runWith({ content: entries, isError: true });
 
         expect(seen).toHaveLength(1);
         expect(seen[0].response).toBe("");
-        expect(seen[0].isError).toBe(false);
+        expect(seen[0].isError).toBe(true);
         expect(seen[0].content).toEqual(entries);
         // A hook cannot change the result it observes.
         expect(Object.isFrozen(seen[0].content)).toBe(true);

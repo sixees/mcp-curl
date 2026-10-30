@@ -14,7 +14,7 @@ import {
 } from "../tools/jq-query.js";
 import { LIMITS, applyDefaultHeaders, JQ_QUERY_HOSTNAME_LABEL } from "../config/index.js";
 import { resolveRequestUrl, safeHostname } from "../utils/index.js";
-import { createWrapper } from "../response/post-processor.js";
+import { createWrapper, markServerAuthored } from "../response/post-processor.js";
 
 interface ConfigDefaultableParams {
     output_dir?: string;
@@ -90,7 +90,7 @@ export function registerCurlToolWithHooks(
         const resolved = resolveRequestUrl(config.baseUrl, params.url);
         if (!resolved.ok) {
             return wrap(
-                { content: [{ type: "text" as const, text: resolved.error }], isError: true },
+                markServerAuthored({ content: [{ type: "text" as const, text: resolved.error }], isError: true }),
                 safeHostname(params.url)
             );
         }

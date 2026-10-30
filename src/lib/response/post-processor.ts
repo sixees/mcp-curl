@@ -56,7 +56,9 @@
 //    enabled, a fresh `randomUUID()` is generated **per `wrap()` call** (one
 //    UUID for the whole call, shared by every text part of that result) so
 //    the begin/end sentinels match within a single response and a hostile
-//    upstream cannot recycle a leaked UUID across responses.
+//    upstream cannot recycle a leaked UUID across responses. A result
+//    `markServerAuthored` marked is the one exception: its text is this
+//    server's own, so it is not spotlighted.
 
 import { randomUUID } from "node:crypto";
 import { logWrapError } from "../security/wrap-error-logger.js";
@@ -79,12 +81,26 @@ import { defendForInline } from "./processor.js";
 // so the re-run takes the undivided strip arm across its fields.
 const WRAPPED = Symbol("mcp-curl.wrapped");
 
+// Set by `markServerAuthored` on a result whose every text part this server
+// wrote, such as a local refusal, so the wrap leaves it unspotlighted and its
+// first line readable. Everything else is spotlighted when the flag is on,
+// `isError` or not: the origin decides whether a transfer fails, so an
+// `isError`-keyed skip would let it switch the layer off for its own bytes by
+// stalling after the body. The mark only REMOVES spotlighting, so a result
+// that is rebuilt or copied loses it and is spotlighted: the safe direction.
+// One that is changed in place keeps it: the mark covers the object, not its
+// parts, and freezing the parts was declined because no path in this
+// repository mutates a marked result and the actor is the embedder's own code.
+// Module-private for the reason WRAPPED is.
+const SERVER_AUTHORED = Symbol("mcp-curl.server-authored");
+
 /**
  * Server-scope config bound once at wrapper creation.
  *
  * `enableSpotlighting` mirrors `McpCurlConfig.enableSpotlighting` — when
- * `true`, defended text parts are also wrapped in spotlighting sentinels;
- * when `false`/`undefined`, the defence pipeline still runs.
+ * `true`, defended text parts are also wrapped in spotlighting sentinels
+ * unless the result is marked by `markServerAuthored`; when
+ * `false`/`undefined`, the defence pipeline still runs.
  */
 export interface WrapperConfig {
     enableSpotlighting?: boolean;
@@ -120,7 +136,7 @@ export interface WrappableResult {
 }
 
 /**
- * Safe own-property probe for the WRAPPED tag.
+ * Safe own-property probe for a module-private tag — WRAPPED or SERVER_AUTHORED.
  *
  * `Object.hasOwn` triggers the target's `getOwnPropertyDescriptor` trap on a
  * Proxy. A hostile or buggy custom-tool author can return a Proxy whose trap
@@ -128,17 +144,15 @@ export interface WrappableResult {
  * documented fail-open contract — the wrap must never throw at the handler
  * boundary. Wrapping the probe in try/catch keeps the failure contained: an
  * un-probable result is treated as untagged, so the wrap pipeline runs
- * normally and the outer try/catch handles any subsequent failure.
+ * normally, a result whose server-authored mark cannot be read is spotlighted,
+ * and the outer try/catch handles any subsequent failure.
  *
- * Also reads the symbol value defensively — accessing `result[WRAPPED]` on a
+ * Also reads the symbol value defensively — accessing `result[key]` on a
  * Proxy invokes the `get` trap, which can also throw.
  */
-function hasOwnWrappedTag(result: object): boolean {
+function hasOwnTag(result: object, key: typeof WRAPPED | typeof SERVER_AUTHORED): boolean {
     try {
-        return (
-            Object.hasOwn(result, WRAPPED) &&
-            (result as { [WRAPPED]?: unknown })[WRAPPED] === true
-        );
+        return Object.hasOwn(result, key) && (result as Record<symbol, unknown>)[key] === true;
     } catch {
         return false;
     }
@@ -154,7 +168,7 @@ function hasOwnWrappedTag(result: object): boolean {
  * properties means the only way the tag is set is via `tag()` in this
  * module after the pipeline has run.
  *
- * The probe itself is wrapped in try/catch via `hasOwnWrappedTag` so a
+ * The probe itself is wrapped in try/catch via `hasOwnTag` so a
  * hostile Proxy with a throwing trap cannot break fail-open.
  *
  * Exported for tests; production callers should rely on the wrap's own
@@ -162,7 +176,18 @@ function hasOwnWrappedTag(result: object): boolean {
  */
 export function isWrappedResult(result: unknown): boolean {
     if (result === null || typeof result !== "object") return false;
-    return hasOwnWrappedTag(result);
+    return hasOwnTag(result, WRAPPED);
+}
+
+/**
+ * Mark `result` as written entirely by this server, so the wrap does not
+ * spotlight it. Call it only on a result built here from server text, never on
+ * one that carries a remote byte or an error message that might echo one.
+ * Non-enumerable, like the WRAPPED tag.
+ */
+export function markServerAuthored<T extends object>(result: T): T {
+    Object.defineProperty(result, SERVER_AUTHORED, { value: true, enumerable: false });
+    return result;
 }
 
 /**
@@ -179,7 +204,7 @@ export function isWrappedResult(result: unknown): boolean {
  * frozen and so always takes the tag. The re-run is the first real pass over
  * that content, never a second pass over defended text.
  *
- * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
+ * The own-tag probe is also routed through `hasOwnTag` so a hostile
  * Proxy whose `getOwnPropertyDescriptor` / `get` trap throws cannot break
  * the catch-fallback path that calls `tag(result)`.
  */
@@ -187,7 +212,7 @@ function tag<T extends object>(result: T): T {
     // Own-property check (not prototype-chain): same reasoning as
     // `isWrappedResult` — an inherited tag must not short-circuit a real
     // pipeline run on the descendant.
-    if (hasOwnWrappedTag(result)) return result;
+    if (hasOwnTag(result, WRAPPED)) return result;
     try {
         Object.defineProperty(result, WRAPPED, {
             value: true,
@@ -316,16 +341,12 @@ export function createWrapper(
             if (!Array.isArray(result.content)) return tag(result);
 
             // Per-message UUID: one UUID per wrap call, shared by every
-            // text part of this result. Generated only when spotlighting is
-            // enabled AND this is not an error result — error text is a
-            // status message about the call, not external content the LLM
-            // should treat as untrusted with sentinel boundaries. Sanitise +
-            // detect still run on errors below: a buggy or hostile custom
-            // tool / YAML handler / hook short-circuit could otherwise emit
-            // `{ isError: true, content: [{ text: <attacker bytes> }] }`
-            // and bypass the defence-in-depth pass entirely.
+            // text part of this result. Generated whenever spotlighting is
+            // enabled, unless the result is marked server-authored (see
+            // SERVER_AUTHORED). Sanitise + detect run on every result below,
+            // marked or not.
             const requestId =
-                config.enableSpotlighting && !result.isError ? randomUUID() : undefined;
+                config.enableSpotlighting && !hasOwnTag(result, SERVER_AUTHORED) ? randomUUID() : undefined;
 
             const newContent = result.content.map((part) =>
                 processTextPart(part, hostname, requestId)

@@ -204,6 +204,11 @@ Files can only be read from:
 | 28 | Operation timeout |
 | 35 | SSL connect error |
 | 52 | Empty reply from server |
+
+Any non-zero exit returns a result with \`isError\` set. Without
+\`include_metadata\` a notice names the code; with it, the JSON carries
+\`success: false\` and \`exit_code\` instead. The request failed: the body may be
+empty or incomplete, and an empty one is not an empty response from the server.
 `,
             }],
         })

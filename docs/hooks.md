@@ -33,7 +33,9 @@ type AfterResponseHook = (
 `content` holds every entry the tool returns. `curl_execute` adds the response
 header text and any `[mcp-curl]` notice as later entries, each only when it has
 text, so match an entry by its text rather than its position. A cURL failure
-can leave `response` empty with `isError` false; its notice is in `content`.
+(any non-zero exit) sets `isError`. Without `include_metadata`, `response` may
+be empty and the notice saying how it failed is in `content`; with it,
+`response` is the JSON envelope, whose `exit_code` says how it failed.
 
 ### onError
 

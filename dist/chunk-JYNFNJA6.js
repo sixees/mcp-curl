@@ -2025,7 +2025,8 @@ function applyServerRemaining(hostname, remaining) {
   } catch {
     return;
   }
-  const pad = hostLimit.max - remaining - log.total;
+  const used = (hostLimit.syncFromHeaders?.quota ?? hostLimit.max) - remaining;
+  const pad = Math.min(used, hostLimit.max) - log.total;
   if (pad <= 0) return;
   log.runs.push({ at: now, count: pad });
   log.total += pad;
@@ -2045,20 +2046,25 @@ function parseHostRateLimit(limit) {
   assertPositiveInteger("rateLimit.max", max);
   assertPositiveInteger("rateLimit.windowMs", windowMs);
   if (syncFromHeaders === void 0) return Object.freeze({ max, windowMs });
-  return Object.freeze({ max, windowMs, syncFromHeaders: parseSyncFromHeaders(syncFromHeaders) });
+  return Object.freeze({ max, windowMs, syncFromHeaders: parseSyncFromHeaders(syncFromHeaders, max) });
 }
-function parseSyncFromHeaders(value) {
+function parseSyncFromHeaders(value, max) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("rateLimit.syncFromHeaders must be an object { remaining }");
+    throw new Error("rateLimit.syncFromHeaders must be an object { remaining, quota? }");
   }
-  assertOnlyKeys("rateLimit.syncFromHeaders", value, ["remaining"]);
-  const { remaining } = value;
+  assertOnlyKeys("rateLimit.syncFromHeaders", value, ["remaining", "quota"]);
+  const { remaining, quota } = value;
   if (typeof remaining !== "string" || !WRITE_OUT_HEADER_NAME.test(remaining)) {
     throw new Error(
       "rateLimit.syncFromHeaders.remaining must be an HTTP header name (RFC 9110 token) without %"
     );
   }
-  return Object.freeze({ remaining });
+  if (quota === void 0) return Object.freeze({ remaining });
+  assertPositiveInteger("rateLimit.syncFromHeaders.quota", quota);
+  if (quota < max) {
+    throw new Error(`rateLimit.syncFromHeaders.quota must be at least rateLimit.max (${max}), got: ${quota}`);
+  }
+  return Object.freeze({ remaining, quota });
 }
 function installHostRateLimit(limit) {
   const parsed = parseHostRateLimit(limit);
@@ -2124,7 +2130,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "5.2.0" : "0.0.0"
+  VERSION: true ? "5.3.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -2629,10 +2635,9 @@ function applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyI
 }
 function plainBranchNotices(exitCode, headerInfo, bodyInfo) {
   return [
-    // A non-zero exit has no field to land in on this branch, so without
-    // this line a FAILED request is byte-identical to an empty successful
-    // one — the shape the reassurance below would otherwise make worse by
-    // naming the body sound.
+    // `isError` says the request failed; this line says how, and that the
+    // body beside it cannot be trusted. A model reads the text, and a flag
+    // with no sentence beside it explains nothing.
     //
     // **"above", because these notices are APPENDED.** `curl-execute.ts`
     // emits them as a content entry after the body so `content[0]` stays
@@ -2640,7 +2645,7 @@ function plainBranchNotices(exitCode, headerInfo, bodyInfo) {
     // function backwards. "below" points at nothing — worst on a truncated
     // body that still parses as JSON, the one case where the warning is all
     // that tells a reader not to trust it.
-    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}; the response above may be empty or incomplete` : null,
+    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}: the request failed, and the response above may be empty or incomplete` : null,
     // Two arms, because the pair is only sometimes statable. Where the
     // defence grew the text past the ceiling, how many origin octets
     // survived is genuinely unknown — so the fact of the cut is reported
@@ -2705,19 +2710,24 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo,
 // src/lib/response/post-processor.ts
 import { randomUUID as randomUUID3 } from "crypto";
 var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
-function hasOwnWrappedTag(result) {
+var SERVER_AUTHORED = /* @__PURE__ */ Symbol("mcp-curl.server-authored");
+function hasOwnTag(result, key) {
   try {
-    return Object.hasOwn(result, WRAPPED) && result[WRAPPED] === true;
+    return Object.hasOwn(result, key) && result[key] === true;
   } catch {
     return false;
   }
 }
 function isWrappedResult(result) {
   if (result === null || typeof result !== "object") return false;
-  return hasOwnWrappedTag(result);
+  return hasOwnTag(result, WRAPPED);
+}
+function markServerAuthored(result) {
+  Object.defineProperty(result, SERVER_AUTHORED, { value: true, enumerable: false });
+  return result;
 }
 function tag(result) {
-  if (hasOwnWrappedTag(result)) return result;
+  if (hasOwnTag(result, WRAPPED)) return result;
   try {
     Object.defineProperty(result, WRAPPED, {
       value: true,
@@ -2755,7 +2765,7 @@ function createWrapper(config) {
     if (isWrappedResult(result)) return result;
     try {
       if (!Array.isArray(result.content)) return tag(result);
-      const requestId = config.enableSpotlighting && !result.isError ? randomUUID3() : void 0;
+      const requestId = config.enableSpotlighting && !hasOwnTag(result, SERVER_AUTHORED) ? randomUUID3() : void 0;
       const newContent = result.content.map(
         (part) => processTextPart(part, hostname, requestId)
       );
@@ -3298,16 +3308,22 @@ async function executeCurlRequest(params, extra = {}) {
         },
         ...headerPart === void 0 ? [] : [{ type: "text", text: headerPart }],
         ...noticePart === void 0 ? [] : [{ type: "text", text: noticePart }]
-      ]
+      ],
+      ...result.exitCode !== 0 && { isError: true }
     };
   } catch (error) {
     const hostname = safeHostname(params.url);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";
     const code = error instanceof LocalRefusalError ? ` ${error.code}` : "";
     console.error(`curl_execute error: [${hostname}] ${errorClass}${code}`);
-    const text = error instanceof LocalRefusalError ? error.message : `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`;
+    if (error instanceof LocalRefusalError) {
+      return markServerAuthored({ content: [{ type: "text", text: error.message }], isError: true });
+    }
     return {
-      content: [{ type: "text", text }],
+      content: [{
+        type: "text",
+        text: `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`
+      }],
       isError: true
     };
   }
@@ -3368,6 +3384,7 @@ export {
   applyJqFilter,
   writeUniqueFile,
   defendText,
+  markServerAuthored,
   createWrapper,
   CURL_EXECUTE_TOOL_META,
   executeCurlRequest
