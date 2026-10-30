@@ -45,7 +45,7 @@ import {
   validateOutputDir,
   withTimeout,
   writeUniqueFile
-} from "./chunk-7K6IZG6A.js";
+} from "./chunk-OSBDQN73.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -234,7 +234,7 @@ Execute HTTP requests with structured, validated parameters.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | url | string | Yes | - | The URL to request |
-| method | string | No | GET | HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) |
+| method | string | No | GET, or POST with data or form | HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) |
 | headers | object | No | - | HTTP headers as key-value pairs |
 | data | string | No | - | Request body data |
 | form | object | No | - | Form data as key-value pairs |
@@ -376,17 +376,23 @@ Files can only be read from:
 - Path traversal (\`..\`) blocked
 - jq_query restricted to temp dir, MCP_CURL_OUTPUT_DIR, and cwd
 
-### Response Sanitisation (text content only)
-- Unicode attack chars stripped: bidi overrides, zero-width family, "Sneaky Bits"
-  Variation Selector Supplement (U+E0100\u2013U+E01EF), Braille blank, Arabic letter
-  mark, Mongolian invisibles, Hangul fillers, Tags block, BOM, and more
-- Visual-space-padding runs (50+ tabs / NBSP / em-spaces / IDEOGRAPHIC SPACE)
-  collapsed to a single space; newline runs (20+) collapsed to a single newline
-- HTML / XHTML / SVG / *+xml: \`<script>\` and \`<style>\` blocks removed
-  (ReDoS-hardened, numeric-entity decode, 256 KB cap)
-- Markdown: image beacons and external links replaced with \`[image removed]\`
-  / \`[link removed]\`; dangerous-scheme URLs (\`javascript:\`, \`vbscript:\`,
-  \`file:\`, \`data:\`) blocked in both links and images
+### Response Sanitisation
+- A response body that parses as JSON is returned exactly as the origin sent it:
+  injection phrases are detected and logged for the operator, and nothing in the
+  document is stripped or rewritten, because the payload is the caller's data
+- A non-JSON response body is never returned inline; it is saved to a file
+- Every other text part \u2014 response headers, verbose stderr, server messages \u2014 is
+  defended before it is returned:
+  - Unicode attack chars stripped: bidi overrides, zero-width family, "Sneaky Bits"
+    Variation Selector Supplement (U+E0100\u2013U+E01EF), Braille blank, Arabic letter
+    mark, Mongolian invisibles, Hangul fillers, Tags block, BOM, and more
+  - Visual-space-padding runs (50+ tabs / NBSP / em-spaces / IDEOGRAPHIC SPACE)
+    collapsed to a single space; newline runs (20+) collapsed to a single newline
+  - Markup comments and \`<script>\` / \`<style>\` blocks removed (ReDoS-hardened,
+    256 KB cap); numeric HTML entities are not decoded
+  - Markdown image beacons and external links replaced with \`[image removed]\`
+    / \`[link removed]\`; dangerous-scheme URLs (\`javascript:\`, \`vbscript:\`,
+    \`file:\`, \`data:\`) blocked in both links and images
 
 ## Common Exit Codes
 

@@ -10,7 +10,7 @@ import {
   resolveBaseUrl,
   safeHostname,
   sanitizeDescription
-} from "./chunk-7K6IZG6A.js";
+} from "./chunk-OSBDQN73.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
