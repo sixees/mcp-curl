@@ -1403,8 +1403,9 @@ describe("generateToolDefinitions", () => {
 // builds a wrap closure with the GeneratorConfig.enableSpotlighting flag and
 // runs every executeCurlRequest result through it: the full defendText
 // pipeline on non-JSON text, detection alone on a JSON document (returned
-// unchanged), and spotlighting only when the flag is set and never on an
-// error result. The mocked executor lets us exercise the wrap in isolation
+// unchanged), and spotlighting whenever the flag is set, error results
+// included, because the origin decides whether a transfer fails. The mocked
+// executor lets us exercise the wrap in isolation
 // from the real cURL pipeline, which runs its own defence pass in
 // processor.ts; the wrap is the chokepoint for a result that did not come
 // through it.

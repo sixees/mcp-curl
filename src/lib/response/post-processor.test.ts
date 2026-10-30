@@ -555,7 +555,7 @@ describe("createWrapper — hostile Proxy probe (PR #29 round-4 hardening)", () 
 
     it("wrap does not throw when the get trap on the WRAPPED symbol throws", () => {
         // hasOwn returns true (the trap allows it), but reading the value
-        // throws. The defensive read inside hasOwnWrappedTag must contain it.
+        // throws. The defensive read inside hasOwnTag must contain it.
         const wrap = createWrapper({});
         const target: Record<string | symbol, unknown> = {
             content: [{ type: "text", text: "x" }],

@@ -517,7 +517,8 @@ export async function executeCurlRequest(
             : undefined;
         // **A non-zero exit is an error, whatever the body holds.** Exit 7 leaves
         // the body empty, and an empty body under no flag reads as an empty
-        // success; the notice alone was a sentence for the model to overlook.
+        // success; a notice alone is a sentence a model can overlook, where
+        // `isError` is what a client acts on.
         // Never marked server-authored: the body, header text and stderr are
         // the origin's, so the wrap spotlights them, error or not.
         return {

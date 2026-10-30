@@ -34,8 +34,9 @@ export interface HostRateLimit {
      * Tighten the per-host count from the upstream's own figure. `remaining`
      * names a response header carrying the requests the upstream will still
      * admit in its window; after each response, the host that answered is
-     * counted as having used at least `quota − remaining`. It only ever tightens,
-     * and an absent, empty or malformed value changes nothing.
+     * counted as having used at least `quota − remaining`, capped at `max`. It
+     * only ever tightens, and an absent, empty or malformed value changes
+     * nothing.
      *
      * `quota` is the upstream's own limit for the window, and defaults to
      * `max`. Set it when `max` sits below the upstream's limit on purpose: the

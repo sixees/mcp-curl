@@ -416,10 +416,9 @@ describe("curl_execute include_headers — no header block arrived", () => {
 describe("curl_execute include_headers — degraded results stay honest", () => {
     beforeEach(() => vi.clearAllMocks());
 
-    // The plain branch carries no JSON fields, so a failed request and an empty
-    // successful one were the same bytes — and the notice then asserted the
-    // empty body was intact. `undetermined` answers "did headers arrive"; it
-    // cannot answer "is the body sound", and only `exitCode` can.
+    // `undetermined` answers "did headers arrive"; it cannot answer "is the body
+    // sound", and only `exitCode` can — so the reassurance must not sit beside a
+    // failed request's empty body.
     it("does not call the body unaffected when cURL failed", async () => {
         mockedExecuteCommand.mockResolvedValue({
             stdoutBytes: Buffer.alloc(0),
@@ -814,23 +813,14 @@ describe("curl_execute include_headers — remaining channels", () => {
 
 
 // -----------------------------------------------------------------------------
-// The DEFENDED tag, tested here because this file already owns the only harness
-// that drives `executeCurlRequest` end to end. A second file would be a near-copy
-// of these three mocks, and the copy is where one of them drifts.
-//
-// `processResponse` defends the body under the Content-Type the origin declared.
-// The wrap downstream cannot see that Content-Type, so its only honest posture
-// for unknown text is the strictest grammar — and applying that to an
-// already-defended body would rewrite markdown syntax out of `text/plain` and
-// `text/html` responses that `processResponse` deliberately left alone. Worse,
-// it would do so only when `include_metadata` is false: with it true the body is
-// nested inside a JSON envelope that the strictest grammar excludes, so the same
-// bytes would get two different defences chosen by an output-format flag.
+// What `executeCurlRequest` returns, asserted through these mocks: the error
+// flag on a failed transfer and what the wrap then does with it, a body's
+// treatment under both output shapes, and the `--resolve` pin.
 // -----------------------------------------------------------------------------
 
-// The consumer's report: exit 7 came back with no error flag and an empty
-// body, which a model reads as an empty success. `isError` is what a client
-// acts on; the notice says how the request failed.
+// Exit 7 leaves the body empty, and with no error flag an empty body reads
+// to a model as an empty success. `isError` is what a client acts on; the
+// notice says how the request failed.
 describe("curl_execute — a failed request is an error", () => {
     beforeEach(() => vi.clearAllMocks());
 
@@ -907,9 +897,7 @@ describe("curl_execute — both output shapes get the same defence", () => {
 
             // Same assertion on both branches, which is the point of the loop:
             // the treatment a body gets must not depend on how the caller asked
-            // for the output to be shaped. Before RC-10 it did — with
-            // include_metadata true the body sat inside a JSON envelope that the
-            // exemption protected, and with it false it did not.
+            // for the output to be shaped (`LESSONS.md` RC-10).
             //
             // `text/plain` is non-JSON, so it is saved rather than inlined on
             // BOTH shapes, and the artefact is the octets the origin sent.

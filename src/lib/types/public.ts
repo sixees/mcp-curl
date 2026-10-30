@@ -111,7 +111,9 @@ export interface McpCurlConfig {
      *   4. **Re-sanitise and re-detect** the stripped text, so a phrase the
      *      strip stage joined still reaches the `[injection-defense]` log.
      *   5. **Spotlight** the defended text (only when this flag is `true`)
-     *      using a fresh per-message UUID.
+     *      using a fresh per-message UUID — on every result except one this
+     *      server wrote entirely itself, such as a local refusal
+     *      (`docs/architecture/architecture.md` → *Spotlighting*).
      *
      * Steps 1-4 run regardless of this flag — only step 5
      * (spotlighting sentinels) is gated — except above `STRIP_PATH_MAX_BYTES`

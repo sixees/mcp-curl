@@ -98,8 +98,9 @@ const SERVER_AUTHORED = Symbol("mcp-curl.server-authored");
  * Server-scope config bound once at wrapper creation.
  *
  * `enableSpotlighting` mirrors `McpCurlConfig.enableSpotlighting` — when
- * `true`, defended text parts are also wrapped in spotlighting sentinels;
- * when `false`/`undefined`, the defence pipeline still runs.
+ * `true`, defended text parts are also wrapped in spotlighting sentinels
+ * unless the result is marked by `markServerAuthored`; when
+ * `false`/`undefined`, the defence pipeline still runs.
  */
 export interface WrapperConfig {
     enableSpotlighting?: boolean;
@@ -135,7 +136,7 @@ export interface WrappableResult {
 }
 
 /**
- * Safe own-property probe for the WRAPPED tag.
+ * Safe own-property probe for a module-private tag — WRAPPED or SERVER_AUTHORED.
  *
  * `Object.hasOwn` triggers the target's `getOwnPropertyDescriptor` trap on a
  * Proxy. A hostile or buggy custom-tool author can return a Proxy whose trap
@@ -143,7 +144,8 @@ export interface WrappableResult {
  * documented fail-open contract — the wrap must never throw at the handler
  * boundary. Wrapping the probe in try/catch keeps the failure contained: an
  * un-probable result is treated as untagged, so the wrap pipeline runs
- * normally and the outer try/catch handles any subsequent failure.
+ * normally, a result whose server-authored mark cannot be read is spotlighted,
+ * and the outer try/catch handles any subsequent failure.
  *
  * Also reads the symbol value defensively — accessing `result[key]` on a
  * Proxy invokes the `get` trap, which can also throw.

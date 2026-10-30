@@ -296,7 +296,8 @@ export function hostRateLimitSyncHeader(): string | undefined {
  * an operator set `max` below the quota to keep.
  *
  * **Tighten only.** It appends one run stamped now and never removes one, so
- * a figure above the local remaining changes nothing, and the pad expires at
+ * a figure that puts `quota − remaining` at or below the local count changes
+ * nothing, and the pad expires at
  * `windowMs` like any admission. The pad counts at most `max − total`, so a
  * log never counts more than `max` whatever the remote sends. It is one run
  * whatever its count, so a host's storage follows responses rather than
@@ -366,8 +367,9 @@ export function parseHostRateLimit(limit: unknown): Readonly<HostRateLimit> {
  * fails `configure()` rather than a request.
  *
  * A `quota` below `max` is refused: it would count less than `max − remaining`
- * as used, so the sync would loosen the limit the operator set rather than
- * keep a margin under the upstream's.
+ * as used, so even an upstream reporting none left could not fill the window,
+ * and the gate would go on admitting `max − quota` requests the upstream
+ * refuses — the opposite of the margin `quota` exists to keep.
  */
 function parseSyncFromHeaders(
     value: unknown,

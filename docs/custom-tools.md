@@ -298,8 +298,10 @@ part the wrap runs:
    match.
 2. If `config.enableSpotlighting === true`, the defended text is wrapped in a
    per-message UUID-keyed sentinel envelope. Your tool's error results are
-   wrapped too; only this server's own refusals and errors are not
-   ([architecture → Spotlighting](./architecture/architecture.md)).
+   wrapped too, and so are most of this server's own errors; only the few
+   results this server marks as its own text are not, so that their first
+   line stays readable ([architecture → Spotlighting](./architecture/architecture.md)
+   lists them).
 
 > **This changed in 3.4.0.** Before that release the wrap ran
 > `sanitizeAndDetect` alone, so a custom-tool handler returning remote markdown

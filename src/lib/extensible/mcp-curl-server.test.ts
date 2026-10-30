@@ -1141,9 +1141,9 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         });
     });
 
-    // Todo 028's acceptance case. The handler rebuilds a failed request's
-    // body into a new error result, as `docs/custom-tools.md` shows, so the
-    // text is the origin's and must stay inside the sentinels.
+    // The handler rebuilds a failed request's body into a new error result,
+    // as `docs/custom-tools.md` shows, so the text is the origin's and must
+    // stay inside the sentinels: a rebuilt result carries no mark.
     it("spotlights a custom tool's error result, such as a rebuilt failed request", async () => {
         const wrapped = await startWithCustomTool(
             "err",

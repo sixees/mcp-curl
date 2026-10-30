@@ -321,7 +321,9 @@ runs these steps in fixed order on each text part:
    decoded on its own, and is never rewritten.
 2. **Defend** every other part with the full `defendText` pipeline: sanitise
    Unicode attack chars and collapse whitespace runs, strip markup comments,
-   `<script>`/`<style>` blocks and markdown beacons, then detect again.
+   `<script>`/`<style>` blocks and markdown beacons, then detect again. A
+   part above 256 KB (`STRIP_PATH_MAX_BYTES`) is sanitised and detected only;
+   the strip stages do not run on it.
 3. **Spotlight** the text using a per-message UUID — only when this flag is
    `true`, and on every result except this server's own refusals and errors
    ([architecture → Spotlighting](./architecture/architecture.md)).
@@ -372,7 +374,8 @@ configure({rateLimit: {max: 200, windowMs: 3_600_000}}) // 200 per rolling hour
 - **Header sync.** `syncFromHeaders: { remaining: "<header name>", quota? }`
   names a response header carrying the requests the upstream will still admit
   in its window. After each response, including each redirect hop, the host
-  that answered is counted as having used at least `quota − remaining`. It only
+  that answered is counted as having used at least `quota − remaining`, never
+  more than `max`. It only
   ever tightens the count, and an absent, empty or malformed value changes
   nothing. The name must be an HTTP field name without `%`.
 - **`quota` keeps your headroom.** It is the upstream's own limit for the
