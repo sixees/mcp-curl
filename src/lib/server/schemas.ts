@@ -90,8 +90,8 @@ export const CurlExecuteSchema = z.object({
             "states are reported beside the text, never inside it: headers_truncated " +
             "(the text was cut), headers_undetermined (requested, but the origin sent no " +
             "header block), and headers_unsupported (this host cannot capture headers at " +
-            "all — a fact about the host, not about the origin). Capture requires macOS, " +
-            "so every other host reports headers_unsupported. After followed redirects, " +
+            "all, because capture requires macOS — a fact about the host, not about the " +
+            "origin). After followed redirects, " +
             "these are the final hop's headers only. Header text is returned verbatim, and " +
             "routinely carries credential material such as Set-Cookie"
         ),

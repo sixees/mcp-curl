@@ -18,6 +18,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat } from "fs/promises";
 import { join, basename, dirname, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 import { LIMITS } from "../config/limits.js";
+import { cleanupTempDir } from "../files/index.js";
 import { createSafeFilenameBase, saveResponseToFile, writeUniqueFile } from "./file-saver.js";
 
 // Under cwd, not `tmpdir()`: on macOS the OS temp root resolves under
@@ -144,6 +145,22 @@ describe("saveResponseToFile — two saves never resolve to one path", () => {
         expect(a).not.toBe(b);
         expect((await readFile(a)).toString()).toBe("batch body");
         expect((await readFile(b)).toString()).toBe("projects body");
+    });
+});
+
+describe("saveResponseToFile — shutdown cleanup reaches only the server's temp directory", () => {
+    // The curl_execute description promises exactly this split. Both sides are
+    // asserted: a cleanup that also reached output_dir would delete files the
+    // caller chose to keep, and one that reached neither would leave the temp
+    // promise false.
+    it("keeps a file saved to output_dir and deletes one saved to the temp directory", async () => {
+        const kept = await saveResponseToFile(Buffer.from("kept"), "https://api.example.test/kept", dir);
+        const temp = await saveResponseToFile(Buffer.from("temp"), "https://api.example.test/temp");
+
+        await cleanupTempDir();
+
+        expect((await readFile(kept)).toString()).toBe("kept");
+        await expect(stat(temp)).rejects.toMatchObject({ code: "ENOENT" });
     });
 });
 

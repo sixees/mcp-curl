@@ -785,7 +785,7 @@ var CurlExecuteSchema = z2.object({
   bearer_token: z2.string().optional().describe("Bearer token for Authorization header"),
   verbose: z2.boolean().default(false).describe("Include verbose output with request/response details"),
   include_headers: z2.boolean().default(false).describe(
-    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as their OWN content entry after the body, so the body entry stays parseable on its own \u2014 never split content[0]. That entry is present only when headers were actually captured: where none were (see headers_undetermined and headers_unsupported below) it is omitted entirely, and a server notice may then occupy content[1]. Match on the entry's content rather than trusting its index. Capped at the smaller of 64KB and max_result_size. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all \u2014 a fact about the host, not about the origin). Capture requires macOS, so every other host reports headers_unsupported. After followed redirects, these are the final hop's headers only. Header text is returned verbatim, and routinely carries credential material such as Set-Cookie"
+    "Report response headers. They never enter the saved file or the jq_filter input, which is what makes this safe to combine with save_to_file and jq_filter. With include_metadata they arrive under a separate 'headers' key; without it they arrive as their OWN content entry after the body, so the body entry stays parseable on its own \u2014 never split content[0]. That entry is present only when headers were actually captured: where none were (see headers_undetermined and headers_unsupported below) it is omitted entirely, and a server notice may then occupy content[1]. Match on the entry's content rather than trusting its index. Capped at the smaller of 64KB and max_result_size. Three out-of-band states are reported beside the text, never inside it: headers_truncated (the text was cut), headers_undetermined (requested, but the origin sent no header block), and headers_unsupported (this host cannot capture headers at all, because capture requires macOS \u2014 a fact about the host, not about the origin). After followed redirects, these are the final hop's headers only. Header text is returned verbatim, and routinely carries credential material such as Set-Cookie"
   ),
   compressed: z2.boolean().default(true).describe("Request compressed response and automatically decompress"),
   include_metadata: z2.boolean().default(false).describe("Wrap response in JSON with metadata (exit code, success status)"),
@@ -3080,18 +3080,11 @@ Examples:
   - Extract fields: { "url": "https://api.example.com/user", "jq_filter": ".name,.email,.id" }
 
 Error Handling:
-  - Returns error message if cURL fails or times out
-  - Exit code 0 indicates success
-  - Non-zero exit codes indicate various cURL errors
   - A jq_filter on a body that is not JSON is not applied and is not an error: the body
     is saved and reported like any other non-JSON body
 
-Temp File Lifecycle:
-  Files saved with save_to_file or auto-save are:
-  - Stored in a secure temp directory (owner-only access: 0o700/0o600)
-  - Deleted on graceful server shutdown (SIGINT/SIGTERM)
-  - Orphaned files from crashed sessions are cleaned on next server start
-  - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash
+Saved files: those in the server's temp directory are deleted when the server stops;
+those written to output_dir or MCP_CURL_OUTPUT_DIR are kept.
 
 mcp-curl v${SERVER.VERSION}`,
   inputSchema: CurlExecuteSchema,

@@ -2,7 +2,7 @@
 // The curl_execute executor and its tool metadata; registration is extensible/tool-wrapper.ts::registerCurlToolWithHooks
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
-import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, type HostPolicy } from "../config/index.js";
+import { LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, type HostPolicy } from "../config/index.js";
 import { generateMetadataSeparator, type MetadataBlock, type UrlValidationResult } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits, hostRateLimitSyncHeader, applyServerRemaining } from "../security/index.js";
@@ -108,18 +108,11 @@ Examples:
   - Extract fields: { "url": "https://api.example.com/user", "jq_filter": ".name,.email,.id" }
 
 Error Handling:
-  - Returns error message if cURL fails or times out
-  - Exit code 0 indicates success
-  - Non-zero exit codes indicate various cURL errors
   - A jq_filter on a body that is not JSON is not applied and is not an error: the body
     is saved and reported like any other non-JSON body
 
-Temp File Lifecycle:
-  Files saved with save_to_file or auto-save are:
-  - Stored in a secure temp directory (owner-only access: 0o700/0o600)
-  - Deleted on graceful server shutdown (SIGINT/SIGTERM)
-  - Orphaned files from crashed sessions are cleaned on next server start
-  - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash
+Saved files: those in the server's temp directory are deleted when the server stops;
+those written to output_dir or MCP_CURL_OUTPUT_DIR are kept.
 
 mcp-curl v${SERVER.VERSION}`,
     inputSchema: CurlExecuteSchema,

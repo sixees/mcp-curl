@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 effort: s
 tags: [code-review, tool-description, file-saver, temp-files, retention, docs]
 dependencies: []
@@ -42,13 +42,13 @@ Say which location the cleanup covers, matching `documentation.ts`.
 
 ## Recommended Action
 
-_To be decided at triage._
+Option 1, chosen by the operator on 2026-10-30 ("Can you fix todo 027 now?").
 
 ## Acceptance Criteria
 
-- [ ] The description makes no unconditional deletion claim.
-- [ ] The pins in `register-all-tools.test.ts` and `tool-wrapper.e2e.test.ts` still pass.
-- [ ] Optional: a test that saves with `output_dir` set, calls `cleanupTempDir()`, and asserts the file still exists.
+- [x] The description makes no unconditional deletion claim.
+- [x] The pins in `register-all-tools.test.ts` and `tool-wrapper.e2e.test.ts` still pass.
+- [x] Optional: a test that saves with `output_dir` set, calls `cleanupTempDir()`, and asserts the file still exists.
 
 ## Work Log
 
@@ -56,3 +56,8 @@ _To be decided at triage._
 **By:** Claude Code
 **Actions:** merged data-integrity-guardian's `unretained-pii` (P3) and code-simplicity-reviewer's `dead-code` (P3) on the description symbol.
 **Learnings:** the plan's keep-list ("the Temp File Lifecycle") carried text forward whose truth nobody re-checked.
+
+### 2026-10-30 - Resolved on docs/release-5.2.0
+**By:** Claude Code
+**Actions:** `src/lib/tools/curl-execute.ts::CURL_EXECUTE_TOOL_META`: the *Temp File Lifecycle* block is replaced by one sentence scoping deletion to the server's temp directory and saying `output_dir`/`MCP_CURL_OUTPUT_DIR` files are kept; *Error Handling* is cut to its pinned `jq_filter` bullet; the unused `TEMP_DIR` import is dropped. `src/lib/server/schemas.ts::CurlExecuteSchema`: the macOS fact is folded into the `headers_unsupported` clause, so it is stated once. New test in `src/lib/response/file-saver.test.ts` saves one file to `output_dir` and one to the temp directory, calls `cleanupTempDir()`, and asserts the first survives and the second is gone; it fails with the `rm` in `cleanupTempDir` removed (measured, then restored from a `cp` backup). `dist/` rebuilt.
+**Learnings:** —

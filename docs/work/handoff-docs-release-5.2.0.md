@@ -1,5 +1,5 @@
 # Work Handoff: 5.2.0 release — description trim, docs, CHANGELOG, version
-**Date:** 2026-10-29 | **Branch:** docs/release-5.2.0 | **Plan:** docs/plans/2026-10-27-feat-host-policy-redirect-hops-plan.md | **Status:** complete — all five tasks landed. The Surface 2 review filed four todos; the operator had 025 and 026 fixed on this branch, and 024 and 027 stay open.
+**Date:** 2026-10-29 | **Branch:** docs/release-5.2.0 | **Plan:** docs/plans/2026-10-27-feat-host-policy-redirect-hops-plan.md | **Status:** complete — all five tasks landed. The Surface 2 review filed four todos; the operator had 025, 026 and 027 fixed on this branch, and had 024 deleted (single consumer: the operator).
 **Plan slice:** PR-5 (tasks 17, 18, 19, 20, 21)
 
 ## Summary
@@ -44,7 +44,7 @@ The `curl_execute` description lost the text the input schema already carries. T
   - *Fixed*: todo 007.
   - There is no `### BREAKING` heading.
 - **Task 20:** two RCs are staged, unnumbered, in `docs/work/RC/`. The operator approved both on 2026-10-29. They are not committed (see *Known issues*).
-- **Task 21:** `package.json` and `package-lock.json` are at 5.2.0, and `dist/` is rebuilt; `SERVER.VERSION` is `"5.2.0"` in `dist/chunk-CVSUWVOF.js`. The operator approved the rebuild. Their earlier uncommitted `dist/` is backed up in the session scratchpad. There is no tag; the tag follows the merge.
+- **Task 21:** `package.json` and `package-lock.json` are at 5.2.0, and `dist/` is rebuilt; `SERVER.VERSION` is `"5.2.0"` in `dist/chunk-7K6IZG6A.js` (the chunk name changes on every rebuild). The operator approved the rebuild. Their earlier uncommitted `dist/` is backed up in the session scratchpad. There is no tag; the tag follows the merge.
 
 ## Key decisions
 
@@ -68,7 +68,7 @@ The `curl_execute` description lost the text the input schema already carries. T
 
 ## Known issues and limitations
 
-- Todos 024 and 027 are open from the Surface 2 review (below). 025 and 026 were fixed in `1d846a1`, after the review ran, so no review pass has read that commit (K-16). Surface 3 is the next reader.
+- No todo from the Surface 2 review is open. 025 and 026 were fixed in `1d846a1` and 027 on 2026-10-30, all after the review ran, so no review pass has read those commits (K-16). Surface 3 is the next reader.
 - **The two staged RCs are untracked**, in `docs/work/RC/`. They reach the ledger only when `/sixees-workflow:file-lessons --flush` runs, ideally before the merge. Todo 024's first option is exactly that flush.
 - The plan's statement that a test pins RC-63's sentence order in the description was false. Only `processor.ts` carries the order. This is a plan error and gets no RC.
 - `CHANGELOG.md`'s date is 2026-10-29, the day of writing. If the merge lands later, adjust it.
@@ -111,15 +111,14 @@ Every commit was made with `git -c core.hooksPath=/dev/null`; no hooks are confi
 ## Follow-up work
 
 - [ ] Flush the staged RCs (`/sixees-workflow:file-lessons --flush`) before the merge.
-- [ ] Decide todos 024 and 027.
+- [x] Decide todos 024 and 027: 024 deleted, 027 fixed (2026-10-30).
 - [ ] After the merge: a signed, annotated tag `5.2.0` (bare number), on the operator's say.
 
 ### Outstanding Todos
 
 | File | Priority | Description | Source |
 |---|---|---|---|
-| docs/todos/024-p2-minor-override-of-invariant-11-recorded-only-in-changelog.md | P2 | Invariant 11 still reads as absolute | architecture-strategist |
-| docs/todos/027-p3-description-temp-file-lifecycle-promises-deletion-it-does-not-do.md | P3 | Description promises deletion `output_dir` does not get | data-integrity, simplicity |
+| — | — | None open from this branch | — |
 
 ### Resolved Todos
 
@@ -127,6 +126,8 @@ Every commit was made with `git -c core.hooksPath=/dev/null`; no hooks are confi
 |---|---|---|---|---|
 | 025 | Redirect and refusal facts restated by hand have drifted | Option 1: drifted copies corrected; the documentation resource defers to the schema | Claude Code, operator-authorised | 2026-10-29 |
 | 026 | Host-policy docblocks say redirect hops are not checked | Three docblocks reworded; `dist/` rebuilt | Claude Code, operator-authorised | 2026-10-29 |
+| 027 | Description promises deletion `output_dir` does not get | Option 1: lifecycle block cut to one scoped sentence, *Error Handling* to its pinned bullet, `headers_unsupported` stated once; cleanup test added; `dist/` rebuilt | Claude Code, operator-authorised | 2026-10-30 |
+| 024 | MINOR override of invariant 11 recorded only in the CHANGELOG | Deleted by the operator on 2026-10-30: "we are not doing a major bump - there is only one consumer / user of the project, and it is me." The staged RC `docs/work/RC/invariant-11-single-consumer-minor.md` remains the record | Operator | 2026-10-30 |
 
 Todo 007, which this release's CHANGELOG lists as fixed, was closed by PR-3.
 
