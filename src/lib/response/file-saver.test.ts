@@ -193,10 +193,10 @@ describe("writeUniqueFile — the sink owns the guarantees", () => {
 
     it("sanitises the name base itself, so a traversal cannot escape the directory", async () => {
         // The suffix does not neutralise a leading `../`: without sanitising at
-        // the sink, this call writes `/tmp/authorized_keys_<ms>_<hex>.txt`,
-        // outside the validated root, at 0o600, with caller-chosen bytes. The
-        // guarantee belongs here rather than in a precondition every future save
-        // site has to remember.
+        // the sink, this call writes `authorized_keys_<ms>_<hex>.txt` into a
+        // `tmp/` four directories above the fixture, outside the validated root,
+        // at 0o600, with caller-chosen bytes. The guarantee belongs here rather
+        // than in a precondition every future save site has to remember.
         const written = await writeUniqueFile(Buffer.from("x"), dir, "../../../../tmp/authorized_keys");
 
         expect(dirname(written)).toBe(dir);

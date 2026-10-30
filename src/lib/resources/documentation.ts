@@ -145,7 +145,7 @@ Files can only be read from:
 \`\`\`json
 {
   "filepath": "/path/to/saved_response.txt",
-  "jq_filter": ".users[0:5].name"
+  "jq_filter": ".users[0:5]"
 }
 \`\`\`
 

@@ -76,7 +76,8 @@ Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/use
   URL the SSRF check validates is not the value cURL is handed. This applies to
   `curl_execute`'s `url` and to
   `executeRequest`'s `url` and `path` alike, and the refusal is an error result that
-  states the rule.
+  states the rule. `executeRequest`'s `path` is the one exception to the leading
+  `/`: one is added where it is missing, so `users` reaches `<baseUrl>/users`.
 - A relative value must not contain a `.` or `..` path segment, literal or
   `%2e`-encoded: the URL parser and cURL both resolve one, so `/users/..` would
   request the parent of `/users/`. Only whole segments of the path count; a dot in

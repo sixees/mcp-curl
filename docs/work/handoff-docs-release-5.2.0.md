@@ -21,11 +21,11 @@ The `curl_execute` description lost the text the input schema already carries. T
     - the response-contract paragraphs;
     - *Returns*;
     - *Error Handling*, which carries a pinned phrase;
-    - *Temp File Lifecycle*;
+    - *Temp File Lifecycle*, since replaced by one sentence on which saved files are deleted and which are kept (todo 027);
     - the version line.
-  - Size went from 6696 to 2633 bytes and from 111 to 52 lines. I measured this from the imported object with a temporary vitest file, deleted afterwards.
+  - At this task the size went from 6696 to 2633 bytes and from 111 to 52 lines. I measured this from the imported object with a temporary vitest file, deleted afterwards. Todo 027 and the review rounds have changed the text since.
   - `src/lib/server/schemas.ts::CurlExecuteSchema`:
-    - `include_headers` now says capture needs macOS, gives the cap as `min(64KB, max_result_size)` (it said "64KB" before), says redirects leave only the final hop's headers, and says header text carries credentials verbatim.
+    - `include_headers` now says capture needs macOS, gives the cap as `min(64KB, max_result_size)` (it said "64KB" before), says redirects leave only the final hop's headers, and says header text is sanitised like other non-body text but not redacted, so it routinely carries credential material.
     - `follow_redirects` and `max_redirects` state the per-hop gate, the method rewrite, the cross-origin header rule and the cap as a refusal.
   - `src/lib/resources/documentation.ts`: the parameter table gained a `max_redirects` row and new redirect and header text. It also stopped saying headers are "prefixed to the returned text".
 - **Task 18: docs.**
@@ -43,7 +43,7 @@ The `curl_execute` description lost the text the input schema already carries. T
   - *Changed*: seven `**BREAKING:**` bullets, each with "To adjust:", plus the description trim.
   - *Fixed*: todo 007.
   - There is no `### BREAKING` heading.
-- **Task 20:** two RCs are staged, unnumbered, in `docs/work/RC/`. The operator approved both on 2026-10-29. They are not committed (see *Known issues*).
+- **Task 20:** the two RCs the plan called for, which the operator approved on 2026-10-29, are filed in `LESSONS.md` as RC-67 and RC-68 (`ba7cb20`).
 - **Task 21:** `package.json` and `package-lock.json` are at 5.2.0, and `dist/` is rebuilt; `SERVER.VERSION` is `"5.2.0"` in `dist/chunk-3ZH6LHDG.js` (the chunk name changes on every rebuild). The operator approved the rebuild. Their earlier uncommitted `dist/` is backed up in the session scratchpad. There is no tag; the tag follows the merge.
 
 ## Key decisions
@@ -63,15 +63,15 @@ The `curl_execute` description lost the text the input schema already carries. T
   - cURL's `-X POST` resent a body-less POST;
   - `-L` reported every hop's headers;
   - `//` was a `-32602`.
-- **Docs are the change here, and the review found the docs drift.** Todo 025 listed the copies that disagreed with the code, including the README's `Accept*` and the *Local refusals* table; `1d846a1` corrected them, and no review pass has read that commit.
+- **Docs are the change here, and the review found the docs drift.** Todo 025 listed the copies that disagreed with the code, including the README's `Accept*` and the *Local refusals* table; `1d846a1` corrected them after the Surface 2 review ran; the three Surface 3 rounds recorded below are the review passes that read it.
 - `dist/` is a full rebuild. Six files are renamed chunks, and the diff is large but generated.
 
 ## Known issues and limitations
 
-- No todo from the Surface 2 review is open. 025 and 026 were fixed in `1d846a1` and 027 on 2026-10-30, all after the review ran, so no review pass has read those commits (K-16). Surface 3 is the next reader.
-- **The two staged RCs are untracked**, in `docs/work/RC/`. They reach the ledger only when `/sixees-workflow:file-lessons --flush` runs, ideally before the merge. Todo 024, since deleted, proposed that flush as its first option.
+- No todo from the Surface 2 review is open. 025 and 026 were fixed in `1d846a1` and 027 on 2026-10-30, all after the Surface 2 review ran (K-16); the three Surface 3 rounds recorded below are the passes that read those commits.
+- The two RCs this release called for are filed in `LESSONS.md` as RC-67 and RC-68 (`ba7cb20`). Todo 024, since deleted, proposed filing them as its first option.
 - The plan's statement that a test pins RC-63's sentence order in the description was false. Only `processor.ts` carries the order. This is a plan error and gets no RC.
-- `CHANGELOG.md`'s date is 2026-10-29, the day of writing. If the merge lands later, adjust it.
+- `CHANGELOG.md`'s `[5.2.0]` date is 2026-10-30 (`ba7cb20`). If the merge lands later, adjust it.
 
 ## Testing summary
 
@@ -84,6 +84,14 @@ The `curl_execute` description lost the text the input schema already carries. T
 ## Commit history
 
 ```
+ba7cb20 docs: file RC-67 and RC-68, date 5.2.0 release
+3843c43 fix: address PR review feedback
+d7c0456 fix: address PR review feedback
+64b45f1 fix: address PR review feedback
+8c462c4 Rebuild dist after the comment sync
+740c5f7 docs(comments): sync comments/doc-blocks with code
+fa9942e Say which saved files the server deletes, and drop todo 024
+a7df911 Close todos 025 and 026 and update the 5.2.0 handoff
 1d846a1 Bring the 5.2.0 docs back in line with the code they describe
 102f27f Record the 5.2.0 work handoff and the Surface 2 review's todos
 8522ae0 Release 5.2.0: version bump and rebuilt dist
@@ -104,13 +112,13 @@ Every commit was made with `git -c core.hooksPath=/dev/null`; no hooks are confi
   5. README.
 
   Skip `dist/`.
-- Invariants: 11 (MINOR-vs-break; recorded in the staged RC `docs/work/RC/invariant-11-single-consumer-minor.md`), 2 (per-hop gate order, as documented).
-- RCs: RC-36, RC-63, RC-66.
+- Invariants: 11 (MINOR-vs-break; recorded in RC-67), 2 (per-hop gate order, as documented).
+- RCs: RC-36, RC-63, RC-66, RC-67, RC-68.
 - Depends on #50–#53, all merged.
 
 ## Follow-up work
 
-- [ ] Flush the staged RCs (`/sixees-workflow:file-lessons --flush`) before the merge.
+- [x] File the staged RCs before the merge: RC-67 and RC-68 (`ba7cb20`).
 - [x] Decide todos 024 and 027: 024 deleted, 027 fixed (2026-10-30).
 - [ ] After the merge: a signed, annotated tag `5.2.0` (bare number), on the operator's say.
 
@@ -127,7 +135,7 @@ Every commit was made with `git -c core.hooksPath=/dev/null`; no hooks are confi
 | 025 | Redirect and refusal facts restated by hand have drifted | Option 1: drifted copies corrected; the documentation resource defers to the schema | Claude Code, operator-authorised | 2026-10-29 |
 | 026 | Host-policy docblocks say redirect hops are not checked | Three docblocks reworded; `dist/` rebuilt | Claude Code, operator-authorised | 2026-10-29 |
 | 027 | Description promises deletion `output_dir` does not get | Option 1: lifecycle block cut to one scoped sentence, *Error Handling* to its pinned bullet, `headers_unsupported` stated once; cleanup test added; `dist/` rebuilt | Claude Code, operator-authorised | 2026-10-30 |
-| 024 | MINOR override of invariant 11 recorded only in the CHANGELOG | Deleted by the operator on 2026-10-30: "we are not doing a major bump - there is only one consumer / user of the project, and it is me." The staged RC `docs/work/RC/invariant-11-single-consumer-minor.md` remains the record | Operator | 2026-10-30 |
+| 024 | MINOR override of invariant 11 recorded only in the CHANGELOG | Deleted by the operator on 2026-10-30: "we are not doing a major bump - there is only one consumer / user of the project, and it is me." RC-67 is the record | Operator | 2026-10-30 |
 
 Todo 007, which this release's CHANGELOG lists as fixed, was closed by PR-3.
 
