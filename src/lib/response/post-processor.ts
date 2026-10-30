@@ -56,7 +56,9 @@
 //    enabled, a fresh `randomUUID()` is generated **per `wrap()` call** (one
 //    UUID for the whole call, shared by every text part of that result) so
 //    the begin/end sentinels match within a single response and a hostile
-//    upstream cannot recycle a leaked UUID across responses.
+//    upstream cannot recycle a leaked UUID across responses. An `isError`
+//    result is not spotlighted unless `markRemoteContent` says the origin
+//    wrote some of its text.
 
 import { randomUUID } from "node:crypto";
 import { logWrapError } from "../security/wrap-error-logger.js";
@@ -78,6 +80,14 @@ import { defendForInline } from "./processor.js";
 // but not on a spotlighted JSON part — the sentinel lines stop it parsing,
 // so the re-run takes the undivided strip arm across its fields.
 const WRAPPED = Symbol("mcp-curl.wrapped");
+
+// Set by `markRemoteContent` on a result whose text the origin wrote, so the
+// wrap spotlights it even when `isError` is set. The origin decides whether a
+// transfer fails, so keying spotlighting on `isError` alone would let it switch
+// the layer off for its own bytes by stalling after the body. Forging the mark
+// only adds spotlighting, so unlike WRAPPED nothing depends on it staying
+// private; it is a Symbol so it never reaches the serialised result.
+const REMOTE_CONTENT = Symbol("mcp-curl.remote-content");
 
 /**
  * Server-scope config bound once at wrapper creation.
@@ -130,15 +140,12 @@ export interface WrappableResult {
  * un-probable result is treated as untagged, so the wrap pipeline runs
  * normally and the outer try/catch handles any subsequent failure.
  *
- * Also reads the symbol value defensively — accessing `result[WRAPPED]` on a
+ * Also reads the symbol value defensively — accessing `result[key]` on a
  * Proxy invokes the `get` trap, which can also throw.
  */
-function hasOwnWrappedTag(result: object): boolean {
+function hasOwnTag(result: object, key: typeof WRAPPED | typeof REMOTE_CONTENT): boolean {
     try {
-        return (
-            Object.hasOwn(result, WRAPPED) &&
-            (result as { [WRAPPED]?: unknown })[WRAPPED] === true
-        );
+        return Object.hasOwn(result, key) && (result as Record<symbol, unknown>)[key] === true;
     } catch {
         return false;
     }
@@ -154,7 +161,7 @@ function hasOwnWrappedTag(result: object): boolean {
  * properties means the only way the tag is set is via `tag()` in this
  * module after the pipeline has run.
  *
- * The probe itself is wrapped in try/catch via `hasOwnWrappedTag` so a
+ * The probe itself is wrapped in try/catch via `hasOwnTag` so a
  * hostile Proxy with a throwing trap cannot break fail-open.
  *
  * Exported for tests; production callers should rely on the wrap's own
@@ -162,7 +169,21 @@ function hasOwnWrappedTag(result: object): boolean {
  */
 export function isWrappedResult(result: unknown): boolean {
     if (result === null || typeof result !== "object") return false;
-    return hasOwnWrappedTag(result);
+    return hasOwnTag(result, WRAPPED);
+}
+
+/**
+ * Mark `result` as carrying text the origin wrote, so the wrap spotlights it
+ * whether or not `isError` is set. Non-enumerable, like the WRAPPED tag, and
+ * never throws: an unmarkable result keeps the `isError`-keyed behaviour.
+ */
+export function markRemoteContent<T extends object>(result: T): T {
+    try {
+        Object.defineProperty(result, REMOTE_CONTENT, { value: true, enumerable: false });
+    } catch {
+        // Non-extensible target: see `tag` below.
+    }
+    return result;
 }
 
 /**
@@ -179,7 +200,7 @@ export function isWrappedResult(result: unknown): boolean {
  * frozen and so always takes the tag. The re-run is the first real pass over
  * that content, never a second pass over defended text.
  *
- * The own-tag probe is also routed through `hasOwnWrappedTag` so a hostile
+ * The own-tag probe is also routed through `hasOwnTag` so a hostile
  * Proxy whose `getOwnPropertyDescriptor` / `get` trap throws cannot break
  * the catch-fallback path that calls `tag(result)`.
  */
@@ -187,7 +208,7 @@ function tag<T extends object>(result: T): T {
     // Own-property check (not prototype-chain): same reasoning as
     // `isWrappedResult` — an inherited tag must not short-circuit a real
     // pipeline run on the descendant.
-    if (hasOwnWrappedTag(result)) return result;
+    if (hasOwnTag(result, WRAPPED)) return result;
     try {
         Object.defineProperty(result, WRAPPED, {
             value: true,
@@ -319,13 +340,16 @@ export function createWrapper(
             // text part of this result. Generated only when spotlighting is
             // enabled AND this is not an error result — error text is a
             // status message about the call, not external content the LLM
-            // should treat as untrusted with sentinel boundaries. Sanitise +
-            // detect still run on errors below: a buggy or hostile custom
-            // tool / YAML handler / hook short-circuit could otherwise emit
+            // should treat as untrusted with sentinel boundaries — unless the
+            // tool marked it as carrying remote text: a failed request is an
+            // error the origin can cause on purpose. Sanitise + detect still
+            // run on errors below: a buggy or hostile custom tool / YAML
+            // handler / hook short-circuit could otherwise emit
             // `{ isError: true, content: [{ text: <attacker bytes> }] }`
             // and bypass the defence-in-depth pass entirely.
-            const requestId =
-                config.enableSpotlighting && !result.isError ? randomUUID() : undefined;
+            const spotlight =
+                config.enableSpotlighting && (!result.isError || hasOwnTag(result, REMOTE_CONTENT));
+            const requestId = spotlight ? randomUUID() : undefined;
 
             const newContent = result.content.map((part) =>
                 processTextPart(part, hostname, requestId)

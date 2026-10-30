@@ -1249,6 +1249,15 @@ describe("McpCurlServer rateLimit lifecycle", () => {
     const textOf = (result: { content: { type: string; text?: string }[] }) =>
         result.content.map((part) => part.text ?? "").join("\n");
 
+    // A real cURL, a real refused connect: the case a consumer reported as
+    // reading like an empty success.
+    it("reports a refused connection as an error", async () => {
+        await server.start("stdio");
+        const result = await server.utilities().executeRequest({ url: URL });
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toContain("cURL exited 7: the request failed");
+    });
+
     it("counts a utilities() request after start() against the configured host limit", async () => {
         await server.start("stdio");
         const first = await server.utilities().executeRequest({ url: URL });

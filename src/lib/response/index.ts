@@ -35,6 +35,7 @@ export {
 export {
     createWrapper,
     isWrappedResult,
+    markRemoteContent,
     type WrapperConfig,
     type WrappableResult,
     type WrappableContentPart,

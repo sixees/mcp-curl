@@ -188,8 +188,8 @@ export type BeforeRequestHook<T = CurlExecuteInput | JqQueryInput> = (
  * `response` is the body, `content[0]`. `content` is every entry the tool
  * returns: `curl_execute` adds response header text and server-authored
  * notices as later entries, only when each has text, so a hook finds one by
- * matching its text rather than its index. A non-zero cURL exit can leave the
- * body empty with `isError` false, and its notice is in `content` alone. The
+ * matching its text rather than its index. A non-zero cURL exit sets `isError`;
+ * its body may be empty, and its notice is in `content` alone. The
  * entries are frozen copies, so a hook cannot change the result it observes.
  */
 export type AfterResponseHook<T = CurlExecuteInput | JqQueryInput> = (

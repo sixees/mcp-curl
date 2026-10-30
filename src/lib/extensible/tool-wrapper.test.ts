@@ -10,7 +10,7 @@ import { applyConfigTransformsCurl, registerCurlToolWithHooks } from "./tool-wra
 import type { AfterResponseHook, McpCurlConfig, CurlExecuteInput } from "../types/public.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
-import { isWrappedResult } from "../response/post-processor.js";
+import { isWrappedResult, markRemoteContent } from "../response/post-processor.js";
 import { CurlExecuteBaseUrlSchema, CurlExecuteSchema } from "../server/schemas.js";
 import { captureTools } from "./tool-capture.test-fixture.js";
 
@@ -54,6 +54,27 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
         expect(text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-[0-9a-f-]{36}---/);
         expect(text).toContain("hello from api");
         expect(text).toMatch(/---EXTERNAL-CONTENT-END-[0-9a-f-]{36}---$/);
+    });
+
+    // The mark is set by the executor and read by the wrap at the pipeline
+    // exit, so it has to survive the hook executor in between.
+    it("spotlights a failed request the executor marked as remote text", async () => {
+        const { server: fakeServer, tools } = captureTools();
+        registerCurlToolWithHooks(fakeServer, {
+            executor: vi.fn().mockResolvedValue(
+                markRemoteContent({ content: [{ type: "text", text: '{"partial":true}' }], isError: true })
+            ) as never,
+            enabled: true,
+            config: { enableSpotlighting: true } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [() => undefined], onError: [] },
+        });
+
+        const result = (await tools.get("curl_execute")!.handler(makeParams(), { sessionId: undefined })) as {
+            content: { text: string }[];
+            isError?: boolean;
+        };
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-[0-9a-f-]{36}---/);
     });
 
     it("does not wrap content when enableSpotlighting is false", async () => {
@@ -312,13 +333,13 @@ describe("afterResponse hooks (registerCurlToolWithHooks integration)", () => {
         const entries = [
             { type: "text", text: "" },
             { type: "text", text: "HTTP/1.1 200 OK" },
-            { type: "text", text: "[mcp-curl] cURL exited with code 28" },
+            { type: "text", text: "[mcp-curl] cURL exited 28: the request failed, and the response above may be empty or incomplete" },
         ];
-        const { seen, result } = await runWith({ content: entries });
+        const { seen, result } = await runWith({ content: entries, isError: true });
 
         expect(seen).toHaveLength(1);
         expect(seen[0].response).toBe("");
-        expect(seen[0].isError).toBe(false);
+        expect(seen[0].isError).toBe(true);
         expect(seen[0].content).toEqual(entries);
         // A hook cannot change the result it observes.
         expect(Object.isFrozen(seen[0].content)).toBe(true);

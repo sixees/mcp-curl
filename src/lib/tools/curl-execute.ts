@@ -16,6 +16,7 @@ import {
     processResponse,
     defendText,
     extractHeaderChannel,
+    markRemoteContent,
     type ParsedResponse,
 } from "../response/index.js";
 import { FOLLOWED_REDIRECT_STATUSES, nextHopParams, sameOrigin } from "./redirect-hop.js";
@@ -36,6 +37,7 @@ export interface CurlExecuteResult {
      * which is what keeps invariant 16 true.
      */
     content: Array<{ type: "text"; text: string }>;
+    /** Set on a non-zero cURL exit, a local refusal and a thrown error. */
     isError?: boolean;
 }
 
@@ -513,7 +515,13 @@ export async function executeCurlRequest(
                   savedToFile: processed.savedToFile,
               }) || undefined
             : undefined;
-        return {
+        // **A non-zero exit is an error, whatever the body holds.** Exit 7 leaves
+        // the body empty, and an empty body under no flag reads as an empty
+        // success; the notice alone was a sentence for the model to overlook.
+        // Marked as remote text either way, because the origin chooses whether
+        // the transfer fails, and the wrap would otherwise drop spotlighting
+        // for a failed result's body, header text and verbose stderr.
+        return markRemoteContent({
             content: [
                 {
                     type: "text",
@@ -522,7 +530,8 @@ export async function executeCurlRequest(
                 ...(headerPart === undefined ? [] : [{ type: "text" as const, text: headerPart }]),
                 ...(noticePart === undefined ? [] : [{ type: "text" as const, text: noticePart }]),
             ],
-        };
+            ...(result.exitCode !== 0 && { isError: true }),
+        });
     } catch (error) {
         const hostname = safeHostname(params.url);
         const errorClass = error instanceof Error ? error.constructor.name : "Error";

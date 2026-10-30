@@ -2,7 +2,7 @@
 // Tests for createWrapper — the defence-in-depth wrap (PR-6b).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createWrapper, isWrappedResult, type WrappableResult } from "./post-processor.js";
+import { createWrapper, isWrappedResult, markRemoteContent, type WrappableResult } from "./post-processor.js";
 import { formatResponse } from "./formatter.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
@@ -223,6 +223,39 @@ describe("createWrapper — error handling", () => {
         // isError preserved through the spread.
         expect(out.isError).toBe(true);
         expect(isWrappedResult(out)).toBe(true);
+    });
+
+    // A failed request is an error the origin can cause: stall after the body
+    // and cURL exits 28. Keyed on `isError` alone, that would switch
+    // spotlighting off for the origin's own bytes.
+    it("spotlights an isError result marked as carrying remote text", () => {
+        const wrap = createWrapper({ enableSpotlighting: true });
+        const out = wrap(
+            markRemoteContent({ content: [{ type: "text", text: '{"a":1}' }], isError: true }),
+            "host.com"
+        );
+        const text = (out.content as { text: string }[])[0].text;
+        expect(text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-[0-9a-f-]{36}---/);
+        expect(text).toContain('{"a":1}');
+        expect(out.isError).toBe(true);
+    });
+
+    it("leaves a marked result unspotlighted when spotlighting is off", () => {
+        const out = createWrapper({ enableSpotlighting: false })(
+            markRemoteContent({ content: [{ type: "text", text: "body" }], isError: true }),
+            "host.com"
+        );
+        expect((out.content as { text: string }[])[0].text).toBe("body");
+    });
+
+    it("marks without changing the serialised result, and tolerates a frozen one", () => {
+        const marked = markRemoteContent({ content: [{ type: "text", text: "x" }], isError: true });
+        expect(JSON.parse(JSON.stringify(marked))).toEqual({ content: [{ type: "text", text: "x" }], isError: true });
+        const frozen = Object.freeze({ content: [{ type: "text", text: "x" }], isError: true });
+        expect(() => markRemoteContent(frozen)).not.toThrow();
+        // Unmarkable, so it keeps the isError-keyed behaviour.
+        const out = createWrapper({ enableSpotlighting: true })(frozen, "host.com");
+        expect((out.content as { text: string }[])[0].text).toBe("x");
     });
 
     it("logs an injection-detection event on error text containing a malicious phrase", () => {

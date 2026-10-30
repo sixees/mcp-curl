@@ -204,6 +204,10 @@ Files can only be read from:
 | 28 | Operation timeout |
 | 35 | SSL connect error |
 | 52 | Empty reply from server |
+
+Any non-zero exit returns a result with \`isError\` set and a notice naming the
+code. The request failed: an empty body there means no response arrived, not an
+empty one.
 `,
             }],
         })
