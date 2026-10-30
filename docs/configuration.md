@@ -429,9 +429,10 @@ bytes change with every release.
 
 ## Local refusals
 
-A request refused for one of the reasons below returns an error result whose
-first line is `Refused locally: no request was sent (CODE).`, followed by the
-reason. A refusal whose reason is the rate limit then ends `Retry in N s.`
+A request refused for one of the reasons below returns an error result that
+begins `Refused locally: no request was sent (CODE).`, or for
+`LOCAL_REDIRECT_REFUSED` the line its row gives, followed by the reason. A
+refusal whose reason is the rate limit then ends `Retry in N s.`
 The text never names a host, URL or header value. An SSRF or DNS refusal of the
 first request is not one of these: it keeps its own message.
 

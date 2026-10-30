@@ -60,8 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **BREAKING: setting `baseUrl` restricts requests to its host.** With
-  `allowedHosts` unset, an absolute URL or redirect hop to any other host is
-  refused as `LOCAL_HOST_NOT_ALLOWED`. This applies to `curl_execute`,
+  `allowedHosts` unset, an absolute URL to any other host is refused as
+  `LOCAL_HOST_NOT_ALLOWED`, and a redirect hop to one as
+  `LOCAL_REDIRECT_REFUSED`. This applies to `curl_execute`,
   `utilities().executeRequest` and the YAML endpoint tools of a `createApiServer()`
   server, whose schema `baseUrl` sets the server's. **To adjust:** list the hosts
   in `allowedHosts`, or set `allowedHosts: "any"` for the 5.1.0 behaviour. An
@@ -98,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns a tool result**, `LOCAL_REFUSED_PATH`, where 5.1.0 rejected it at the
   schema with a `-32602` protocol error the model never saw. **To adjust:** read
   the refusal from the tool result.
-- **The `curl_execute` description is shorter** (about 2.6 KB, from 6.7 KB). The
+- **The `curl_execute` description is shorter** (about 2.3 KB, from 6.7 KB). The
   parameter list and `jq_filter` syntax are in the input schema already; what
   only the description said about `include_headers` (macOS only, final hop,
   credentials in header text) and redirects moved into the schema. The version line

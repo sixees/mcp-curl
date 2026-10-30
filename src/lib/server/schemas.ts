@@ -13,7 +13,7 @@ export const CurlExecuteSchema = z.object({
     url: createHttpOnlyUrlSchema({ description: "The URL to request (http or https)" }),
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
         .optional()
-        .describe("HTTP method (defaults to GET, or POST if data is provided)"),
+        .describe("HTTP method (defaults to GET, or POST if data or form is provided)"),
     headers: z.record(z.string(), z.string())
         .optional()
         .describe("HTTP headers as key-value pairs (e.g., {\"Content-Type\": \"application/json\"})"),

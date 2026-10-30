@@ -7,7 +7,7 @@
 // than a convenience.** The clock cannot discriminate two writes inside one
 // millisecond, so a case that lets it run measures how fast the machine is: it
 // passes on two saves a millisecond apart whether the naming scheme separates
-// them or not. `docs/todos/012`.
+// them or not. `LESSONS.md` RC-53.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // The write-sink guard below parses production source rather than matching it.
@@ -214,8 +214,7 @@ describe("writeUniqueFile — the sink owns the guarantees", () => {
         // one `../` this case escapes through lands on `dir` and is removed by
         // `afterEach`. Writing from `dir` itself would put the escaped file in
         // the repository root, and it would do so on exactly the runs where the
-        // guard is broken — measured, not assumed: an earlier draft of this
-        // case left two files there while probing the fix.
+        // guard is broken.
         const nested = join(dir, "nested");
         await mkdir(nested);
         const written = await writeUniqueFile(Buffer.from("x"), nested, "///", "../escaped_marker");
@@ -228,12 +227,11 @@ describe("writeUniqueFile — the sink owns the guarantees", () => {
     it.each([".", "..", "///", "\u0000"])(
         "squeezes %j to nothing, which is what makes the deleted . and .. checks safe",
         (input) => {
-            // These pass today, and that is the point. Two guards were deleted on
-            // the argument that `squeeze` makes "." and ".." unconstructible, and
-            // the terminal `|| "response"` rests on the same alphabet. Both claims
-            // were checkable in under two minutes and were asserted by nothing, so
-            // widening the character class — `/[^a-zA-Z0-9._-]/` is a plausible
-            // one-line edit for readable hostnames — would silently un-delete them.
+            // `createSafeFilenameBase` carries no "." or ".." check because `squeeze`
+            // makes both unconstructible, and its terminal `|| "response"` rests on the
+            // same alphabet. This case is what asserts that claim, so widening the
+            // character class — `/[^a-zA-Z0-9._-]/` is a plausible one-line edit for
+            // readable hostnames — fails here instead of silently reopening both.
             expect(createSafeFilenameBase(input)).toBe("response");
         }
     );
@@ -412,8 +410,8 @@ describe("writeUniqueFile is the only file-write sink in production code", () =>
         ['import { default as fs } from "node:fs";', "default via a named clause"],
         ['import * as fsp from "node:fs/promises";', "namespace"],
         // `import x = require()` binds the namespace too, and its
-        // ExternalModuleReference is not a CallExpression — invisible to the
-        // dynamic arm below until the import-equals arm was added.
+        // ExternalModuleReference is not a CallExpression — so `forbiddenFsBindings`'
+        // dynamic arm cannot see it, and only its import-equals arm reports it.
         ['import fsp = require("node:fs/promises");', "import-equals namespace"],
         ['const f = require("node:fs");', "require"],
         ['const { writeFile } = await import("fs/promises");', "dynamic import"],
@@ -589,8 +587,8 @@ describe("nothing in production imports a test-only module", () => {
         ['const m = require("./cpu-time.test-fixture.js");', "require"],
         ["const m = await import(spec);", "unreadable dynamic specifier"],
         // A `.test.ts` module, which `productionFiles` also excludes from the
-        // `fs` sweep — so before `TEST_ONLY` was shared, this was reported by
-        // neither guard and the pair was nonetheless documented as sufficient.
+        // `fs` sweep — so this row is what shows the two guards share one
+        // definition of test-only rather than each missing what the other skips.
         ['import { w } from "./helpers.test.js";', "a .test.ts module"],
         ['import fx = require("./cpu-time.test-fixture.js");', "import-equals"],
     ])("reports a test-only import: %s (%s)", (source) => {

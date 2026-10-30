@@ -63,19 +63,19 @@ The `curl_execute` description lost the text the input schema already carries. T
   - cURL's `-X POST` resent a body-less POST;
   - `-L` reported every hop's headers;
   - `//` was a `-32602`.
-- **Docs are the change here, and the review found the docs drift.** Todo 025 lists the copies that already disagree with the code, including the README's `Accept*` and the *Local refusals* table. They are unfixed on this branch.
+- **Docs are the change here, and the review found the docs drift.** Todo 025 listed the copies that disagreed with the code, including the README's `Accept*` and the *Local refusals* table; `1d846a1` corrected them, and no review pass has read that commit.
 - `dist/` is a full rebuild. Six files are renamed chunks, and the diff is large but generated.
 
 ## Known issues and limitations
 
 - No todo from the Surface 2 review is open. 025 and 026 were fixed in `1d846a1` and 027 on 2026-10-30, all after the review ran, so no review pass has read those commits (K-16). Surface 3 is the next reader.
-- **The two staged RCs are untracked**, in `docs/work/RC/`. They reach the ledger only when `/sixees-workflow:file-lessons --flush` runs, ideally before the merge. Todo 024's first option is exactly that flush.
+- **The two staged RCs are untracked**, in `docs/work/RC/`. They reach the ledger only when `/sixees-workflow:file-lessons --flush` runs, ideally before the merge. Todo 024, since deleted, proposed that flush as its first option.
 - The plan's statement that a test pins RC-63's sentence order in the description was false. Only `processor.ts` carries the order. This is a plan error and gets no RC.
 - `CHANGELOG.md`'s date is 2026-10-29, the day of writing. If the merge lands later, adjust it.
 
 ## Testing summary
 
-- No tests were added. Every change is prose, a version number or a rebuild. The existing pins on the description held: `register-all-tools.test.ts` (three phrases) and `tool-wrapper.e2e.test.ts` (line 1, last line, append).
+- One test was added, for todo 027: `src/lib/response/file-saver.test.ts` saves one file to `output_dir` and one to the temp directory, calls `cleanupTempDir()`, and asserts the first survives and the second is gone. Every other change is prose, a version number or a rebuild. The existing pins on the description held: `register-all-tools.test.ts` (three phrases) and `tool-wrapper.e2e.test.ts` (line 1, last line, append).
 - **Verdict** (re-run after `1d846a1`, same result): `npm test -- --reporter=json --outputFile=<scratchpad>/vitest.json` (the declared `npm test`: `tsc --noEmit`, then `vitest run`). The artefact shows `success: true`, 1773 total, 1766 passed, 0 failed, 7 pending, and 0 failed suites.
 - `npm run build` succeeds.
 - `src/lib/release-guards.test.ts` passes (14 tests), including the BREAKING guard and the tarball doc list.
@@ -104,7 +104,7 @@ Every commit was made with `git -c core.hooksPath=/dev/null`; no hooks are confi
   5. README.
 
   Skip `dist/`.
-- Invariants: 11 (MINOR-vs-break; todo 024), 2 (per-hop gate order, as documented).
+- Invariants: 11 (MINOR-vs-break; recorded in the staged RC `docs/work/RC/invariant-11-single-consumer-minor.md`), 2 (per-hop gate order, as documented).
 - RCs: RC-36, RC-63, RC-66.
 - Depends on #50–#53, all merged.
 
