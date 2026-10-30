@@ -44,7 +44,7 @@ The `curl_execute` description lost the text the input schema already carries. T
   - *Fixed*: todo 007.
   - There is no `### BREAKING` heading.
 - **Task 20:** two RCs are staged, unnumbered, in `docs/work/RC/`. The operator approved both on 2026-10-29. They are not committed (see *Known issues*).
-- **Task 21:** `package.json` and `package-lock.json` are at 5.2.0, and `dist/` is rebuilt; `SERVER.VERSION` is `"5.2.0"` in `dist/chunk-OUM4PJX6.js` (the chunk name changes on every rebuild). The operator approved the rebuild. Their earlier uncommitted `dist/` is backed up in the session scratchpad. There is no tag; the tag follows the merge.
+- **Task 21:** `package.json` and `package-lock.json` are at 5.2.0, and `dist/` is rebuilt; `SERVER.VERSION` is `"5.2.0"` in `dist/chunk-3ZH6LHDG.js` (the chunk name changes on every rebuild). The operator approved the rebuild. Their earlier uncommitted `dist/` is backed up in the session scratchpad. There is no tag; the tag follows the merge.
 
 ## Key decisions
 
@@ -222,3 +222,28 @@ None filed (0 this round; 0 open against #54).
 ### Files Modified
 
 `src/lib/server/schemas.ts`, `src/lib/tools/curl-execute.ts`, `src/lib/resources/documentation.ts`, `docs/configuration.md`, `docs/hooks.md`, `dist/` (rebuilt), this handoff.
+
+## Review Comments Addressed — 2026-10-30 (round 2)
+
+Round 2 of up to 3. Same three bots requested. Copilot graded "Changes recommended" against `64b45f1` (1 open, 1 resolved since the last review). Codex: "Didn't find any major issues." Round 2 returned 6 new entries (4 inline, a Codex summary and a CodeRabbit acknowledgement), so the stop condition (4 or fewer, no P1) is not met and round 3 follows.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Crash cleanup waits for the one-hour orphan age, so "next start" overstates it | copilot-pull-request-reviewer | Fix needed (P3) | Description: after a crash, a later start deletes them once they are an hour old (`TEMP_DIR.ORPHAN_MIN_AGE_MS`) |
+| 307/308 body secrets also cross a scheme or port change on one host | coderabbitai [Major] | Fix needed (P2) | `configuration.md` *allowedHosts*: say so, and drop the multi-host qualifier from the `follow_redirects: false` advice |
+| Sync correction expires after `windowMs`, not the upstream reset | coderabbitai [Major] | Fix needed (P2) | `configuration.md` *rateLimit*: set `windowMs` to the upstream's window (`applyServerRemaining` pads with the configured window) |
+| Handoff does not show how the stop condition was met | coderabbitai [Minor] | Fix needed (P3) | This section records round 2 and why round 3 follows |
+
+### Declined Findings
+
+None this round.
+
+### Decisions Revised, Resolved Todos, Outstanding Todos
+
+None. 0 todos filed; 0 open against #54.
+
+### Files Modified
+
+`src/lib/tools/curl-execute.ts`, `docs/configuration.md`, `dist/` (rebuilt), this handoff.

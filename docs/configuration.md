@@ -148,8 +148,8 @@ configure({
   `basic_auth` and `bearer_token` are dropped, and stay dropped if the chain comes
   back. 303 turns every method but `HEAD` into a body-less `GET`, and 301/302 do
   the same to `POST`; 307 and 308 keep the method and body, so a secret in `data`
-  or `form` reaches the new origin. Where the list allows more than one host, set
-  `follow_redirects: false` on calls whose body carries one.
+  or `form` reaches the new origin, including a change of scheme or port on the
+  same host. Set `follow_redirects: false` on calls whose body carries one.
 - **YAML servers.** `createApiServer()` derives the default list from the schema's
   `baseUrl`, and its YAML tools use the server's list. An embedder that overrides
   `generatorConfig.baseUrl` with a URL on another host sets `allowedHosts`
@@ -389,7 +389,8 @@ a hard upstream quota, use `syncFromHeaders` where the upstream reports its
 remaining count: the first response after a restart, or after another client
 spent quota, corrects the local count. That is best-effort: requests sent before
 that response, and quota spent elsewhere after the last one, are still unseen.
-So set `max` below the quota either way, and leave headroom for what this process
+The correction also expires after `windowMs`, not at the upstream's reset, so set
+`windowMs` to the upstream's window. Set `max` below the quota either way, and leave headroom for what this process
 cannot see (for example, 200 of a 240/hour quota).
 
 ### curlExecuteDescriptionAppend
