@@ -247,3 +247,27 @@ None. 0 todos filed; 0 open against #54.
 ### Files Modified
 
 `src/lib/tools/curl-execute.ts`, `docs/configuration.md`, `dist/` (rebuilt), this handoff.
+
+## Review Comments Addressed — 2026-10-30 (round 3)
+
+Round 3 of 3, the last the operator authorised. Copilot graded "Approval recommended", no open issues, against `d7c0456`. Codex: "Didn't find any major issues." CodeRabbit filed 3 inline findings, so the round returned 3 findings, none P1, which meets the operator's stop condition (4 or fewer, no P1). Counting every bot entry, including the Codex summary, CodeRabbit's acknowledgement and Copilot's review body, it returned 6.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| A credential in a forwarded header (`User-Agent`, `Accept*`) follows a cross-origin redirect | coderabbitai [Minor] | Fix needed (P3) | `configuration.md` *defaultHeaders*: unless it sits in one of those headers; keep credentials out of them |
+| A full window refuses the request; it does not wait | coderabbitai [Minor] | Fix needed (P3) | `configuration.md` *rateLimit*: refused, not queued |
+| Entity-encoded markdown destinations are not removed | coderabbitai [Minor] | Fix needed (P3) | `documentation.ts`: a destination is matched as written (`strip-blocks.ts` patterns require a literal `http(s)://`) |
+
+### Declined Findings
+
+None this round.
+
+### Decisions Revised, Resolved Todos, Outstanding Todos
+
+None. 0 todos filed; 0 open against #54.
+
+### Files Modified
+
+`docs/configuration.md`, `src/lib/resources/documentation.ts`, `dist/` (rebuilt), this handoff.

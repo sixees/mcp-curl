@@ -191,7 +191,8 @@ Files can only be read from:
     256 KB cap); numeric HTML entities are not decoded
   - Markdown image beacons and external links replaced with \`[image removed]\`
     / \`[link removed]\`; dangerous-scheme URLs (\`javascript:\`, \`vbscript:\`,
-    \`file:\`, \`data:\`) blocked in both links and images
+    \`file:\`, \`data:\`) blocked in both links and images. A destination is
+    matched as written, so an entity-encoded one (\`&#104;ttps:\`) is not removed
 
 ## Common Exit Codes
 

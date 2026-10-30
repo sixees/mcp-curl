@@ -104,7 +104,7 @@ Added to every request the host list lets through: with `allowedHosts` unset on 
 or a longer list, every host on it gets them. A redirect to another origin forwards
 only `Accept`, `Accept-Language`, `Accept-Encoding`, `User-Agent` and, while the
 body is kept, its body headers (see [allowedHosts](#allowedhosts)), so a key here is not sent to a host a redirect
-names. Merged with request-specific headers (request headers take precedence):
+names unless it sits in one of those headers. Keep credentials out of them. Merged with request-specific headers (request headers take precedence):
 
 ```typescript
 .
@@ -344,7 +344,7 @@ configure({rateLimit: {max: 200, windowMs: 3_600_000}}) // 200 per rolling hour
   session, or for the stdio process) is not configurable and still applies.
 - **Sliding, not fixed.** A request is admitted when fewer than `max` were made
   to that host in the last `windowMs`. A burst of `max` is allowed; the next
-  request waits until the oldest leaves the window. The refusal is
+  request is refused, not queued, until the oldest leaves the window. The refusal is
   `LOCAL_RATE_LIMITED` and ends with how long to wait: `Retry in N s.` Without
   `rateLimit` the fixed 60/min window applies, and its refusal takes the same
   shape.
