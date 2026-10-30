@@ -44,7 +44,7 @@ The `curl_execute` description lost the text the input schema already carries. T
   - *Fixed*: todo 007.
   - There is no `### BREAKING` heading.
 - **Task 20:** two RCs are staged, unnumbered, in `docs/work/RC/`. The operator approved both on 2026-10-29. They are not committed (see *Known issues*).
-- **Task 21:** `package.json` and `package-lock.json` are at 5.2.0, and `dist/` is rebuilt; `SERVER.VERSION` is `"5.2.0"` in `dist/chunk-OSBDQN73.js` (the chunk name changes on every rebuild). The operator approved the rebuild. Their earlier uncommitted `dist/` is backed up in the session scratchpad. There is no tag; the tag follows the merge.
+- **Task 21:** `package.json` and `package-lock.json` are at 5.2.0, and `dist/` is rebuilt; `SERVER.VERSION` is `"5.2.0"` in `dist/chunk-OUM4PJX6.js` (the chunk name changes on every rebuild). The operator approved the rebuild. Their earlier uncommitted `dist/` is backed up in the session scratchpad. There is no tag; the tag follows the merge.
 
 ## Key decisions
 
@@ -177,3 +177,48 @@ See the *Outstanding Todos* table above.
 **Open classes without a todo:** none.
 
 **Blockers:** none (no P1, and nothing awaiting the operator from the review).
+
+## Review Comments Addressed — 2026-10-30
+
+Round 1 of up to 3 (operator rule: stop after a round with 4 or fewer comments and no P1). Requested: CodeRabbit (`full review`), Codex (`@codex review` with scope), Copilot (GraphQL `requestReviews`, `union: true`). Copilot graded "Changes recommended" against head `8c462c4`. Codex: "Didn't find any major issues." Severities below are this run's, re-derived from consequence; the bots' own labels are in brackets.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `include_headers` describe calls header text verbatim, but it is sanitised | coderabbitai [Minor], copilot-pull-request-reviewer [Low] | Fix needed (P3) | `schemas.ts`: sanitised like other non-body text, not redacted, still carries credentials. Swept `verbatim` over src, docs and README: no other header claim |
+| Saved-file deletion is graceful-shutdown only | coderabbitai [Minor] | Fix needed (P3) | Description: deleted on graceful shutdown, or at the next start after a crash |
+| JSON pass-through overstated: `jq_filter` and the size cap still transform | coderabbitai [Minor] | Fix needed (P3) | `documentation.ts` *Response Sanitisation* scoped to the defence |
+| Empty body (204, HEAD) is not saved to a file | coderabbitai [Minor] | Fix needed (P3) | `documentation.ts`: empty body comes back as `""` unless `save_to_file` |
+| 307/308 forward `data`/`form` secrets cross-origin | coderabbitai [Major] | Fix needed (P2) | `configuration.md` *allowedHosts*: say so, and to set `follow_redirects: false` where the list allows more than one host |
+| Host list does not check scheme or `insecure` | coderabbitai [Minor] | Fix needed (P3) | `configuration.md` *baseUrl* |
+| "Stays out of the transcript" is false under `verbose` | coderabbitai [Major] | Fix needed (P2) | `configuration.md` *baseUrl*: `verbose` prints request headers, `defaultHeaders` included, and the trace is returned |
+| Header sync is not hard-quota enforcement | coderabbitai [Minor] | Fix needed (P3) | `configuration.md` *rateLimit*: best-effort; keep `max` below the quota either way |
+| `afterResponse` on a refused hop sees the refusal | coderabbitai [Minor] | Fix needed (P3) | `docs/hooks.md` |
+| Refusal "first line" is a prefix (outdated thread) | coderabbitai [Minor] | Fix needed (P3) | Already fixed in `740c5f7` ("begins") |
+| Description size 2.6 KB vs 2.3 KB | coderabbitai [Trivial] | Fix needed (P3) | CHANGELOG fixed in `740c5f7`; PR body updated |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Release as 6.0.0 or keep 5.1.0 behaviour | coderabbitai [Major] | P2 | in scope (`package.json`) | Already decided: MINOR by operator decision, restated 2026-10-30 — one consumer, the operator. Staged RC `invariant-11-single-consumer-minor` |
+| Re-certify the Surface 2 review after post-review fixes | coderabbitai [Minor] | P3 | in scope (handoff) | No consequence: the certification records the range it reviewed, and *Known issues* names the later commits; this Surface 3 round is their review |
+| `output_dir` inside the server temp dir is deleted at shutdown | coderabbitai [Minor] | P3 | in scope (description) | No consequence shown: only a call that points `output_dir` into the server's own temp dir hits it, and the file is then deleted like any temp file. Internal, single-operator use (K-14) |
+| `data: ""` / `form: {}` send GET, though the describe says POST | coderabbitai [Minor] | P3 | describe in scope; `buildCurlArgs` out of diff | The fix is in `buildCurlArgs`, which this PR does not touch; an empty body has nothing to POST. Not changed in this PR |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None this round.
+
+### Outstanding Todos
+
+None filed (0 this round; 0 open against #54).
+
+### Files Modified
+
+`src/lib/server/schemas.ts`, `src/lib/tools/curl-execute.ts`, `src/lib/resources/documentation.ts`, `docs/configuration.md`, `docs/hooks.md`, `dist/` (rebuilt), this handoff.

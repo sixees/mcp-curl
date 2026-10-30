@@ -174,10 +174,12 @@ Files can only be read from:
 - jq_query restricted to temp dir, MCP_CURL_OUTPUT_DIR, and cwd
 
 ### Response Sanitisation
-- A response body that parses as JSON is returned exactly as the origin sent it:
-  injection phrases are detected and logged for the operator, and nothing in the
-  document is stripped or rewritten, because the payload is the caller's data
-- A non-JSON response body is never returned inline; it is saved to a file
+- A response body that parses as JSON is not sanitised: injection phrases are
+  detected and logged for the operator, and the defence strips or rewrites nothing
+  in it, because the payload is the caller's data. \`jq_filter\` and the size cap
+  still apply
+- A non-JSON response body is never returned inline; it is saved to a file. An
+  empty body (a 204, a HEAD) comes back as an empty string unless save_to_file is set
 - Every other text part — response headers, verbose stderr, server messages — is
   defended before it is returned:
   - Unicode attack chars stripped: bidi overrides, zero-width family, "Sneaky Bits"

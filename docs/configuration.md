@@ -90,8 +90,12 @@ Then `curl_execute` with `url: "/users"` becomes `https://api.example.com/v1/use
 
 **Setting `baseUrl` also sets the default host list.** With `allowedHosts` unset,
 requests and redirect hops may go only to the `baseUrl`'s host. Set
-`allowedHosts: "any"` to send absolute URLs elsewhere. Keep an API key in
-`defaultHeaders`, never in tool-call arguments, so it stays out of the transcript.
+`allowedHosts: "any"` to send absolute URLs elsewhere. The list checks the host
+only: an `http://` URL on that host also receives `defaultHeaders`, and a call may
+set `insecure: true`. Keep an API key in `defaultHeaders`, never in tool-call
+arguments, so it stays out of the transcript. A call that sets `verbose` is the
+exception: cURL's trace prints the request headers, `defaultHeaders` included, and
+that trace is returned with the response.
 
 ### defaultHeaders
 
@@ -143,7 +147,9 @@ configure({
   `User-Agent`, plus the body headers while the body is kept; every other header,
   `basic_auth` and `bearer_token` are dropped, and stay dropped if the chain comes
   back. 303 turns every method but `HEAD` into a body-less `GET`, and 301/302 do
-  the same to `POST`; 307 and 308 keep the method and body.
+  the same to `POST`; 307 and 308 keep the method and body, so a secret in `data`
+  or `form` reaches the new origin. Where the list allows more than one host, set
+  `follow_redirects: false` on calls whose body carries one.
 - **YAML servers.** `createApiServer()` derives the default list from the schema's
   `baseUrl`, and its YAML tools use the server's list. An embedder that overrides
   `generatorConfig.baseUrl` with a URL on another host sets `allowedHosts`
@@ -381,9 +387,10 @@ starts it from zero while the upstream's window keeps running. It cannot see
 requests made by other processes, apps or clients on the same credential. For
 a hard upstream quota, use `syncFromHeaders` where the upstream reports its
 remaining count: the first response after a restart, or after another client
-spent quota, corrects the local count. Where it does not, set `max` below the
-quota and leave headroom for what this process cannot see (for example, 200 of a
-240/hour quota).
+spent quota, corrects the local count. That is best-effort: requests sent before
+that response, and quota spent elsewhere after the last one, are still unseen.
+So set `max` below the quota either way, and leave headroom for what this process
+cannot see (for example, 200 of a 240/hour quota).
 
 ### curlExecuteDescriptionAppend
 

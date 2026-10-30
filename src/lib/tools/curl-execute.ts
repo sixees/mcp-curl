@@ -111,8 +111,9 @@ Error Handling:
   - A jq_filter on a body that is not JSON is not applied and is not an error: the body
     is saved and reported like any other non-JSON body
 
-Saved files: those in the server's temp directory are deleted when the server stops;
-those written to output_dir or MCP_CURL_OUTPUT_DIR are kept.
+Saved files: those in the server's temp directory are deleted on graceful shutdown,
+or at the next start after a crash; those written to output_dir or
+MCP_CURL_OUTPUT_DIR are kept.
 
 mcp-curl v${SERVER.VERSION}`,
     inputSchema: CurlExecuteSchema,

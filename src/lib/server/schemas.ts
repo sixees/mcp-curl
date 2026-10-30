@@ -92,8 +92,9 @@ export const CurlExecuteSchema = z.object({
             "header block), and headers_unsupported (this host cannot capture headers at " +
             "all, because capture requires macOS — a fact about the host, not about the " +
             "origin). After followed redirects, " +
-            "these are the final hop's headers only. Header text is returned verbatim, and " +
-            "routinely carries credential material such as Set-Cookie"
+            "these are the final hop's headers only. Header text is sanitised like other " +
+            "non-body text, so a value may not match the origin's byte for byte, but it " +
+            "is not redacted and routinely carries credential material such as Set-Cookie"
         ),
     compressed: z.boolean()
         .default(true)
