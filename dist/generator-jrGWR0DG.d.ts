@@ -51,6 +51,31 @@ declare const JqQuerySchema: z.ZodObject<{
 /** Inferred TypeScript type from JqQuerySchema */
 type JqQueryInput = z.infer<typeof JqQuerySchema>;
 
+/**
+ * The hosts a request URL may name. `"any"` is the explicit opt-out; a list is
+ * matched exactly after {@link canonicalHost}, and an empty list refuses every
+ * request. `executeCurlRequest` checks it on the request URL and on every
+ * followed redirect hop, before DNS.
+ */
+type HostPolicy = {
+    readonly kind: "any";
+} | {
+    readonly kind: "list";
+    readonly hosts: ReadonlySet<string>;
+};
+/**
+ * The policy a server enforces. An explicit `allowedHosts` wins; left unset,
+ * a server with a `baseUrl` may name only that host in a request URL, and one
+ * without a `baseUrl` may name any host. The same list gates every followed
+ * redirect hop. A `baseUrl` that cannot give a host throws
+ * rather than yielding an empty or open list. The message does not echo the
+ * `baseUrl`, which may carry credentials.
+ */
+declare function deriveHostPolicy(config: {
+    readonly baseUrl?: string;
+    readonly allowedHosts?: readonly string[] | "any";
+}): HostPolicy;
+
 /** Tool result type returned by executeCurlRequest */
 interface CurlExecuteResult {
     [key: string]: unknown;
@@ -77,14 +102,30 @@ interface CurlExecuteExtra {
     sessionId?: string;
     /** Override env var for allowing localhost requests (from McpCurlConfig) */
     allowLocalhost?: boolean;
+    /**
+     * The hosts this call may reach. `executeWithHooks` and
+     * `InstanceUtilities.executeRequest` pass `deriveHostPolicy(config)`; a
+     * generated YAML tool passes its generator config's `allowedHosts`, else
+     * the caller's policy, else `"any"`; `createApiServer` supplies the
+     * server's policy as that caller. `executor-call-sites.test.ts` checks only that
+     * every call names a defined `hostPolicy` — what it evaluates to is the
+     * behavioural tests' to show. A direct caller that passes none gets
+     * `"any"`: that is the documented library default, and the SSRF gate
+     * still runs.
+     */
+    hostPolicy?: HostPolicy;
 }
 /**
- * Execute a cURL request with the given parameters.
- * This is the core handler logic extracted for reuse by McpCurlServer.
+ * Execute a cURL request with the given parameters. The one executor every
+ * entry point reaches: the registered `curl_execute` tool (through
+ * `executeWithHooks`), `InstanceUtilities.executeRequest`, and generated
+ * YAML tools.
  *
  * @param params - Validated curl_execute parameters
  * @param extra - Additional context (sessionId for rate limiting; allowLocalhost
- *   overrides the localhost SSRF guard for this call, from McpCurlConfig)
+ *   overrides the localhost SSRF guard for this call, from McpCurlConfig;
+ *   hostPolicy is the host list checked on every hop's host before DNS,
+ *   `"any"` when absent)
  * @returns Tool result with response content
  */
 declare function executeCurlRequest(params: CurlExecuteInput, extra?: CurlExecuteExtra): Promise<CurlExecuteResult>;
@@ -265,6 +306,16 @@ interface GeneratorConfig {
      * knob.
      */
     enableSpotlighting?: boolean;
+    /**
+     * The hosts these tools may reach, in `McpCurlConfig.allowedHosts`'s form
+     * and validated the same way: an invalid entry throws when the tools are
+     * generated. Set, it wins over the caller's `extra.hostPolicy`; unset, a
+     * tool takes the caller's, and with neither it may reach any host, which
+     * is the library default for a caller that builds tools without a server.
+     * `createApiServer` leaves it unset and passes the server's own policy at
+     * call time. The SSRF gate still runs either way.
+     */
+    allowedHosts?: readonly string[] | "any";
 }
 /**
  * Generate a Zod input schema from endpoint parameter definitions.
@@ -281,7 +332,7 @@ declare function generateInputSchema(endpoint: EndpointDefinition): z.ZodObject<
  * @param pathParams - Values for path parameters
  * @param queryParams - Query parameters to append
  * @returns Fully constructed URL
- * @throws Error if a path parameter makes a `.` or `..` path segment.
+ * @throws LocalRefusalError (`LOCAL_REFUSED_PATH`) if a path parameter makes a `.` or `..` path segment.
  *   `encodeURIComponent` keeps a value inside one segment but leaves `.`
  *   alone, so `{id}` set to `..` would request the endpoint's parent.
  */
@@ -335,4 +386,4 @@ declare function generateToolDefinitions(schema: ApiSchema, config?: GeneratorCo
     handler: (params: Record<string, unknown>, extra?: CurlExecuteExtra) => Promise<CurlExecuteResult>;
 }>;
 
-export { type ApiDefaults as A, type CurlExecuteInput as C, type EndpointDefinition as E, type GeneratorConfig as G, type HttpMethod as H, type JqQueryInput as J, type ParameterLocation as P, type ResponseConfig as R, CurlExecuteSchema as a, JqQuerySchema as b, type ApiInfo as c, type ApiSchema as d, executeCurlRequest as e, type ApiSchemaVersion as f, type AuthConfig as g, AuthenticationError as h, type EndpointParameter as i, type ParameterType as j, buildUrl as k, generateInputSchema as l, generateToolDefinitions as m, getAuthConfig as n, getMethodAnnotations as o, type CurlExecuteResult as p, registerEndpointTools as r };
+export { type ApiDefaults as A, type CurlExecuteInput as C, type EndpointDefinition as E, type GeneratorConfig as G, type HostPolicy as H, type JqQueryInput as J, type ParameterLocation as P, type ResponseConfig as R, CurlExecuteSchema as a, JqQuerySchema as b, type ApiInfo as c, deriveHostPolicy as d, executeCurlRequest as e, type ApiSchema as f, type ApiSchemaVersion as g, type AuthConfig as h, AuthenticationError as i, type EndpointParameter as j, type HttpMethod as k, type ParameterType as l, buildUrl as m, generateInputSchema as n, generateToolDefinitions as o, getAuthConfig as p, getMethodAnnotations as q, registerEndpointTools as r, type CurlExecuteResult as s };

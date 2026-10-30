@@ -2,7 +2,7 @@
 // The curl_execute executor and its tool metadata; registration is extensible/tool-wrapper.ts::registerCurlToolWithHooks
 
 import { CurlExecuteSchema, type CurlExecuteInput } from "../server/schemas.js";
-import { TEMP_DIR, LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, type HostPolicy } from "../config/index.js";
+import { LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, type HostPolicy } from "../config/index.js";
 import { generateMetadataSeparator, type MetadataBlock, type UrlValidationResult } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits, hostRateLimitSyncHeader, applyServerRemaining } from "../security/index.js";
@@ -72,9 +72,6 @@ export const CURL_EXECUTE_TOOL_META = {
     title: "Execute cURL Request",
     description: `Execute an HTTP request using cURL with structured parameters.
 
-This tool provides a safe, structured way to make HTTP requests with common cURL options.
-It handles URL encoding, header formatting, and response processing automatically.
-
 Response contract: a body that parses as JSON is returned to you as the origin wrote it,
 whatever Content-Type it declared — duplicate names, number lexemes, key order, a leading
 byte-order mark and any invisible or bidi characters all survive. Nothing in it is
@@ -88,61 +85,11 @@ A body that does NOT parse as JSON is not returned inline at all — it is writt
 file and you get the reason, the byte count and the path, to open with your own file
 tooling. That file holds the origin's exact bytes unless attack codepoints had to be
 removed or long whitespace or newline runs collapsed, and the message says which you
-have. An empty body is the exception:
+have. An empty body is the exception: unless save_to_file is set,
 nothing is saved and you get an empty response, because there is nothing to recover.
 
 A JSON body larger than max_result_size is also written to a file; use jq_query on that
 path. Above 10MB the request fails and you should narrow it with query parameters.
-
-Args:
-  - url (string, required): The URL to request
-  - method (string): HTTP method - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS
-  - headers (object): HTTP headers as key-value pairs
-  - data (string): Request body for POST/PUT/PATCH requests
-  - form (object): Form data as key-value pairs (multipart/form-data)
-  - follow_redirects (boolean): Follow HTTP redirects (default: true)
-  - max_redirects (number): Maximum redirects to follow (0-50)
-  - insecure (boolean): Skip SSL verification (default: false)
-  - timeout (number): Request timeout in seconds (1-300, default: 30)
-  - user_agent (string): Custom User-Agent header (a browser-like default is sent automatically if not set; empty string disables)
-  - basic_auth (string): Basic auth as "username:password"
-  - bearer_token (string): Bearer token for Authorization header
-  - verbose (boolean): Include verbose request/response details
-  - include_headers (boolean): Report response headers. With include_metadata they
-    arrive under a separate "headers" key; without it they arrive as a SECOND content
-    entry after the body, so the body entry stays parseable on its own. Either way the
-    header text is never mixed into the body text. cURL writes the headers to their own
-    descriptor, so they are never part of the body: they cannot reach the saved file or
-    jq_filter, and combining this with save_to_file or jq_filter is safe
-    unconditionally. Header text is capped at
-    min(64KB, max_result_size); truncation is reported as headers_truncated under
-    include_metadata, and as an [mcp-curl] notice otherwise — in a THIRD content entry
-    after the body and the header entry, never prefixed to either. If headers were
-    asked for and none arrived, that is reported as headers_undetermined (or the same
-    [mcp-curl] notice) rather than guessed at. Requires macOS; elsewhere no headers are
-    captured and that is reported as headers_unsupported, which is a fact about the host
-    and NOT a statement that the origin sent none. Note that response headers routinely
-    carry credential material (Set-Cookie, and Authorization where an origin echoes it)
-    and this text is returned verbatim
-  - compressed (boolean): Request compressed response (default: true)
-  - include_metadata (boolean): Wrap response in JSON with metadata
-  - jq_filter (string): JSON path filter to extract specific data
-  - max_result_size (number): Max bytes to return inline (default: 500KB, max: 1MB). Auto-saves to file when exceeded
-  - save_to_file (boolean): Force save response to temp file. Returns filepath instead of content
-  - output_dir (string): Custom directory to save files (overrides MCP_CURL_OUTPUT_DIR env var)
-
-jq_filter Syntax:
-  - .key - Object property access
-  - .[n] or .n - Array index (non-negative only, e.g., .results.0)
-  - .[n:m] - Array slice from index n to m
-  - .["key"] - Bracket notation for special characters in keys
-  - .a,.b,.c - Multiple comma-separated paths (returns array of values, max 20)
-
-jq_filter Validation:
-  - Unclosed quotes and brackets throw clear errors
-  - Leading zeros in indices rejected (use .0 not .00)
-  - Negative indices not supported (unlike real jq)
-  - Indices must be within safe integer range
 
 Returns:
   The HTTP response body, or JSON with metadata if include_metadata is true:
@@ -158,27 +105,15 @@ Returns:
 
 Examples:
   - Simple GET: { "url": "https://api.example.com/data" }
-  - POST JSON: { "url": "https://api.example.com/users", "method": "POST", "headers": {"Content-Type": "application/json"}, "data": "{\\"name\\": \\"John\\"}" }
-  - With auth: { "url": "https://api.example.com/secure", "bearer_token": "your-token-here" }
-  - Extract field: { "url": "https://api.github.com/repos/octocat/hello-world", "jq_filter": ".name" }
-  - Multiple fields: { "url": "https://api.example.com/user", "jq_filter": ".name,.email,.id" }
-  - Dot notation: { "url": "https://api.example.com/items", "jq_filter": ".results.0.name" }
-  - Array slice: { "url": "https://api.example.com/items", "jq_filter": ".results[0:10]" }
-  - Custom output: { "url": "https://api.example.com/large", "save_to_file": true, "output_dir": "/path/to/dir" }
+  - Extract fields: { "url": "https://api.example.com/user", "jq_filter": ".name,.email,.id" }
 
 Error Handling:
-  - Returns error message if cURL fails or times out
-  - Exit code 0 indicates success
-  - Non-zero exit codes indicate various cURL errors
   - A jq_filter on a body that is not JSON is not applied and is not an error: the body
     is saved and reported like any other non-JSON body
 
-Temp File Lifecycle:
-  Files saved with save_to_file or auto-save are:
-  - Stored in a secure temp directory (owner-only access: 0o700/0o600)
-  - Deleted on graceful server shutdown (SIGINT/SIGTERM)
-  - Orphaned files from crashed sessions are cleaned on next server start
-  - Check ${TEMP_DIR.PREFIX}* in system temp dir if files persist after crash
+Saved files: those in the server's temp directory are deleted on graceful shutdown;
+after a crash, a later start deletes them once they are an hour old. Those written
+to output_dir or MCP_CURL_OUTPUT_DIR are kept.
 
 mcp-curl v${SERVER.VERSION}`,
     inputSchema: CurlExecuteSchema,

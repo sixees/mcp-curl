@@ -1,13 +1,16 @@
 import {
+  ANY_HOST_POLICY,
+  LocalRefusalError,
   applyDefaultHeaders,
   createHttpOnlyUrlSchema,
   createWrapper,
+  deriveHostPolicy,
   executeCurlRequest,
   hasDotSegment,
   resolveBaseUrl,
   safeHostname,
   sanitizeDescription
-} from "./chunk-LJQMSET7.js";
+} from "./chunk-2H76KKK5.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -321,8 +324,6 @@ function createParamSchema(param) {
       return z2.string();
   }
 }
-var DotSegmentError = class extends Error {
-};
 function buildUrl(baseUrl, path, pathParams, queryParams) {
   let resolvedPath = path;
   for (const [key, value] of Object.entries(pathParams)) {
@@ -332,7 +333,7 @@ function buildUrl(baseUrl, path, pathParams, queryParams) {
     );
   }
   if (hasDotSegment(resolvedPath)) {
-    throw new DotSegmentError("Error: a path parameter must not be . or ..; it would resolve outside the endpoint's path");
+    throw new LocalRefusalError({ code: "LOCAL_REFUSED_PATH", reason: "path-parameter-dot-segment" });
   }
   const url = resolveBaseUrl(baseUrl, resolvedPath);
   const queryEntries = Object.entries(queryParams);
@@ -435,6 +436,7 @@ function resolveJqFilter(endpoint, params) {
 }
 function createToolHandler(schema, endpoint, config) {
   const wrap = createWrapper({ enableSpotlighting: config?.enableSpotlighting });
+  const configPolicy = config?.allowedHosts === void 0 ? void 0 : deriveHostPolicy({ allowedHosts: config.allowedHosts });
   return async (params, extra) => {
     try {
       const { pathParams, queryParams, headerParams, bodyData } = separateParams(
@@ -461,7 +463,8 @@ function createToolHandler(schema, endpoint, config) {
       const timeout = config?.timeout ?? schema.defaults?.timeout;
       const execExtra = {
         ...extra,
-        allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost
+        allowLocalhost: config?.allowLocalhost ?? extra?.allowLocalhost,
+        hostPolicy: configPolicy ?? extra?.hostPolicy ?? ANY_HOST_POLICY
       };
       const result = await executeCurlRequest(
         {
@@ -494,7 +497,7 @@ function createToolHandler(schema, endpoint, config) {
           isError: true
         };
       }
-      if (error instanceof DotSegmentError) {
+      if (error instanceof LocalRefusalError) {
         return {
           content: [{ type: "text", text: error.message }],
           isError: true

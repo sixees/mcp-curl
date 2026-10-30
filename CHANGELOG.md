@@ -5,6 +5,115 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - 2026-10-30
+
+### Notes
+
+- **Shipped in a MINOR release by decision.** The `**BREAKING:**` changes below go
+  out as 5.2.0, not 6.0.0: mcp-curl has one consumer, internal, and that consumer
+  is told about each change directly. This is a larger break than earlier MINORs
+  carried, and the decision was made knowing that. `LESSONS.md` RC-67.
+- **This release reverses a 5.1.0 decline.** 5.1.0 said `baseUrl` would not pin
+  absolute URLs to its origin. With `allowedHosts` unset, a `baseUrl` server now
+  reaches only its `baseUrl`'s host. `LESSONS.md` RC-68.
+- **Not in this release, by decision:**
+  - **A per-host `rateLimit` map.** One limit applies to every host. Revisit when
+    one server fronts a second API.
+  - **Persisting the rate-limit count across restarts.** It adds disk state and a
+    race between processes; with `syncFromHeaders`, the first response after a
+    restart corrects the count.
+  - **`reset` in `syncFromHeaders`.** Whether a reset header carries seconds or an
+    epoch is a vendor fact; `remaining` alone needs no new limiter state.
+  - **Refusal codes for an SSRF or DNS failure on the first request, and for
+    `jq_query`.** The first request keeps its existing messages; `jq_query` sends
+    no request.
+  - **A hop count in the `include_metadata` envelope.**
+  - **A cURL version check.** `syncFromHeaders` needs cURL 7.84 or later, and
+    mcp-curl runs on macOS with Homebrew's cURL.
+
+### Added
+
+- **`allowedHosts`: the hosts a request may reach.** A list of bare host names or
+  IP literals, matched exactly, case-insensitively, trailing dots ignored; `"any"`
+  allows every host and `[]` refuses every request. Checked before DNS, so a
+  refused host is never resolved or contacted, and checked again on every redirect
+  hop. Unset, a server with a `baseUrl` may reach only the `baseUrl`'s host (see
+  *Changed*). `configure()` throws on an entry with a scheme, port, path, userinfo
+  or wildcard. `deriveHostPolicy` and `HostPolicy` are exported for callers of
+  `executeCurlRequest`.
+- **`rateLimit.syncFromHeaders: { remaining: "<header name>" }`.** After each
+  response, the host that answered is counted as having used at least
+  `max − remaining`, so a count this process cannot see (another client, a
+  restart) tightens the local limit. It only ever tightens, and an absent, empty or
+  malformed value changes nothing. `configure()` throws on a name that is not an
+  HTTP field name, on a `%`, and on any key but `remaining`. Needs cURL 7.84 or
+  later.
+- **Local refusal codes.** A request refused before it is sent returns an error
+  result beginning `Refused locally: no request was sent (CODE).`, followed by the
+  reason (and `Retry in N s.` where the reason is the rate limit), and never a
+  host, URL or header value:
+  `LOCAL_HOST_NOT_ALLOWED`, `LOCAL_RATE_LIMITED`, `LOCAL_REFUSED_PATH`. A redirect
+  hop refused after earlier hops were sent is `LOCAL_REDIRECT_REFUSED`, and its
+  first line says how many requests went out. `curl_execute`'s stderr line logs
+  the code, never the message.
+
+### Changed
+
+- **BREAKING: setting `baseUrl` restricts requests to its host.** With
+  `allowedHosts` unset, an absolute URL to any other host is refused as
+  `LOCAL_HOST_NOT_ALLOWED`, and a redirect hop to one as
+  `LOCAL_REDIRECT_REFUSED`. This applies to `curl_execute`,
+  `utilities().executeRequest` and the YAML endpoint tools of a `createApiServer()`
+  server, whose schema `baseUrl` sets the server's. **To adjust:** list the hosts
+  in `allowedHosts`, or set `allowedHosts: "any"` for the 5.1.0 behaviour. An
+  embedder overriding `generatorConfig.baseUrl` with another host must list it.
+- **BREAKING: `start()` throws on a `baseUrl` that is not an absolute http(s) URL**
+  when `allowedHosts` is unset, because the default host list cannot be derived
+  from it. 5.1.0 started and failed each relative call instead. **To adjust:** fix
+  `baseUrl`, or set `allowedHosts`.
+- **BREAKING: mcp-curl follows redirects itself, and rewrites the method as
+  browsers do.** cURL now runs without `-L`, and each hop is spawned separately
+  after the host list, the SSRF check with its own `--resolve` pin and the rate
+  limit. A 303 turns every method but `HEAD` into a body-less `GET`, and a 301 or
+  302 does the same to `POST`; 307 and 308 keep the method and body. Under 5.1.0,
+  cURL's `-X POST` re-sent `POST` without its body after a 301, 302 or 303.
+  **To adjust:** have the API answer a method-preserving redirect with 307 or 308,
+  or set `follow_redirects: false` and follow the `Location` yourself.
+- **BREAKING: a redirect to another origin forwards only `Accept`,
+  `Accept-Language`, `Accept-Encoding` and `User-Agent`**, plus the body headers
+  while the body is kept. Every other header, `defaultHeaders` and YAML
+  `auth.headers` included, and `basic_auth` and `bearer_token` are dropped, and
+  stay dropped if the chain returns to the first origin. **To adjust:** call the
+  redirect target directly, with its host in `allowedHosts`, where it needs a
+  credential.
+- **BREAKING: `include_headers` and `verbose` report the final hop only.** With
+  `-L`, cURL reported every hop's headers and trace. **To adjust:** set
+  `follow_redirects: false` to see a hop's own headers.
+- **BREAKING: local refusal texts have changed.** The rate-limit refusal, the
+  relative-path refusals and a YAML path parameter's `.`/`..` refusal now take the
+  shape under *Added* → *Local refusal codes*, and the rate-limit text ends
+  `Retry in N s.` A chain longer than `max_redirects` is
+  `LOCAL_REDIRECT_REFUSED` rather than cURL's exit 47. **To adjust:** match on the
+  code in parentheses, not on the sentence.
+- **BREAKING: a `curl_execute` `url` starting `//` or `\` on a `baseUrl` server
+  returns a tool result**, `LOCAL_REFUSED_PATH`, where 5.1.0 rejected it at the
+  schema with a `-32602` protocol error the model never saw. **To adjust:** read
+  the refusal from the tool result.
+- **The `curl_execute` description is shorter** (about 2.4 KB, from 6.7 KB). The
+  parameter list and `jq_filter` syntax are in the input schema already; what
+  only the description said about `include_headers` (macOS only, final hop,
+  credentials in header text) and redirects moved into the schema. The version line
+  still matches `^mcp-curl v\d+\.\d+\.\d+$`: search for it rather than taking
+  the last line, which an append follows.
+
+### Fixed
+
+- **A redirect could reach an address the SSRF check refuses** (todo 007). cURL
+  followed redirects with `-L`, so only the first hop was checked and pinned: a 302
+  to `169.254.169.254`, an RFC 1918 address or a privileged loopback port returned
+  that target's body. Every hop is now checked, pinned and counted, and one
+  deadline covers the whole chain.
+
 ## [5.1.0] - 2026-10-26
 
 ### Notes

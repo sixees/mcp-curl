@@ -1,0 +1,281 @@
+# Work Handoff: 5.2.0 release — description trim, docs, CHANGELOG, version
+**Date:** 2026-10-29 | **Branch:** docs/release-5.2.0 | **Plan:** docs/plans/2026-10-27-feat-host-policy-redirect-hops-plan.md | **Status:** complete — all five tasks landed. The Surface 2 review filed four todos; the operator had 025, 026 and 027 fixed on this branch, and had 024 deleted (single consumer: the operator).
+**Plan slice:** PR-5 (tasks 17, 18, 19, 20, 21)
+
+## Summary
+
+This is the release slice of the 5.2.0 plan. The code behaviour shipped in PRs #50–#53: the host list, per-hop redirects, header sync and one refusal shape. This branch:
+- tells the model and the embedder about that behaviour;
+- writes the CHANGELOG with its `**BREAKING:**` bullets;
+- stages the two RCs the plan called for;
+- bumps the version to 5.2.0 and rebuilds `dist/`.
+
+The `curl_execute` description lost the text the input schema already carries. The facts that lived only in the dropped text moved into the schema.
+
+## What was implemented
+
+- **Task 17: the description trim** (`src/lib/tools/curl-execute.ts::CURL_EXECUTE_TOOL_META`).
+  - Removed: the 2-line filler paragraph, *Args*, *jq_filter Syntax* and *jq_filter Validation*, and 6 of the 8 examples.
+  - Kept:
+    - line 1;
+    - the response-contract paragraphs;
+    - *Returns*;
+    - *Error Handling*, which carries a pinned phrase;
+    - *Temp File Lifecycle*, since replaced by one sentence on which saved files are deleted and which are kept (todo 027);
+    - the version line.
+  - At this task the size went from 6696 to 2633 bytes and from 111 to 52 lines. I measured this from the imported object with a temporary vitest file, deleted afterwards. Todo 027 and the review rounds have changed the text since.
+  - `src/lib/server/schemas.ts::CurlExecuteSchema`:
+    - `include_headers` now says capture needs macOS, gives the cap as `min(64KB, max_result_size)` (it said "64KB" before), says redirects leave only the final hop's headers, and says header text is sanitised like other non-body text but not redacted, so it routinely carries credential material.
+    - `follow_redirects` and `max_redirects` state the per-hop gate, the method rewrite, the cross-origin header rule and the cap as a refusal.
+  - `src/lib/resources/documentation.ts`: the parameter table gained a `max_redirects` row and new redirect and header text. It also stopped saying headers are "prefixed to the returned text".
+- **Task 18: docs.**
+  - `docs/configuration.md` gained:
+    - an *allowedHosts* section, including the YAML `generatorConfig.baseUrl` sentence the operator approved and the fact that the shipped binary has no such setting;
+    - `syncFromHeaders`, with the cURL 7.84 floor and no version check;
+    - a *Local refusals* section;
+    - corrected *baseUrl* and *defaultHeaders* text, the rateLimit refusal text, the unknown-key throw, and the version-line "search for it" rule.
+  - `docs/hooks.md` gained *What `curl_execute` hooks see*.
+  - `README.md`: Security bullets.
+  - `src/lib/types/public.ts`: the `allowedHosts` doc-block no longer says redirect hops are unbounded.
+- **Task 19:** `CHANGELOG.md` `[5.2.0]`:
+  - *Notes*: the MINOR decision, the reversal of the 5.1.0 decline, and the declined list.
+  - *Added*: three entries.
+  - *Changed*: seven `**BREAKING:**` bullets, each with "To adjust:", plus the description trim.
+  - *Fixed*: todo 007.
+  - There is no `### BREAKING` heading.
+- **Task 20:** the two RCs the plan called for, which the operator approved on 2026-10-29, are filed in `LESSONS.md` as RC-67 and RC-68 (`ba7cb20`).
+- **Task 21:** `package.json` and `package-lock.json` are at 5.2.0, and `dist/` is rebuilt; `SERVER.VERSION` is `"5.2.0"` in `dist/chunk-2H76KKK5.js` (the chunk name changes on every rebuild). The operator approved the rebuild. Their earlier uncommitted `dist/` is backed up in the session scratchpad. There is no tag; the tag follows the merge.
+
+## Key decisions
+
+| Decision | Reasoning | Alternatives considered |
+|---|---|---|
+| Rebuild `dist/` over the operator's uncommitted build | The operator chose it at the Step 3 audit ("rebuild dist, all good"). A release commit must carry its own version (todo 023) | Skip the rebuild; abort |
+| Add the YAML `generatorConfig.baseUrl` sentence | The plan's default answer to its open question asks for it; the operator approved | Leave it out, as task 18 listed |
+| Moved facts go into the schema `.describe()`, not the description | The schema is sent with the tool list anyway; one model-facing owner per parameter | Keep them in the description |
+| Fix the stale "prefixed" row and the 64KB cap while moving text | K-7: both sat in text this branch rewrote | Leave them for a later pass |
+| Keep the RC-63 sentence order in the description | The plan says a test pins it. None does, but the order is still the right one | — |
+| RCs staged, not committed | `docs/work/RC/` is not gitignored here, and an unnumbered entry is not ledger content | Commit them for reviewers to read |
+
+## What to pay attention to during review
+
+- **The CHANGELOG's `**BREAKING:**` bullets are claims about 5.1.0 behaviour.** These came from the plan's research and were not re-measured on this branch:
+  - cURL's `-X POST` resent a body-less POST;
+  - `-L` reported every hop's headers;
+  - `//` was a `-32602`.
+- **Docs are the change here, and the review found the docs drift.** Todo 025 listed the copies that disagreed with the code, including the README's `Accept*` and the *Local refusals* table; `1d846a1` corrected them after the Surface 2 review ran; the three Surface 3 rounds recorded below are the review passes that read it.
+- `dist/` is a full rebuild. Six files are renamed chunks, and the diff is large but generated.
+
+## Known issues and limitations
+
+- No todo from the Surface 2 review is open. 025 and 026 were fixed in `1d846a1` and 027 on 2026-10-30, all after the Surface 2 review ran (K-16); the three Surface 3 rounds recorded below are the passes that read those commits.
+- The two RCs this release called for are filed in `LESSONS.md` as RC-67 and RC-68 (`ba7cb20`). Todo 024, since deleted, proposed filing them as its first option.
+- The plan's statement that a test pins RC-63's sentence order in the description was false. Only `processor.ts` carries the order. This is a plan error and gets no RC.
+- `CHANGELOG.md`'s `[5.2.0]` date is 2026-10-30 (`ba7cb20`). If the merge lands later, adjust it.
+
+## Testing summary
+
+- One test was added, for todo 027: `src/lib/response/file-saver.test.ts` saves one file to `output_dir` and one to the temp directory, calls `cleanupTempDir()`, and asserts the first survives and the second is gone. Every other change is prose, a version number or a rebuild. The existing pins on the description held: `register-all-tools.test.ts` (three phrases) and `tool-wrapper.e2e.test.ts` (line 1, last line, append).
+- **Verdict** (re-run after `1d846a1`, same result): `npm test -- --reporter=json --outputFile=<scratchpad>/vitest.json` (the declared `npm test`: `tsc --noEmit`, then `vitest run`). The artefact shows `success: true`, 1773 total, 1766 passed, 0 failed, 7 pending, and 0 failed suites.
+- `npm run build` succeeds.
+- `src/lib/release-guards.test.ts` passes (14 tests), including the BREAKING guard and the tarball doc list.
+- **Gaps:** nothing ties the schema describes or the documentation resource to `CROSS_ORIGIN_FORWARDED_HEADERS`, `FOLLOWED_REDIRECT_STATUSES` or `LIMITS` (todo 025).
+
+## Commit history
+
+```
+ba7cb20 docs: file RC-67 and RC-68, date 5.2.0 release
+3843c43 fix: address PR review feedback
+d7c0456 fix: address PR review feedback
+64b45f1 fix: address PR review feedback
+8c462c4 Rebuild dist after the comment sync
+740c5f7 docs(comments): sync comments/doc-blocks with code
+fa9942e Say which saved files the server deletes, and drop todo 024
+a7df911 Close todos 025 and 026 and update the 5.2.0 handoff
+1d846a1 Bring the 5.2.0 docs back in line with the code they describe
+102f27f Record the 5.2.0 work handoff and the Surface 2 review's todos
+8522ae0 Release 5.2.0: version bump and rebuilt dist
+1ccae6b Write the 5.2.0 CHANGELOG entry
+67ccc62 Document the host list, per-hop redirects, header sync and refusals
+744c829 Trim the curl_execute description to what the schema cannot say
+```
+
+Every commit was made with `git -c core.hooksPath=/dev/null`; no hooks are configured in this repository.
+
+## Review context
+
+- **Suggested order:**
+  1. `CHANGELOG.md` `[5.2.0]`;
+  2. `src/lib/server/schemas.ts` and the description in `src/lib/tools/curl-execute.ts`;
+  3. `docs/configuration.md` → *allowedHosts* and *Local refusals*;
+  4. `docs/hooks.md`;
+  5. README.
+
+  Skip `dist/`.
+- Invariants: 11 (MINOR-vs-break; recorded in RC-67), 2 (per-hop gate order, as documented).
+- RCs: RC-36, RC-63, RC-66, RC-67, RC-68.
+- Depends on #50–#53, all merged.
+
+## Follow-up work
+
+- [x] File the staged RCs before the merge: RC-67 and RC-68 (`ba7cb20`).
+- [x] Decide todos 024 and 027: 024 deleted, 027 fixed (2026-10-30).
+- [ ] After the merge: a signed, annotated tag `5.2.0` (bare number), on the operator's say.
+
+### Outstanding Todos
+
+| File | Priority | Description | Source |
+|---|---|---|---|
+| — | — | None open from this branch | — |
+
+### Resolved Todos
+
+| Id | Title | Summary | By | Date |
+|---|---|---|---|---|
+| 025 | Redirect and refusal facts restated by hand have drifted | Option 1: drifted copies corrected; the documentation resource defers to the schema | Claude Code, operator-authorised | 2026-10-29 |
+| 026 | Host-policy docblocks say redirect hops are not checked | Three docblocks reworded; `dist/` rebuilt | Claude Code, operator-authorised | 2026-10-29 |
+| 027 | Description promises deletion `output_dir` does not get | Option 1: lifecycle block cut to one scoped sentence, *Error Handling* to its pinned bullet, `headers_unsupported` stated once; cleanup test added; `dist/` rebuilt | Claude Code, operator-authorised | 2026-10-30 |
+| 024 | MINOR override of invariant 11 recorded only in the CHANGELOG | Deleted by the operator on 2026-10-30: "we are not doing a major bump - there is only one consumer / user of the project, and it is me." RC-67 is the record | Operator | 2026-10-30 |
+
+Todo 007, which this release's CHANGELOG lists as fixed, was closed by PR-3.
+
+## Code Review — 2026-10-29
+
+**Certification:** complete
+**Roster closure:** closed — unresolved: security-sentinel → "Anything genuinely outside your lane gets one line under `notes:` and no finding"; pattern-recognition-specialist → "whichever reviewer owns that lane"
+
+**Scope:** base `0933d3e` (`git merge-base --fork-point origin/HEAD HEAD`; origin/HEAD = main) .. HEAD: 4 commits and 29 file entries, 18 of them `dist/`.
+
+**Agents used (8):**
+- Floor: learnings-researcher, code-simplicity-reviewer, security-sentinel and data-integrity-guardian.
+- Optional: typescript-reviewer, performance-oracle, architecture-strategist and pattern-recognition-specialist.
+
+All returned, and none failed. Each `v1` reviewer named both lens subjects. code-simplicity, data-integrity, typescript and architecture have no Bash, and each declared that it judged its files whole.
+
+**Findings:** 4 classes after merging: P1 0 · P2 2 · P3 2.
+- Filed: 4. Declined: 0. Investigate-first: 0. Rejected: 0. Escalated: 0.
+
+**Merge note:** three classes share the anchors `CURL_EXECUTE_TOOL_META` and `CurlExecuteSchema`. Each anchor is a single large string or object, so overlap there is not evidence of one defect. I merged by defect instead, and each todo records its aliases.
+
+**Handoff assessment:** no handoff existed when the review ran. This file was written by the work run in the same session, after the review.
+
+### Key findings
+
+| Severity | Class | Category | Todo |
+|---|---|---|---|
+| P2 | convention-drift: MINOR override of invariant 11 recorded only in the CHANGELOG | architecture / versioning | 024 |
+| P2 (P3→P2 via RC-36 alias `broken-contract`) | duplicated-logic: redirect and refusal facts restated by hand, already drifted | docs / tool description | 025 |
+| P3 | stale-comment: `host-policy.ts` docblocks say hops are unchecked, shipped in `dist/` | docs / security | 026 |
+| P3 | unretained-pii (alias dead-code): the lifecycle block promises deletion `output_dir` does not get | tool description | 027 |
+
+### Verified claims
+
+| Claim | Checked | Result |
+|---|---|---|
+| Tests pass | declared `npm test` with the JSON reporter | 1766 passed, 0 failed, 7 skipped |
+| Build passes | `npm run build` | succeeds; `dist` VERSION is 5.2.0 |
+| Description keeps line 1, version line, pinned phrases | typescript-reviewer, the test pins | holds |
+| Schema describes match code | typescript-reviewer, pattern-recognition-specialist, security-sentinel | hold; drift is in docs and README (todo 025) |
+| Release consistency | architecture-strategist | `package.json`, lock and `dist` all at 5.2.0 |
+
+### Outstanding todos
+
+See the *Outstanding Todos* table above.
+
+**Open classes without a todo:** none.
+
+**Blockers:** none (no P1, and nothing awaiting the operator from the review).
+
+## Review Comments Addressed — 2026-10-30
+
+Round 1 of up to 3 (operator rule: stop after a round with 4 or fewer comments and no P1). Requested: CodeRabbit (`full review`), Codex (`@codex review` with scope), Copilot (GraphQL `requestReviews`, `union: true`). Copilot graded "Changes recommended" against head `8c462c4`. Codex: "Didn't find any major issues." Severities below are this run's, re-derived from consequence; the bots' own labels are in brackets.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `include_headers` describe calls header text verbatim, but it is sanitised | coderabbitai [Minor], copilot-pull-request-reviewer [Low] | Fix needed (P3) | `schemas.ts`: sanitised like other non-body text, not redacted, still carries credentials. Swept `verbatim` over src, docs and README: no other header claim |
+| Saved-file deletion is graceful-shutdown only | coderabbitai [Minor] | Fix needed (P3) | Description: deleted on graceful shutdown, or at the next start after a crash |
+| JSON pass-through overstated: `jq_filter` and the size cap still transform | coderabbitai [Minor] | Fix needed (P3) | `documentation.ts` *Response Sanitisation* scoped to the defence |
+| Empty body (204, HEAD) is not saved to a file | coderabbitai [Minor] | Fix needed (P3) | `documentation.ts`: empty body comes back as `""` unless `save_to_file` |
+| 307/308 forward `data`/`form` secrets cross-origin | coderabbitai [Major] | Fix needed (P2) | `configuration.md` *allowedHosts*: say so, and to set `follow_redirects: false` where the list allows more than one host |
+| Host list does not check scheme or `insecure` | coderabbitai [Minor] | Fix needed (P3) | `configuration.md` *baseUrl* |
+| "Stays out of the transcript" is false under `verbose` | coderabbitai [Major] | Fix needed (P2) | `configuration.md` *baseUrl*: `verbose` prints request headers, `defaultHeaders` included, and the trace is returned |
+| Header sync is not hard-quota enforcement | coderabbitai [Minor] | Fix needed (P3) | `configuration.md` *rateLimit*: best-effort; keep `max` below the quota either way |
+| `afterResponse` on a refused hop sees the refusal | coderabbitai [Minor] | Fix needed (P3) | `docs/hooks.md` |
+| Refusal "first line" is a prefix (outdated thread) | coderabbitai [Minor] | Fix needed (P3) | Already fixed in `740c5f7` ("begins") |
+| Description size 2.6 KB vs 2.3 KB | coderabbitai [Trivial] | Fix needed (P3) | CHANGELOG fixed in `740c5f7`; PR body updated |
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Release as 6.0.0 or keep 5.1.0 behaviour | coderabbitai [Major] | P2 | in scope (`package.json`) | Already decided: MINOR by operator decision, restated 2026-10-30 — one consumer, the operator. Staged RC `invariant-11-single-consumer-minor` |
+| Re-certify the Surface 2 review after post-review fixes | coderabbitai [Minor] | P3 | in scope (handoff) | No consequence: the certification records the range it reviewed, and *Known issues* names the later commits; this Surface 3 round is their review |
+| `output_dir` inside the server temp dir is deleted at shutdown | coderabbitai [Minor] | P3 | in scope (description) | No consequence shown: only a call that points `output_dir` into the server's own temp dir hits it, and the file is then deleted like any temp file. Internal, single-operator use (K-14) |
+| `data: ""` / `form: {}` send GET, though the describe says POST | coderabbitai [Minor] | P3 | describe in scope; `buildCurlArgs` out of diff | The fix is in `buildCurlArgs`, which this PR does not touch; an empty body has nothing to POST. Not changed in this PR |
+
+### Decisions Revised
+
+None.
+
+### Resolved Todos
+
+None this round.
+
+### Outstanding Todos
+
+None filed (0 this round; 0 open against #54).
+
+### Files Modified
+
+`src/lib/server/schemas.ts`, `src/lib/tools/curl-execute.ts`, `src/lib/resources/documentation.ts`, `docs/configuration.md`, `docs/hooks.md`, `dist/` (rebuilt), this handoff.
+
+## Review Comments Addressed — 2026-10-30 (round 2)
+
+Round 2 of up to 3. Same three bots requested. Copilot graded "Changes recommended" against `64b45f1` (1 open, 1 resolved since the last review). Codex: "Didn't find any major issues." Round 2 returned 6 new entries (4 inline, a Codex summary and a CodeRabbit acknowledgement), so the stop condition (4 or fewer, no P1) is not met and round 3 follows.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| Crash cleanup waits for the one-hour orphan age, so "next start" overstates it | copilot-pull-request-reviewer | Fix needed (P3) | Description: after a crash, a later start deletes them once they are an hour old (`TEMP_DIR.ORPHAN_MIN_AGE_MS`) |
+| 307/308 body secrets also cross a scheme or port change on one host | coderabbitai [Major] | Fix needed (P2) | `configuration.md` *allowedHosts*: say so, and drop the multi-host qualifier from the `follow_redirects: false` advice |
+| Sync correction expires after `windowMs`, not the upstream reset | coderabbitai [Major] | Fix needed (P2) | `configuration.md` *rateLimit*: set `windowMs` to the upstream's window (`applyServerRemaining` pads with the configured window) |
+| Handoff does not show how the stop condition was met | coderabbitai [Minor] | Fix needed (P3) | This section records round 2 and why round 3 follows |
+
+### Declined Findings
+
+None this round.
+
+### Decisions Revised, Resolved Todos, Outstanding Todos
+
+None. 0 todos filed; 0 open against #54.
+
+### Files Modified
+
+`src/lib/tools/curl-execute.ts`, `docs/configuration.md`, `dist/` (rebuilt), this handoff.
+
+## Review Comments Addressed — 2026-10-30 (round 3)
+
+Round 3 of 3, the last the operator authorised. Copilot graded "Approval recommended", no open issues, against `d7c0456`. Codex: "Didn't find any major issues." CodeRabbit filed 3 inline findings, so the round returned 3 findings, none P1, which meets the operator's stop condition (4 or fewer, no P1). Counting every bot entry, including the Codex summary, CodeRabbit's acknowledgement and Copilot's review body, it returned 6.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| A credential in a forwarded header (`User-Agent`, `Accept*`) follows a cross-origin redirect | coderabbitai [Minor] | Fix needed (P3) | `configuration.md` *defaultHeaders*: unless it sits in one of those headers; keep credentials out of them |
+| A full window refuses the request; it does not wait | coderabbitai [Minor] | Fix needed (P3) | `configuration.md` *rateLimit*: refused, not queued |
+| Entity-encoded markdown destinations are not removed | coderabbitai [Minor] | Fix needed (P3) | `documentation.ts`: a destination is matched as written (`strip-blocks.ts` patterns require a literal `http(s)://`) |
+
+### Declined Findings
+
+None this round.
+
+### Decisions Revised, Resolved Todos, Outstanding Todos
+
+None. 0 todos filed; 0 open against #54.
+
+### Files Modified
+
+`docs/configuration.md`, `src/lib/resources/documentation.ts`, `dist/` (rebuilt), this handoff.

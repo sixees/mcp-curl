@@ -13,7 +13,7 @@ export const CurlExecuteSchema = z.object({
     url: createHttpOnlyUrlSchema({ description: "The URL to request (http or https)" }),
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
         .optional()
-        .describe("HTTP method (defaults to GET, or POST if data is provided)"),
+        .describe("HTTP method (defaults to GET, or POST if data or form is provided)"),
     headers: z.record(z.string(), z.string())
         .optional()
         .describe("HTTP headers as key-value pairs (e.g., {\"Content-Type\": \"application/json\"})"),
@@ -25,13 +25,25 @@ export const CurlExecuteSchema = z.object({
         .describe("Form data as key-value pairs (uses multipart/form-data)"),
     follow_redirects: z.boolean()
         .default(true)
-        .describe("Follow HTTP redirects (default: true)"),
+        .describe(
+            "Follow HTTP redirects (default: true). mcp-curl follows 301, 302, 303, 307 and " +
+            "308 one hop at a time, and checks every hop as it checks the first: the host " +
+            "list, the SSRF check and the rate limit. A refused hop ends the chain with a " +
+            "refusal that says how many requests were sent. 303 turns every method but " +
+            "HEAD into a body-less GET, and 301/302 do the same to POST; 307 and 308 keep " +
+            "the method and body. A hop to an origin other than the first request's keeps " +
+            "only the Accept, Accept-Language, Accept-Encoding and User-Agent headers, plus " +
+            "the body headers while the body is kept, and drops basic_auth and bearer_token. Any other 3xx, or one with an empty Location, is returned as is"
+        ),
     max_redirects: z.number()
         .int()
         .min(0)
         .max(50)
         .optional()
-        .describe("Maximum number of redirects to follow"),
+        .describe(
+            "Maximum number of redirects to follow (default: 10). A chain longer than this " +
+            "is refused as LOCAL_REDIRECT_REFUSED, not returned as its last 3xx"
+        ),
     insecure: z.boolean()
         .default(false)
         .describe("Skip SSL certificate verification (default: false)"),
@@ -74,11 +86,15 @@ export const CurlExecuteSchema = z.object({
             "headers_undetermined and headers_unsupported below) it is omitted entirely, " +
             "and a server notice may then occupy content[1]. Match on the entry's content " +
             "rather than trusting its index. " +
-            "Capped at 64KB. Three out-of-band " +
+            "Capped at the smaller of 64KB and max_result_size. Three out-of-band " +
             "states are reported beside the text, never inside it: headers_truncated " +
             "(the text was cut), headers_undetermined (requested, but the origin sent no " +
             "header block), and headers_unsupported (this host cannot capture headers at " +
-            "all — a fact about the host, not about the origin)"
+            "all, because capture requires macOS — a fact about the host, not about the " +
+            "origin). After followed redirects, " +
+            "these are the final hop's headers only. Header text is sanitised like other " +
+            "non-body text, so a value may not match the origin's byte for byte, but it " +
+            "is not redacted and routinely carries credential material such as Set-Cookie"
         ),
     compressed: z.boolean()
         .default(true)

@@ -1,5 +1,5 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, h as HostRateLimit, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-DJUDe7h7.js';
-export { A as ApiDefaults, c as ApiInfo, d as ApiSchema, f as ApiSchemaVersion, g as AuthConfig, h as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, i as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, j as ParameterType, R as ResponseConfig, k as buildUrl, l as generateInputSchema, m as generateToolDefinitions, n as getAuthConfig, o as getMethodAnnotations, r as registerEndpointTools } from './generator-Do0M6C0q.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, h as HostRateLimit, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-C-tVdGaZ.js';
+export { A as ApiDefaults, c as ApiInfo, f as ApiSchema, g as ApiSchemaVersion, h as AuthConfig, i as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, j as EndpointParameter, G as GeneratorConfig, k as HttpMethod, J as JqQueryInput, P as ParameterLocation, l as ParameterType, R as ResponseConfig, m as buildUrl, n as generateInputSchema, o as generateToolDefinitions, p as getAuthConfig, q as getMethodAnnotations, r as registerEndpointTools } from './generator-jrGWR0DG.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
@@ -80,10 +80,11 @@ interface CreateHttpOnlyUrlSchemaOptions {
  */
 declare function createHttpOnlyUrlSchema(options?: CreateHttpOnlyUrlSchemaOptions): z.ZodType<string>;
 /**
- * Extract a hostname from a URL string for use as a log label.
- * Returns the configured fallback (default: "unknown") if the URL is malformed
- * or missing — used in error paths where we still want a stable label without
- * letting URL-parse failures shadow the original error.
+ * Extract a hostname from a URL string, or `fallback` (default: "unknown")
+ * when the URL is malformed or missing. Never throws, so an error path keeps a
+ * stable log label without a URL-parse failure shadowing the original error.
+ * `executeCurlRequest` also reads it for the host-list check, passing `""` so
+ * an unparseable URL is told apart from a real host and left to the SSRF gate.
  *
  * Pure: depends only on its inputs.
  */

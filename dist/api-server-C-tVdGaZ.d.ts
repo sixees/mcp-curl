@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, p as CurlExecuteResult, G as GeneratorConfig, d as ApiSchema } from './generator-Do0M6C0q.js';
+import { C as CurlExecuteInput, J as JqQueryInput, s as CurlExecuteResult, G as GeneratorConfig, f as ApiSchema } from './generator-jrGWR0DG.js';
 
 /**
  * An embedder-configured per-host limit: at most `max` requests to one host in
@@ -12,6 +12,19 @@ interface HostRateLimit {
     readonly max: number;
     /** Window length in milliseconds (positive integer) */
     readonly windowMs: number;
+    /**
+     * Tighten the per-host count from the upstream's own figure. `remaining`
+     * names a response header carrying the requests the upstream will still
+     * admit in its window; after each response, the host that answered is
+     * counted as having used at least `max − remaining`. It only ever tightens,
+     * and an absent, empty or malformed value changes nothing.
+     *
+     * The name must be an HTTP field name (RFC 9110 token) without `%`. Reading
+     * the header needs cURL 7.84 or later.
+     */
+    readonly syncFromHeaders?: {
+        readonly remaining: string;
+    };
 }
 
 /**
@@ -22,7 +35,9 @@ interface McpCurlConfig {
     /**
      * Base URL that a `url` starting with a single `/` is resolved against, in
      * `curl_execute` and `utilities().executeRequest`. An absolute URL passes
-     * through unchanged, so this is a convenience, not a host restriction.
+     * through unchanged: resolving against this URL does not limit hosts. But
+     * with `allowedHosts` unset, the host list defaults to this URL's host alone,
+     * so setting `baseUrl` refuses absolute URLs to any other host.
      */
     baseUrl?: string;
     /** Default headers for `curl_execute` and `utilities().executeRequest`; a request's own header of the same name wins */
@@ -43,6 +58,20 @@ interface McpCurlConfig {
     authToken?: string;
     /** Allowed origins for HTTP transport Origin header validation (default: localhost) */
     allowedOrigins?: readonly string[];
+    /**
+     * The hosts a request may go to, matched exactly, case-insensitively, with
+     * trailing dots ignored. Entries are bare host names or IP literals (IPv6 in
+     * brackets): no scheme, port, path, userinfo or wildcard, or `configure()`
+     * throws. `"any"` allows every host; `[]` refuses every request.
+     *
+     * Unset, a server with a `baseUrl` may reach only the `baseUrl` host, and
+     * `start()` throws if the `baseUrl` cannot give one; a server without a
+     * `baseUrl` may reach any host. The list is checked against the request
+     * URL's host before DNS, so a refused host is never resolved or contacted,
+     * and again on every followed redirect hop's host. The SSRF gate applies on
+     * top of this list either way.
+     */
+    allowedHosts?: readonly string[] | "any";
     /** Default User-Agent for all requests. Empty string disables. */
     defaultUserAgent?: string;
     /** Default Referer for all requests. Empty string disables. */
@@ -50,15 +79,17 @@ interface McpCurlConfig {
     /**
      * Per-host limit as a sliding window: at most `max` requests to any one
      * host in any `windowMs` span. Unset, each host gets the fixed default of
-     * 60 per minute. Both fields must be positive integers, or `configure()`
-     * throws. The per-client limit is not affected.
+     * 60 per minute. `max` and `windowMs` must be positive integers, or
+     * `configure()` throws. The per-client limit is not affected.
      *
      * Applied process-wide by `start()` and released only by this server's
      * `shutdown()` or failed `start()`, so it also counts `utilities()` calls,
      * YAML endpoint tools and any other server in the process. While one server
      * holds it, another's `start()` with a `rateLimit` throws. It is local
      * throttling, not quota accounting: the count starts again with the
-     * process, and requests made elsewhere on the same credential are not seen.
+     * process, and requests made elsewhere on the same credential are not seen
+     * unless `syncFromHeaders` names the header carrying the upstream's own
+     * remaining count.
      */
     rateLimit?: HostRateLimit;
     /**
@@ -167,11 +198,23 @@ type BeforeRequestResult<T> = void | {
  */
 type BeforeRequestHook<T = CurlExecuteInput | JqQueryInput> = (ctx: HookContext<T>) => BeforeRequestResult<T> | Promise<BeforeRequestResult<T>>;
 /**
- * Hook called after successful tool execution.
+ * Hook called once the tool returns, an `isError` result included; a tool
+ * that throws reaches the onError hooks instead.
  * Receives the response for logging, metrics, caching, etc.
+ *
+ * `response` is the body, `content[0]`. `content` is every entry the tool
+ * returns: `curl_execute` adds response header text and server-authored
+ * notices as later entries, only when each has text, so a hook finds one by
+ * matching its text rather than its index. A non-zero cURL exit can leave the
+ * body empty with `isError` false, and its notice is in `content` alone. The
+ * entries are frozen copies, so a hook cannot change the result it observes.
  */
 type AfterResponseHook<T = CurlExecuteInput | JqQueryInput> = (ctx: HookContext<T> & {
     response: string;
+    content: ReadonlyArray<{
+        readonly type: "text";
+        readonly text: string;
+    }>;
     isError: boolean;
 }) => void | Promise<void>;
 /**
@@ -236,6 +279,14 @@ interface InstanceUtilities {
      * a `.` or `..` segment (literal or `%2e`-encoded) is refused with an error
      * result rather than requested.
      *
+     * Rejects, rather than returning an error result, when `allowedHosts` is
+     * unset, `baseUrl` cannot give a host and the call names an absolute `url`:
+     * the configuration `start()` refuses with the same error, so it is reachable
+     * only before `start()`, and a misconfigured server surfaces it to the
+     * embedder, not the model. A relative `url` or a `path` against that
+     * `baseUrl` gets `resolveRequestUrl`'s error result first and never reaches
+     * the rejection.
+     *
      * NOTE: This method calls executeCurlRequest directly and bypasses the hook
      * system (beforeRequest, afterResponse, onError). Use MCP tool invocation
      * if you need hooks to execute.
@@ -275,6 +326,22 @@ interface CustomToolMeta {
         openWorldHint?: boolean;
     };
 }
+/**
+ * Extensible MCP cURL server with fluent builder API.
+ *
+ * Provides hooks for request interception, configuration options,
+ * and tool management.
+ *
+ * @example
+ * ```typescript
+ * const server = new McpCurlServer()
+ *   .configure({ baseUrl: "https://api.example.com" })
+ *   .beforeRequest((ctx) => {
+ *     console.log("Request:", ctx.tool, ctx.params);
+ *   });
+ * await server.start("stdio");
+ * ```
+ */
 declare class McpCurlServer {
     private _config;
     private _frozenConfig;
@@ -298,7 +365,9 @@ declare class McpCurlServer {
      *
      * @param config - Configuration options to merge
      * @returns this for chaining
-     * @throws Error if called after start(), if `rateLimit` is not two positive integers,
+     * @throws Error if called after start(), if `rateLimit` holds an unknown key, a
+     *   `max` or `windowMs` that is not a positive integer, or a `syncFromHeaders`
+     *   that is not `{ remaining: <header name> }`, if an `allowedHosts` entry is not a bare host name,
      *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
      *   once sanitised
      */
@@ -331,7 +400,7 @@ declare class McpCurlServer {
     beforeRequest(hook: BeforeRequestHook): this;
     /**
      * Register an afterResponse hook.
-     * Hooks run sequentially after successful tool execution.
+     * Hooks run sequentially once the tool returns, an isError result included; a hook that throws is passed to the onError hooks.
      * Useful for logging, metrics, caching.
      *
      * @param hook - Hook function
@@ -341,7 +410,7 @@ declare class McpCurlServer {
     afterResponse(hook: AfterResponseHook): this;
     /**
      * Register an onError hook.
-     * Hooks run sequentially when tool execution throws.
+     * Hooks run sequentially when tool execution or an afterResponse hook throws; the original error is still rethrown.
      * Useful for error logging and reporting.
      *
      * @param hook - Hook function
@@ -355,13 +424,16 @@ declare class McpCurlServer {
      * Use this to add API-specific tools generated from schema definitions.
      *
      * Note: Custom tools are NOT wrapped with beforeRequest/afterResponse/onError hooks.
-     * They are registered directly on the MCP server. If you need hook-like behavior,
-     * implement it within the handler function itself.
+     * If you need hook-like behavior, implement it within the handler function itself.
+     * Their results do pass through the response defence wrap at start(): text parts are
+     * sanitised and scanned for injection (a JSON part is scanned only), and spotlighted
+     * when `enableSpotlighting` is set, under the "custom" hostname label.
      *
      * @param name - Tool name (must match /^[a-z][a-z0-9_]*$/)
      * @param meta - Tool metadata (title, description, inputSchema). title and description
-     *   are sanitized automatically. **inputSchema field descriptions are also
-     *   sanitised at every depth** at registration time via the
+     *   are sanitized automatically, and the description is truncated (with a warning) to
+     *   `MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH` chars. **inputSchema field descriptions are also
+     *   sanitised at every depth, to the walker's 100-level cap,** at registration time via the
      *   `sanitizeFieldDescriptionsDeep` helper. Recursion descends into
      *   `ZodObject` (`.shape` values), `ZodArray` (`.element`),
      *   `ZodUnion` (including `ZodDiscriminatedUnion`, which `instanceof
@@ -458,7 +530,11 @@ declare class McpCurlServer {
      * Configuration is frozen after this call.
      *
      * @param transport - Transport mode: "stdio" (default) or "http"
-     * @throws Error if already started
+     * @throws Error if already started, or if `allowedHosts` is unset and `baseUrl`
+     *   is not an absolute http(s) URL (the default host list cannot be derived);
+     *   and, after rolling back, if the HTTP auth token is invalid, another server in
+     *   the process already holds `rateLimit`, or the transport fails to come up
+     *   (e.g. the HTTP port is in use)
      */
     start(transport?: TransportMode): Promise<void>;
     private launch;
@@ -495,7 +571,7 @@ declare class McpCurlServer {
      * Delegates to shared createHttpApp() for route setup, auth, and Origin validation.
      *
      * @param authToken - Pre-resolved bearer token (already passed through
-     *   `validateAuthToken` in `start()`). Passing the snapshot down avoids
+     *   `validateAuthToken` in `launch()`). Passing the snapshot down avoids
      *   resolving the env var twice and guarantees the value the auth
      *   middleware closes over is the exact value that was validated.
      */
@@ -527,8 +603,12 @@ interface ApiServerOptionsBase {
     disableCurlExecute?: boolean;
     /** Disable the default jq_query tool */
     disableJqQuery?: boolean;
-    /** Generator configuration for tool creation */
-    generatorConfig?: GeneratorConfig;
+    /**
+     * Generator configuration for tool creation. Takes no `allowedHosts`: the
+     * YAML tools take the server's own `config.allowedHosts`, so a generator
+     * list here would be discarded rather than applied.
+     */
+    generatorConfig?: Omit<GeneratorConfig, "allowedHosts">;
 }
 /**
  * Load schema from a YAML file path.

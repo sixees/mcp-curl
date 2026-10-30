@@ -56,6 +56,23 @@ interface HookContext<T = CurlExecuteInput | JqQueryInput> {
 }
 ```
 
+### What `curl_execute` hooks see
+
+- **`ctx.params.url` is absolute.** On a `baseUrl` server, a relative `url` is
+  resolved before the hooks run, and a path the server refuses never reaches them.
+- **A returned `params` is merged, not swapped.** `{ params: { headers } }`
+  replaces `ctx.params.headers` as a whole and keeps every other field, so spread
+  `ctx.params.headers` into it to add one header.
+- **A hook that rewrites `url` is still gated.** The rewritten URL goes through the
+  host list, the SSRF check and the rate limit like any other, and nothing resolves
+  it against `baseUrl`, so return an absolute URL.
+- **`afterResponse` sees the final hop.** After a completed redirect chain,
+  `response`, `content` and any header text are the last hop's; `ctx.params` is
+  still what the first request was built from. Where a hop is refused, it sees the
+  local refusal result instead, with `isError` set.
+- **`utilities()` skips hooks.** `utilities().executeRequest` goes through the
+  same host list, SSRF check and rate limit, but no hook runs.
+
 ## Hook Execution Flow
 
 ```text

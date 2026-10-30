@@ -3018,3 +3018,39 @@ merged when the correction was made.
 - **Reality was:** cURL reads `.curlrc` (`$CURL_HOME`, `$XDG_CONFIG_HOME`, `$HOME`) unless `-q` is its first argument. With `location` in one, a single spawn followed a loopback 302 and returned the target's body (measured, cURL 8.7.1). The always-present `-L` had made this irrelevant, which was a second job it did by accident. Caught pre-merge by security-sentinel in the Surface 2 review.
 - **What changed:** `buildCurlArgs` emits `-q` as `args[0]`. `curl-args-builder.test.ts` pins it. `curl-execute.redirects.e2e.test.ts` points `CURL_HOME` at a `.curlrc` holding `location` and asserts `LOCAL_REDIRECT_REFUSED` with no request reaching the target. Removing `-q` fails both tests.
 - **What this costs next time:** a property of a spawned tool stated as "the argv never contains X" holds only once the tool's ambient inputs are disabled too. For cURL that means `-q` first. Environment variables (`http_proxy`, `ALL_PROXY`) are a separate ambient input, and `-q` does not cover them.
+
+### RC-67 — Invariant 11 reads as absolute, and a single-consumer release overrides it by operator decision
+
+**Date:** 2026-10-29 · **PR:** #54
+
+**Class:** K-14, K-8 — *class-id:* `broken-contract`
+
+- **The plan said:** 5.2.0 ships seven `**BREAKING:**` changes as a MINOR:
+  - a default-on host list;
+  - a start-time throw;
+  - a method rewrite on 301/302/303;
+  - dropped cross-origin credentials;
+  - final-hop-only headers;
+  - new refusal text;
+  - `//` as a tool result.
+
+  The plan cites RC-36 as the earlier MINOR-versus-break decision.
+- **Reality was:** `.sixees/ARCHITECTURE.md` → invariant 11 says any breaking change to an entry point is a MAJOR, with no exception. RC-36 settled a single schema narrowing by *reverting* it, not by shipping a break as a MINOR. 5.1.0 and 5.2.0 are the actual precedents. In both, the operator shipped breaks as a MINOR because mcp-curl has one internal consumer who is told each change directly. 5.2.0's break is larger than either earlier case priced. Todo 023 found the invariant and the releases disagreeing, and on 2026-10-26 the operator chose to leave invariant 11 unchanged.
+- **What changed:** nothing in the invariant. The decision is recorded in CHANGELOG `[5.2.0]` → *Notes* and here. Commit subjects carry no `!`.
+- **What this costs next time:** a breaking change in a MINOR is valid only with an operator decision naming the consumer population. A reviewer citing invariant 11 against such a release cites this entry for the exception and checks that the decision is recorded. Without the decision, invariant 11 binds. If the consumer population grows beyond one, the exception lapses.
+
+### RC-68 — The 5.1.0 origin-pinning decline was reversed once per-hop redirects answered its false-green half
+
+**Date:** 2026-10-29 · **PR:** #54
+
+**Class:** K-1, K-22 — *class-id:* `fail-open-default`
+
+- **The plan said:** 5.1.0 (CHANGELOG `[5.1.0]` → *Notes*) declined pinning absolute URLs to `baseUrl`'s origin. There were two reasons:
+  - pinning would narrow a published input;
+  - a pin checked on the first hop only is a false green while cURL follows redirects with `-L`.
+- **Reality was:** PRs #50–#53 moved redirect following into `tools/curl-execute.ts::executeCurlRequest`, so every hop passes `config/security/host-policy.ts::isHostAllowed`. That removed the false-green half. The operator reversed the decline on 2026-10-27 (brainstorm `2026-10-27-consumer-feedback-5.2.0` → *Key decisions*, plan Q1). The remaining half, narrowing a published input, was priced as a MINOR (RC-67).
+- **What changed:**
+  - `deriveHostPolicy` defaults the host list to `baseUrl`'s host when `allowedHosts` is unset.
+  - `"any"` restores the 5.1.0 behaviour.
+  - CHANGELOG `[5.2.0]` carries it as `**BREAKING:**` with "To adjust:".
+- **What this costs next time:** this reversal is settled. A finding proposing to drop the default list, or to call `baseUrl` "not a security boundary" again, cites this entry rather than reopening it. The same applies in reverse: a decline whose stated reason lapses does not lapse its other reasons. Re-price what remains, as was done here.
