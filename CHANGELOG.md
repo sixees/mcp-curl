@@ -5,17 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.2.0] - 2026-10-29
+## [5.2.0] - 2026-10-30
 
 ### Notes
 
 - **Shipped in a MINOR release by decision.** The `**BREAKING:**` changes below go
   out as 5.2.0, not 6.0.0: mcp-curl has one consumer, internal, and that consumer
   is told about each change directly. This is a larger break than earlier MINORs
-  carried, and the decision was made knowing that.
+  carried, and the decision was made knowing that. `LESSONS.md` RC-67.
 - **This release reverses a 5.1.0 decline.** 5.1.0 said `baseUrl` would not pin
   absolute URLs to its origin. With `allowedHosts` unset, a `baseUrl` server now
-  reaches only its `baseUrl`'s host.
+  reaches only its `baseUrl`'s host. `LESSONS.md` RC-68.
 - **Not in this release, by decision:**
   - **A per-host `rateLimit` map.** One limit applies to every host. Revisit when
     one server fronts a second API.
