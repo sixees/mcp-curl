@@ -207,8 +207,8 @@ Files can only be read from:
 
 Any non-zero exit returns a result with \`isError\` set. Without
 \`include_metadata\` a notice names the code; with it, the JSON carries
-\`success: false\` and \`exit_code\` instead. The request failed: an empty body
-there means no response arrived, not an empty one.
+\`success: false\` and \`exit_code\` instead. The request failed: the body may be
+empty or incomplete, and an empty one is not an empty response from the server.
 `,
             }],
         })

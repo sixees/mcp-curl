@@ -162,3 +162,21 @@ None.
 ### Files Modified
 
 `CHANGELOG.md`, `docs/hooks.md`, `docs/work/handoff-fix-sync-quota-and-failed-exit.md`, `src/lib/resources/documentation.ts`, `src/lib/types/public.ts`, `dist/` (rebuilt).
+
+## Review Comments Addressed — 2026-10-30 (round 2)
+
+Codex found no major issues. Copilot graded "Needs a closer look" with no open issues: `.sixees/ARCHITECTURE.md` is gitignored, so its checkout could not see the numbered invariants (a coverage gap, not a finding; invariant 1 was checked in the Surface 2 rounds). CodeRabbit filed 1 inline finding.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `documentation.ts`: an empty body after a non-zero exit does not prove no response arrived (exit 28 can follow a partial body) | coderabbitai | Documentation (P3, in scope) | Reworded: the body may be empty or incomplete |
+
+### Declined Findings
+
+None this round.
+
+### Files Modified
+
+`src/lib/resources/documentation.ts`, `dist/` (rebuilt), this handoff.
