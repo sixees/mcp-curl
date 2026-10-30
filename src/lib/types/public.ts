@@ -68,7 +68,8 @@ export interface McpCurlConfig {
      * throttling, not quota accounting: the count starts again with the
      * process, and requests made elsewhere on the same credential are not seen
      * unless `syncFromHeaders` names the header carrying the upstream's own
-     * remaining count.
+     * remaining count. Give it the upstream's `quota` too when `max` is set
+     * below it, or the sync spends that margin.
      */
     rateLimit?: HostRateLimit;
     /**

@@ -34,11 +34,16 @@ export interface HostRateLimit {
      * Tighten the per-host count from the upstream's own figure. `remaining`
      * names a response header carrying the requests the upstream will still
      * admit in its window; after each response, the host that answered is
-     * counted as having used at least `max − remaining`. It only ever tightens,
+     * counted as having used at least `quota − remaining`. It only ever tightens,
      * and an absent, empty or malformed value changes nothing.
+     *
+     * `quota` is the upstream's own limit for the window, and defaults to
+     * `max`. Set it when `max` sits below the upstream's limit on purpose: the
+     * upstream reports what is left of ITS quota, so measured against `max`
+     * that figure would hand the margin back.
      *
      * The name must be an HTTP field name (RFC 9110 token) without `%`. Reading
      * the header needs cURL 7.84 or later.
      */
-    readonly syncFromHeaders?: { readonly remaining: string };
+    readonly syncFromHeaders?: { readonly remaining: string; readonly quota?: number };
 }

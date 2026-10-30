@@ -23,7 +23,7 @@ interface McpCurlConfig {
     rateLimit?: {
         readonly max: number;
         readonly windowMs: number;
-        readonly syncFromHeaders?: { readonly remaining: string };
+        readonly syncFromHeaders?: { readonly remaining: string; readonly quota?: number };
     };
     curlExecuteDescriptionAppend?: string;
 }
@@ -368,18 +368,25 @@ configure({rateLimit: {max: 200, windowMs: 3_600_000}}) // 200 per rolling hour
   window. A different `windowMs` starts the count from zero.
 - **One host, one count.** `api.example.com.` (with a trailing dot) counts
   against the same budget as `api.example.com`.
-- **Header sync.** `syncFromHeaders: { remaining: "<header name>" }` names a
-  response header carrying the requests the upstream will still admit in its
-  window. After each response, including each redirect hop, the host that
-  answered is counted as having used at least `max − remaining`. It only ever
-  tightens the count, and an absent, empty or malformed value changes nothing.
-  The name must be an HTTP field name without `%`, and `remaining` is the only
-  key; anything else makes `configure()` throw. Reading the header needs cURL
-  7.84 or later, and mcp-curl does not check the version: on an older cURL the
-  response's metadata cannot be read, which fails safe as undetermined.
+- **Header sync.** `syncFromHeaders: { remaining: "<header name>", quota? }`
+  names a response header carrying the requests the upstream will still admit
+  in its window. After each response, including each redirect hop, the host
+  that answered is counted as having used at least `quota − remaining`. It only
+  ever tightens the count, and an absent, empty or malformed value changes
+  nothing. The name must be an HTTP field name without `%`.
+- **`quota` keeps your headroom.** It is the upstream's own limit for the
+  window, and defaults to `max`. Set it whenever `max` is below the upstream's
+  limit: the upstream counts down from its quota, so with `max: 200` under a
+  240/hour quota and no `quota`, "40 left" would read as 160 used, not 200, and
+  the 40-request margin would be spent. With `quota: 240`, the count stops when
+  the upstream reports 40 left. `quota` must be a positive integer no smaller
+  than `max`, and `remaining` and `quota` are the only keys; anything else
+  makes `configure()` throw. Reading the header needs cURL 7.84 or later, and
+  mcp-curl does not check the version: on an older cURL the response's metadata
+  cannot be read, which fails safe as undetermined.
 
   ```typescript
-  configure({rateLimit: {max: 200, windowMs: 3_600_000, syncFromHeaders: {remaining: "X-RateLimit-Remaining"}}})
+  configure({rateLimit: {max: 200, windowMs: 3_600_000, syncFromHeaders: {remaining: "X-RateLimit-Remaining", quota: 240}}})
   ```
 
 **This is local throttling, not quota accounting.** The counter lives in this
@@ -392,7 +399,7 @@ spent quota, corrects the local count. That is best-effort: requests sent before
 that response, and quota spent elsewhere after the last one, are still unseen.
 The correction also expires after `windowMs`, not at the upstream's reset, so set
 `windowMs` to the upstream's window. Set `max` below the quota either way, and leave headroom for what this process
-cannot see (for example, 200 of a 240/hour quota).
+cannot see (for example, 200 of a 240/hour quota, with `quota: 240` so the sync keeps it).
 
 ### curlExecuteDescriptionAppend
 
