@@ -56,9 +56,9 @@
 //    enabled, a fresh `randomUUID()` is generated **per `wrap()` call** (one
 //    UUID for the whole call, shared by every text part of that result) so
 //    the begin/end sentinels match within a single response and a hostile
-//    upstream cannot recycle a leaked UUID across responses. An `isError`
-//    result is not spotlighted unless `markRemoteContent` says the origin
-//    wrote some of its text.
+//    upstream cannot recycle a leaked UUID across responses. A result
+//    `markServerAuthored` marked is the one exception: its text is this
+//    server's own, so it is not spotlighted.
 
 import { randomUUID } from "node:crypto";
 import { logWrapError } from "../security/wrap-error-logger.js";
@@ -81,13 +81,15 @@ import { defendForInline } from "./processor.js";
 // so the re-run takes the undivided strip arm across its fields.
 const WRAPPED = Symbol("mcp-curl.wrapped");
 
-// Set by `markRemoteContent` on a result whose text the origin wrote, so the
-// wrap spotlights it even when `isError` is set. The origin decides whether a
-// transfer fails, so keying spotlighting on `isError` alone would let it switch
-// the layer off for its own bytes by stalling after the body. Forging the mark
-// only adds spotlighting, so unlike WRAPPED nothing depends on it staying
-// private; it is a Symbol so it never reaches the serialised result.
-const REMOTE_CONTENT = Symbol("mcp-curl.remote-content");
+// Set by `markServerAuthored` on a result whose every text part this server
+// wrote, such as a local refusal, so the wrap leaves it unspotlighted and its
+// first line readable. Everything else is spotlighted when the flag is on,
+// `isError` or not: the origin decides whether a transfer fails, so an
+// `isError`-keyed skip would let it switch the layer off for its own bytes by
+// stalling after the body. The mark only REMOVES spotlighting, so a result
+// that is rebuilt or copied loses it and is spotlighted: the safe direction.
+// Module-private for the reason WRAPPED is.
+const SERVER_AUTHORED = Symbol("mcp-curl.server-authored");
 
 /**
  * Server-scope config bound once at wrapper creation.
@@ -143,7 +145,7 @@ export interface WrappableResult {
  * Also reads the symbol value defensively — accessing `result[key]` on a
  * Proxy invokes the `get` trap, which can also throw.
  */
-function hasOwnTag(result: object, key: typeof WRAPPED | typeof REMOTE_CONTENT): boolean {
+function hasOwnTag(result: object, key: typeof WRAPPED | typeof SERVER_AUTHORED): boolean {
     try {
         return Object.hasOwn(result, key) && (result as Record<symbol, unknown>)[key] === true;
     } catch {
@@ -173,16 +175,13 @@ export function isWrappedResult(result: unknown): boolean {
 }
 
 /**
- * Mark `result` as carrying text the origin wrote, so the wrap spotlights it
- * whether or not `isError` is set. Non-enumerable, like the WRAPPED tag, and
- * never throws: an unmarkable result keeps the `isError`-keyed behaviour.
+ * Mark `result` as written entirely by this server, so the wrap does not
+ * spotlight it. Call it only on a result built here from server text, never on
+ * one that carries a remote byte or an error message that might echo one.
+ * Non-enumerable, like the WRAPPED tag.
  */
-export function markRemoteContent<T extends object>(result: T): T {
-    try {
-        Object.defineProperty(result, REMOTE_CONTENT, { value: true, enumerable: false });
-    } catch {
-        // Non-extensible target: see `tag` below.
-    }
+export function markServerAuthored<T extends object>(result: T): T {
+    Object.defineProperty(result, SERVER_AUTHORED, { value: true, enumerable: false });
     return result;
 }
 
@@ -337,19 +336,12 @@ export function createWrapper(
             if (!Array.isArray(result.content)) return tag(result);
 
             // Per-message UUID: one UUID per wrap call, shared by every
-            // text part of this result. Generated only when spotlighting is
-            // enabled AND this is not an error result — error text is a
-            // status message about the call, not external content the LLM
-            // should treat as untrusted with sentinel boundaries — unless the
-            // tool marked it as carrying remote text: a failed request is an
-            // error the origin can cause on purpose. Sanitise + detect still
-            // run on errors below: a buggy or hostile custom tool / YAML
-            // handler / hook short-circuit could otherwise emit
-            // `{ isError: true, content: [{ text: <attacker bytes> }] }`
-            // and bypass the defence-in-depth pass entirely.
-            const spotlight =
-                config.enableSpotlighting && (!result.isError || hasOwnTag(result, REMOTE_CONTENT));
-            const requestId = spotlight ? randomUUID() : undefined;
+            // text part of this result. Generated whenever spotlighting is
+            // enabled, unless the result is marked server-authored (see
+            // SERVER_AUTHORED). Sanitise + detect run on every result below,
+            // marked or not.
+            const requestId =
+                config.enableSpotlighting && !hasOwnTag(result, SERVER_AUTHORED) ? randomUUID() : undefined;
 
             const newContent = result.content.map((part) =>
                 processTextPart(part, hostname, requestId)

@@ -2710,7 +2710,7 @@ function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo,
 // src/lib/response/post-processor.ts
 import { randomUUID as randomUUID3 } from "crypto";
 var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
-var REMOTE_CONTENT = /* @__PURE__ */ Symbol("mcp-curl.remote-content");
+var SERVER_AUTHORED = /* @__PURE__ */ Symbol("mcp-curl.server-authored");
 function hasOwnTag(result, key) {
   try {
     return Object.hasOwn(result, key) && result[key] === true;
@@ -2722,11 +2722,8 @@ function isWrappedResult(result) {
   if (result === null || typeof result !== "object") return false;
   return hasOwnTag(result, WRAPPED);
 }
-function markRemoteContent(result) {
-  try {
-    Object.defineProperty(result, REMOTE_CONTENT, { value: true, enumerable: false });
-  } catch {
-  }
+function markServerAuthored(result) {
+  Object.defineProperty(result, SERVER_AUTHORED, { value: true, enumerable: false });
   return result;
 }
 function tag(result) {
@@ -2768,8 +2765,7 @@ function createWrapper(config) {
     if (isWrappedResult(result)) return result;
     try {
       if (!Array.isArray(result.content)) return tag(result);
-      const spotlight = config.enableSpotlighting && (!result.isError || hasOwnTag(result, REMOTE_CONTENT));
-      const requestId = spotlight ? randomUUID3() : void 0;
+      const requestId = config.enableSpotlighting && !hasOwnTag(result, SERVER_AUTHORED) ? randomUUID3() : void 0;
       const newContent = result.content.map(
         (part) => processTextPart(part, hostname, requestId)
       );
@@ -3304,7 +3300,7 @@ async function executeCurlRequest(params, extra = {}) {
         savedToFile: processed.savedToFile
       }
     ) || void 0 : void 0;
-    return markRemoteContent({
+    return {
       content: [
         {
           type: "text",
@@ -3314,15 +3310,20 @@ async function executeCurlRequest(params, extra = {}) {
         ...noticePart === void 0 ? [] : [{ type: "text", text: noticePart }]
       ],
       ...result.exitCode !== 0 && { isError: true }
-    });
+    };
   } catch (error) {
     const hostname = safeHostname(params.url);
     const errorClass = error instanceof Error ? error.constructor.name : "Error";
     const code = error instanceof LocalRefusalError ? ` ${error.code}` : "";
     console.error(`curl_execute error: [${hostname}] ${errorClass}${code}`);
-    const text = error instanceof LocalRefusalError ? error.message : `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`;
+    if (error instanceof LocalRefusalError) {
+      return markServerAuthored({ content: [{ type: "text", text: error.message }], isError: true });
+    }
     return {
-      content: [{ type: "text", text }],
+      content: [{
+        type: "text",
+        text: `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`
+      }],
       isError: true
     };
   }
@@ -3383,6 +3384,7 @@ export {
   applyJqFilter,
   writeUniqueFile,
   defendText,
+  markServerAuthored,
   createWrapper,
   CURL_EXECUTE_TOOL_META,
   executeCurlRequest

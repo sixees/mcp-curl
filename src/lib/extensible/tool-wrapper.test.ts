@@ -10,7 +10,7 @@ import { applyConfigTransformsCurl, registerCurlToolWithHooks } from "./tool-wra
 import type { AfterResponseHook, McpCurlConfig, CurlExecuteInput } from "../types/public.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
-import { isWrappedResult, markRemoteContent } from "../response/post-processor.js";
+import { isWrappedResult } from "../response/post-processor.js";
 import { CurlExecuteBaseUrlSchema, CurlExecuteSchema } from "../server/schemas.js";
 import { captureTools } from "./tool-capture.test-fixture.js";
 
@@ -56,13 +56,13 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
         expect(text).toMatch(/---EXTERNAL-CONTENT-END-[0-9a-f-]{36}---$/);
     });
 
-    // The mark is set by the executor and read by the wrap at the pipeline
-    // exit, so it has to survive the hook executor in between.
-    it("spotlights a failed request the executor marked as remote text", async () => {
+    // A failed request carries the origin's bytes, so it is spotlighted
+    // through the hook executor like any other result.
+    it("spotlights a failed request", async () => {
         const { server: fakeServer, tools } = captureTools();
         registerCurlToolWithHooks(fakeServer, {
             executor: vi.fn().mockResolvedValue(
-                markRemoteContent({ content: [{ type: "text", text: '{"partial":true}' }], isError: true })
+                { content: [{ type: "text", text: '{"partial":true}' }], isError: true }
             ) as never,
             enabled: true,
             config: { enableSpotlighting: true } as McpCurlConfig,
@@ -106,34 +106,23 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
         expect(text).toBe("hello from api");
     });
 
-    it("does not wrap error results", async () => {
+    // The resolver's refusal is server text, marked so its first line stays
+    // readable; "spotlights a failed request" above is the unmarked control.
+    it("does not spotlight the resolver's own refusal", async () => {
         const { server: fakeServer, tools } = captureTools();
-
-        const mockExecutor = vi.fn().mockResolvedValue({
-            content: [{ type: "text", text: "Error: something went wrong" }],
-            isError: true,
-        });
-
         registerCurlToolWithHooks(fakeServer, {
-            executor: mockExecutor as never,
+            executor: vi.fn() as never,
             enabled: true,
-            config: { enableSpotlighting: true } as McpCurlConfig,
+            config: { baseUrl: "https://", enableSpotlighting: true } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [] },
         });
 
-        const result = await tools.get("curl_execute")!.handler({
-            url: "https://example.com",
-            follow_redirects: true,
-            insecure: false,
-            verbose: false,
-            include_headers: false,
-            compressed: true,
-            include_metadata: false,
-        }, { sessionId: undefined });
-
-        const text = (result as { content: { text: string }[] }).content[0].text;
-        expect(text).toBe("Error: something went wrong");
-        expect(text).not.toContain("<response");
+        const result = (await tools.get("curl_execute")!.handler({ url: "/users" }, { sessionId: undefined })) as {
+            content: { text: string }[];
+            isError?: boolean;
+        };
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).not.toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
     });
 
     it("non-text content parts are passed through unchanged (multi-part safe)", async () => {

@@ -26,6 +26,7 @@ import {
   getOrCreateTempDir,
   installHostRateLimit,
   isValidSessionId,
+  markServerAuthored,
   parseAllowedHosts,
   parseHostRateLimit,
   parsePort,
@@ -45,7 +46,7 @@ import {
   validateOutputDir,
   withTimeout,
   writeUniqueFile
-} from "./chunk-VKHLOMBQ.js";
+} from "./chunk-JYNFNJA6.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -811,7 +812,7 @@ function registerCurlToolWithHooks(server, options) {
     const resolved = resolveRequestUrl(config.baseUrl, params.url);
     if (!resolved.ok) {
       return wrap(
-        { content: [{ type: "text", text: resolved.error }], isError: true },
+        markServerAuthored({ content: [{ type: "text", text: resolved.error }], isError: true }),
         safeHostname(params.url)
       );
     }

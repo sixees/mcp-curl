@@ -323,7 +323,8 @@ runs these steps in fixed order on each text part:
    Unicode attack chars and collapse whitespace runs, strip markup comments,
    `<script>`/`<style>` blocks and markdown beacons, then detect again.
 3. **Spotlight** the text using a per-message UUID — only when this flag is
-   `true` and the result is not an error.
+   `true`, and on every result except this server's own refusals and errors
+   ([architecture → Spotlighting](./architecture/architecture.md)).
 
 Steps 1 and 2 run regardless of this flag. The wrap is idempotent (same
 result wrapped twice is a no-op) and fail-open (an internal exception returns

@@ -35,7 +35,7 @@ export {
 export {
     createWrapper,
     isWrappedResult,
-    markRemoteContent,
+    markServerAuthored,
     type WrapperConfig,
     type WrappableResult,
     type WrappableContentPart,

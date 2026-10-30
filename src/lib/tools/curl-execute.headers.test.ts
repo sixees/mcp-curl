@@ -863,6 +863,15 @@ describe("curl_execute — a failed request is an error", () => {
         expect(result.isError).toBeUndefined();
     });
 
+    it("keeps a local refusal's first line unspotlighted", async () => {
+        const result = await executeCurlRequest(params({ url: "https://example.test/x" }), {
+            hostPolicy: { kind: "list", hosts: new Set<string>() },
+        });
+        const wrapped = createWrapper({ enableSpotlighting: true })(result, "example.test");
+        expect(wrapped.isError).toBe(true);
+        expect(wrapped.content[0].text).toMatch(/^Refused locally: no request was sent \(LOCAL_HOST_NOT_ALLOWED\)/);
+    });
+
     // The composition the wrap's `isError` gate would get wrong: a complete
     // JSON body followed by a stall the origin chose. Error or not, those are
     // the origin's bytes, and spotlighting must still bound them.

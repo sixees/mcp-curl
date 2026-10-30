@@ -33,11 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `afterResponse` hook now sees `isError: true` for a failed request, so one that
   filters with `!ctx.isError` no longer sees them, and one that counts failures
   should look for them there.
-- **A failed request is still spotlighted.** With `enableSpotlighting` on, the
-  wrap skips spotlighting on error results, but not on a failed `curl_execute`
-  request: the origin chooses whether a transfer fails, so its body, header text
-  and verbose stderr stay inside the sentinels. Refusals, thrown errors and
-  custom-tool errors are unchanged.
+- **BREAKING: with `enableSpotlighting` on, error results are spotlighted too.**
+  Only text this server writes itself stays outside the sentinels, so its first
+  line reads as before: a local refusal, a URL-resolution error, and a YAML
+  endpoint's authentication error. A failed request's body, header text and
+  stderr are the origin's, and so may be an error a custom tool or a hook
+  short-circuit returns, for example a failed request's body rebuilt into a new
+  result. 5.2.0 left error results unspotlighted. **To adjust:** a consumer
+  reading a custom tool's or hook's error text from its first line should expect
+  the sentinel line first.
 
 ## [5.2.0] - 2026-10-30
 

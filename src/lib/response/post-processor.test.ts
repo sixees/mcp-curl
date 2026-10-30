@@ -2,7 +2,7 @@
 // Tests for createWrapper — the defence-in-depth wrap (PR-6b).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createWrapper, isWrappedResult, markRemoteContent, type WrappableResult } from "./post-processor.js";
+import { createWrapper, isWrappedResult, markServerAuthored, type WrappableResult } from "./post-processor.js";
 import { formatResponse } from "./formatter.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
@@ -200,17 +200,15 @@ describe("createWrapper — idempotence", () => {
 });
 
 describe("createWrapper — error handling", () => {
-    it("isError results are sanitised + detected but NOT spotlighted", () => {
-        // Error text from custom tools / YAML
-        // handlers / hook short-circuits can carry attacker-controlled bytes
-        // (e.g. `{ isError: true, content: [{ text: "Failed: <attacker>" }] }`),
-        // so sanitise + detect must run regardless of the isError flag —
-        // only the spotlighting sentinel step is gated off.
+    it("server-authored results are sanitised + detected but NOT spotlighted", () => {
+        // The mark only gates the sentinel step: sanitise + detect still run,
+        // so a mark placed on the wrong result loses spotlighting and nothing
+        // else.
         const wrap = createWrapper({ enableSpotlighting: true });
-        const errorResult = {
+        const errorResult = markServerAuthored({
             content: [{ type: "text", text: "Error: bidi‮bytes​" }],
             isError: true,
-        };
+        });
         const out = wrap(errorResult, "host.com");
         // Sanitise still runs — bidi/zero-width chars are stripped from error text.
         expect((out.content as { text: string }[])[0].text).toBe(
@@ -226,12 +224,11 @@ describe("createWrapper — error handling", () => {
     });
 
     // A failed request is an error the origin can cause: stall after the body
-    // and cURL exits 28. Keyed on `isError` alone, that would switch
-    // spotlighting off for the origin's own bytes.
-    it("spotlights an isError result marked as carrying remote text", () => {
-        const wrap = createWrapper({ enableSpotlighting: true });
-        const out = wrap(
-            markRemoteContent({ content: [{ type: "text", text: '{"a":1}' }], isError: true }),
+    // and cURL exits 28. An `isError` result with no mark is spotlighted, so
+    // the origin cannot switch the layer off for its own bytes.
+    it("spotlights an unmarked isError result", () => {
+        const out = createWrapper({ enableSpotlighting: true })(
+            { content: [{ type: "text", text: '{"a":1}' }], isError: true },
             "host.com"
         );
         const text = (out.content as { text: string }[])[0].text;
@@ -240,22 +237,16 @@ describe("createWrapper — error handling", () => {
         expect(out.isError).toBe(true);
     });
 
-    it("leaves a marked result unspotlighted when spotlighting is off", () => {
-        const out = createWrapper({ enableSpotlighting: false })(
-            markRemoteContent({ content: [{ type: "text", text: "body" }], isError: true }),
-            "host.com"
-        );
-        expect((out.content as { text: string }[])[0].text).toBe("body");
+    // The property the inversion buys: a copy loses the mark and fails safe.
+    it("spotlights a copy of a server-authored result", () => {
+        const marked = markServerAuthored({ content: [{ type: "text", text: "Refused" }], isError: true });
+        const out = createWrapper({ enableSpotlighting: true })({ ...marked }, "host.com");
+        expect((out.content as { text: string }[])[0].text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
     });
 
-    it("marks without changing the serialised result, and tolerates a frozen one", () => {
-        const marked = markRemoteContent({ content: [{ type: "text", text: "x" }], isError: true });
+    it("marks without changing the serialised result", () => {
+        const marked = markServerAuthored({ content: [{ type: "text", text: "x" }], isError: true });
         expect(JSON.parse(JSON.stringify(marked))).toEqual({ content: [{ type: "text", text: "x" }], isError: true });
-        const frozen = Object.freeze({ content: [{ type: "text", text: "x" }], isError: true });
-        expect(() => markRemoteContent(frozen)).not.toThrow();
-        // Unmarkable, so it keeps the isError-keyed behaviour.
-        const out = createWrapper({ enableSpotlighting: true })(frozen, "host.com");
-        expect((out.content as { text: string }[])[0].text).toBe("x");
     });
 
     it("logs an injection-detection event on error text containing a malicious phrase", () => {

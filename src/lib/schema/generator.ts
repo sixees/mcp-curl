@@ -26,7 +26,7 @@ import type {
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
 import { hasDotSegment, LocalRefusalError, resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
 import { applyDefaultHeaders, ANY_HOST_POLICY, deriveHostPolicy } from "../config/index.js";
-import { createWrapper } from "../response/post-processor.js";
+import { createWrapper, markServerAuthored } from "../response/post-processor.js";
 
 /**
  * Error thrown when authentication is required but not available.
@@ -62,7 +62,8 @@ export interface GeneratorConfig {
      * The response-side defence runs on every text part regardless of this flag —
      * the full `defendText` pipeline on non-JSON text, detection alone on a JSON
      * document, which is returned unchanged — and the flag only adds the
-     * `applySpotlighting` step, never on an error result. Mirrors
+     * `applySpotlighting` step, on every result but this server's own error
+     * text (`docs/architecture/architecture.md` → *Spotlighting*). Mirrors
      * `McpCurlConfig.enableSpotlighting` so the YAML path inherits the same
      * setting from `createApiServer({ config })` callers without a separate
      * knob.
@@ -438,23 +439,26 @@ function createToolHandler(
             return wrap(result, safeHostname(url));
         } catch (error) {
             // A missing required credential is configuration the model can report back, so it returns as an error result; anything unrecognised is rethrown.
+            // The authentication error and the refusal are server text, so they
+            // are marked and stay unspotlighted; the preset error echoes the
+            // model's own parameter and is spotlighted like any other result.
             if (error instanceof AuthenticationError) {
-                return {
+                return markServerAuthored({
                     content: [
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: `Authentication error: ${error.message}`,
                         },
                     ],
                     isError: true,
-                };
+                });
             }
 
             if (error instanceof LocalRefusalError) {
-                return {
-                    content: [{ type: "text", text: error.message }],
+                return markServerAuthored({
+                    content: [{ type: "text" as const, text: error.message }],
                     isError: true,
-                };
+                });
             }
 
             // Matched by message prefix, because `resolveJqFilter` throws a plain Error:

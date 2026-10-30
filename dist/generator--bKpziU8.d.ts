@@ -301,7 +301,8 @@ interface GeneratorConfig {
      * The response-side defence runs on every text part regardless of this flag —
      * the full `defendText` pipeline on non-JSON text, detection alone on a JSON
      * document, which is returned unchanged — and the flag only adds the
-     * `applySpotlighting` step, never on an error result. Mirrors
+     * `applySpotlighting` step, on every result but this server's own error
+     * text (`docs/architecture/architecture.md` → *Spotlighting*). Mirrors
      * `McpCurlConfig.enableSpotlighting` so the YAML path inherits the same
      * setting from `createApiServer({ config })` callers without a separate
      * knob.

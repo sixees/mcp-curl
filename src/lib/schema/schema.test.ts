@@ -1504,7 +1504,9 @@ describe("PR-6b wrap on YAML-tool output", () => {
         errorSpy.mockRestore();
     });
 
-    it("error results pass through unchanged (no spotlight, no re-sanitise)", async () => {
+    // A failed request's text is the origin's, so it is spotlighted like any
+    // other request result; only text the generator writes itself is not.
+    it("spotlights an error result from the request", async () => {
         mockedExecuteCurlRequest.mockResolvedValue({
             content: [{ type: "text", text: "Error: HTTP 500" }],
             isError: true,
@@ -1514,7 +1516,8 @@ describe("PR-6b wrap on YAML-tool output", () => {
         const result = await tools[0].handler({});
 
         const text = (result.content as { text: string }[])[0].text;
-        expect(text).toBe("Error: HTTP 500");
+        expect(text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
+        expect(text).toContain("Error: HTTP 500");
         expect(result.isError).toBe(true);
     });
 });
