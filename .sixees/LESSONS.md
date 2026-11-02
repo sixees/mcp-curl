@@ -3054,3 +3054,14 @@ merged when the correction was made.
   - `"any"` restores the 5.1.0 behaviour.
   - CHANGELOG `[5.2.0]` carries it as `**BREAKING:**` with "To adjust:".
 - **What this costs next time:** this reversal is settled. A finding proposing to drop the default list, or to call `baseUrl` "not a security boundary" again, cites this entry rather than reopening it. The same applies in reverse: a decline whose stated reason lapses does not lapse its other reasons. Re-price what remains, as was done here.
+
+### RC-69 — The upstream's remaining count is relative to its own quota, and the 5.2.0 sync subtracted it from the local limit the docs told operators to set lower
+
+**Date:** 2026-10-30 · **PR:** #55
+
+**Class:** K-21 — *class-id:* `broken-contract`
+
+- **The plan said:** the 5.2.0 plan (`docs/plans/2026-10-27-feat-host-policy-redirect-hops-plan.md`) padded the sliding log to `max − remaining`. The same release's `docs/configuration.md` → *rateLimit* advised setting `max` below the upstream quota ("200 of a 240/hour quota").
+- **Reality was:** `remaining` counts down from the upstream's own quota. Subtracted from the local `max`, "40 left" read as 160 used, so once the sync took effect the local limit admitted exactly what the upstream had left and the 40-request margin was gone. The consumer reported it after release; Surface 2 and three Surface 3 rounds did not catch it.
+- **What changed:** `security/rate-limiter.ts::applyServerRemaining` pads to `min(quota − remaining, max) − total`, with `syncFromHeaders.quota` defaulting to `max` and refused below it (`parseSyncFromHeaders`). The docs example sets `quota: 240`.
+- **What this costs next time:** before combining an upstream figure with a local limit, name which quantity each side counts. Test the configuration the docs recommend (local below upstream), not only the one where the two are equal.

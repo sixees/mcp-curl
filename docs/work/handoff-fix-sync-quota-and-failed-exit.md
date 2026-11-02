@@ -180,3 +180,17 @@ None this round.
 ### Files Modified
 
 `src/lib/resources/documentation.ts`, `dist/` (rebuilt), this handoff.
+
+## Review Comments Addressed — 2026-11-02 (tail read after round 2)
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `configuration.md` → *enableSpotlighting* step 3: "except this server's own refusals and errors" is too broad (an unmarked usage error from `utilities().executeRequest` is spotlighted) | coderabbitai | Documentation (P3, in scope) | Reworded to "except one this server marks as its own text", citing architecture → *Spotlighting* for the list. The same comment named `public.ts` → `enableSpotlighting` step 5; the operator scoped this fix to `configuration.md`. |
+
+### Declined Findings
+
+None.
+
+RC-69 (the sync's remaining count is relative to the upstream quota) flushed into `.sixees/LESSONS.md`.
