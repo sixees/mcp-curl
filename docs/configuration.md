@@ -325,8 +325,9 @@ runs these steps in fixed order on each text part:
    part above 256 KB (`STRIP_PATH_MAX_BYTES`) is sanitised and detected only;
    the strip stages do not run on it.
 3. **Spotlight** the text using a per-message UUID — only when this flag is
-   `true`, and on every result except one this server marks as its own text
-   ([architecture → Spotlighting](./architecture/architecture.md) lists them).
+   `true`, and on every result except those this server marks as
+   server-authored ([architecture → Spotlighting](./architecture/architecture.md)
+   lists them).
 
 Steps 1 and 2 run regardless of this flag. The wrap is idempotent (same
 result wrapped twice is a no-op) and fail-open (an internal exception returns

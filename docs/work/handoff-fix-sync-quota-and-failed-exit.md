@@ -194,3 +194,9 @@ None this round.
 None.
 
 RC-69 (the sync's remaining count is relative to the upstream quota) flushed into `.sixees/LESSONS.md`.
+
+### Final check (2026-11-02)
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `configuration.md` step 3: "except one … marks as its own text" reads as singular, and the mark is on a whole result | coderabbitai (2 threads, one finding) | Documentation (P3, in scope) | Reworded to "except those this server marks as server-authored". The handoff's quote of the earlier wording is left as the record of that edit. |
