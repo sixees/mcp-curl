@@ -2,7 +2,7 @@
 // Tests for createWrapper — the defence-in-depth wrap (PR-6b).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createWrapper, isWrappedResult, type WrappableResult } from "./post-processor.js";
+import { createWrapper, isWrappedResult, markServerAuthored, type WrappableResult } from "./post-processor.js";
 import { formatResponse } from "./formatter.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { clearWrapErrorMap } from "../security/wrap-error-logger.js";
@@ -200,17 +200,15 @@ describe("createWrapper — idempotence", () => {
 });
 
 describe("createWrapper — error handling", () => {
-    it("isError results are sanitised + detected but NOT spotlighted", () => {
-        // Error text from custom tools / YAML
-        // handlers / hook short-circuits can carry attacker-controlled bytes
-        // (e.g. `{ isError: true, content: [{ text: "Failed: <attacker>" }] }`),
-        // so sanitise + detect must run regardless of the isError flag —
-        // only the spotlighting sentinel step is gated off.
+    it("server-authored results are sanitised + detected but NOT spotlighted", () => {
+        // The mark only gates the sentinel step: sanitise + detect still run,
+        // so a mark placed on the wrong result loses spotlighting and nothing
+        // else.
         const wrap = createWrapper({ enableSpotlighting: true });
-        const errorResult = {
+        const errorResult = markServerAuthored({
             content: [{ type: "text", text: "Error: bidi‮bytes​" }],
             isError: true,
-        };
+        });
         const out = wrap(errorResult, "host.com");
         // Sanitise still runs — bidi/zero-width chars are stripped from error text.
         expect((out.content as { text: string }[])[0].text).toBe(
@@ -223,6 +221,32 @@ describe("createWrapper — error handling", () => {
         // isError preserved through the spread.
         expect(out.isError).toBe(true);
         expect(isWrappedResult(out)).toBe(true);
+    });
+
+    // A failed request is an error the origin can cause: stall after the body
+    // and cURL exits 28. An `isError` result with no mark is spotlighted, so
+    // the origin cannot switch the layer off for its own bytes.
+    it("spotlights an unmarked isError result", () => {
+        const out = createWrapper({ enableSpotlighting: true })(
+            { content: [{ type: "text", text: '{"a":1}' }], isError: true },
+            "host.com"
+        );
+        const text = (out.content as { text: string }[])[0].text;
+        expect(text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-[0-9a-f-]{36}---/);
+        expect(text).toContain('{"a":1}');
+        expect(out.isError).toBe(true);
+    });
+
+    // The property the inversion buys: a copy loses the mark and fails safe.
+    it("spotlights a copy of a server-authored result", () => {
+        const marked = markServerAuthored({ content: [{ type: "text", text: "Refused" }], isError: true });
+        const out = createWrapper({ enableSpotlighting: true })({ ...marked }, "host.com");
+        expect((out.content as { text: string }[])[0].text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
+    });
+
+    it("marks without changing the serialised result", () => {
+        const marked = markServerAuthored({ content: [{ type: "text", text: "x" }], isError: true });
+        expect(JSON.parse(JSON.stringify(marked))).toEqual({ content: [{ type: "text", text: "x" }], isError: true });
     });
 
     it("logs an injection-detection event on error text containing a malicious phrase", () => {
@@ -531,7 +555,7 @@ describe("createWrapper — hostile Proxy probe (PR #29 round-4 hardening)", () 
 
     it("wrap does not throw when the get trap on the WRAPPED symbol throws", () => {
         // hasOwn returns true (the trap allows it), but reading the value
-        // throws. The defensive read inside hasOwnWrappedTag must contain it.
+        // throws. The defensive read inside hasOwnTag must contain it.
         const wrap = createWrapper({});
         const target: Record<string | symbol, unknown> = {
             content: [{ type: "text", text: "x" }],

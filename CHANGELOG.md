@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] - 2026-10-30
+
+### Notes
+
+- **Shipped in a MINOR release by decision**, as 5.2.0 was: the `**BREAKING:**`
+  change below goes out as 5.3.0 because mcp-curl has one consumer, who reported
+  both problems this release fixes. `LESSONS.md` RC-67.
+
+### Added
+
+- **`rateLimit.syncFromHeaders.quota`: the upstream's own limit.** The sync now
+  counts a host as having used at least `quota − remaining`, never more than
+  `max`. Set `quota` when `max` sits below the upstream's limit on purpose: with
+  `max: 200` under a 240/hour quota, "40 left" now stops the count at 200, where
+  5.2.0 read it as 160 used and spent the 40-request margin. Defaults to `max`,
+  which is the 5.2.0 behaviour. `configure()` throws on a `quota` that is not a
+  positive integer or is below `max`.
+
+### Changed
+
+- **BREAKING: a failed cURL request is an error result.** Any non-zero cURL exit
+  now sets `isError: true`, on both output shapes. Without `include_metadata`
+  its notice reads `[mcp-curl] cURL exited N: the request failed, and the
+  response above may be empty or incomplete`; with it, the JSON carries
+  `success: false` and `exit_code`, and there is no notice. 5.2.0 returned exit 7 (could not connect) with no flag and
+  an empty body, which read as an empty success. **To adjust:** an
+  `afterResponse` hook now sees `isError: true` for a failed request, so one that
+  filters with `!ctx.isError` no longer sees them, and one that counts failures
+  should look for them there.
+- **BREAKING: with `enableSpotlighting` on, error results are spotlighted too.**
+  Only text this server writes itself stays outside the sentinels, so its first
+  line reads as before: a local refusal, `curl_execute`'s URL-resolution error,
+  and a YAML endpoint's authentication error. A failed request's body, header text and
+  stderr are the origin's, and so may be an error a custom tool or a hook
+  short-circuit returns, for example a failed request's body rebuilt into a new
+  result. 5.2.0 left error results unspotlighted. **To adjust:** a consumer
+  reading a custom tool's or hook's error text from its first line should expect
+  the sentinel line first.
+
 ## [5.2.0] - 2026-10-30
 
 ### Notes

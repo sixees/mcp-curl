@@ -93,10 +93,9 @@ function applyOutOfBandFields(
  */
 export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bodyInfo?: BodyInfo): string {
     return [
-        // A non-zero exit has no field to land in on this branch, so without
-        // this line a FAILED request is byte-identical to an empty successful
-        // one — the shape the reassurance below would otherwise make worse by
-        // naming the body sound.
+        // `isError` says the request failed; this line says how, and that the
+        // body beside it cannot be trusted. A model reads the text, and a flag
+        // with no sentence beside it explains nothing.
         //
         // **"above", because these notices are APPENDED.** `curl-execute.ts`
         // emits them as a content entry after the body so `content[0]` stays
@@ -105,7 +104,7 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
         // body that still parses as JSON, the one case where the warning is all
         // that tells a reader not to trust it.
         exitCode !== 0
-            ? `[mcp-curl] cURL exited ${exitCode}; the response above may be empty or incomplete`
+            ? `[mcp-curl] cURL exited ${exitCode}: the request failed, and the response above may be empty or incomplete`
             : null,
         // Two arms, because the pair is only sometimes statable. Where the
         // defence grew the text past the ceiling, how many origin octets

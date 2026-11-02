@@ -289,12 +289,15 @@ export function hostRateLimitSyncHeader(): string | undefined {
 }
 
 /**
- * Count `hostname` as having used at least `max − remaining` of the window,
+ * Count `hostname` as having used at least `quota − remaining` of the window,
  * where `remaining` is the upstream's own figure: the local log cannot see
- * other processes spending the same key.
+ * other processes spending the same key. The upstream counts down from its own
+ * quota, not from `max`, so subtracting from `max` would hand back the margin
+ * an operator set `max` below the quota to keep.
  *
  * **Tighten only.** It appends one run stamped now and never removes one, so
- * a figure above the local remaining changes nothing, and the pad expires at
+ * a figure that puts `quota − remaining` at or below the local count changes
+ * nothing, and the pad expires at
  * `windowMs` like any admission. The pad counts at most `max − total`, so a
  * log never counts more than `max` whatever the remote sends. It is one run
  * whatever its count, so a host's storage follows responses rather than
@@ -318,7 +321,8 @@ export function applyServerRemaining(hostname: string, remaining: number): void 
     } catch {
         return;
     }
-    const pad = hostLimit.max - remaining - log.total;
+    const used = (hostLimit.syncFromHeaders?.quota ?? hostLimit.max) - remaining;
+    const pad = Math.min(used, hostLimit.max) - log.total;
     if (pad <= 0) return;
     log.runs.push({ at: now, count: pad });
     log.total += pad;
@@ -354,26 +358,39 @@ export function parseHostRateLimit(limit: unknown): Readonly<HostRateLimit> {
     assertPositiveInteger("rateLimit.max", max);
     assertPositiveInteger("rateLimit.windowMs", windowMs);
     if (syncFromHeaders === undefined) return Object.freeze({ max, windowMs });
-    return Object.freeze({ max, windowMs, syncFromHeaders: parseSyncFromHeaders(syncFromHeaders) });
+    return Object.freeze({ max, windowMs, syncFromHeaders: parseSyncFromHeaders(syncFromHeaders, max) });
 }
 
 /**
- * `{ remaining }` and nothing else. The name reaches cURL's `-w` format, so it
- * is held to {@link WRITE_OUT_HEADER_NAME} here, where a bad one fails
- * `configure()` rather than a request.
+ * `{ remaining, quota? }` and nothing else. The name reaches cURL's `-w`
+ * format, so it is held to {@link WRITE_OUT_HEADER_NAME} here, where a bad one
+ * fails `configure()` rather than a request.
+ *
+ * A `quota` below `max` is refused: it would count less than `max − remaining`
+ * as used, so even an upstream reporting none left could not fill the window,
+ * and the gate would go on admitting `max − quota` requests the upstream
+ * refuses — the opposite of the margin `quota` exists to keep.
  */
-function parseSyncFromHeaders(value: unknown): { readonly remaining: string } {
+function parseSyncFromHeaders(
+    value: unknown,
+    max: number
+): { readonly remaining: string; readonly quota?: number } {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        throw new Error("rateLimit.syncFromHeaders must be an object { remaining }");
+        throw new Error("rateLimit.syncFromHeaders must be an object { remaining, quota? }");
     }
-    assertOnlyKeys("rateLimit.syncFromHeaders", value, ["remaining"]);
-    const { remaining } = value as Record<string, unknown>;
+    assertOnlyKeys("rateLimit.syncFromHeaders", value, ["remaining", "quota"]);
+    const { remaining, quota } = value as Record<string, unknown>;
     if (typeof remaining !== "string" || !WRITE_OUT_HEADER_NAME.test(remaining)) {
         throw new Error(
             "rateLimit.syncFromHeaders.remaining must be an HTTP header name (RFC 9110 token) without %"
         );
     }
-    return Object.freeze({ remaining });
+    if (quota === undefined) return Object.freeze({ remaining });
+    assertPositiveInteger("rateLimit.syncFromHeaders.quota", quota);
+    if (quota < max) {
+        throw new Error(`rateLimit.syncFromHeaders.quota must be at least rateLimit.max (${max}), got: ${quota}`);
+    }
+    return Object.freeze({ remaining, quota });
 }
 
 /**

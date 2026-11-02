@@ -16,6 +16,7 @@ import {
     processResponse,
     defendText,
     extractHeaderChannel,
+    markServerAuthored,
     type ParsedResponse,
 } from "../response/index.js";
 import { FOLLOWED_REDIRECT_STATUSES, nextHopParams, sameOrigin } from "./redirect-hop.js";
@@ -36,6 +37,7 @@ export interface CurlExecuteResult {
      * which is what keeps invariant 16 true.
      */
     content: Array<{ type: "text"; text: string }>;
+    /** Set on a non-zero cURL exit, a local refusal and a thrown error. */
     isError?: boolean;
 }
 
@@ -513,6 +515,12 @@ export async function executeCurlRequest(
                   savedToFile: processed.savedToFile,
               }) || undefined
             : undefined;
+        // **A non-zero exit is an error, whatever the body holds.** Exit 7 leaves
+        // the body empty, and an empty body under no flag reads as an empty
+        // success; a notice alone is a sentence a model can overlook, where
+        // `isError` is what a client acts on.
+        // Never marked server-authored: the body, header text and stderr are
+        // the origin's, so the wrap spotlights them, error or not.
         return {
             content: [
                 {
@@ -522,6 +530,7 @@ export async function executeCurlRequest(
                 ...(headerPart === undefined ? [] : [{ type: "text" as const, text: headerPart }]),
                 ...(noticePart === undefined ? [] : [{ type: "text" as const, text: noticePart }]),
             ],
+            ...(result.exitCode !== 0 && { isError: true }),
         };
     } catch (error) {
         const hostname = safeHostname(params.url);
@@ -533,11 +542,18 @@ export async function executeCurlRequest(
         // A local refusal is not an error executing a request: its own first line
         // says how many requests were sent — none, or for LOCAL_REDIRECT_REFUSED,
         // the `requestsSent` before the refused hop.
-        const text = error instanceof LocalRefusalError
-            ? error.message
-            : `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`;
+        //
+        // Only the refusal is marked server-authored, so it keeps its first line
+        // unspotlighted. Any other error's message can echo remote content, so
+        // the wrap spotlights it.
+        if (error instanceof LocalRefusalError) {
+            return markServerAuthored({ content: [{ type: "text", text: error.message }], isError: true });
+        }
         return {
-            content: [{ type: "text", text }],
+            content: [{
+                type: "text",
+                text: `Error executing cURL request: ${sanitizeErrorMessage(getErrorMessage(error), params.include_metadata)}`,
+            }],
             isError: true,
         };
     }

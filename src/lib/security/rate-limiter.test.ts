@@ -414,18 +414,37 @@ describe("parseHostRateLimit — syncFromHeaders", () => {
     });
 
     it.each([
-        ["a reset key", { remaining: "X-Remaining", reset: "X-Reset" }, /syncFromHeaders accepts only remaining, got: reset/],
+        ["a reset key", { remaining: "X-Remaining", reset: "X-Reset" }, /syncFromHeaders accepts only remaining, quota, got: reset/],
         ["no remaining", {}, /remaining must be an HTTP header name/],
         ["an empty name", { remaining: "" }, /remaining must be an HTTP header name/],
         ["a space", { remaining: "X Remaining" }, /remaining must be an HTTP header name/],
         ["a %", { remaining: "X-%{url}" }, /remaining must be an HTTP header name/],
         ["a brace", { remaining: "X}" }, /remaining must be an HTTP header name/],
         ["a non-string", { remaining: 5 }, /remaining must be an HTTP header name/],
-        ["an array", ["X-Remaining"], /must be an object \{ remaining \}/],
-        ["a string", "X-Remaining", /must be an object \{ remaining \}/],
-        ["null", null, /must be an object \{ remaining \}/],
+        ["an array", ["X-Remaining"], /must be an object \{ remaining, quota\? \}/],
+        ["a string", "X-Remaining", /must be an object \{ remaining, quota\? \}/],
+        ["null", null, /must be an object \{ remaining, quota\? \}/],
+        ["a quota below max", { remaining: "X-Remaining", quota: 4 }, /quota must be at least rateLimit.max \(5\), got: 4/],
+        ["a zero quota", { remaining: "X-Remaining", quota: 0 }, /quota must be a positive integer, got: 0/],
+        ["a fractional quota", { remaining: "X-Remaining", quota: 5.5 }, /quota must be a positive integer, got: 5.5/],
+        ["a string quota", { remaining: "X-Remaining", quota: "240" }, /quota must be a positive integer, got: 240/],
     ])("throws on %s", (_label, syncFromHeaders, message) => {
         expect(() => parseHostRateLimit({ ...BASE, syncFromHeaders })).toThrow(message);
+    });
+
+    it("returns a frozen copy of the quota, and accepts one equal to max", () => {
+        const sync = { remaining: "X-Remaining", quota: 240 };
+        const parsed = parseHostRateLimit({ ...BASE, syncFromHeaders: sync });
+        sync.quota = 1;
+        expect(parsed.syncFromHeaders).toEqual({ remaining: "X-Remaining", quota: 240 });
+        expect(Object.isFrozen(parsed.syncFromHeaders)).toBe(true);
+        expect(parseHostRateLimit({ ...BASE, syncFromHeaders: { remaining: "X-Remaining", quota: 5 } }).syncFromHeaders)
+            .toEqual({ remaining: "X-Remaining", quota: 5 });
+    });
+
+    it("leaves quota out when it is not set", () => {
+        expect(parseHostRateLimit({ ...BASE, syncFromHeaders: { remaining: "X-Remaining" } }).syncFromHeaders)
+            .not.toHaveProperty("quota");
     });
 });
 
@@ -529,6 +548,32 @@ describe("applyServerRemaining", () => {
         releaseHostRateLimit(handle);
         applyServerRemaining(HOST, 0);
         expect(rateLimitMapSizes().slidingHosts).toBe(0);
+    });
+
+    // The consumer's case, scaled down: a local max of 5 under an upstream
+    // quota of 8 keeps a margin of 3. Measured against max, the upstream's
+    // "6 left" would read as nothing used and the margin would be spent.
+    it("keeps the margin under an upstream quota above max", () => {
+        releaseHostRateLimit(handle);
+        installHostRateLimit({ max: 5, windowMs: WINDOW, syncFromHeaders: { remaining: "X-Remaining", quota: 8 } });
+        checkRateLimits(HOST, "first");
+        applyServerRemaining(HOST, 6);
+        expect(slidingLogSize(HOST).counted).toBe(2);
+        expect(admittedBeforeRefusal()).toBe(3);
+    });
+
+    it("stops at max when the upstream reports exactly the margin left", () => {
+        releaseHostRateLimit(handle);
+        installHostRateLimit({ max: 5, windowMs: WINDOW, syncFromHeaders: { remaining: "X-Remaining", quota: 8 } });
+        applyServerRemaining(HOST, 3);
+        expect(admittedBeforeRefusal()).toBe(0);
+    });
+
+    it("never writes past max when the quota is above it", () => {
+        releaseHostRateLimit(handle);
+        installHostRateLimit({ max: 5, windowMs: WINDOW, syncFromHeaders: { remaining: "X-Remaining", quota: 8 } });
+        applyServerRemaining(HOST, 0);
+        expect(slidingLogSize(HOST).counted).toBe(5);
     });
 
     it("keeps the local count, without throwing, for a host the map has no room for", () => {

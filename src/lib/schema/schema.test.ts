@@ -883,8 +883,10 @@ describe("getAuthConfig", () => {
 // --- Handler Execution Tests ---
 
 import { vi, type Mock } from "vitest";
-import { generateToolDefinitions } from "./generator.js";
+import { generateToolDefinitions, registerEndpointTools } from "./generator.js";
 import * as curlExecuteModule from "../tools/curl-execute.js";
+import { isWrappedResult } from "../response/post-processor.js";
+import { captureTools } from "../extensible/tool-capture.test-fixture.js";
 
 // Replace the executor so these handler tests assert the request the
 // generator builds without spawning cURL or touching the network. Vitest
@@ -1401,8 +1403,9 @@ describe("generateToolDefinitions", () => {
 // builds a wrap closure with the GeneratorConfig.enableSpotlighting flag and
 // runs every executeCurlRequest result through it: the full defendText
 // pipeline on non-JSON text, detection alone on a JSON document (returned
-// unchanged), and spotlighting only when the flag is set and never on an
-// error result. The mocked executor lets us exercise the wrap in isolation
+// unchanged), and spotlighting whenever the flag is set, error results
+// included, because the origin decides whether a transfer fails. The mocked
+// executor lets us exercise the wrap in isolation
 // from the real cURL pipeline, which runs its own defence pass in
 // processor.ts; the wrap is the chokepoint for a result that did not come
 // through it.
@@ -1504,7 +1507,9 @@ describe("PR-6b wrap on YAML-tool output", () => {
         errorSpy.mockRestore();
     });
 
-    it("error results pass through unchanged (no spotlight, no re-sanitise)", async () => {
+    // A failed request's text is the origin's, so it is spotlighted like any
+    // other request result; only text the generator writes itself is not.
+    it("spotlights an error result from the request", async () => {
         mockedExecuteCurlRequest.mockResolvedValue({
             content: [{ type: "text", text: "Error: HTTP 500" }],
             isError: true,
@@ -1514,8 +1519,58 @@ describe("PR-6b wrap on YAML-tool output", () => {
         const result = await tools[0].handler({});
 
         const text = (result.content as { text: string }[])[0].text;
-        expect(text).toBe("Error: HTTP 500");
+        expect(text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
+        expect(text).toContain("Error: HTTP 500");
         expect(result.isError).toBe(true);
+    });
+});
+
+// `registerEndpointTools` registers each handler with no outer wrap, so the
+// handler's own error arms are the only wrap on this public path (invariant 1).
+describe("registerEndpointTools — error results are wrapped", () => {
+    const schema = (extra: Partial<ApiSchema> = {}): ApiSchema => ({
+        apiVersion: "1.0",
+        api: { name: "t", title: "T", description: "d", version: "1.0.0", baseUrl: "https://api.example.com" },
+        endpoints: [{
+            id: "get_user",
+            path: "/users/{id}",
+            method: "GET",
+            title: "Get User",
+            description: "Fetch a user",
+            parameters: [{ name: "id", in: "path", type: "string", required: true }],
+            response: { filterPresets: [{ name: "summary", jqFilter: ".summary" }] },
+        }],
+        ...extra,
+    });
+    const call = async (s: ApiSchema, params: Record<string, unknown>) => {
+        const { server, tools } = captureTools();
+        registerEndpointTools(server, s, { enableSpotlighting: true });
+        return (await tools.get("get_user")!.handler(params, { sessionId: undefined })) as {
+            content: { text: string }[];
+            isError?: boolean;
+        };
+    };
+
+    it("wraps and spotlights the preset error", async () => {
+        const result = await call(schema(), { id: "1", filter_preset: "nonexistent" });
+        expect(result.isError).toBe(true);
+        expect(isWrappedResult(result)).toBe(true);
+        expect(result.content[0].text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
+    });
+
+    it("wraps the refusal and keeps its first line", async () => {
+        const result = await call(schema(), { id: ".." });
+        expect(isWrappedResult(result)).toBe(true);
+        expect(result.content[0].text).toMatch(/^Refused locally: no request was sent/);
+    });
+
+    it("wraps the authentication error and keeps its first line", async () => {
+        const result = await call(
+            schema({ auth: { apiKey: { type: "header", name: "X-API-Key", envVar: "TEST_API_KEY_NOT_SET", required: true } } }),
+            { id: "1" }
+        );
+        expect(isWrappedResult(result)).toBe(true);
+        expect(result.content[0].text).toMatch(/^Authentication error/);
     });
 });
 

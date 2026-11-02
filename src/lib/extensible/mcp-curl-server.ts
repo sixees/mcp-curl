@@ -150,7 +150,8 @@ export class McpCurlServer {
      * @returns this for chaining
      * @throws Error if called after start(), if `rateLimit` holds an unknown key, a
      *   `max` or `windowMs` that is not a positive integer, or a `syncFromHeaders`
-     *   that is not `{ remaining: <header name> }`, if an `allowedHosts` entry is not a bare host name,
+     *   that is not `{ remaining: <header name>, quota? }` with `quota` a positive
+     *   integer no smaller than `max`, if an `allowedHosts` entry is not a bare host name,
      *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
      *   once sanitised
      */

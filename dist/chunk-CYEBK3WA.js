@@ -26,6 +26,7 @@ import {
   getOrCreateTempDir,
   installHostRateLimit,
   isValidSessionId,
+  markServerAuthored,
   parseAllowedHosts,
   parseHostRateLimit,
   parsePort,
@@ -45,7 +46,7 @@ import {
   validateOutputDir,
   withTimeout,
   writeUniqueFile
-} from "./chunk-2H76KKK5.js";
+} from "./chunk-JYNFNJA6.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -407,6 +408,11 @@ Files can only be read from:
 | 28 | Operation timeout |
 | 35 | SSL connect error |
 | 52 | Empty reply from server |
+
+Any non-zero exit returns a result with \`isError\` set. Without
+\`include_metadata\` a notice names the code; with it, the JSON carries
+\`success: false\` and \`exit_code\` instead. The request failed: the body may be
+empty or incomplete, and an empty one is not an empty response from the server.
 `
       }]
     })
@@ -807,7 +813,7 @@ function registerCurlToolWithHooks(server, options) {
     const resolved = resolveRequestUrl(config.baseUrl, params.url);
     if (!resolved.ok) {
       return wrap(
-        { content: [{ type: "text", text: resolved.error }], isError: true },
+        markServerAuthored({ content: [{ type: "text", text: resolved.error }], isError: true }),
         safeHostname(params.url)
       );
     }
@@ -1036,7 +1042,8 @@ var McpCurlServer = class {
    * @returns this for chaining
    * @throws Error if called after start(), if `rateLimit` holds an unknown key, a
    *   `max` or `windowMs` that is not a positive integer, or a `syncFromHeaders`
-   *   that is not `{ remaining: <header name> }`, if an `allowedHosts` entry is not a bare host name,
+   *   that is not `{ remaining: <header name>, quota? }` with `quota` a positive
+   *   integer no smaller than `max`, if an `allowedHosts` entry is not a bare host name,
    *   or if `curlExecuteDescriptionAppend` exceeds `MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH`
    *   once sanitised
    */

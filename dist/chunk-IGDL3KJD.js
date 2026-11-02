@@ -7,10 +7,11 @@ import {
   deriveHostPolicy,
   executeCurlRequest,
   hasDotSegment,
+  markServerAuthored,
   resolveBaseUrl,
   safeHostname,
   sanitizeDescription
-} from "./chunk-2H76KKK5.js";
+} from "./chunk-JYNFNJA6.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -486,8 +487,9 @@ function createToolHandler(schema, endpoint, config) {
       );
       return wrap(result, safeHostname(url));
     } catch (error) {
+      const fail = (result) => wrap(result, safeHostname(config?.baseUrl ?? schema.api.baseUrl));
       if (error instanceof AuthenticationError) {
-        return {
+        return fail(markServerAuthored({
           content: [
             {
               type: "text",
@@ -495,16 +497,16 @@ function createToolHandler(schema, endpoint, config) {
             }
           ],
           isError: true
-        };
+        }));
       }
       if (error instanceof LocalRefusalError) {
-        return {
+        return fail(markServerAuthored({
           content: [{ type: "text", text: error.message }],
           isError: true
-        };
+        }));
       }
       if (error instanceof Error && error.message.startsWith("Unknown filter preset")) {
-        return {
+        return fail({
           content: [
             {
               type: "text",
@@ -512,7 +514,7 @@ function createToolHandler(schema, endpoint, config) {
             }
           ],
           isError: true
-        };
+        });
       }
       throw error;
     }

@@ -296,8 +296,12 @@ part the wrap runs:
    sanitised form — on a JSON document, each escaped string token decoded on its
    own as well — and emits the throttled `[injection-defense] [host]` log on a
    match.
-2. If `config.enableSpotlighting === true` and the result is not an error, the
-   defended text is wrapped in a per-message UUID-keyed sentinel envelope.
+2. If `config.enableSpotlighting === true`, the defended text is wrapped in a
+   per-message UUID-keyed sentinel envelope. Your tool's error results are
+   wrapped too, and so are most of this server's own errors; only the few
+   results this server marks as its own text are not, so that their first
+   line stays readable ([architecture → Spotlighting](./architecture/architecture.md)
+   lists them).
 
 > **This changed in 3.4.0.** Before that release the wrap ran
 > `sanitizeAndDetect` alone, so a custom-tool handler returning remote markdown
