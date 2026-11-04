@@ -176,3 +176,23 @@ None — no todo is claimed by PR #56.
 - `docs/hooks.md`, `docs/custom-tools.md`, `docs/architecture/architecture.md`
 - `dist/` — rebuilt
 - this handoff
+
+### Round 2 — 2026-11-04 (same command, same three bots, 15-minute wait)
+
+Baseline before the request: 6 entries (3 CodeRabbit threads from round 1's requested full review, posted after round 1's read; the two Codex comments and the ack). The read returned 10 entries: 4 CodeRabbit inline threads, Copilot's review body (🟢 *Approval recommended*, no open issues, against `20bf31b`), Codex's round-2 receipt ("didn't find any major issues", `20bf31b`), and the earlier issue/ack entries that return on every read. No code changed this round.
+
+#### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| `architecture.md` → *Error Handling* promises every converted throw is "logged" | coderabbitai | Documentation — P3 [Minor], in scope (sentence in the diff) | Verified: none of the three boundaries logs; the built-in tools log inside their executors (`curl_execute error: [<host>] <ErrorClassName>`). Sentence now says so and that a hook or custom-tool throw is logged only by an `onError` hook |
+| `docs/hooks.md` says an `afterResponse` throw "aborts the tool call" | coderabbitai | Documentation — P3 [Minor], in scope | Split: a `beforeRequest` throw aborts before any request; an `afterResponse` throw cannot abort the executor that already ran — it stops the remaining response hooks and replaces the result |
+| `docs/hooks.md` "reaches the model as thrown" is unqualified for spotlighting | coderabbitai | Documentation — P3 [Minor], in scope (round 1's fix text, K-16) | Added: inside the spotlighting sentinels when enabled, which frame the text without changing it |
+
+#### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| A custom tool throwing `Object.create(null)` makes `getErrorMessage`'s `String(error)` throw inside the catch, so the throw escapes the wrap; guard the conversion and `executeWithHooks`'s `normalizedError` | coderabbitai | P3 [Minor] | In scope (the conversion is this branch's) | Already decided — *What to pay attention to* → *Residual escape, declined on population*: a thrown value whose `String()` read throws is the embedder's own deliberate code, not a population this project defends against (`42-ship-what-matters.md`); a null-prototype object is another member of that same class and brings no new information. The hardening shape is recorded there if ever wanted |
+
+Resolved Todos: none. Outstanding Todos: 0 filed this round, 0 open against PR #56. Files modified: `docs/architecture/architecture.md`, `docs/hooks.md`, this handoff.
