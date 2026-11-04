@@ -45,10 +45,11 @@ export const HEADER_DUMP_PATH = `/dev/fd/${HEADER_DUMP_FD}`;
  * Whether this host can serve {@link HEADER_DUMP_PATH}.
  *
  * Consulted before the flag is added rather than after cURL fails, so an
- * unsupported host loses the header channel and keeps its response body — the
- * "degrade legibly rather than assume" rule in `ARCHITECTURE.md` →
- * *Environments*. Without it the whole request fails on exit 23 and the caller
- * loses the body too, for a feature they merely asked to include.
+ * unsupported host loses the header channel and keeps its response body, and
+ * the result reports `headers_unsupported` rather than staying silent
+ * (`docs/architecture/architecture.md` → *Business Rules / Invariants*).
+ * Without it the whole request fails on exit 23 and the caller loses the body
+ * too, for a feature they merely asked to include.
  */
 export function platformSupportsHeaderDump(): boolean {
     return process.platform === "darwin";
@@ -117,7 +118,8 @@ export interface CommandResult {
  * - Per-request memory tracking with global limit enforcement
  * - Per-request size limit (kills process if exceeded)
  * - AbortController for process-level timeout
- * - Stderr truncation at MAX_RESPONSE_SIZE
+ * - Stderr counts toward the same per-request ceiling, so an oversized stderr
+ *   aborts the request rather than being truncated
  * - Response headers arrive on their own descriptor, so no remote-controlled
  *   byte can move the header/body boundary (ARCHITECTURE.md invariant 13)
  *
@@ -163,7 +165,9 @@ export async function executeCommand(
     let requestMemoryUsage = 0;
 
     return new Promise((resolve, reject) => {
-        // Use AbortController for process-level timeout (spawn ignores timeout option)
+        // AbortController rather than spawn's timeout option: an abort surfaces as an
+        // AbortError on "error", which is how the handler below tells a timeout from
+        // any other failure
         const abortController = new AbortController();
         const timeoutId = setTimeout(() => {
             abortController.abort();
@@ -180,9 +184,9 @@ export async function executeCommand(
         });
 
         // Chunks are concatenated once at close rather than decoded per chunk.
-        // Per-chunk `.toString()` also corrupts VALID UTF-8 whose multi-byte
-        // sequence straddles a chunk boundary, so this is two defects closed
-        // by one change.
+        // Beyond the lossy decode `CommandResult.stdoutBytes` explains, a
+        // per-chunk `.toString()` corrupts VALID UTF-8 whose multi-byte
+        // sequence straddles a chunk boundary.
         const stdoutChunks: Buffer[] = [];
         const headerChunks: Buffer[] = [];
         let headerBytesReceived = 0;
@@ -342,8 +346,14 @@ export async function executeCommand(
                 // references so only one full-size copy survives.
                 //
                 // This copy, and every copy downstream of it, is made with
-                // this request's accounting already at zero. That ordering is
-                // the defect `docs/todos/003` records, not a choice made here.
+                // this request's accounting already at zero, so the pool
+                // under-counts peak memory while concurrent responses
+                // materialise. Known and unfixed: nothing serialises
+                // `executeCommand` calls, so overlapping requests can hold
+                // buffers the pool never counts and total memory can exceed
+                // the global limit `memory-tracker.ts` documents. Moving the
+                // release point needs `releaseRequestMemory` and the killed
+                // path reviewed together first.
                 //
                 // No eager `.toString()`: it costs a full decode (20MB on a
                 // 10MB non-UTF-8 response, since U+FFFD forces a two-byte

@@ -18,6 +18,49 @@ created: 2026-09-07
 > **the selection machinery and the four published exports are not**, and neither
 > is `declared_content_type`. See *Work log* at the end. Do not close this on the
 > body path alone.
+>
+> **AUDITED 2026-11-02 against main at `d070990` (5.3.0): slice 1 holds, slice 2
+> untouched.** The data-corruption P1 is gone — `processor.ts::classifyBody` parses
+> to validate only, `curl-execute.ts` returns the body "as it arrived", and
+> `curl-execute.json-passthrough.test.ts` is the byte-identity suite. **What is left
+> is a deletion plus a MAJOR API change, not a P1 defect** — see *Slice 2 as of the
+> 2026-11-02 audit* below. The severity in the frontmatter is the director's to
+> re-grade.
+
+## Slice 2 as of the 2026-11-02 audit
+
+Re-measured on main; every item below is still present.
+
+- **Selection machinery** in `response/processor.ts::defendText`: `strictestGrammar`,
+  `isMarkup`, `isMarkdown`, `sniffedAsMarkup`, `needsStripPath`. `processor.ts` is 964
+  lines.
+- **`MEDIA_TYPE_HEAD`** in `response/parser.ts` (conditional on the reporting decision).
+- **`utils/content-type.ts`** — still 206 lines; `utils/content-type.test.ts` still 49
+  `it` blocks; `response/processor.test.ts` now 59.
+- **The five published exports**: `defendText` and `DefendTextOptions` from `src/lib.ts`;
+  `isMarkdownContentType`, `isSniffableContentType`, `supportsMarkupComments` from
+  `src/lib/utils/index.ts`. *(The body's "four" counts the three re-exports as one
+  site.)* Removing them is **MAJOR**.
+- **`declared_content_type`** — absent (`rg declared_content_type src` is empty).
+- **AC 7's teeth probe** (remove a strip stage; header and stderr tests must fail) —
+  not run.
+- `defendJsonLeaves` is **already gone**; strike it from *What this deletes*.
+- **AC 8 is met in substance**: `jq/filter.ts` imports `isRawNumber`/`keepNumberLexeme`
+  from `utils/json-lexeme.ts` and parses with `JSON.parse(…, keepNumberLexeme)` — one
+  path. Tick it after a read, not on this note.
+- **One stale doc-block slice 2 would delete anyway:** `isSniffableContentType`'s
+  claims `application/yaml` is covered; it is not (it ends `return
+  isBinaryContentType(contentType)`). Probed: `application/yaml`, `foo/bar` and
+  `application/x-custom` leak `<script>` and `<!-- -->` through `defendText` with
+  `contentTypeUndetermined: false`. No shipped path reaches it — only a direct
+  library caller of `defendText`.
+
+**Todos this table names that no longer exist** (removed 2026-11-02 as fixed,
+marginal or subsumed): 010, 014, 016, 017 — and 015, resolved and removed on
+2026-11-04 by branch `fix/015-wrap-every-handler-exit`. The 016 remainder — `jq-query.ts`'s
+`readFile(…, "utf-8")` substituting U+FFFD silently on non-UTF-8 JSON — was judged
+marginal (RFC 8259 rules the input out) and is not tracked anywhere else. 004 and
+005 remain open.
 
 **This is a settled scope decision from the director, not a review finding.** It
 reverses the direction five consecutive review rounds took on PR #37, and it is
@@ -535,6 +578,8 @@ budgets, a different pair each run, in a file this branch does not touch
   `exceedsInlineCap`, and the verbatim arm cannot grow text. Kept because `defendText`'s
   growing arm is reachable by a direct caller of the published API; recorded in RC-47 as
   dead machinery rather than deleted, because removing it changes a published surface.
+  *(Since removed, with `exceedsInlineCap` — `CHANGELOG.md` → 5.0.0 → Removed, which
+  records that none of them was on a published entry point. No longer open.)*
 - **RC-40 through RC-43 were never written to `LESSONS.md`.** Seventeen source comments
   cited them; all are now re-pointed to RC-44 and RC-46, which hold the same facts. This
   document and the handoff still reference the missing numbers as history.
@@ -544,3 +589,10 @@ budgets, a different pair each run, in a file this branch does not touch
   and leaving citations, which is a larger and separable change.
 - Slice 2 (the selection machinery, the four published exports, `declared_content_type`)
   is untouched and still MAJOR.
+
+### Audit, 2026-11-02
+
+- Re-measured against main at `d070990` (5.3.0). Slice 1 holds; slice 2 is untouched.
+  Detail under *Slice 2 as of the 2026-11-02 audit* near the top. Todos 010, 014, 016
+  and 017 were removed the same day, so the *Existing todos this affects* table is
+  history for those four rows.

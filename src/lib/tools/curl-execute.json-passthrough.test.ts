@@ -97,9 +97,9 @@ async function fetchBody(
 // ---------------------------------------------------------------------------
 // AC 1 — a JSON body is returned byte-identical to what the origin sent.
 //
-// Every case here is a documented loss of the round trip this todo removed, and
-// each has its own RC. They are asserted as one list because the property is
-// one property: no re-serialisation happened.
+// Every case here is a loss a parse-and-reserialise round trip would cause.
+// They are asserted as one list because the property is one property: no
+// re-serialisation happened.
 // ---------------------------------------------------------------------------
 describe("018 AC1 — a JSON body survives byte for byte", () => {
     const cases: Array<[string, string]> = [
@@ -107,15 +107,15 @@ describe("018 AC1 — a JSON body survives byte for byte", () => {
         // the body is re-serialised — the P1 of `docs/todos/018`: a tool contracted
         // to return an API's data would return different data.
         ["duplicate name", '{"total":5,"total":9}'],
-        // RC-24, RC-27, RC-29: needed `keepNumberLexeme` to survive at all.
+        // RC-24, RC-27, RC-29: a re-serialising defence loses these unless a reviver keeps the number's lexeme.
         ["integer past MAX_SAFE_INTEGER", '{"id":9223372036854775807}'],
         ["overflowing exponent", '{"n":1e400}'],
         // **A NUMBER, not a string.** `"1.50"` in quotes is ordinary string
-        // content that any round trip preserves, so the case could not fail
-        // however the body was re-serialised — it discriminated nothing. The
-        // lexeme is only at risk unquoted, where `JSON.parse` yields 1.5 and a
-        // re-serialising defence emits `1.5`. `keepNumberLexeme` is what keeps
-        // the trailing zero, and this is the case that measures it.
+        // content that any round trip preserves, so that case could not fail
+        // however the body was re-serialised. The lexeme is only at risk
+        // unquoted, where `JSON.parse` yields 1.5 and a re-serialising defence
+        // emits `1.5`. Returning the origin's bytes is what keeps the trailing
+        // zero, and this is the case that measures it.
         ["trailing-zero decimal", '{"price":1.50}'],
         // Key order is the origin's, because nothing re-serialises the body.
         ["key order", '{"z":1,"m":2,"a":3}'],
@@ -128,7 +128,7 @@ describe("018 AC1 — a JSON body survives byte for byte", () => {
         // regression this shape is chosen to catch.
         ["escaped lone surrogate", '{"s":"\\ud800"}'],
         // Markup inside a value is legitimate string content in an API payload,
-        // and rewriting it was what the strip stages did on this path.
+        // so no strip stage runs on a JSON body.
         ["markup inside values", '{"a":"<script>x</script>","b":"<!-- c -->"}'],
         ["nested composite", '{"a":{"b":[1,{"c":"<!--"}]},"d":"-->"}'],
     ];
@@ -263,8 +263,7 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
     // writes the origin's octets only where Step 2 was a no-op; where it removed
     // a codepoint the file is the sanitised text, and claiming exactness there
     // would tell a reader diffing the file against the origin that a difference
-    // was the origin's. Reported by chatgpt-codex-connector and coderabbitai on
-    // PR #39.
+    // was the origin's.
     it("says the file is NOT byte-identical when Step 2 changed the body", async () => {
         // The template literal interprets `\u200b`, so `page` already holds a
         // real U+200B; a `.replace` for the six-character text `\u200b` would
@@ -307,7 +306,6 @@ describe("018 AC3/AC4/AC5 — a non-JSON body is reported, not inlined", () => {
 
     // `options.contentType` is origin-written, and this string is prose a model
     // reads as the server's. The reason comes from the closed vocabulary.
-    // Reported by coderabbitai on PR #39.
     it("names the rejection reason in the jq_filter error, never the origin's content type", async () => {
         const text = await fetchBody("<html>nope</html>", "text/html", {
             jq_filter: ".a",
@@ -446,8 +444,8 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
         // measured exactly that: reverting the gate failed nothing.
         //
         // A raw `0xE9` decodes to U+FFFD, so re-encoding the decode gives
-        // `EF BF BD` where the origin sent one byte. `docs/todos/016`'s
-        // acceptance criterion 1; `docs/todos/018` decides who reads the file.
+        // `EF BF BD` where the origin sent one byte, and the artefact must
+        // carry the origin's byte; `docs/todos/018` decides who reads the file.
         const wire = Buffer.concat([
             Buffer.from('{"name":"Jos', "utf8"),
             Buffer.from([0xe9]),
@@ -485,8 +483,8 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
 // ---------------------------------------------------------------------------
 // Invariant 13 / 16 — the regions stay separate, and the divider survives.
 //
-// These are the two routes that re-opened RC-16's splice when the per-leaf walk
-// was removed, and each is fixed at a different layer.
+// These are the two routes to RC-16's splice, and each is fixed at a
+// different layer.
 // ---------------------------------------------------------------------------
 describe("018 — two remote regions, two content entries", () => {
     const spliceable = '{"a":"open <!--","b":"secret","c":"close -->","d":"kept"}';

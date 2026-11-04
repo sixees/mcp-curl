@@ -7,11 +7,13 @@ import {
   deriveHostPolicy,
   executeCurlRequest,
   hasDotSegment,
+  isUrlElicitationRequired,
   markServerAuthored,
   resolveBaseUrl,
   safeHostname,
-  sanitizeDescription
-} from "./chunk-JYNFNJA6.js";
+  sanitizeDescription,
+  toolErrorResult
+} from "./chunk-QADYJTWR.js";
 
 // src/lib/schema/validator.ts
 import { z } from "zod";
@@ -487,6 +489,7 @@ function createToolHandler(schema, endpoint, config) {
       );
       return wrap(result, safeHostname(url));
     } catch (error) {
+      if (isUrlElicitationRequired(error)) throw error;
       const fail = (result) => wrap(result, safeHostname(config?.baseUrl ?? schema.api.baseUrl));
       if (error instanceof AuthenticationError) {
         return fail(markServerAuthored({
@@ -505,18 +508,7 @@ function createToolHandler(schema, endpoint, config) {
           isError: true
         }));
       }
-      if (error instanceof Error && error.message.startsWith("Unknown filter preset")) {
-        return fail({
-          content: [
-            {
-              type: "text",
-              text: error.message
-            }
-          ],
-          isError: true
-        });
-      }
-      throw error;
+      return fail(toolErrorResult(error));
     }
   };
 }

@@ -3,7 +3,7 @@
 
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
-import type { CurlRegisterToolOptions, JqRegisterToolOptions, ToolResult } from "./types.js";
+import type { CurlRegisterToolOptions, JqRegisterToolOptions } from "./types.js";
 import { executeWithHooks } from "./hook-executor.js";
 import { CurlExecuteBaseUrlSchema, CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
 import {
@@ -81,11 +81,16 @@ export function registerCurlToolWithHooks(
     const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
 
     const handler: ToolCallback<typeof CurlExecuteSchema> = async (params, extra) => {
+        // Constant server text, and still wrapped: invariant 1 admits no exit
+        // on trust, and an edit to this string would otherwise inherit the gap.
         if (!enabled) {
-            return {
-                content: [{ type: "text" as const, text: "Error: curl_execute tool is disabled" }],
-                isError: true,
-            };
+            return wrap(
+                markServerAuthored({
+                    content: [{ type: "text" as const, text: "Error: curl_execute tool is disabled" }],
+                    isError: true,
+                }),
+                safeHostname(params.url)
+            );
         }
         const resolved = resolveRequestUrl(config.baseUrl, params.url);
         if (!resolved.ok) {
@@ -142,11 +147,15 @@ export function registerJqToolWithHooks(
     const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
 
     const handler: ToolCallback<typeof JqQuerySchema> = async (params, extra) => {
+        // Wrapped for the reason the curl_execute handler states.
         if (!enabled) {
-            return {
-                content: [{ type: "text" as const, text: "Error: jq_query tool is disabled" }],
-                isError: true,
-            };
+            return wrap(
+                markServerAuthored({
+                    content: [{ type: "text" as const, text: "Error: jq_query tool is disabled" }],
+                    isError: true,
+                }),
+                JQ_QUERY_HOSTNAME_LABEL
+            );
         }
         // jq_query has no tool-specific transforms — only the shared
         // output_dir / max_result_size defaults, applied in place.

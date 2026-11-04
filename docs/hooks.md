@@ -39,7 +39,12 @@ be empty and the notice saying how it failed is in `content`; with it,
 
 ### onError
 
-Called when tool execution throws an error.
+Called when a `beforeRequest` hook, the tool, or an `afterResponse` hook throws. After the
+`onError` hooks run, the error's message is returned to the model as an `isError` result
+through the same response defence every result takes; the tool call never rejects. The one
+exception is the SDK's URL-elicitation signal — an `McpError` carrying
+`ErrorCode.UrlElicitationRequired` — which is a structured request for the client to open a
+URL rather than a failure: it is re-thrown unchanged, and `onError` does not see it.
 
 ```typescript
 type OnErrorHook = (ctx: HookContext & { error: Error }) => void;
@@ -92,10 +97,13 @@ Request arrives
 │ Execute tool   │
 └────────────────┘
      │
-     ├──► Success ──► afterResponse hooks
+     ├──► Success ──► afterResponse hooks ──► wrapped result
      │
-     └──► Error ────► onError hooks
+     └──► Error ────► onError hooks ──► wrapped isError result
 ```
+
+A throw from a `beforeRequest` or `afterResponse` hook takes the same error path as a
+throw from the tool.
 
 ## Common Patterns
 
@@ -308,9 +316,19 @@ If a beforeRequest hook returns `{ shortCircuit: true }`, subsequent hooks are s
 
 ## Error Handling in Hooks
 
-**Important:** Errors thrown in hooks propagate and abort the tool call (fail-fast). They are NOT caught and ignored.
-The `onError` hook only runs for errors during tool execution, not for errors in `beforeRequest` or `afterResponse`
-hooks.
+**Important:** An error thrown in a `beforeRequest` hook aborts the tool call before any request is
+sent (fail-fast). An error thrown in an `afterResponse` hook cannot abort anything: the executor has
+already run and its request and side effects stand; the throw stops the remaining response hooks and
+replaces the returned result with an error. In both cases the error is not ignored: the `onError`
+hooks run with it, and the model receives its message as an `isError` result, passed through the
+response defence like every other result.
+The call never reaches the SDK as a rejected handler, so a thrown message takes the same defence a
+response body takes — including its JSON rule: a message that parses as a JSON document is detected
+and logged, never rewritten, and reaches the model as thrown — inside the spotlighting sentinels
+when `enableSpotlighting` is on, which frame the text without changing it (the `enableSpotlighting`
+docblock in `src/lib/types/public.ts` states the rule and its cost). The one throw that does leave the handler
+is the URL-elicitation signal described under `onError` above. An error thrown inside an `onError`
+hook is suppressed with a name-only warning so the original error is the one reported.
 
 To prevent hook failures from breaking requests, wrap hook bodies in try/catch:
 

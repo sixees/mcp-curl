@@ -104,7 +104,10 @@ This service has no database, no message queue, and no external cache. All state
 ```mermaid
 flowchart LR
     A[MCP transport] --> B[Zod CurlExecuteSchema]
-    B --> C[executeCurlRequest]
+    B --> V[beforeRequest hooks]
+    V --> C[executeCurlRequest]
+    V -. shortCircuit .-> T
+    V -. throws .-> U
     C --> D[SSRF + DNS resolve]
     D --> E[Rate limit checks]
     E --> F[Output dir validate]
@@ -125,7 +128,7 @@ flowchart LR
     S --> T[wrap: defendForInline<br/>+ spotlight if enableSpotlighting]
     T --> R[MCP text result]
     S -. throws .-> U[onError hooks]
-    U -. rethrow original .-> R
+    U -. isError result .-> T
 ```
 
 Stage notes:
@@ -134,7 +137,7 @@ Stage notes:
 - **Memory tracker** — module-level counter `totalResponseMemory`, capped at `LIMITS.MAX_TOTAL_RESPONSE_MEMORY = 100 MB`. Per-chunk `allocateMemory` kills the child if either the global cap or `MAX_RESPONSE_SIZE = 10 MB` per request would be exceeded (`execution/memory-tracker.ts`, `execution/command-executor.ts`).
 - **Metadata separator** — per-request `\n---MCP-CURL-${randomUUID()}---\n`, written by cURL `-w` ahead of every field of the metadata block in the order `metadataDirectives` states. Fields are split only by the separator, and a block with the wrong separator count is undetermined, which selects the strictest grammar (`types/common.ts`, `response/parser.ts`).
 - **Detect + classify** — runs the combined injection regex over the body, over its sanitised form (so a phrase split by a zero-width character still matches) and over each string token that carries an escape, decoded on its own (so `\u0049gnore` still matches), logs throttled per host, then classifies the body as JSON or not. **A JSON body is never rewritten**; the sanitised form is persisted only for a saved non-JSON body it differs from. Content is never suppressed.
-- **afterResponse + spotlighting** — `tool-wrapper.ts` invokes `executeWithHooks` (which runs `afterResponse` synchronously and routes its throws to `onError`) with a wrap built by `createWrapper`, applied at the pipeline exit: `defendForInline` on each text part, then per-request UUID sentinels when `config.enableSpotlighting === true`, on every result but a server-authored one (see *Spotlighting* below). Schema-generated and custom tools skip the hooks but not the wrap — `schema/generator.ts` and `registerCustomTool` apply the same one to the handler's return.
+- **afterResponse + spotlighting** — `tool-wrapper.ts` invokes `executeWithHooks` (which runs `afterResponse` synchronously and routes its throws to `onError`) with a wrap built by `createWrapper`, applied at the pipeline exit: `defendForInline` on each text part, then per-request UUID sentinels when `config.enableSpotlighting === true`, on every result but a server-authored one (see *Spotlighting* below). Schema-generated and custom tools skip the hooks but not the wrap — `schema/generator.ts` and `registerCustomTool` apply the same one to the handler's return and to any throw it makes (see *Error Handling* below). A custom tool's `structuredContent` takes the JSON arm inside the same wrap: detected and logged, never rewritten, carried by reference.
 
 ### Data Stores
 
@@ -274,7 +277,7 @@ Env vars are funneled through a single `ENV` map (`config/environment.ts`). `MCP
 
 ### Error Handling
 
-Plain `Error` thrown everywhere — no custom subclasses, no `Result<T, E>`. Helpers in `utils/error.ts` produce consistent messages: `getErrorMessage(unknown)`, `createValidationError`, `createAccessError`, `createFileError`, `createConfigError`. Errors thrown deep in the stack are caught at the **tool handler boundary**, converted to `{ content, isError: true }`, and logged. Hook errors during `afterResponse` flow to `onError`; errors *inside* `onError` are suppressed with a name-only warning to preserve the original error's context.
+Plain `Error` thrown almost everywhere, no `Result<T, E>`; of its four subclasses, two — `utils/error.ts::LocalRefusalError` and `schema/generator.ts::AuthenticationError` — exist so a handler can match a server-authored refusal by `instanceof` and leave it unspotlighted, and two — `schema/loader.ts::ApiSchemaLoadError` and `schema/validator.ts::ApiSchemaValidationError` — report a YAML API schema that failed to load or validate. Helpers in `utils/error.ts` produce consistent messages: `getErrorMessage(unknown)`, `createValidationError`, `createAccessError`, `createFileError`, `createConfigError`. Errors thrown deep in the stack are caught at the **tool handler boundary** and converted to `{ content, isError: true }`. Logging is not part of that conversion: the built-in tools log their own failures inside the executor (`curl_execute error: [<host>] <ErrorClassName>`, and the `jq_query` equivalent), while a hook or executor throw on a built-in tool is logged only by an `onError` hook the embedder registers. Schema-generated and custom tools run no hooks, so a throw from one of their handlers reaches no `onError` hook and is logged by nothing beyond what the executor itself wrote. The conversion is `utils/error.ts::toolErrorResult`, and every handler boundary applies it — `executeWithHooks` for the built-in tools, `createToolHandler` for schema-generated tools, the custom-tool adapter in `McpCurlServer` — so that no throw escapes to the SDK's own error rendering, which would hand the message to the model unwrapped (invariant 1). The one deliberate exception is the SDK's URL-elicitation signal: an `McpError` with `ErrorCode.UrlElicitationRequired` is re-thrown unchanged at all three boundaries (`utils/error.ts::isUrlElicitationRequired`), because the SDK's tool boundary passes that code through as a structured JSON-RPC error for the client's elicitation flow and converting it to text would strip the URL; the embedder's own code constructs it, and the SDK returns it to the client as an error rather than as content for the model. On the built-in tools, a throw from a `beforeRequest` hook, the executor or an `afterResponse` hook flows to `onError` first; errors *inside* `onError` are suppressed with a name-only warning to preserve the original error's context.
 
 ### Logging
 

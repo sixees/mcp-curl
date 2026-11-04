@@ -76,11 +76,18 @@ function isHostAllowed(policy, hostname) {
 import { z } from "zod";
 
 // src/lib/utils/error.ts
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 function getErrorMessage(error) {
   if (error instanceof Error) {
     return error.message;
   }
   return String(error);
+}
+function toolErrorResult(error) {
+  return { content: [{ type: "text", text: getErrorMessage(error) }], isError: true };
+}
+function isUrlElicitationRequired(error) {
+  return error instanceof McpError && error.code === ErrorCode.UrlElicitationRequired;
 }
 function createValidationError(field, reason, suggestion) {
   let message = `Invalid ${field}: ${reason}.`;
@@ -2130,7 +2137,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "5.3.0" : "0.0.0"
+  VERSION: true ? "5.4.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
@@ -2769,12 +2776,23 @@ function createWrapper(config) {
       const newContent = result.content.map(
         (part) => processTextPart(part, hostname, requestId)
       );
+      detectStructuredContent(result.structuredContent, hostname);
       return tag({ ...result, content: newContent });
     } catch (err) {
       logWrapError(hostname, err);
       return tag(result);
     }
   };
+}
+function detectStructuredContent(value, hostname) {
+  if (value === null || typeof value !== "object") return;
+  let text;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return;
+  }
+  if (text !== void 0) detectJsonAndLog(text, hostname);
 }
 
 // src/lib/execution/command-executor.ts
@@ -3332,6 +3350,8 @@ async function executeCurlRequest(params, extra = {}) {
 export {
   ENV,
   getErrorMessage,
+  toolErrorResult,
+  isUrlElicitationRequired,
   createConfigError,
   assertPositiveInteger,
   LocalRefusalError,

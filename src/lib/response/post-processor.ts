@@ -12,12 +12,15 @@
 //
 // Design notes:
 //
-// 1. **Single chokepoint, multiple call sites.** The same closure is invoked
-//    from `tool-wrapper.ts` (curl_execute / jq_query), the YAML
-//    `createToolHandler` in `schema/generator.ts`, the custom-tool
-//    registration adapter in `extensible/mcp-curl-server.ts`, and the
-//    short-circuit return path in `extensible/hook-executor.ts`. Symbol-tag
-//    idempotence (see point 3) lets these compose freely.
+// 1. **Single chokepoint, multiple call sites.** Each site that returns a
+//    result builds its own closure with `createWrapper`: `tool-wrapper.ts`
+//    (curl_execute / jq_query), whose closure `extensible/hook-executor.ts`
+//    calls at every exit — after `afterResponse`, on a hook short-circuit,
+//    and in its `catch`; the YAML `createToolHandler` in
+//    `schema/generator.ts`, on its success and error arms; and the
+//    custom-tool registration adapter in `extensible/mcp-curl-server.ts`,
+//    on a handler's return and on its throw. Symbol-tag idempotence (see
+//    point 3) lets these compose freely.
 //
 // 2. **Detect-on-original ordering.** The wrap runs `defendForInline()` from
 //    `processor.ts` over each text part as one undivided string. A non-JSON
@@ -62,6 +65,7 @@
 
 import { randomUUID } from "node:crypto";
 import { logWrapError } from "../security/wrap-error-logger.js";
+import { detectJsonAndLog } from "../security/index.js";
 import { applySpotlighting } from "../utils/sanitize.js";
 import { defendForInline } from "./processor.js";
 
@@ -126,6 +130,10 @@ export interface WrappableContentPart {
  * them the index signature alone would also carry them through, but a future
  * refactor that switches from spread to explicit field copying would silently
  * drop them. Naming them protects the SDK shape.
+ *
+ * By reference is not unexamined: `structuredContent` is JSON by definition,
+ * so it takes the JSON arm of the defence — detected and logged, never
+ * rewritten — the same rule `defendForInline` applies to a JSON text part.
  */
 export interface WrappableResult {
     content?: WrappableContentPart[];
@@ -351,6 +359,7 @@ export function createWrapper(
             const newContent = result.content.map((part) =>
                 processTextPart(part, hostname, requestId)
             );
+            detectStructuredContent(result.structuredContent, hostname);
             // Spread + content replacement preserves every other field
             // (`_meta`, `structuredContent`, etc.) by reference. The cast is
             // load-bearing here because TypeScript widens `T & { content: … }`
@@ -366,4 +375,25 @@ export function createWrapper(
             return tag(result);
         }
     };
+}
+
+/**
+ * Run the detector over a result's `structuredContent`. A custom tool can
+ * return one with remote data in it, and the SDK hands it to the client
+ * untouched, so this wrap is the only place it meets the defence. It is JSON
+ * by definition and so takes the JSON arm: detected and logged, never
+ * rewritten (`defendForInline`'s rule, `LESSONS.md` RC-49). The serialisation
+ * exists only to run the detector; the object itself is carried by reference.
+ * Contained, because a value `JSON.stringify` refuses — a cycle, a BigInt, a
+ * throwing getter — must not cost the text parts their defence.
+ */
+function detectStructuredContent(value: unknown, hostname: string): void {
+    if (value === null || typeof value !== "object") return;
+    let text: string | undefined;
+    try {
+        text = JSON.stringify(value);
+    } catch {
+        return;
+    }
+    if (text !== undefined) detectJsonAndLog(text, hostname);
 }
