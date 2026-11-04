@@ -201,6 +201,11 @@ crosses the same trust boundary the built-in `curl_execute` tool defends.
 already done for you** — see *Composing the Full Defence* below. The helpers
 here are for a pipeline that runs outside the MCP handler boundary.
 
+That covers `structuredContent` too, on the JSON rule: it is detected and
+logged, never rewritten, and the object you return is the object the client
+receives. Treat it as the data contract it is, not as a channel the defence
+sanitises for you.
+
 | Helper | Use when... | Notes |
 |--------|-------------|-------|
 | `defendText(text, options)` | You want the defence the built-in tools apply to non-JSON text. | **This is the whole pipeline.** Everything below it is one stage of it. |

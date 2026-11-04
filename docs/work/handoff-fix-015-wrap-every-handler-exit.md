@@ -72,10 +72,17 @@ Operator chose "fix 019–021, then ready-pr". Third commit on the branch:
 - **021** — typed mocks (`vi.fn<OnErrorHook>()`, `vi.fn<CurlToolExecutor>()`, `vi.fn<JqToolExecutor>()`) in the two new describe blocks; `as never` casts removed there.
 - Full suite after the fixes: `success: true`, 1807 tests, 1800 passed, 0 failed, 7 pending; type-check clean. Todos 019–021 marked complete with ACs ticked.
 
+## Folded in on operator instruction — 2026-11-04
+
+- **`structuredContent` now meets the defence.** `response/post-processor.ts::detectStructuredContent` runs the detector over a serialisation of a result's `structuredContent` inside `createWrapper` — the JSON arm: detected and logged, never rewritten, carried by reference (RC-49's rule, as `defendForInline` applies it to a JSON text part). Contained against `JSON.stringify` refusing. Two tests in `mcp-curl-server.test.ts` (positive: injection phrase logged and object `toBe`-identical; negative: clean object logs nothing); teeth probed (call removed → the positive test fails; restored). Docs: `architecture.md` Stage notes, `docs/custom-tools.md` → *Sanitizing External Outputs*.
+- **The `validateToolOutput` half is empty**, not fixed: `CustomToolMeta` carries no `outputSchema`, so no custom tool can register one and the SDK's output validation never runs on this library's surface. Nothing to do unless `outputSchema` is ever added to `CustomToolMeta` — at which point its failure must take the wrap.
+- **Handled todos deleted** (015, 019, 020, 021) per the operator's convention, after being marked complete; recoverable from commits `8ff61ad`/`98007f7`.
+- **The operator's pre-existing backlog edits** committed as `4eeeac4`.
+
 ## Follow-up work
 
 - [x] Apply 019, 020, 021 — done on this branch
-- [ ] Decide whether the pre-existing `outputSchema` gaps (`structuredContent`, `validateToolOutput`) earn a todo
+- [x] `structuredContent` gap — fixed on this branch; `validateToolOutput` gap does not exist (no `outputSchema` in `CustomToolMeta`)
 - [ ] CHANGELOG line in the next release PR: handlers resolve with `isError` instead of rejecting; `onError` fires for `beforeRequest` throws
 - [ ] Todo ids 020/021 were reissued over uncommitted deletions — renumber if the rebinding matters
 
