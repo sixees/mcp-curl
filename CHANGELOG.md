@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.0] - 2026-11-04
+
+### Added
+
+- **`isUrlElicitationRequired(error)`** (`mcp-curl/lib`): true for the one throw
+  a tool-handler boundary re-throws instead of converting — the MCP SDK's
+  URL-elicitation signal (`McpError` with `ErrorCode.UrlElicitationRequired`),
+  which the SDK passes to the client as a structured JSON-RPC error for its
+  elicitation flow. Every boundary below checks it before converting.
+- **A custom tool's `structuredContent` meets the injection detector.** The
+  post-processor wrap runs the detector over its serialisation: detected and
+  logged per host, never rewritten, carried by reference (`LESSONS.md` RC-49's
+  JSON rule). Before this release it was the one remote-origin field the wrap
+  never examined.
+- **`onError` hooks fire for `beforeRequest` throws.** A hook that throws before
+  any request is sent now reaches the `onError` chain exactly as an
+  `afterResponse` or executor throw does. A hook counting "failed requests"
+  therefore also counts refusals that cost upstream nothing.
+
+### Changed
+
+- **Every tool-handler exit returns through the post-processor wrap.** A throw
+  from a hook, a custom executor, a schema-generated handler or a custom tool
+  reaches the model as a defended `{ content, isError: true }` result instead
+  of the SDK's own unwrapped error text (ARCHITECTURE.md invariant 1). The
+  conversion is `toolErrorResult`, applied by `executeWithHooks`, the YAML
+  `createToolHandler` and the custom-tool adapter; a tool call on these paths
+  resolves with `isError` where it previously rejected. The thrown message is
+  not marked server-authored — its provenance is unknown — so it takes the
+  full defence and is spotlighted when `enableSpotlighting` is on.
+- **The two disabled-tool refusals (`curl_execute`, `jq_query`) are wrapped**
+  as server-authored text rather than returned bare.
+- **`docs/hooks.md` → *Error Handling in Hooks*, `docs/custom-tools.md` and
+  `docs/architecture/architecture.md` → *Error Handling* describe the contract
+  above**, including which throws `onError` sees (built-in tools only) and that
+  the conversion itself logs nothing.
+
+### Fixed
+
+- **Comments and doc-blocks across the touched files say what the code does.**
+  A branch-scoped accuracy pass corrected 25 stale comments and stripped
+  narrated history from 10, in `command-executor.ts`, `hook-executor.ts`,
+  `post-processor.ts`, `generator.ts` and their tests; no code changed.
+
 ## [5.3.0] - 2026-10-30
 
 ### Notes

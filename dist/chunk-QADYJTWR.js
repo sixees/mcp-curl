@@ -2137,7 +2137,7 @@ var SERVER = {
   /** MCP server name for protocol identification */
   NAME: "curl-mcp-server",
   /** Server version from package.json */
-  VERSION: true ? "5.3.0" : "0.0.0"
+  VERSION: true ? "5.4.0" : "0.0.0"
 };
 
 // src/lib/config/defaults.ts
