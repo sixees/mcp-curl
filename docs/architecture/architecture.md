@@ -125,7 +125,7 @@ flowchart LR
     S --> T[wrap: defendForInline<br/>+ spotlight if enableSpotlighting]
     T --> R[MCP text result]
     S -. throws .-> U[onError hooks]
-    U -. rethrow original .-> R
+    U -. isError result .-> T
 ```
 
 Stage notes:
@@ -274,7 +274,7 @@ Env vars are funneled through a single `ENV` map (`config/environment.ts`). `MCP
 
 ### Error Handling
 
-Plain `Error` thrown everywhere — no custom subclasses, no `Result<T, E>`. Helpers in `utils/error.ts` produce consistent messages: `getErrorMessage(unknown)`, `createValidationError`, `createAccessError`, `createFileError`, `createConfigError`. Errors thrown deep in the stack are caught at the **tool handler boundary**, converted to `{ content, isError: true }`, and logged. Hook errors during `afterResponse` flow to `onError`; errors *inside* `onError` are suppressed with a name-only warning to preserve the original error's context.
+Plain `Error` thrown everywhere — no custom subclasses, no `Result<T, E>`. Helpers in `utils/error.ts` produce consistent messages: `getErrorMessage(unknown)`, `createValidationError`, `createAccessError`, `createFileError`, `createConfigError`. Errors thrown deep in the stack are caught at the **tool handler boundary**, converted to `{ content, isError: true }`, and logged. The conversion is `utils/error.ts::toolErrorResult`, and every handler boundary applies it — `executeWithHooks` for the built-in tools, `createToolHandler` for schema-generated tools, the custom-tool adapter in `McpCurlServer` — so that no throw escapes to the SDK's own error rendering, which would hand the message to the model unwrapped (invariant 1). A throw from a `beforeRequest` hook, the executor or an `afterResponse` hook flows to `onError` first; errors *inside* `onError` are suppressed with a name-only warning to preserve the original error's context.
 
 ### Logging
 

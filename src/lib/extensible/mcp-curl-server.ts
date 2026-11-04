@@ -38,6 +38,7 @@ import {
 } from "../security/index.js";
 import {
     sanitizeDescription,
+    toolErrorResult,
     MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
     MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
     withTimeout,
@@ -696,12 +697,16 @@ export class McpCurlServer {
         // and tags the result) but the Symbol-tag idempotence makes the outer
         // wrap a no-op for them. Custom tools registered by library consumers
         // are wrapped here for the first time, with the "custom" hostname
-        // label.
+        // label. A handler that throws is converted here too: a throw that
+        // escapes is rendered into a result by the MCP SDK, unwrapped.
         const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
         for (const { name, meta, handler } of this._customTools) {
             const wrappedHandler: typeof handler = async (params, extra) => {
-                const result = await handler(params, extra);
-                return wrap(result, CUSTOM_TOOL_HOSTNAME_LABEL);
+                try {
+                    return wrap(await handler(params, extra), CUSTOM_TOOL_HOSTNAME_LABEL);
+                } catch (error) {
+                    return wrap(toolErrorResult(error), CUSTOM_TOOL_HOSTNAME_LABEL);
+                }
             };
             server.registerTool(name, meta, wrappedHandler);
         }

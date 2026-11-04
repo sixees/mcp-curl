@@ -24,7 +24,14 @@ import type {
     HttpMethod,
 } from "./types.js";
 import { executeCurlRequest, type CurlExecuteResult, type CurlExecuteExtra } from "../tools/curl-execute.js";
-import { hasDotSegment, LocalRefusalError, resolveBaseUrl, sanitizeDescription, safeHostname } from "../utils/index.js";
+import {
+    hasDotSegment,
+    LocalRefusalError,
+    resolveBaseUrl,
+    sanitizeDescription,
+    safeHostname,
+    toolErrorResult,
+} from "../utils/index.js";
 import { applyDefaultHeaders, ANY_HOST_POLICY, deriveHostPolicy } from "../config/index.js";
 import { createWrapper, markServerAuthored } from "../response/post-processor.js";
 
@@ -438,7 +445,9 @@ function createToolHandler(
             // result then flows through the registerToolsOnServer adapter).
             return wrap(result, safeHostname(url));
         } catch (error) {
-            // A missing required credential is configuration the model can report back, so it returns as an error result; anything unrecognised is rethrown.
+            // Every error returns as an error result; nothing is re-thrown,
+            // because a throw that leaves the handler is rendered by the MCP
+            // SDK and never wrapped.
             //
             // Each arm takes this handler's own wrap, as the success arm does:
             // `registerEndpointTools` registers the handler with no outer wrap,
@@ -446,8 +455,9 @@ function createToolHandler(
             // none (invariant 1). There is no request URL here, so the base
             // URL's host labels the call. The authentication error and the
             // refusal are server text, so they are marked and stay
-            // unspotlighted; the preset error echoes the model's own parameter
-            // and is spotlighted like any other result.
+            // unspotlighted; the preset error echoes the model's own parameter,
+            // and an unrecognised error's message can echo anything, so both
+            // are spotlighted like any other result.
             const fail = (result: CurlExecuteResult) =>
                 wrap(result, safeHostname(config?.baseUrl ?? schema.api.baseUrl));
             if (error instanceof AuthenticationError) {
@@ -483,7 +493,7 @@ function createToolHandler(
                 });
             }
 
-            throw error;
+            return fail(toolErrorResult(error));
         }
     };
 }

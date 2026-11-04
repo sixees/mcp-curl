@@ -39,7 +39,9 @@ be empty and the notice saying how it failed is in `content`; with it,
 
 ### onError
 
-Called when tool execution throws an error.
+Called when a `beforeRequest` hook, the tool, or an `afterResponse` hook throws. After the
+`onError` hooks run, the error's message is returned to the model as an `isError` result
+through the same response defence every result takes; the tool call never rejects.
 
 ```typescript
 type OnErrorHook = (ctx: HookContext & { error: Error }) => void;
@@ -92,10 +94,13 @@ Request arrives
 │ Execute tool   │
 └────────────────┘
      │
-     ├──► Success ──► afterResponse hooks
+     ├──► Success ──► afterResponse hooks ──► wrapped result
      │
-     └──► Error ────► onError hooks
+     └──► Error ────► onError hooks ──► wrapped isError result
 ```
+
+A throw from a `beforeRequest` or `afterResponse` hook takes the same error path as a
+throw from the tool.
 
 ## Common Patterns
 
@@ -308,9 +313,12 @@ If a beforeRequest hook returns `{ shortCircuit: true }`, subsequent hooks are s
 
 ## Error Handling in Hooks
 
-**Important:** Errors thrown in hooks propagate and abort the tool call (fail-fast). They are NOT caught and ignored.
-The `onError` hook only runs for errors during tool execution, not for errors in `beforeRequest` or `afterResponse`
-hooks.
+**Important:** An error thrown in a `beforeRequest` or `afterResponse` hook aborts the tool call
+(fail-fast). It is not ignored: the `onError` hooks run with it, and the model receives its
+message as an `isError` result, passed through the response defence like every other result.
+The call never reaches the SDK as a rejected handler, so nothing a hook throws reaches the model
+unsanitised. An error thrown inside an `onError` hook is suppressed with a name-only warning so
+the original error is the one reported.
 
 To prevent hook failures from breaking requests, wrap hook bodies in try/catch:
 

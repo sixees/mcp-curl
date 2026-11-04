@@ -10,18 +10,21 @@ import type {
 } from "../types/public.js";
 import type { Hooks, ToolResult, ToolName, ToolExtra } from "./types.js";
 import { deriveHostPolicy } from "../config/index.js";
+import { toolErrorResult } from "../utils/index.js";
 import type { WrappableResult } from "../response/post-processor.js";
 
 /**
  * Per-call wrap closure injected by the caller (built in `tool-wrapper.ts`
- * via `createWrapper(config)`). The hook-executor calls this at its two
- * returning exits (after `afterResponse` hooks run, or when a hook
- * short-circuits) so that:
+ * via `createWrapper(config)`). The hook-executor calls this at each of its
+ * three exits — after `afterResponse` hooks run, when a hook short-circuits,
+ * and in the `catch` — so that:
  *
- *   1. A `beforeRequest` hook that short-circuits by returning a
- *      `CallToolResult` cannot bypass the wrap. A hook that THROWS is not
- *      covered: the `beforeRequest` loop sits outside the `try`, and the
- *      `catch` re-throws, so either throw leaves unwrapped.
+ *   1. Nothing a hook or executor produces bypasses the wrap: a
+ *      `beforeRequest` hook that short-circuits by returning a
+ *      `CallToolResult`, and a hook or executor that throws, both leave as a
+ *      wrapped result. The hook loops and the executor sit inside one `try`,
+ *      and the `catch` converts rather than re-throws, because a throw that
+ *      escapes the handler is rendered by the MCP SDK and never wrapped.
  *   2. The hostname passed to wrap is derived from the **final** `ctx.params`,
  *      after every `beforeRequest` hook has had its turn. A hook that rewrites
  *      `params.url` — routing through a proxy, say — decides the host the
@@ -54,11 +57,13 @@ type HostnameExtractor<T> = (params: T) => string;
  * 4. On error, run onError hooks instead of afterResponse
  *
  * Error Handling:
- * - For afterResponse: if a hook throws, the error is caught and passed to
- *   onError hooks (same as tool execution errors). This means afterResponse
- *   hook errors are observable via onError hooks for logging/reporting.
+ * - A throw from a beforeRequest hook, the executor or an afterResponse hook
+ *   is caught and passed to the onError hooks, so every failure is observable
+ *   there for logging/reporting. It then returns as a wrapped `isError`
+ *   result carrying the error's message; this function never rejects.
  * - For onError: hook errors are caught and suppressed (logged as warnings).
- *   Subsequent onError hooks continue to run, and the original tool error is re-thrown.
+ *   Subsequent onError hooks continue to run, and the original error is the
+ *   one returned.
  *
  * @param tool - Name of the tool being executed
  * @param params - Tool parameters; copied into the hook context, so hooks modify the copy and never the caller's object
@@ -66,7 +71,7 @@ type HostnameExtractor<T> = (params: T) => string;
  * @param hooks - Registered hook functions
  * @param sessionId - Session ID for HTTP transport
  * @param executor - The actual tool execution function (receives params and extra)
- * @returns Tool result (from executor or short-circuit)
+ * @returns Tool result (from executor, short-circuit, or a converted throw)
  */
 export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput>(
     tool: ToolName,
@@ -86,32 +91,32 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         config,
     };
 
-    for (const hook of hooks.beforeRequest) {
-        const result = (await hook(ctx)) as BeforeRequestResult<T> | undefined;
+    try {
+        for (const hook of hooks.beforeRequest) {
+            const result = (await hook(ctx)) as BeforeRequestResult<T> | undefined;
 
-        if (result) {
-            if ("shortCircuit" in result && result.shortCircuit) {
-                // Defence-in-depth: a hook that returns synthesised text skips
-                // the executor, so route it through the same wrap the executor's
-                // return value would hit. It gets exactly the response defence: the
-                // full `defendText` pipeline on non-JSON text, detection alone on a
-                // JSON document, which passes through unchanged. Hostname comes
-                // from the post-mutation params so a proxy-rewriting hook is
-                // attributed to the rewritten host, not the original.
-                const shortCircuitResult: ToolResult = {
-                    content: [{ type: "text", text: result.response }],
-                    isError: result.isError,
-                };
-                return wrap(shortCircuitResult, hostnameOf(ctx.params));
-            }
+            if (result) {
+                if ("shortCircuit" in result && result.shortCircuit) {
+                    // Defence-in-depth: a hook that returns synthesised text skips
+                    // the executor, so route it through the same wrap the executor's
+                    // return value would hit. It gets exactly the response defence: the
+                    // full `defendText` pipeline on non-JSON text, detection alone on a
+                    // JSON document, which passes through unchanged. Hostname comes
+                    // from the post-mutation params so a proxy-rewriting hook is
+                    // attributed to the rewritten host, not the original.
+                    const shortCircuitResult: ToolResult = {
+                        content: [{ type: "text", text: result.response }],
+                        isError: result.isError,
+                    };
+                    return wrap(shortCircuitResult, hostnameOf(ctx.params));
+                }
 
-            if ("params" in result && result.params) {
-                ctx.params = { ...ctx.params, ...result.params };
+                if ("params" in result && result.params) {
+                    ctx.params = { ...ctx.params, ...result.params };
+                }
             }
         }
-    }
 
-    try {
         // Execute the tool with potentially modified params
         const response = await executor(ctx.params, {
             sessionId,
@@ -170,7 +175,12 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
             }
         }
 
-        // Re-throw the original error to preserve stack trace
-        throw error;
+        // Converted, not re-thrown: a throw that leaves the handler is
+        // rendered into a result by the MCP SDK, which skips the wrap
+        // (invariant 1). The message is whatever the hook or executor put in
+        // it, remote text included, so it is not marked server-authored. The
+        // hostname is read from the params as they stand, so a hook that
+        // rewrote the URL before the throw is attributed to the rewritten host.
+        return wrap(toolErrorResult(error), hostnameOf(ctx.params));
     }
 }

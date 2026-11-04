@@ -13,6 +13,21 @@ export function getErrorMessage(error: unknown): string {
 }
 
 /**
+ * The error result a tool handler returns in place of a throw.
+ *
+ * A handler that throws leaves the MCP SDK to render the message into a
+ * result of its own, and that result never meets the post-processor wrap
+ * (ARCHITECTURE.md invariant 1). So every handler boundary converts here and
+ * passes the result through its own wrap. The result is not marked
+ * server-authored: a hook, a custom executor or a custom tool can put remote
+ * text in the message, so it takes the full defence and is spotlighted like
+ * any other result.
+ */
+export function toolErrorResult(error: unknown): { content: Array<{ type: "text"; text: string }>; isError: true } {
+    return { content: [{ type: "text", text: getErrorMessage(error) }], isError: true };
+}
+
+/**
  * Create a validation error with consistent formatting.
  *
  * @param field - The field or value being validated (e.g., "filepath", "array index")

@@ -3,6 +3,7 @@
 
 export {
     getErrorMessage,
+    toolErrorResult,
     createValidationError,
     createAccessError,
     createFileError,

