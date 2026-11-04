@@ -56,10 +56,11 @@ Re-measured on main; every item below is still present.
   library caller of `defendText`.
 
 **Todos this table names that no longer exist** (removed 2026-11-02 as fixed,
-marginal or subsumed): 010, 014, 016, 017. The 016 remainder — `jq-query.ts`'s
+marginal or subsumed): 010, 014, 016, 017 — and 015, resolved and removed on
+2026-11-04 by branch `fix/015-wrap-every-handler-exit`. The 016 remainder — `jq-query.ts`'s
 `readFile(…, "utf-8")` substituting U+FFFD silently on non-UTF-8 JSON — was judged
-marginal (RFC 8259 rules the input out) and is not tracked anywhere else. 004, 005
-and 015 remain open.
+marginal (RFC 8259 rules the input out) and is not tracked anywhere else. 004 and
+005 remain open.
 
 **This is a settled scope decision from the director, not a review finding.** It
 reverses the direction five consecutive review rounds took on PR #37, and it is
@@ -577,6 +578,8 @@ budgets, a different pair each run, in a file this branch does not touch
   `exceedsInlineCap`, and the verbatim arm cannot grow text. Kept because `defendText`'s
   growing arm is reachable by a direct caller of the published API; recorded in RC-47 as
   dead machinery rather than deleted, because removing it changes a published surface.
+  *(Since removed, with `exceedsInlineCap` — `CHANGELOG.md` → 5.0.0 → Removed, which
+  records that none of them was on a published entry point. No longer open.)*
 - **RC-40 through RC-43 were never written to `LESSONS.md`.** Seventeen source comments
   cited them; all are now re-pointed to RC-44 and RC-46, which hold the same facts. This
   document and the handoff still reference the missing numbers as history.

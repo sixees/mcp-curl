@@ -1,9 +1,11 @@
 // src/lib/extensible/tool-wrapper.test.ts
 // Tests for applyConfigTransformsCurl default User-Agent and Referer behavior,
 // and for registerCurlToolWithHooks: the post-processor wrap (PR-6b), what
-// afterResponse hooks receive, input-schema selection, and a baseUrl
-// resolution refusal. The baseUrl path through the SDK's own input parse is
-// in tool-wrapper.e2e.test.ts.
+// afterResponse hooks receive, input-schema selection, a baseUrl resolution
+// refusal, and that every exit leaves through the wrap — a throwing hook or
+// executor, and a disabled tool's refusal on curl_execute and jq_query alike
+// (invariant 1). The baseUrl path through the SDK's own input parse is in
+// tool-wrapper.e2e.test.ts.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { applyConfigTransformsCurl, registerCurlToolWithHooks, registerJqToolWithHooks } from "./tool-wrapper.js";
@@ -300,7 +302,7 @@ describe("post-processor wrap (registerCurlToolWithHooks integration)", () => {
         // But the synthesised text was still sanitised
         const text = (result as { content: { text: string }[] }).content[0].text;
         expect(text).toBe("Synthesised by hook: malicious");
-        // And tagged so the outer wrap is a no-op
+        // And tagged, so any wrap layer the result passes through next is a no-op
         expect(isWrappedResult(result)).toBe(true);
     });
 });

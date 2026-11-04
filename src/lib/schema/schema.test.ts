@@ -1198,11 +1198,13 @@ describe("generateToolDefinitions", () => {
         expect(mockedExecuteCurlRequest).not.toHaveBeenCalled();
     });
 
-    // The arm no other test reaches: an error no arm recognises. It returns
-    // through the handler's own wrap rather than re-throwing, because
-    // `registerEndpointTools` registers this handler with no outer wrap, and
-    // a throw would leave the SDK to render the message unwrapped
-    // (invariant 1). The shipped executor never rejects, so the mock does.
+    // The general arm, reached from the executor: an error no specific arm
+    // recognises (the unknown-preset cases reach the same arm from inside the
+    // handler). It returns through the handler's own wrap rather than
+    // re-throwing, because `registerEndpointTools` registers this handler with
+    // no outer wrap, and a throw would leave the SDK to render the message
+    // unwrapped (invariant 1). The shipped executor never rejects, so the mock
+    // does.
     it("returns an unrecognised error as a defended error result rather than rejecting", async () => {
         const schema: ApiSchema = {
             ...baseSchema,

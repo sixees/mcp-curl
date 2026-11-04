@@ -19,12 +19,15 @@ import type { WrappableResult } from "../response/post-processor.js";
  * three exits — after `afterResponse` hooks run, when a hook short-circuits,
  * and in the `catch` — so that:
  *
- *   1. Nothing a hook or executor produces bypasses the wrap: a
+ *   1. No result a hook or executor produces bypasses the wrap: a
  *      `beforeRequest` hook that short-circuits by returning a
  *      `CallToolResult`, and a hook or executor that throws, both leave as a
  *      wrapped result. The hook loops and the executor sit inside one `try`,
- *      and the `catch` converts rather than re-throws, because a throw that
- *      escapes the handler is rendered by the MCP SDK and never wrapped.
+ *      and the `catch` converts every throw but one rather than re-throwing,
+ *      because a throw that escapes the handler is rendered by the MCP SDK
+ *      and never wrapped. The exception is the SDK's URL-elicitation signal
+ *      (`isUrlElicitationRequired`), re-thrown unchanged so the SDK passes it
+ *      to the client as a JSON-RPC error rather than as content for the model.
  *   2. The hostname passed to wrap is derived from the **final** `ctx.params`,
  *      after every `beforeRequest` hook has had its turn. A hook that rewrites
  *      `params.url` — routing through a proxy, say — decides the host the

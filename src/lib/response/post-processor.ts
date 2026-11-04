@@ -12,12 +12,15 @@
 //
 // Design notes:
 //
-// 1. **Single chokepoint, multiple call sites.** The same closure is invoked
-//    from `tool-wrapper.ts` (curl_execute / jq_query), the YAML
-//    `createToolHandler` in `schema/generator.ts`, the custom-tool
-//    registration adapter in `extensible/mcp-curl-server.ts`, and the
-//    short-circuit return path in `extensible/hook-executor.ts`. Symbol-tag
-//    idempotence (see point 3) lets these compose freely.
+// 1. **Single chokepoint, multiple call sites.** Each site that returns a
+//    result builds its own closure with `createWrapper`: `tool-wrapper.ts`
+//    (curl_execute / jq_query), whose closure `extensible/hook-executor.ts`
+//    calls at every exit — after `afterResponse`, on a hook short-circuit,
+//    and in its `catch`; the YAML `createToolHandler` in
+//    `schema/generator.ts`, on its success and error arms; and the
+//    custom-tool registration adapter in `extensible/mcp-curl-server.ts`,
+//    on a handler's return and on its throw. Symbol-tag idempotence (see
+//    point 3) lets these compose freely.
 //
 // 2. **Detect-on-original ordering.** The wrap runs `defendForInline()` from
 //    `processor.ts` over each text part as one undivided string. A non-JSON
