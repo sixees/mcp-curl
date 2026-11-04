@@ -39,8 +39,8 @@ Invariant 1 says every byte returned to the model passes the post-processor wrap
 
 ## Known issues and limitations
 
-- Review findings 019 (redundant "Unknown filter preset" arm — a direct consequence of this fix), 020 (three prose sites still state the old contract, including the `McpCurlServer.onError()` docblock shipped in the `.d.ts`) and 021 (new tests use bare `vi.fn()`) are **unfixed on this branch** — `/work` Step 5 forbids self-patching after review. All three are `s`.
-- The unused `ToolResult` import in `tool-wrapper.ts` is pre-existing at base; listed inside 019 as out of scope.
+- Review findings 019, 020 and 021 were **applied on this branch after the operator chose to** (third commit; see *Review fixes applied* below). Nothing from the review is left open.
+- The unused `ToolResult` import in `tool-wrapper.ts` was pre-existing at base; removed with 019 as the out-of-scope one-liner.
 - `hooks: Partial<Hooks>` spread in the test helpers is sound under `strict` without `exactOptionalPropertyTypes`; an explicit `undefined` would break at runtime (none passed).
 
 ## Testing summary
@@ -64,9 +64,17 @@ Invariant 1 says every byte returned to the model passes the post-processor wrap
 - **RCs relevant:** RC-20 (a path newly routed through the wrap inherits its defects — the error channel takes the same linear-before-256-KB pipeline as a custom-tool result), RC-21 (assertion set = exit set), RC-16, RC-30, RC-31, RC-46 (the class 019 recurs), RC-65 (refusal text says "disabled", never "not exposed").
 - **Working tree:** `main` carried the operator's uncommitted 2026-11-02 backlog edits (todo deletions, 015/018 audit edits, comment-only edits in three `src` files, untracked `docs/{brainstorms,plans,work/backup,work/plan-research}`). They ride on this branch unstaged; nothing of theirs is in `3bc9e17`.
 
+## Review fixes applied — 2026-11-04
+
+Operator chose "fix 019–021, then ready-pr". Third commit on the branch:
+- **019** — preset arm and its comment deleted from `generator.ts::createToolHandler`; the reason folded into the catch comment. Unused `ToolResult` import dropped from `tool-wrapper.ts`. The existing invalid-preset test passes unchanged against the deleted arm.
+- **020** — `McpCurlServer.onError()` docblock rewritten to the `OnErrorHook` wording; `architecture.md` → *Stage notes* now says "return and any throw it makes" and points at *Error Handling*; *Error Handling* names the two `Error` subclasses instead of claiming none exist.
+- **021** — typed mocks (`vi.fn<OnErrorHook>()`, `vi.fn<CurlToolExecutor>()`, `vi.fn<JqToolExecutor>()`) in the two new describe blocks; `as never` casts removed there.
+- Full suite after the fixes: `success: true`, 1807 tests, 1800 passed, 0 failed, 7 pending; type-check clean. Todos 019–021 marked complete with ACs ticked.
+
 ## Follow-up work
 
-- [ ] Apply 019, 020, 021 (all `s`) — on operator instruction
+- [x] Apply 019, 020, 021 — done on this branch
 - [ ] Decide whether the pre-existing `outputSchema` gaps (`structuredContent`, `validateToolOutput`) earn a todo
 - [ ] CHANGELOG line in the next release PR: handlers resolve with `isError` instead of rejecting; `onError` fires for `beforeRequest` throws
 - [ ] Todo ids 020/021 were reissued over uncommitted deletions — renumber if the rebinding matters
@@ -75,15 +83,16 @@ Invariant 1 says every byte returned to the model passes the post-processor wrap
 
 | file | priority | description | source |
 |---|---|---|---|
-| `docs/todos/019-p2-redundant-catch-arm-left-behind-by-the-boundary-conversion.md` | p2 | "Unknown filter preset" arm now equals the fall-through (RC-46 raise) | review, this branch |
-| `docs/todos/020-p3-three-prose-sites-still-state-the-throw-contract-the-change-inverted.md` | p3 | `onError()` docblock + two `architecture.md` sentences | review, this branch |
-| `docs/todos/021-p3-new-hook-tests-reach-typed-contracts-through-untyped-mocks.md` | p3 | bare `vi.fn()` in new tests | review, this branch |
+| — | — | none from this branch | — |
 
 ### Resolved Todos
 
 | id | title | summary | by | date |
 |---|---|---|---|---|
 | 015 | The defence wrap has six unwrapped exits and guards two of them | Every remaining exit (hook-executor throws, generator throw arm, custom-tool adapter, both `!enabled` refusals) now leaves through the wrap; one assertion per exit; teeth probed | Claude Code (/sixees-workflow:work) | 2026-11-04 |
+| 019 | A special-case catch arm now produces exactly what the general fall-through produces | Preset arm deleted; unused import dropped | Claude Code (/sixees-workflow:work) | 2026-11-04 |
+| 020 | Three prose sites still state the throw contract this change inverted | `onError()` docblock and two `architecture.md` sentences corrected | Claude Code (/sixees-workflow:work) | 2026-11-04 |
+| 021 | New hook tests reach typed hook contracts through untyped mocks | Typed `vi.fn<T>()` in the new blocks | Claude Code (/sixees-workflow:work) | 2026-11-04 |
 
 ## Code Review — 2026-11-04
 

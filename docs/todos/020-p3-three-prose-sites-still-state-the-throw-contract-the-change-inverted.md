@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: s
 tags: [code-review, stale-comment, docs, extensible, hooks, architecture-doc]
@@ -92,11 +92,11 @@ from this document and get the same answer from both sections.
 
 ## Acceptance Criteria
 
-- [ ] `McpCurlServer.onError()`'s docblock says the call never rejects and names
+- [x] `McpCurlServer.onError()`'s docblock says the call never rejects and names
       `beforeRequest` as a trigger
-- [ ] `architecture.md` → *Stage notes* and *Error Handling* give the same answer about
+- [x] `architecture.md` → *Stage notes* and *Error Handling* give the same answer about
       throw coverage
-- [ ] `architecture.md` → *Error Handling* no longer claims "no custom subclasses"
+- [x] `architecture.md` → *Error Handling* no longer claims "no custom subclasses"
 
 ## Work Log
 
@@ -110,3 +110,16 @@ read all three instances.
 **Learnings:** the change updated the type-level docblock and the docs it knew about; the
 registration-method docblock is the same fact stated a third time, and a sweep for the old
 wording ("rethrown") is what found it — K-11, the other side of the boundary.
+
+### 2026-11-04 - Resolved on the same branch
+
+**By:** Claude Code (/sixees-workflow:work, on operator instruction after review)
+
+**Actions:** Option 1 — `McpCurlServer.onError()` docblock now carries the `OnErrorHook`
+wording (beforeRequest named; never rejects); `architecture.md` → *Stage notes* says the wrap
+applies "to the handler's return and to any throw it makes" and points at *Error Handling*;
+*Error Handling* names the two `Error` subclasses and why they exist instead of claiming
+there are none.
+
+**Learnings:** a sweep for the *old* wording ("rethrown") is the check that finds the
+third copy.

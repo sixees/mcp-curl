@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: s
 tags: [code-review, convention-drift, tests, extensible, hooks]
@@ -82,9 +82,9 @@ compile-time checked.
 
 ## Acceptance Criteria
 
-- [ ] `onError` in `registerWith` is `vi.fn<OnErrorHook>()`
-- [ ] No `as never` on an `executor:` in the two new describe blocks
-- [ ] `npm run typecheck` and `vitest run src/lib/extensible/tool-wrapper.test.ts` both
+- [x] `onError` in `registerWith` is `vi.fn<OnErrorHook>()`
+- [x] No `as never` on an `executor:` in the two new describe blocks
+- [x] `npm run typecheck` and `vitest run src/lib/extensible/tool-wrapper.test.ts` both
       pass
 
 ## Work Log
@@ -97,3 +97,15 @@ compile-time checked.
 
 **Learnings:** the new tests copied the host file's cast idiom; the e2e sibling in the same
 diff shows the typed form costs nothing.
+
+### 2026-11-04 - Resolved on the same branch
+
+**By:** Claude Code (/sixees-workflow:work, on operator instruction after review)
+
+**Actions:** Option 1 — `vi.fn<OnErrorHook>()`, `vi.fn<CurlToolExecutor>()` and
+`vi.fn<JqToolExecutor>()` in the two new describe blocks of
+`src/lib/extensible/tool-wrapper.test.ts`; every `as never` on `executor:` in those blocks
+removed. `npm run typecheck` and the file's suite pass. The 15 pre-existing casts elsewhere
+in the file are untouched (Option 2 declined as out of scope).
+
+**Learnings:** `Mock<CurlToolExecutor>` is assignable to `CurlToolExecutor` without a cast.

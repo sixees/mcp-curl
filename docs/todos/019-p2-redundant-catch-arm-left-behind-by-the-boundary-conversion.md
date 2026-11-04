@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: medium
 effort: s
 tags: [code-review, dead-code, schema-generator, error-boundary, extensible]
@@ -98,11 +98,11 @@ already that layer; the fix is removing the special case, not adding another.
 
 ## Acceptance Criteria
 
-- [ ] `createToolHandler`'s catch has no arm whose output equals the fall-through's
-- [ ] The comment above the catch names why the preset error is spotlighted, without
+- [x] `createToolHandler`'s catch has no arm whose output equals the fall-through's
+- [x] The comment above the catch names why the preset error is spotlighted, without
       claiming a wording dependency
-- [ ] `schema.test.ts` "returns error result for invalid filter preset" still passes
-- [ ] (optional, out of scope) `ToolResult` import removed from `tool-wrapper.ts`
+- [x] `schema.test.ts` "returns error result for invalid filter preset" still passes
+- [x] (optional, out of scope) `ToolResult` import removed from `tool-wrapper.ts`
 
 ## Work Log
 
@@ -116,3 +116,15 @@ equivalence; read `tool-wrapper.ts` at base to establish the import was pre-exis
 
 **Learnings:** the fall-through conversion is what made the arm redundant — the review
 question "what did the fix newly make true" (`pr-resolver-safety`) is what found it.
+
+### 2026-11-04 - Resolved on the same branch
+
+**By:** Claude Code (/sixees-workflow:work, on operator instruction after review)
+
+**Actions:** Option 1 — deleted the preset arm and its comment in
+`src/lib/schema/generator.ts::createToolHandler`; folded the "why spotlighted" reason into
+the catch's existing comment. Also removed the unused `ToolResult` import from
+`src/lib/extensible/tool-wrapper.ts` (the out-of-scope one-liner). `schema.test.ts` →
+"returns error result for invalid filter preset" passes unchanged; full suite 1800/0.
+
+**Learnings:** the existing test passing against the deleted arm is the whole proof.

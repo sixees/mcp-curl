@@ -3,7 +3,7 @@
 
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpCurlConfig, CurlExecuteInput, JqQueryInput } from "../types/public.js";
-import type { CurlRegisterToolOptions, JqRegisterToolOptions, ToolResult } from "./types.js";
+import type { CurlRegisterToolOptions, JqRegisterToolOptions } from "./types.js";
 import { executeWithHooks } from "./hook-executor.js";
 import { CurlExecuteBaseUrlSchema, CurlExecuteSchema, JqQuerySchema } from "../server/schemas.js";
 import {

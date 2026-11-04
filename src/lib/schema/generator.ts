@@ -455,9 +455,10 @@ function createToolHandler(
             // none (invariant 1). There is no request URL here, so the base
             // URL's host labels the call. The authentication error and the
             // refusal are server text, so they are marked and stay
-            // unspotlighted; the preset error echoes the model's own parameter,
-            // and an unrecognised error's message can echo anything, so both
-            // are spotlighted like any other result.
+            // unspotlighted. Everything else — the unknown-preset error from
+            // `resolveJqFilter`, which echoes the model's own parameter, and
+            // any error this handler does not recognise — takes the general
+            // arm and is spotlighted like any other result.
             const fail = (result: CurlExecuteResult) =>
                 wrap(result, safeHostname(config?.baseUrl ?? schema.api.baseUrl));
             if (error instanceof AuthenticationError) {
@@ -477,20 +478,6 @@ function createToolHandler(
                     content: [{ type: "text" as const, text: error.message }],
                     isError: true,
                 }));
-            }
-
-            // Matched by message prefix, because `resolveJqFilter` throws a plain Error:
-            // its "Unknown filter preset" wording is what this check depends on.
-            if (error instanceof Error && error.message.startsWith("Unknown filter preset")) {
-                return fail({
-                    content: [
-                        {
-                            type: "text",
-                            text: error.message,
-                        },
-                    ],
-                    isError: true,
-                });
             }
 
             return fail(toolErrorResult(error));

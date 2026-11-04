@@ -251,8 +251,10 @@ export class McpCurlServer {
 
     /**
      * Register an onError hook.
-     * Hooks run sequentially when tool execution or an afterResponse hook throws; the original error is still rethrown.
-     * Useful for error logging and reporting.
+     * Hooks run sequentially when a beforeRequest hook, the tool, or an
+     * afterResponse hook throws; the error's message is then returned to the
+     * model as a wrapped `isError` result, so the tool call itself never
+     * rejects. Useful for error logging and reporting.
      *
      * @param hook - Hook function
      * @returns this for chaining
