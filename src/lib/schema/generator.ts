@@ -30,6 +30,7 @@ import {
     resolveBaseUrl,
     sanitizeDescription,
     safeHostname,
+    isUrlElicitationRequired,
     toolErrorResult,
 } from "../utils/index.js";
 import { applyDefaultHeaders, ANY_HOST_POLICY, deriveHostPolicy } from "../config/index.js";
@@ -445,9 +446,14 @@ function createToolHandler(
             // result then flows through the registerToolsOnServer adapter).
             return wrap(result, safeHostname(url));
         } catch (error) {
-            // Every error returns as an error result; nothing is re-thrown,
-            // because a throw that leaves the handler is rendered by the MCP
-            // SDK and never wrapped.
+            // The SDK's URL-elicitation signal is the one throw passed on
+            // unchanged: a protocol request the SDK's tool boundary carries
+            // through to the client, which converting would strip of its data.
+            if (isUrlElicitationRequired(error)) throw error;
+
+            // Every other error returns as an error result; nothing else is
+            // re-thrown, because a throw that leaves the handler is rendered
+            // by the MCP SDK and never wrapped.
             //
             // Each arm takes this handler's own wrap, as the success arm does:
             // `registerEndpointTools` registers the handler with no outer wrap,

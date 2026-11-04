@@ -38,6 +38,7 @@ import {
 } from "../security/index.js";
 import {
     sanitizeDescription,
+    isUrlElicitationRequired,
     toolErrorResult,
     MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
     MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH,
@@ -254,7 +255,9 @@ export class McpCurlServer {
      * Hooks run sequentially when a beforeRequest hook, the tool, or an
      * afterResponse hook throws; the error's message is then returned to the
      * model as a wrapped `isError` result, so the tool call itself never
-     * rejects. Useful for error logging and reporting.
+     * rejects. The one exception is the SDK's URL-elicitation signal, a
+     * protocol request that is re-thrown unchanged and that these hooks do
+     * not see. Useful for error logging and reporting.
      *
      * @param hook - Hook function
      * @returns this for chaining
@@ -700,13 +703,16 @@ export class McpCurlServer {
         // wrap a no-op for them. Custom tools registered by library consumers
         // are wrapped here for the first time, with the "custom" hostname
         // label. A handler that throws is converted here too: a throw that
-        // escapes is rendered into a result by the MCP SDK, unwrapped.
+        // escapes is rendered into a result by the MCP SDK, unwrapped. The
+        // SDK's URL-elicitation signal is the one throw passed on unchanged,
+        // for the client's elicitation flow (`isUrlElicitationRequired`).
         const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
         for (const { name, meta, handler } of this._customTools) {
             const wrappedHandler: typeof handler = async (params, extra) => {
                 try {
                     return wrap(await handler(params, extra), CUSTOM_TOOL_HOSTNAME_LABEL);
                 } catch (error) {
+                    if (isUrlElicitationRequired(error)) throw error;
                     return wrap(toolErrorResult(error), CUSTOM_TOOL_HOSTNAME_LABEL);
                 }
             };

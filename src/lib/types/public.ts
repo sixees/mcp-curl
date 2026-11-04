@@ -208,7 +208,9 @@ export type AfterResponseHook<T = CurlExecuteInput | JqQueryInput> = (
  * Hook called when a beforeRequest hook, the tool, or an afterResponse hook
  * throws. Receives the error for logging or handling; the error's message is
  * then returned to the model as a wrapped `isError` result, so the tool call
- * itself never rejects.
+ * itself never rejects. The one exception is the SDK's URL-elicitation signal
+ * (`McpError` with `ErrorCode.UrlElicitationRequired`): a protocol request,
+ * not a failure, so it is re-thrown unchanged and this hook does not see it.
  */
 export type OnErrorHook<T = CurlExecuteInput | JqQueryInput> = (
     ctx: HookContext<T> & { error: Error }

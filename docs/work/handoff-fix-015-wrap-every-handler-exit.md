@@ -23,7 +23,7 @@ Invariant 1 says every byte returned to the model passes the post-processor wrap
 | Solution 1 + outer catch, not solution 3 (wrap at SDK registration) | `registerEndpointTools`/`generateToolDefinitions` are published and consumers register the handler themselves — the library owns no registration boundary there, so the handler's own catch is the outermost layer it can guarantee (architecture-strategist concurs) | Solution 2 (wrap each exit mechanically) — leaves the next exit to whoever adds it; solution 3 — relies on the idempotence tag as a runtime guarantee |
 | Thrown messages are **not** server-authored | Provenance unknown; a hook can embed remote text. Marking would skip spotlighting (RC-30 shape) | Mark server-authored (rejected — false claim) |
 | `!enabled` refusals **are** server-authored and wrapped | Constant closed-grammar text; wrapped because invariant 1 admits no trust exemption and an edit to the string would inherit the gap silently | Leave bare (zero consequence today, but the invariant's wording does not permit it) |
-| Resolve-with-`isError` instead of reject on a public export is not MAJOR | `architecture.md` → *Error Handling* already promised handler-boundary conversion; three of four arms already did it; return type unchanged (invariant 11) | MAJOR bump — overstates; a consumer relying on rejection relied on an arm the published contract said did not exist |
+| Resolve-with-`isError` instead of reject on a public export is not MAJOR | `architecture.md` → *Error Handling* already promised handler-boundary conversion; three of four arms already did it; return type unchanged (invariant 11). *Revised during review — "never rejects" changed to "never rejects, except the SDK's URL-elicitation signal, which is re-thrown unchanged" based on @coderabbitai's feedback (Surface 3, 2026-11-04; see *Review Comments Addressed* below).* | MAJOR bump — overstates; a consumer relying on rejection relied on an arm the published contract said did not exist |
 | Tool-level catch arms in `curl-execute.ts` / `jq-query.ts` left as they are | They author prefixed text and `sanitizeErrorMessage` keyed on `include_metadata`, which `toolErrorResult` cannot see; different responsibility (pattern + architecture reviewers concur). **Declined, not deferred.** | Fold into the helper with prefix/transform params — not warranted |
 | `hostnameOf(ctx.params)` in the catch reads params as they stand | A hook that rewrote the URL before throwing is attributed to the rewritten host — same rule as the short-circuit exit | Snapshot pre-hook params — wrong attribution |
 | No CHANGELOG entry | This repo writes the changelog in the release PR (no *Unreleased* section) | — |
@@ -49,6 +49,7 @@ Invariant 1 says every byte returned to the model passes the post-processor wrap
 - **Verdict source:** `npm test -- --reporter=json --outputFile=<scratch>/vitest-results.json`, parsed structurally: `success: true`, 345/345 suites, **1807 tests — 1800 passed, 0 failed, 7 pending**, exit 0. The declared command ran (`tsc --noEmit` then `vitest run`); type-check clean. Caveat per `/work` Step 5: vitest's JSON reporter is not on that step's trusted-mode list, so the operator's own run is the formal floor; the artefact is offered as evidence, not certification.
 - **Lint:** no lint script in `package.json`; the type-check is the gate.
 - **Gaps:** no test for the throwing-`toString` residual (declined); no test that `onError` sees the mid-mutation params (documented, not asserted).
+- **Cumulative, after the fold-in and Surface 3 (2026-11-04):** the figures above are the first commit's. The branch now adds 14 tests — the 9 above, 2 for `structuredContent` (*Folded in*), 3 for the URL-elicitation pass-through (*Review Comments Addressed*). Latest full run of the declared `npm test`: `success: true`, 345 suites, **1812 tests — 1805 passed, 0 failed, 7 pending**, type-check clean.
 
 ## Commit history
 
@@ -126,3 +127,52 @@ Operator chose "fix 019–021, then ready-pr". Third commit on the branch:
 | Docs describe the present | architecture-strategist sweep | **partly** — two `architecture.md` sentences + `onError()` docblock stale → 020 |
 
 **Outstanding todos:** 019, 020, 021 (table above). **Open without a todo:** none. **Blockers:** none.
+
+## Review Comments Addressed — 2026-11-04
+
+Surface 3 on PR #56 (`/sixees-workflow:review-pr-comments`, bots requested: CodeRabbit, Codex, Copilot; 15-minute wait). Baseline before the request: 7 open CodeRabbit threads from its automatic review. The read returned 11 entries: 8 inline threads (7 CodeRabbit, 1 Copilot), 2 Codex issue comments (review completed, no findings), 1 CodeRabbit command acknowledgement. Severities below are this run's, re-derived from consequence; the bot's own label is in brackets.
+
+### Changes Made
+
+| Comment | Reviewer | Category | Action taken |
+|---|---|---|---|
+| The three new catches convert `McpError(UrlElicitationRequired)` to text, so an embedder cannot use SDK URL elicitation from a hook, executor or custom tool (`hook-executor.ts::executeWithHooks`, `generator.ts::createToolHandler`; the custom-tool adapter named as the third site) | coderabbitai (two threads, one class) | Fix needed — P2 [Major], in scope, contained | `utils/error.ts::isUrlElicitationRequired` (the SDK's own test: `instanceof McpError` and `code === ErrorCode.UrlElicitationRequired`); re-thrown at the head of all three catches, before `onError`, so the signal is a protocol request the hooks do not see. One test per exit: e2e through a real in-memory client (`tool-wrapper.e2e.test.ts`, asserts the client rejects with the code and the `elicitations` data intact, executor and `onError` untouched), `schema.test.ts` (generator), `mcp-curl-server.test.ts` (adapter). Teeth: each rethrow removed in turn → only its own test red; restored, `cmp`-verified. Prose qualified at five sites: `hook-executor.ts` Error Handling docblock, `OnErrorHook` (`public.ts`), `McpCurlServer.onError()`, `docs/hooks.md` (`onError`), `docs/architecture/architecture.md` → *Error Handling* |
+| `dist/` is tracked and was not rebuilt, so `npm start`, the `bin` and the package `main` still run the pre-fix code (`dist/chunk-CYEBK3WA.js`) | copilot-pull-request-reviewer | Fix needed — P2 [High], in scope | `npm run build`; the rebuilt `dist/` committed (hash-named chunks renamed; the new chunks carry `toolErrorResult`, `detectStructuredContent` and `isUrlElicitationRequired`). This repo rebuilds `dist/` in feature PRs (#55, #48, #47, #40), so the finding holds against its own convention |
+| `docs/hooks.md` → *Error Handling in Hooks* claims "nothing a hook throws reaches the model unsanitised" | coderabbitai | Documentation — P3 [Minor], in scope, one-liner | Verified: `defendForInline` routes a message that parses as JSON to the detect-only arm. Sentence now states the JSON rule and points at the `enableSpotlighting` docblock, and names the elicitation exception |
+| `docs/custom-tools.md` promises "the object you return is the object the client receives" | coderabbitai | Documentation — P3 [Minor], in scope, one-liner | Reworded: the wrap hands the SDK the same object; the transport serialises it as JSON (`undefined` drops, `NaN` → `null`); return JSON-compatible values |
+| This handoff's test counts ("9 tests", "1800 passed") predate the `structuredContent` fold-in | coderabbitai | Documentation — P3 [Minor], in scope | Annotation line added under *Testing summary* (cumulative figures; the originals kept as the first commit's) |
+
+Carrying nothing, dispositioned as such: Codex's two issue comments (review completed on `e872632`, "didn't find any major issues"; `kind: issue`, no thread to close, they return on every read) and CodeRabbit's "Full review triggered" acknowledgement (`ack: true`). CodeRabbit's requested full review had not posted new threads by the read (acknowledged 11:28:48Z; read 11:37Z).
+
+### Declined Findings
+
+| Comment | Reviewer | Severity | Scope call | Reason declined |
+|---|---|---|---|---|
+| Strike the stale `defendJsonLeaves` bullet from todo 018's *What this deletes* list | coderabbitai | P3 [Minor] | Out of scope: the list line is pre-existing and unchanged in `gh pr diff 56`; the diff adds only the audit note at line 47 | The note is the operator's audit instruction to whoever works 018, recorded deliberately beside the body rather than edited into it (`.claude/rules/03-divergence.md` → never retro-edit plan text). Out of scope; no todo |
+| Bound the `structuredContent` detection work (`post-processor.ts::detectStructuredContent`): large or concurrent results could block or exhaust the heap | coderabbitai | P3 [Major] — hedged; re-derived down because no failing case beyond the transport's own is stated | In scope (the call is new on this branch) | The SDK transport `JSON.stringify`s the whole result for the wire, so the detection's serialisation and linear scan are a constant factor on work the same result already incurs. The text parts of the same custom-tool result take the same unbounded pipeline — invariant 14 at the custom-tool door, pre-existing and recorded under *What to pay attention to*. A bound here would be a second implementation of a limit the wrap does not own (K-12). No consequence shown; revisit with a measured case |
+
+### Decisions Revised
+
+| Original decision | New approach | Reason | Reviewer |
+|---|---|---|---|
+| Every handler boundary converts every throw; "the tool call never rejects" | Every throw but one: `McpError(UrlElicitationRequired)` is re-thrown unchanged at all three boundaries and `onError` does not see it | The SDK's tool boundary passes that code through as a structured JSON-RPC error for the client's elicitation flow; converting it to text strips the URL and stalls the flow. The embedder's own code constructs it, and it reaches the client as an error, not the model as content, so invariant 1 is not touched | coderabbitai |
+
+### Resolved Todos
+
+None — no todo is claimed by PR #56.
+
+### Outstanding Todos
+
+| file | priority | description | source |
+|---|---|---|---|
+| — | — | 0 filed this round; 0 open against PR #56 | — |
+
+### Files Modified
+
+- `src/lib/utils/error.ts`, `src/lib/utils/index.ts` — `isUrlElicitationRequired`
+- `src/lib/extensible/hook-executor.ts`, `src/lib/schema/generator.ts`, `src/lib/extensible/mcp-curl-server.ts` — rethrow at each catch; docblocks
+- `src/lib/types/public.ts` — `OnErrorHook` docblock
+- `src/lib/extensible/tool-wrapper.e2e.test.ts`, `src/lib/schema/schema.test.ts`, `src/lib/extensible/mcp-curl-server.test.ts` — one test per exit
+- `docs/hooks.md`, `docs/custom-tools.md`, `docs/architecture/architecture.md`
+- `dist/` — rebuilt
+- this handoff

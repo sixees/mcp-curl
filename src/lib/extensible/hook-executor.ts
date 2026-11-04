@@ -10,7 +10,7 @@ import type {
 } from "../types/public.js";
 import type { Hooks, ToolResult, ToolName, ToolExtra } from "./types.js";
 import { deriveHostPolicy } from "../config/index.js";
-import { toolErrorResult } from "../utils/index.js";
+import { isUrlElicitationRequired, toolErrorResult } from "../utils/index.js";
 import type { WrappableResult } from "../response/post-processor.js";
 
 /**
@@ -60,7 +60,10 @@ type HostnameExtractor<T> = (params: T) => string;
  * - A throw from a beforeRequest hook, the executor or an afterResponse hook
  *   is caught and passed to the onError hooks, so every failure is observable
  *   there for logging/reporting. It then returns as a wrapped `isError`
- *   result carrying the error's message; this function never rejects.
+ *   result carrying the error's message. The one throw it passes on is the
+ *   SDK's URL-elicitation signal (`isUrlElicitationRequired`): a protocol
+ *   request rather than a failure, so it is re-thrown unchanged and onError
+ *   does not see it. Otherwise this function never rejects.
  * - For onError: hook errors are caught and suppressed (logged as warnings).
  *   Subsequent onError hooks continue to run, and the original error is the
  *   one returned.
@@ -159,6 +162,12 @@ export async function executeWithHooks<T extends CurlExecuteInput | JqQueryInput
         // through outer wraps without double-processing.
         return wrap(response, hostnameOf(ctx.params));
     } catch (error) {
+        // The SDK's URL-elicitation signal is a protocol request, not a
+        // failure: it must leave the handler as the structured JSON-RPC error
+        // the SDK's tool boundary passes through by design, and converting it
+        // below would strip the elicitation data (`isUrlElicitationRequired`).
+        if (isUrlElicitationRequired(error)) throw error;
+
         // Run onError hooks sequentially
         // Preserve non-Error thrown values by wrapping them
         const normalizedError = error instanceof Error ? error : new Error(String(error));

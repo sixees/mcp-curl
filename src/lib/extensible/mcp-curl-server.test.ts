@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
+import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import { McpCurlServer } from "./mcp-curl-server.js";
 import {
     MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH,
@@ -1212,6 +1213,19 @@ describe("PR-6b custom-tool wrap (registerToolsOnServer)", () => {
         expect(result.content[0].text).toMatch(/^---EXTERNAL-CONTENT-BEGIN-/);
         expect(result.content[0].text).toContain("upstream said:");
         expect(result.content[0].text).not.toContain("evil.test");
+    });
+
+    // The one throw the adapter passes on: the SDK's URL-elicitation signal,
+    // which its tool boundary carries to the client as a structured error.
+    it("re-throws a custom tool's URL-elicitation signal instead of converting it", async () => {
+        const signal = new UrlElicitationRequiredError([
+            { mode: "url", message: "Sign in to continue", elicitationId: "e-1", url: "https://auth.example.com/start" },
+        ]);
+        const wrapped = await startWithCustomTool("elicit", async () => {
+            throw signal;
+        });
+
+        await expect(wrapped({}, { sessionId: undefined })).rejects.toBe(signal);
     });
 
     // -------------------------------------------------------------------

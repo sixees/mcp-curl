@@ -3,6 +3,7 @@
 
 export {
     getErrorMessage,
+    isUrlElicitationRequired,
     toolErrorResult,
     createValidationError,
     createAccessError,

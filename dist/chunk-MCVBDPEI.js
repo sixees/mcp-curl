@@ -25,6 +25,7 @@ import {
   getErrorMessage,
   getOrCreateTempDir,
   installHostRateLimit,
+  isUrlElicitationRequired,
   isValidSessionId,
   markServerAuthored,
   parseAllowedHosts,
@@ -42,11 +43,12 @@ import {
   stopInjectionCleanup,
   stopRateLimitCleanup,
   stopWrapErrorCleanup,
+  toolErrorResult,
   validateFilePath,
   validateOutputDir,
   withTimeout,
   writeUniqueFile
-} from "./chunk-JYNFNJA6.js";
+} from "./chunk-EHVH7BXW.js";
 
 // src/lib/server/lifecycle.ts
 var httpServer = null;
@@ -729,22 +731,22 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
     sessionId,
     config
   };
-  for (const hook of hooks.beforeRequest) {
-    const result = await hook(ctx);
-    if (result) {
-      if ("shortCircuit" in result && result.shortCircuit) {
-        const shortCircuitResult = {
-          content: [{ type: "text", text: result.response }],
-          isError: result.isError
-        };
-        return wrap(shortCircuitResult, hostnameOf(ctx.params));
-      }
-      if ("params" in result && result.params) {
-        ctx.params = { ...ctx.params, ...result.params };
+  try {
+    for (const hook of hooks.beforeRequest) {
+      const result = await hook(ctx);
+      if (result) {
+        if ("shortCircuit" in result && result.shortCircuit) {
+          const shortCircuitResult = {
+            content: [{ type: "text", text: result.response }],
+            isError: result.isError
+          };
+          return wrap(shortCircuitResult, hostnameOf(ctx.params));
+        }
+        if ("params" in result && result.params) {
+          ctx.params = { ...ctx.params, ...result.params };
+        }
       }
     }
-  }
-  try {
     const response = await executor(ctx.params, {
       sessionId,
       allowLocalhost: config.allowLocalhost,
@@ -763,6 +765,7 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
     }
     return wrap(response, hostnameOf(ctx.params));
   } catch (error) {
+    if (isUrlElicitationRequired(error)) throw error;
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     for (const hook of hooks.onError) {
       try {
@@ -775,7 +778,7 @@ async function executeWithHooks(tool, params, config, hooks, sessionId, executor
         console.error(`Warning: onError hook threw (${hookErrorName}) [suppressed to preserve original error]`);
       }
     }
-    throw error;
+    return wrap(toolErrorResult(error), hostnameOf(ctx.params));
   }
 }
 
@@ -805,10 +808,13 @@ function registerCurlToolWithHooks(server, options) {
   const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
   const handler = async (params, extra) => {
     if (!enabled) {
-      return {
-        content: [{ type: "text", text: "Error: curl_execute tool is disabled" }],
-        isError: true
-      };
+      return wrap(
+        markServerAuthored({
+          content: [{ type: "text", text: "Error: curl_execute tool is disabled" }],
+          isError: true
+        }),
+        safeHostname(params.url)
+      );
     }
     const resolved = resolveRequestUrl(config.baseUrl, params.url);
     if (!resolved.ok) {
@@ -844,10 +850,13 @@ function registerJqToolWithHooks(server, options) {
   const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
   const handler = async (params, extra) => {
     if (!enabled) {
-      return {
-        content: [{ type: "text", text: "Error: jq_query tool is disabled" }],
-        isError: true
-      };
+      return wrap(
+        markServerAuthored({
+          content: [{ type: "text", text: "Error: jq_query tool is disabled" }],
+          isError: true
+        }),
+        JQ_QUERY_HOSTNAME_LABEL
+      );
     }
     const transformedParams = { ...params };
     applySharedConfigDefaults(transformedParams, config);
@@ -1133,8 +1142,12 @@ var McpCurlServer = class {
   }
   /**
    * Register an onError hook.
-   * Hooks run sequentially when tool execution or an afterResponse hook throws; the original error is still rethrown.
-   * Useful for error logging and reporting.
+   * Hooks run sequentially when a beforeRequest hook, the tool, or an
+   * afterResponse hook throws; the error's message is then returned to the
+   * model as a wrapped `isError` result, so the tool call itself never
+   * rejects. The one exception is the SDK's URL-elicitation signal, a
+   * protocol request that is re-thrown unchanged and that these hooks do
+   * not see. Useful for error logging and reporting.
    *
    * @param hook - Hook function
    * @returns this for chaining
@@ -1490,8 +1503,12 @@ var McpCurlServer = class {
     const wrap = createWrapper({ enableSpotlighting: config.enableSpotlighting });
     for (const { name, meta, handler } of this._customTools) {
       const wrappedHandler = async (params, extra) => {
-        const result = await handler(params, extra);
-        return wrap(result, CUSTOM_TOOL_HOSTNAME_LABEL);
+        try {
+          return wrap(await handler(params, extra), CUSTOM_TOOL_HOSTNAME_LABEL);
+        } catch (error) {
+          if (isUrlElicitationRequired(error)) throw error;
+          return wrap(toolErrorResult(error), CUSTOM_TOOL_HOSTNAME_LABEL);
+        }
       };
       server.registerTool(name, meta, wrappedHandler);
     }

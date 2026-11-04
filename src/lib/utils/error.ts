@@ -1,6 +1,8 @@
 // src/lib/utils/error.ts
 // Error handling utilities
 
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+
 /**
  * Safely extract an error message from an unknown error value.
  * Handles both Error objects and arbitrary thrown values.
@@ -22,9 +24,26 @@ export function getErrorMessage(error: unknown): string {
  * server-authored: a hook, a custom executor or a custom tool can put remote
  * text in the message, so it takes the full defence and is spotlighted like
  * any other result.
+ *
+ * One throw is not converted: the SDK's URL-elicitation signal, which a
+ * boundary checks with {@link isUrlElicitationRequired} before calling this.
  */
 export function toolErrorResult(error: unknown): { content: Array<{ type: "text"; text: string }>; isError: true } {
     return { content: [{ type: "text", text: getErrorMessage(error) }], isError: true };
+}
+
+/**
+ * True for the one throw a handler boundary re-throws instead of converting:
+ * the SDK's URL-elicitation signal. The SDK's own tool boundary passes an
+ * `McpError` with this code through as a structured JSON-RPC error so the
+ * client can open the URL; flattening it to an `isError` text result would
+ * strip the elicitation data and stall that flow. It is a protocol request,
+ * not a failure, so `onError` hooks do not see it. The embedder's own code
+ * constructs it, so no remote-authored text rides on it, and the SDK returns
+ * it to the client as an error rather than as content for the model.
+ */
+export function isUrlElicitationRequired(error: unknown): error is McpError {
+    return error instanceof McpError && error.code === ErrorCode.UrlElicitationRequired;
 }
 
 /**

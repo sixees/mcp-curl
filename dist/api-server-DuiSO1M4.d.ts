@@ -230,8 +230,12 @@ type AfterResponseHook<T = CurlExecuteInput | JqQueryInput> = (ctx: HookContext<
     isError: boolean;
 }) => void | Promise<void>;
 /**
- * Hook called when tool execution throws an error.
- * Receives the error for logging or handling.
+ * Hook called when a beforeRequest hook, the tool, or an afterResponse hook
+ * throws. Receives the error for logging or handling; the error's message is
+ * then returned to the model as a wrapped `isError` result, so the tool call
+ * itself never rejects. The one exception is the SDK's URL-elicitation signal
+ * (`McpError` with `ErrorCode.UrlElicitationRequired`): a protocol request,
+ * not a failure, so it is re-thrown unchanged and this hook does not see it.
  */
 type OnErrorHook<T = CurlExecuteInput | JqQueryInput> = (ctx: HookContext<T> & {
     error: Error;
@@ -423,8 +427,12 @@ declare class McpCurlServer {
     afterResponse(hook: AfterResponseHook): this;
     /**
      * Register an onError hook.
-     * Hooks run sequentially when tool execution or an afterResponse hook throws; the original error is still rethrown.
-     * Useful for error logging and reporting.
+     * Hooks run sequentially when a beforeRequest hook, the tool, or an
+     * afterResponse hook throws; the error's message is then returned to the
+     * model as a wrapped `isError` result, so the tool call itself never
+     * rejects. The one exception is the SDK's URL-elicitation signal, a
+     * protocol request that is re-thrown unchanged and that these hooks do
+     * not see. Useful for error logging and reporting.
      *
      * @param hook - Hook function
      * @returns this for chaining

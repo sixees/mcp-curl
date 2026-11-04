@@ -202,9 +202,11 @@ already done for you** — see *Composing the Full Defence* below. The helpers
 here are for a pipeline that runs outside the MCP handler boundary.
 
 That covers `structuredContent` too, on the JSON rule: it is detected and
-logged, never rewritten, and the object you return is the object the client
-receives. Treat it as the data contract it is, not as a channel the defence
-sanitises for you.
+logged, never rewritten, and the wrap hands the SDK the very object you
+returned. The transport then serialises it as JSON for the client — an
+`undefined` property drops out and `NaN` becomes `null` — so return
+JSON-compatible values, and treat it as the data contract it is, not as a
+channel the defence sanitises for you.
 
 | Helper | Use when... | Notes |
 |--------|-------------|-------|
