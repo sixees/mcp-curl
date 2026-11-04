@@ -169,7 +169,7 @@ None — no todo is claimed by PR #56.
 
 ### Files Modified
 
-- `src/lib/utils/error.ts`, `src/lib/utils/index.ts` — `isUrlElicitationRequired`
+- `src/lib/utils/error.ts`, `src/lib/utils/index.ts` — `isUrlElicitationRequired`, and the `toolErrorResult` docblock, which now names the one throw it does not convert (`toolErrorResult` itself and its barrel export are the first commit's, under *What was implemented*)
 - `src/lib/extensible/hook-executor.ts`, `src/lib/schema/generator.ts`, `src/lib/extensible/mcp-curl-server.ts` — rethrow at each catch; docblocks
 - `src/lib/types/public.ts` — `OnErrorHook` docblock
 - `src/lib/extensible/tool-wrapper.e2e.test.ts`, `src/lib/schema/schema.test.ts`, `src/lib/extensible/mcp-curl-server.test.ts` — one test per exit
@@ -196,3 +196,7 @@ Baseline before the request: 6 entries (3 CodeRabbit threads from round 1's requ
 | A custom tool throwing `Object.create(null)` makes `getErrorMessage`'s `String(error)` throw inside the catch, so the throw escapes the wrap; guard the conversion and `executeWithHooks`'s `normalizedError` | coderabbitai | P3 [Minor] | In scope (the conversion is this branch's) | Already decided — *What to pay attention to* → *Residual escape, declined on population*: a thrown value whose `String()` read throws is the embedder's own deliberate code, not a population this project defends against (`42-ship-what-matters.md`); a null-prototype object is another member of that same class and brings no new information. The hardening shape is recorded there if ever wanted |
 
 Resolved Todos: none. Outstanding Todos: 0 filed this round, 0 open against PR #56. Files modified: `docs/architecture/architecture.md`, `docs/hooks.md`, this handoff.
+
+### Round 3 — 2026-11-04 (CodeRabbit's post-round-2 full review; no bots requested for this round)
+
+Five CodeRabbit threads arrived after round 2's read, all graded Minor by the bot and P3 here. Two (handoff "one commit" and "never rejects", lines 7/57–59 and 12/36) were fixed by `/sixees-workflow:sync-comments --branch` in `91545c6`, which also audited every comment the branch touched (25 corrected, 10 histories stripped, no aspirational gap). The remaining three are fixed in the commit that carries this section: `architecture.md` → *Error Handling* now scopes the `onError` statements to the built-in tools (schema-generated and custom tools run no hooks, so their throws reach no `onError` and are not logged by the conversion); the `command-executor.ts` close-handler comment now states the uncharged-buffer gap as known and unfixed, naming `releaseRequestMemory` and the killed path as what a fix must review first; and the round 1 *Files Modified* entry names the `toolErrorResult` docblock. 5 fixed, 0 declined, 0 escalated.

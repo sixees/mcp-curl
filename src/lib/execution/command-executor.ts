@@ -348,7 +348,12 @@ export async function executeCommand(
                 // This copy, and every copy downstream of it, is made with
                 // this request's accounting already at zero, so the pool
                 // under-counts peak memory while concurrent responses
-                // materialise. Accepted for a single local consumer.
+                // materialise. Known and unfixed: nothing serialises
+                // `executeCommand` calls, so overlapping requests can hold
+                // buffers the pool never counts and total memory can exceed
+                // the global limit `memory-tracker.ts` documents. Moving the
+                // release point needs `releaseRequestMemory` and the killed
+                // path reviewed together first.
                 //
                 // No eager `.toString()`: it costs a full decode (20MB on a
                 // 10MB non-UTF-8 response, since U+FFFD forces a two-byte
