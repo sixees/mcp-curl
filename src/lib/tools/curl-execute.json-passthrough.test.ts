@@ -446,8 +446,8 @@ describe("018 AC6 — the artefact gate is the body gate, with no strip cap", ()
         // measured exactly that: reverting the gate failed nothing.
         //
         // A raw `0xE9` decodes to U+FFFD, so re-encoding the decode gives
-        // `EF BF BD` where the origin sent one byte. `docs/todos/016`'s
-        // acceptance criterion 1; `docs/todos/018` decides who reads the file.
+        // `EF BF BD` where the origin sent one byte, and the artefact must
+        // carry the origin's byte; `docs/todos/018` decides who reads the file.
         const wire = Buffer.concat([
             Buffer.from('{"name":"Jos', "utf8"),
             Buffer.from([0xe9]),

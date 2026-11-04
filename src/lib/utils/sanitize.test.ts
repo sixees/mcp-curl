@@ -791,10 +791,10 @@ describe("detectInjectionPattern — wall-clock ReDoS budget (PR-8 / B7-sub-4)",
     // **Do not cite the layering arrow as forbidding that.** The arrow places
     // four directories — `config/ → security/ → tools/`, plus `utils/` as leaf —
     // and `response/` is not one of them, so it cannot adjudicate an import from
-    // there; `docs/todos/011` owns that gap and records the edge as unplaced. What
-    // is true is narrower: `utils/` is leaf-level, no test in this directory
-    // imports upward today, and todo 011's proposed DAG would put `response/`
-    // above `utils/` — so importing the fixture from here is a placement question
+    // there, and the edge is unplaced. What is true is narrower: `utils/` is
+    // leaf-level, no test in this directory imports upward today, and any DAG
+    // that places `response/` would put it above `utils/` — so importing the
+    // fixture from here is a placement question
     // to settle rather than a rule already broken, and the honest price is a
     // module move plus its import sites.
     it("matches a 1 MB pathological 'ignore' chain in well under 2 s", () => {

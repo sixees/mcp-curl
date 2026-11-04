@@ -342,8 +342,9 @@ export async function executeCommand(
                 // references so only one full-size copy survives.
                 //
                 // This copy, and every copy downstream of it, is made with
-                // this request's accounting already at zero. That ordering is
-                // the defect `docs/todos/003` records, not a choice made here.
+                // this request's accounting already at zero, so the pool
+                // under-counts peak memory while concurrent responses
+                // materialise. Accepted for a single local consumer.
                 //
                 // No eager `.toString()`: it costs a full decode (20MB on a
                 // 10MB non-UTF-8 response, since U+FFFD forces a two-byte
