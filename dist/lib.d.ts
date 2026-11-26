@@ -1,5 +1,5 @@
-export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, h as HostRateLimit, I as InstanceUtilities, M as McpCurlConfig, c as McpCurlServer, O as OnErrorHook, T as TransportMode, d as createApiServer, e as createApiServerSync, f as createInstanceUtilities } from './api-server-CkeK3lUu.js';
-export { A as ApiDefaults, c as ApiInfo, f as ApiSchema, g as ApiSchemaVersion, h as AuthConfig, i as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, j as EndpointParameter, G as GeneratorConfig, k as HttpMethod, J as JqQueryInput, P as ParameterLocation, l as ParameterType, R as ResponseConfig, m as buildUrl, n as generateInputSchema, o as generateToolDefinitions, p as getAuthConfig, q as getMethodAnnotations, r as registerEndpointTools } from './generator-DlK_AEnr.js';
+export { A as AfterResponseHook, B as BeforeRequestHook, a as BeforeRequestResult, C as CreateApiServerOptions, b as CustomToolMeta, E as ExecuteRequestParams, H as HookContext, c as HostRateLimit, I as InstanceUtilities, M as McpCurlConfig, d as McpCurlServer, O as OnErrorHook, T as TransportMode, e as createApiServer, f as createApiServerSync, g as createInstanceUtilities } from './api-server-Jm7p_Lxw.js';
+export { A as ApiDefaults, a as ApiInfo, b as ApiSchema, c as ApiSchemaVersion, d as AuthConfig, e as AuthenticationError, C as CurlExecuteInput, E as EndpointDefinition, f as EndpointParameter, G as GeneratorConfig, H as HttpMethod, J as JqQueryInput, P as ParameterLocation, g as ParameterType, R as ResponseConfig, h as buildUrl, i as generateInputSchema, j as generateToolDefinitions, k as getAuthConfig, l as getMethodAnnotations, r as registerEndpointTools } from './generator-BBozd3k8.js';
 export { ApiSchemaLoadError, ApiSchemaValidationError, ApiSchemaValidator, loadApiSchema, loadApiSchemaFromString, validateApiSchema } from './lib/schema/index.js';
 import { z } from 'zod';
 import '@modelcontextprotocol/sdk/server/mcp.js';
@@ -144,8 +144,8 @@ declare function sanitizeDescription(input: string | null | undefined): string;
  *
  * Whitespace runs collapse to a single ASCII space (rather than a marker like
  * "[WHITESPACE REMOVED]") because callers may JSON.parse the sanitized output
- * (`response/processor.ts → defendText` re-reads its post-sanitise body with
- * `isDefinitelyJson`, and a direct caller may persist what it returns). Inserting a non-whitespace
+ * (`response/processor.ts → processResponse` runs a `jq_filter` over its
+ * post-sanitise body, and writes that body to disk). Inserting a non-whitespace
  * marker into the middle of a JSON document — between tokens or inside a deeply
  * pretty-printed value — would break the parse. A single space preserves
  * JSON validity while still neutralising the padding attack (the hidden tail
@@ -281,99 +281,6 @@ declare function detectInjectionPattern(input: string): boolean;
 declare function applySpotlighting(content: string, requestId: string): string;
 
 /**
- * Options for {@link defendText}.
- */
-interface DefendTextOptions {
-    /** Content-Type of the text, used to select the strip stages. */
-    contentType?: string;
-    /** Hostname label for injection-detection logging. */
-    hostname: string;
-    /**
-     * True when the content type could not be DETERMINED, as distinct from the
-     * origin simply not sending one.
-     *
-     * Losing our own metadata must never be a way to switch a defence off. When
-     * the content type is unknown the strictest grammar applies, so every strip
-     * stage runs and a remote cannot disable beacon stripping by making the
-     * metadata unreadable.
-     *
-     * **Required, not optional, and that is the whole point.** Both fields that
-     * select the grammar are absent-able, so an optional flag defaulting
-     * permissive would let `defendText(text, { hostname })` compile, look
-     * defended, and run Step 2 alone. Pass `false` when you know the content
-     * type (including knowing the origin sent none), `true` when you could not
-     * determine it.
-     *
-     * **The type is only half the fix, because a type is not a runtime check.**
-     * This function is on the published entry point, and a JavaScript consumer can omit the
-     * field whatever the declaration says. So omission resolves to the
-     * strictest grammar at runtime as well — see the destructuring default in
-     * `defendText`. Both halves are needed: the type tells a TypeScript caller
-     * to decide, and the default decides safely for a caller who did not.
-     */
-    contentTypeUndetermined: boolean;
-    /**
-     * Whether a text that parses as a JSON document is exempt from the markup
-     * and markdown strip stages. Defaults true.
-     *
-     * **The exemption is about the artefact, not the model.** A caller of the
-     * published function may persist what it defends, and rewriting `<script>`
-     * or `[a](b)` inside a JSON string value would silently alter that document.
-     * No in-repo caller persists `defendText`'s output — `processResponse` never
-     * calls it, and writes the origin's octets, a filter's output, or the sanitised
-     * text of a non-JSON body Step 2 changed — and `defendForInline` passes
-     * `false` because it has already answered the JSON question with
-     * {@link classifyBody} and returns a JSON document before reaching here. See
-     * `LESSONS.md` RC-10.
-     */
-    excludeJsonDocuments?: boolean;
-    /**
-     * Whether to decode numeric HTML entities during the block strip.
-     *
-     * **Defaults true, and must be false for any channel whose consumer does
-     * not itself decode.** The decode is not a scratch copy: its result is what
-     * gets returned. On a body bound for a renderer that would decode anyway,
-     * that is correct and is what lets Step 5 catch `&#x69;gnore previous
-     * instructions`. On a channel like response headers it is additive — it
-     * turns inert text the origin sent into live markup we authored.
-     */
-    decodeEntities?: boolean;
-}
-/**
- * Run the full defensive pipeline over one piece of remote-origin text.
- *
- * **This is the single defence path for remote-origin text that is not a JSON
- * document, and it exists as a shared function so that no caller can assemble
- * a shorter one** — a text channel holding only `sanitizeAndDetect` (Step 2)
- * would pass markdown beacons, `<script>`/`<style>` blocks and
- * numeric-entity-masked injections to the model. A JSON document is the
- * deliberate exception: {@link defendForInline} detects on it and returns it
- * unchanged (`LESSONS.md` RC-49).
- *
- * The stages, in order, and the order is load-bearing:
- *
- * - **Step 2** — sanitise + detect, ALWAYS, on the original text and its
- *   sanitised form: the original keeps the signal for anything a later stage
- *   erases, the sanitised form joins a phrase an invisible character split.
- * - **Steps 3-4** — markup comments, the `<script>`/`<style>` strip, and (for
- *   declared markdown) beacon removal. Gated on the strip-path cap so the cost
- *   stays bounded on adversarial input.
- * - **Step 5** — re-sanitise + detect, because the strip path's numeric-entity
- *   decoder unmasks `&#x69;gnore previous instructions` into a real injection
- *   phrase that Step 2 could not see.
- *
- * {@link processResponse} does not call this — the body path rewrites nothing
- * and returns only JSON inline. The in-repo callers are `defendForInline`'s
- * non-JSON arm, the header channel and cURL stderr in `curl-execute.ts`; a
- * published consumer calls it for any other text channel it builds.
- *
- * @param text - Remote-origin text to defend
- * @param options - Content-type (selects strip stages) and hostname (logging)
- * @returns The defended text; never suppressed, only rewritten
- */
-declare function defendText(text: string, options: DefendTextOptions): string;
-
-/**
  * Log a prompt injection detection event, throttled to once per hostname per minute.
  * Logs only the hostname and event class — never the matched phrase content,
  * which could itself contain injection payloads.
@@ -401,4 +308,4 @@ declare function logInjectionDetected(hostname: string): void;
  */
 declare function sanitizeAndDetect(text: string, label: string): string;
 
-export { type CreateHttpOnlyUrlSchemaOptions, type DefendTextOptions, MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, applySpotlighting, createHttpOnlyUrlSchema, defendText, detectInjectionPattern, logInjectionDetected, safeHostname, sanitizeAndDetect, sanitizeDescription, sanitizeResponse };
+export { type CreateHttpOnlyUrlSchemaOptions, MAX_CURL_EXECUTE_DESCRIPTION_APPEND_LENGTH, MAX_CUSTOM_TOOL_DESCRIPTION_LENGTH, applySpotlighting, createHttpOnlyUrlSchema, detectInjectionPattern, logInjectionDetected, safeHostname, sanitizeAndDetect, sanitizeDescription, sanitizeResponse };

@@ -102,7 +102,9 @@ Returns:
     "headers": string (response header text; present only with include_headers),
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
-    "filepath": string (path to saved file)
+    "filepath": string (path to saved file),
+    "declared_content_type": string (the Content-Type the server sent, if any; reported
+      only — whether the body is JSON is decided by parsing it)
   }
 
 Examples:
