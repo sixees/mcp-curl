@@ -160,9 +160,8 @@ describe("curl_execute saved artefact — defended, and honestly measured", () =
         // diagnostics they opened it for — `stripHtmlComments` deletes the
         // `<!-- trace-id -->` a framework puts its trace in.
         //
-        // `text/markdown` because it is the declaration that selects BOTH stage
-        // sets in `defendText`, so it is the strongest available test that no
-        // declared type reaches a stage from here.
+        // Markup and a markdown beacon both, so either strip stage running on
+        // this path would show up as moved bytes.
         const body = Buffer.from(
             "# ok\n\n<script>alert(1)</script> and ![x](https://evil.test/?d=1)",
             "utf8"

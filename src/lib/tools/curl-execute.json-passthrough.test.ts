@@ -133,11 +133,9 @@ describe("018 AC1 — a JSON body survives byte for byte", () => {
         ["nested composite", '{"a":{"b":[1,{"c":"<!--"}]},"d":"-->"}'],
     ];
 
-    // **Both content types, and `text/html` is the one with teeth.**
-    // `application/json` is exempt from the strip stages, so `defendText` is a
-    // no-op on these bodies and the cases would pass even if the body were
-    // re-defended — a probe confirms it. Under `text/html` every stage would
-    // run, so any defence pass on the body shows up as moved bytes.
+    // Two content types, a JSON one and a markup one: the declared type selects
+    // nothing (AC 2 below), so each case must come back byte-identical under
+    // both.
     for (const [name, body] of cases) {
         for (const contentType of ["application/json", "text/html"]) {
             it(`returns ${name} unchanged (${contentType})`, async () => {
@@ -166,9 +164,7 @@ describe("018 AC2 — the declared content type selects nothing", () => {
         "image/png",
         "application/octet-stream",
         "text/plain",
-        // Malformed tail: `MEDIA_TYPE_HEAD` keeps the head and discards the rest,
-        // so it arrives as `text/markdown` — the head-match `LESSONS.md` RC-32
-        // records. The declared type selects nothing regardless.
+        // A malformed value, reported as sent and selecting nothing.
         "text/markdown;;",
         // The origin sent none at all.
         "",
@@ -589,5 +585,50 @@ describe("018 — two remote regions, two content entries", () => {
         );
         const result = await executeCurlRequest(params({ url: "https://example.test/x" }));
         expect(result.content).toHaveLength(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// `declared_content_type` — the header reported as a fact, never as a selector.
+// ---------------------------------------------------------------------------
+describe("018 — declared_content_type is reported under include_metadata only", () => {
+    async function envelope(body: string, contentType: string): Promise<Record<string, unknown>> {
+        mockedExecuteCommand.mockResolvedValue(curlOutputFor({ body, contentType }));
+        const result = await executeCurlRequest(
+            params({ url: "https://example.test/x", include_metadata: true })
+        );
+        const parsed = JSON.parse(bodyOf(result)) as Record<string, unknown>;
+        if (typeof parsed.filepath === "string") written.push(parsed.filepath);
+        return parsed;
+    }
+
+    it("reports the origin's Content-Type beside a JSON body, parameters included", async () => {
+        const body = '{"ok":true}';
+        const out = await envelope(body, "application/json; charset=utf-8");
+        expect(out.declared_content_type).toBe("application/json; charset=utf-8");
+        expect(out.response).toBe(body);
+    });
+
+    it("reports it beside a saved non-JSON body, so a CDN error page reads as one", async () => {
+        const out = await envelope("<html><body>502 Bad Gateway</body></html>", "text/html");
+        expect(out.saved_to_file).toBe(true);
+        expect(out.declared_content_type).toBe("text/html");
+    });
+
+    it("omits the field when the origin sent no Content-Type", async () => {
+        const out = await envelope('{"ok":true}', "");
+        expect(out).not.toHaveProperty("declared_content_type");
+    });
+
+    it("never quotes it on the plain branch", async () => {
+        // Settled in `docs/todos/018`: the plain branch is server-authored prose,
+        // so a remote-chosen token stays out of it.
+        const marker = "application/x-distinctive-marker";
+        mockedExecuteCommand.mockResolvedValue(
+            curlOutputFor({ body: "<html>not json</html>", contentType: marker })
+        );
+        const result = await executeCurlRequest(params({ url: "https://example.test/x" }));
+        for (const part of result.content) expect(part.text).not.toContain(marker);
+        savedPathFrom(bodyOf(result));
     });
 });

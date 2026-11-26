@@ -6,146 +6,16 @@ import { applyJqFilterToParsed } from "../jq/index.js";
 import { saveResponseToFile } from "./file-saver.js";
 import {
     STRIP_PATH_MAX_BYTES,
-    looksLikeMarkupShape,
-    stripBlocksFixedPoint,
+    stripScriptStyleBlocks,
     stripHtmlComments,
     stripMarkdownBeacons,
 } from "./strip-blocks.js";
-import {
-    isMarkdownContentType,
-    isSniffableContentType,
-    keepNumberLexeme,
-    safeHostname,
-    sanitizeResponse,
-    supportsMarkupComments,
-} from "../utils/index.js";
+import { keepNumberLexeme, safeHostname, sanitizeResponse } from "../utils/index.js";
 import { detectJsonAndLog, sanitizeAndDetect } from "../security/index.js";
 
 // Re-export types from lib/types for convenience
 export type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
 import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.js";
-
-/**
- * Options for {@link defendText}.
- */
-export interface DefendTextOptions {
-    /** Content-Type of the text, used to select the strip stages. */
-    contentType?: string;
-    /** Hostname label for injection-detection logging. */
-    hostname: string;
-    /**
-     * True when the content type could not be DETERMINED, as distinct from the
-     * origin simply not sending one.
-     *
-     * Losing our own metadata must never be a way to switch a defence off. When
-     * the content type is unknown the strictest grammar applies, so every strip
-     * stage runs and a remote cannot disable beacon stripping by making the
-     * metadata unreadable.
-     *
-     * **Required, not optional, and that is the whole point.** Both fields that
-     * select the grammar are absent-able, so an optional flag defaulting
-     * permissive would let `defendText(text, { hostname })` compile, look
-     * defended, and run Step 2 alone. Pass `false` when you know the content
-     * type (including knowing the origin sent none), `true` when you could not
-     * determine it.
-     *
-     * **The type is only half the fix, because a type is not a runtime check.**
-     * This function is on the published entry point, and a JavaScript consumer can omit the
-     * field whatever the declaration says. So omission resolves to the
-     * strictest grammar at runtime as well — see the destructuring default in
-     * `defendText`. Both halves are needed: the type tells a TypeScript caller
-     * to decide, and the default decides safely for a caller who did not.
-     */
-    contentTypeUndetermined: boolean;
-    /**
-     * Whether a text that parses as a JSON document is exempt from the markup
-     * and markdown strip stages. Defaults true.
-     *
-     * **The exemption is about the artefact, not the model.** A caller of the
-     * published function may persist what it defends, and rewriting `<script>`
-     * or `[a](b)` inside a JSON string value would silently alter that document.
-     * No in-repo caller persists `defendText`'s output — `processResponse` never
-     * calls it, and writes the origin's octets, a filter's output, or the sanitised
-     * text of a non-JSON body Step 2 changed — and `defendForInline` passes
-     * `false` because it has already answered the JSON question with
-     * {@link classifyBody} and returns a JSON document before reaching here. See
-     * `LESSONS.md` RC-10.
-     */
-    excludeJsonDocuments?: boolean;
-    /**
-     * Whether to decode numeric HTML entities during the block strip.
-     *
-     * **Defaults true, and must be false for any channel whose consumer does
-     * not itself decode.** The decode is not a scratch copy: its result is what
-     * gets returned. On a body bound for a renderer that would decode anyway,
-     * that is correct and is what lets Step 5 catch `&#x69;gnore previous
-     * instructions`. On a channel like response headers it is additive — it
-     * turns inert text the origin sent into live markup we authored.
-     */
-    decodeEntities?: boolean;
-}
-
-/**
- * Every character a JSON document may begin with. RFC 8259 puts any *value* at
- * the top level, so a bare string, number, `true`, `false` or `null` is a whole
- * document — `"![x](https://host/p.gif)"` is one, and jq reads it.
- *
- * **Every scalar first character is listed, not just `{` and `[`.** Those two
- * cover the documents people picture; omitting the rest would send a scalar
- * document to the strictest grammar and rewrite the beacon inside it — the
- * exact outcome the JSON exemption exists to prevent (`LESSONS.md` RC-10).
- *
- * This is only a cheap pre-filter for the parse below; being permissive here
- * costs a `JSON.parse` that fails on its first token, and prose beginning with
- * `t`, `f` or `n` is common enough that the arm is worth having.
- */
-const JSON_DOCUMENT_FIRST_CHARS: ReadonlySet<string> = new Set([
-    "{", "[", '"', "-",
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-    "t", "f", "n",
-]);
-
-/**
- * Whether `text` genuinely parses as JSON.
- *
- * Used by `defendText` to decide whether a JSON document may skip the
- * markdown/markup strip stages — under an undetermined or sniffable content
- * type — and whether the entity decode may run on it, whatever the declared
- * type. It must be a parse rather than a shape test:
- * the whole point is to separate a real JSON document (where `<script>` and
- * `[a](b)` are legitimate string content that must survive) from attacker text
- * wearing a `[` at the front. Fails closed — anything that does not parse is
- * treated as not-JSON, which selects the stricter path.
- *
- * **The leading-character test may only ever REJECT what the parse would
- * reject.** It is an optimisation, and every character it turns away is a
- * document class silently losing the exemption — see
- * {@link JSON_DOCUMENT_FIRST_CHARS}.
- *
- * `processResponse`'s jq branch does not use this function: it is gated on
- * {@link classifyBody}'s verdict, which the filter's own parse then agrees with.
- *
- * **Not the body gate either — see {@link classifyBody}, which owns that and
- * explains why this predicate cannot do the job.** The short version is the
- * strip cap below: above {@link STRIP_PATH_MAX_BYTES} this answers "not JSON"
- * as a cost optimisation, which is correct for selecting a strip exemption no
- * stage would run anyway, and wrong for any decision taken on bodies that are
- * over the inline cap by construction.
- */
-function isDefinitelyJson(text: string): boolean {
-    const trimmed = text.trimStart();
-    if (trimmed.length === 0) return false;
-    if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0]!)) return false;
-    // Cheap gate first: above the strip cap no stage runs either way, so the
-    // parse would be pure cost.
-    if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
-    try {
-        JSON.parse(text);
-        return true;
-    } catch {
-        return false;
-    }
-}
 
 /**
  * Why a body is not a JSON document this server will return verbatim.
@@ -163,8 +33,8 @@ function isDefinitelyJson(text: string): boolean {
  *
  * - `empty-body` — the body is empty or whitespace only.
  * - `looks-like-markup` — the first non-space byte is `<`. Decided before the
- *   parse, and sound to decide there because {@link JSON_DOCUMENT_FIRST_CHARS}
- *   does not admit `<`, so such a body can never parse. This is the member that
+ *   parse, and sound to decide there because no JSON value begins with `<`, so
+ *   such a body can never parse. This is the member that
  *   answers *"HTML error page, or truncated body?"* — the question
  *   `docs/todos/018` requires the report to answer — without echoing a byte.
  * - `invalid-syntax` — the parse threw and none of the above applies.
@@ -196,10 +66,9 @@ export type BodyClassification =
  * and comes back as `null`. The parsed value is discarded; only the original
  * text is ever returned.
  *
- * Deliberately NOT {@link isDefinitelyJson}, which skips the parse above
- * {@link STRIP_PATH_MAX_BYTES} (262,144) while the inline cap is 500,000 — so on
- * the band where the artefact question actually arises, that predicate always
- * answers no.
+ * **Uncapped, deliberately.** The artefact question arises on bodies over the
+ * inline cap, so a gate that skipped the parse above some size would answer
+ * "not JSON" on exactly the band where the answer matters.
  */
 export function classifyBody(text: string): BodyClassification {
     const trimmed = text.trim();
@@ -231,179 +100,52 @@ export function classifyBody(text: string): BodyClassification {
 // `keepNumberLexeme`, `rawJson` and `isRawNumber` live in `utils/json-lexeme.ts`,
 // with the Node >= 22 capability guard for `JSON.rawJSON` beside them. The guard
 // belongs there rather than here: an import path reaching `jq_query` without
-// going through `defendText`'s barrel would skip it silently. The lexeme rule
+// going through this module's barrel would skip it silently. The lexeme rule
 // must stay a single implementation — a second copy is how a body's numbers end
 // up corrupted through jq while surviving intact inline. `LESSONS.md` RC-27,
 // RC-29.
 
 /**
- * Run the full defensive pipeline over one piece of remote-origin text.
+ * Run the full defensive pipeline over one piece of remote-origin text that is
+ * not a JSON document.
  *
- * **This is the single defence path for remote-origin text that is not a JSON
- * document, and it exists as a shared function so that no caller can assemble
- * a shorter one** — a text channel holding only `sanitizeAndDetect` (Step 2)
- * would pass markdown beacons, `<script>`/`<style>` blocks and
- * numeric-entity-masked injections to the model. A JSON document is the
- * deliberate exception: {@link defendForInline} detects on it and returns it
- * unchanged (`LESSONS.md` RC-49).
+ * **One pipeline, every stage, on every channel.** No input selects a shorter
+ * path: the origin's `Content-Type` is not consulted, so choosing it cannot
+ * switch a stage off (`ARCHITECTURE.md` invariant 1a). A text channel holding
+ * only `sanitizeAndDetect` would pass markdown beacons and `<script>`/`<style>`
+ * blocks to the model, which is why this is one shared function rather than a
+ * sequence each caller assembles.
  *
- * The stages, in order, and the order is load-bearing:
+ * The stages, in order:
  *
- * - **Step 2** — sanitise + detect, ALWAYS, on the original text and its
- *   sanitised form: the original keeps the signal for anything a later stage
- *   erases, the sanitised form joins a phrase an invisible character split.
- * - **Steps 3-4** — markup comments, the `<script>`/`<style>` strip, and (for
- *   declared markdown) beacon removal. Gated on the strip-path cap so the cost
- *   stays bounded on adversarial input.
- * - **Step 5** — re-sanitise + detect, because the strip path's numeric-entity
- *   decoder unmasks `&#x69;gnore previous instructions` into a real injection
- *   phrase that Step 2 could not see.
+ * - **Step 2** — sanitise + detect on the original text and its sanitised form:
+ *   the original keeps the signal for anything a later stage erases, the
+ *   sanitised form joins a phrase an invisible character split.
+ * - **Steps 3-4** — markup comments, the `<script>`/`<style>` strip, and
+ *   markdown beacon removal. Gated on the strip-path cap because
+ *   `stripHtmlComments` and `stripMarkdownBeacons` carry no cap of their own.
+ * - **Step 5** — sanitise + detect again, because removing markup can join what
+ *   it separated: `Ig<!-- -->nore previous instructions` is only a phrase once
+ *   the comment is gone.
  *
- * {@link processResponse} does not call this — the body path rewrites nothing
- * and returns only JSON inline. The in-repo callers are `defendForInline`'s
- * non-JSON arm, the header channel and cURL stderr in `curl-execute.ts`; a
- * published consumer calls it for any other text channel it builds.
+ * A JSON document never reaches here: {@link defendForInline} detects on it and
+ * returns it unchanged (`LESSONS.md` RC-49). The callers are that function's
+ * non-JSON arm, the header channel, and cURL stderr in `curl-execute.ts`.
  *
  * @param text - Remote-origin text to defend
- * @param options - Content-type (selects strip stages) and hostname (logging)
+ * @param hostname - Label for injection-detection logging
  * @returns The defended text; never suppressed, only rewritten
  */
-export function defendText(text: string, options: DefendTextOptions): string {
-    let content = text;
-    // Omission resolves to the STRICTEST grammar, not the permissive one. The
-    // type makes this field required, which binds TypeScript callers and does
-    // nothing at runtime — and this function is on the published entry point, so a JavaScript
-    // consumer calling `defendText(text, { hostname })` would otherwise get
-    // Step 2 alone and a returned beacon, which is the exact behaviour the
-    // required field was added to prevent. Failing closed costs a caller who
-    // omits it some over-stripping; failing open costs them the defence.
-    const { hostname, contentTypeUndetermined = true } = options;
+export function defendText(text: string, hostname: string): string {
+    // Step 2 runs before the cap is measured, so the cap weighs the bytes the
+    // stages will actually see.
+    let content = sanitizeAndDetect(text, hostname);
+    if (Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES) return content;
 
-    // An UNDETERMINED content type selects the strictest grammar, not the
-    // loosest: a remote must not disable a stage by making our metadata
-    // unreadable. One exception — a body that is plainly JSON is excluded, as a
-    // declared `application/json` is, because `<script>` and `[a](b)` are
-    // legitimate inside JSON string values and a caller may be persisting what
-    // it defends.
-    //
-    // **The exclusion requires the body to BE JSON, not to start like it.**
-    // `[![x](https://evil.test)]` begins with `[`, so a leading-character check
-    // reads it as JSON, drops the strictest grammar and lets the beacon through.
-    //
-    // **Step 2 runs BEFORE the grammar is selected.** Every decision below reads
-    // `content` and sanitising changes it, so deciding first would act on bytes
-    // the stages never see — one zero-width space would be enough to lose the
-    // exemption and splice two fields out of a document. The same order makes
-    // `isDefinitelyJson`'s byte gate measure the same bytes as `exceedsStripCap`.
-    // Detection is unaffected: `sanitizeAndDetect` tests its input, the original
-    // text, and the sanitised form alike. `LESSONS.md` RC-16, RC-31, RC-32.
-    // Step 2 — sanitise + detect, ALWAYS, whatever the body declares.
-    //
-    // Gating this on content type would be attacker-controllable: `Content-Type:
-    // image/png` on an HTML body would disable the whole pipeline. The body here
-    // is always a string, and sanitising it can only remove attack-class
-    // codepoints and collapse padding — both no-ops on a legitimate binary
-    // preview. Detection reads this function's INPUT as well as the sanitised
-    // form, so the log signals on what the origin actually sent and on a phrase
-    // an invisible character split.
-    content = sanitizeAndDetect(content, hostname);
-
-    const excludeJsonDocuments = options.excludeJsonDocuments ?? true;
-    const jsonExemptionCouldApply =
-        excludeJsonDocuments &&
-        (contentTypeUndetermined || isSniffableContentType(options.contentType));
-    const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);
-
-    // Losing our own metadata must never be a way to switch a stage off, so an
-    // undetermined OR absent type takes every stage a declared markup type would.
-    const strictestGrammar =
-        (contentTypeUndetermined || options.contentType === undefined) && !looksLikeJsonBody;
-
-    const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
-    const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
-
-    // Outer-level byte cap. `stripBlocksFixedPoint` re-checks the same cap
-    // internally, but `stripHtmlComments` and `stripMarkdownBeacons` are full
-    // scans with no cap of their own, so the gate has to sit here to bound all
-    // three. Measured on the post-sanitise bytes, which is what the stages see.
-    const exceedsStripCap =
-        Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
-
-    // **A content type the parser REJECTED arrives as `undefined` while
-    // `contentTypeUndetermined` stays FALSE, so the two must be tested
-    // separately.** `parseResponseWithMetadata` resolves anything failing
-    // `MEDIA_TYPE_HEAD` to `undefined`; only an unlocated `-w` block sets the flag.
-    // `LESSONS.md` RC-31.
-    //
-    // `isSniffableContentType` covers any type that neither declares a grammar
-    // handled either way nor is one we deliberately do not sniff
-    // (`application/json`). The scan is over the FULL post-sanitise body,
-    // bounded by `exceedsStripCap` rather than a fixed leading window, which a
-// remote could pad its markup past.
-    //
-    // **Unreachable from every in-repo caller.** `defendForInline` passes
-    // `contentTypeUndetermined: true` with the JSON exemption off, which forces
-    // `strictestGrammar`; the header and stderr channels declare markdown, which
-    // is not sniffable. It serves direct callers of the published `defendText`.
-    const sniffedAsMarkup =
-        !exceedsStripCap &&
-        !strictestGrammar &&
-        !looksLikeJsonBody &&
-        isSniffableContentType(options.contentType) &&
-        looksLikeMarkupShape(content);
-    const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
-
-    // Steps 3-5 share one gate, so the predicate has one source of truth.
-    if (needsStripPath && !exceedsStripCap) {
-        // A JSON document is never entity-decoded, whatever the origin
-        // declared. The decode's output is what gets RETURNED — and a caller
-        // of the published function may persist it — and `&#x22;` decodes to
-        // `"`, which ends a JSON string: `{"q":"a &#x22;b&#x22;"}` declared
-        // `text/html` would come back as `{"q":"a "b"}`, which no longer parses.
-        //
-        // Gating the decode here rather than at each caller is what makes the
-        // sniffed and DECLARED-markup arms agree: the sniffed arm excludes JSON
-        // bodies on its own, so without this gate one mislabelled Content-Type
-        // is enough to reach the decode. `LESSONS.md` RC-12.
-        //
-        // **The two terms answer DIFFERENT questions, and neither is
-        // sufficient alone.** `looksLikeJsonBody` answers *"is this JSON and
-        // could the exemption apply"*, and `jsonExemptionCouldApply` is false
-        // for a DECLARED markup type because `isSniffableContentType`
-        // ("text/html") is false. So on a JSON body mislabelled `text/html` the
-        // first term is false while the body is plainly JSON, which is why the
-        // second asks directly. **Neither term is redundant** — dropping this
-        // arm fails three RC-12 cases. RC-12, RC-32.
-        //
-        // Both terms read the same post-sanitise string, so they cannot answer
-        // for different bytes.
-        const decodeEntities =
-            (options.decodeEntities ?? true) && !(looksLikeJsonBody || isDefinitelyJson(content));
-
-        // Step 3 — markup comments + script/style blocks. Fires on any
-        // markup-shaped body (declared OR sniffed).
-        content = stripHtmlComments(content);
-        content = stripBlocksFixedPoint(content, { decodeEntities });
-
-        // Step 4 — markdown beacons. Image / link / dangerous-scheme +
-        // residual cleanup. Only fires for declared markdown — sniffed-
-        // markup bodies (probably HTML mis-typed as text/plain) don't
-        // need the markdown-specific patterns.
-        if (isMarkdown) {
-            content = stripMarkdownBeacons(content);
-        }
-
-        // Step 5 — re-sanitise + detect. The strip path's numeric-entity
-        // decoder unmasks `&#x69;gnore previous instructions` into a real
-        // injection phrase AFTER the original-text Step 2 detection
-        // passed (it saw the entity-encoded form and missed). Using
-        // sanitizeAndDetect here (not bare sanitizeResponse) closes the
-        // silenced-log gap; per-host throttling (60 s window) prevents
-        // double-counting.
-        content = sanitizeAndDetect(content, hostname);
-    }
-
-    return content;
+    content = stripHtmlComments(content);
+    content = stripScriptStyleBlocks(content);
+    content = stripMarkdownBeacons(content);
+    return sanitizeAndDetect(content, hostname);
 }
 
 /**
@@ -415,20 +157,6 @@ export function defendText(text: string, options: DefendTextOptions): string {
  * returns it unchanged — a change that lengthens a JSON document here breaks
  * invariant 14 silently, which `processor.test.ts`'s "the JSON arm returns a
 * document unchanged, so the gate measures what the model receives" case pins.
- *
- * The options and their reasons:
- *
- * - `contentTypeUndetermined: true` — at these boundaries the grammar
- *   genuinely is unknown, so the STRICTEST arm runs and every stage fires.
- * - `excludeJsonDocuments: false` — `defendForInline` has already decided the
- *   JSON question with `classifyBody`, so this stops `defendText` re-asking it
- *   with `isDefinitelyJson` and answering differently. The exemption itself is
- *   about a persisted artefact, and nothing inline is persisted: persisted
- *   keeps it, returned does not (`LESSONS.md` RC-10).
- * - `decodeEntities: false` — the decode's output is what gets returned, so on
- *   a channel whose consumer does not itself decode it would manufacture live
- *   markup from inert bytes (`LESSONS.md` RC-3). Its cost is stated on
- *   `processTextPart` and in ARCHITECTURE.md invariant 1a.
  *
  * **The non-JSON arm can make text LONGER** — `[link removed]` is 14 bytes and
  * the shortest form it replaces is 9 — which is why no size gate is applied to
@@ -454,17 +182,7 @@ export function defendForInline(text: string, hostname: string): string {
         detectJsonAndLog(text, hostname);
         return text;
     }
-    return defendInlineString(text, hostname);
-}
-
-/** {@link defendForInline}'s option set, applied to one undivided string. */
-function defendInlineString(text: string, hostname: string): string {
-    return defendText(text, {
-        hostname,
-        contentTypeUndetermined: true,
-        excludeJsonDocuments: false,
-        decodeEntities: false,
-    });
+    return defendText(text, hostname);
 }
 
 /**

@@ -2,7 +2,7 @@
 // Defend and bound the `include_headers` text channel.
 
 import { LIMITS } from "../config/limits.js";
-import { MARKDOWN_MIME, safeHostname } from "../utils/index.js";
+import { safeHostname } from "../utils/index.js";
 import { defendText } from "./processor.js";
 
 /** Result of preparing the header channel for return to the model. */
@@ -103,15 +103,8 @@ export function extractHeaderChannel(
 
     // The full pipeline, never a shorter one (ARCHITECTURE.md invariant 1a):
     // header text is not a JSON payload, so it takes every strip stage the body
-    // is exempt from. Markdown is the strictest grammar, so every stage runs. `decodeEntities: false` because that stage is ADDITIVE and its
-    // result is what gets returned — decoding would hand the model a live
-    // instruction the origin only ever sent as inert text (LESSONS.md RC-3).
-    const defended = defendText(raw, {
-        contentType: MARKDOWN_MIME,
-        contentTypeUndetermined: false,
-        hostname: safeHostname(url),
-        decodeEntities: false,
-    });
+    // is exempt from.
+    const defended = defendText(raw, safeHostname(url));
 
     // Re-cap AFTER defence as well as before it, because the defence can grow
     // the text as well as shrink it — invariant 14 requires the gate to weigh

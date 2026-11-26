@@ -148,14 +148,7 @@ export function sanitizeDescription(input: string | null | undefined): string {
     return input.replace(DESC_CONTROL_CHARS, " ").trim();
 }
 
-/**
- * Idempotence cap for {@link sanitizeResponse}. Imports the shared
- * `FIXED_POINT_MAX_ITERATIONS` from `config/limits.ts` so this loop and
- * the parallel script/style-strip loop in
- * `response/strip-blocks.ts → stripBlocksFixedPoint` cannot drift
- * independently. See the JSDoc on `FIXED_POINT_MAX_ITERATIONS` for the
- * shared rationale.
- */
+/** Idempotence cap for {@link sanitizeResponse}; see `FIXED_POINT_MAX_ITERATIONS`. */
 const SANITIZE_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 
 /**
@@ -188,8 +181,8 @@ const SANITIZE_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
  *
  * Whitespace runs collapse to a single ASCII space (rather than a marker like
  * "[WHITESPACE REMOVED]") because callers may JSON.parse the sanitized output
- * (`response/processor.ts → defendText` re-reads its post-sanitise body with
- * `isDefinitelyJson`, and a direct caller may persist what it returns). Inserting a non-whitespace
+ * (`response/processor.ts → processResponse` runs a `jq_filter` over its
+ * post-sanitise body, and writes that body to disk). Inserting a non-whitespace
  * marker into the middle of a JSON document — between tokens or inside a deeply
  * pretty-printed value — would break the parse. A single space preserves
  * JSON validity while still neutralising the padding attack (the hidden tail

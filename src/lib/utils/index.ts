@@ -34,16 +34,6 @@ export type { CreateHttpOnlyUrlSchemaOptions, ResolvedRequestUrl } from "./url.j
 export { withTimeout } from "./timeout.js";
 
 export {
-    isBinaryContentType,
-    isMarkdownContentType,
-    MARKDOWN_MIME,
-    JSON_MIME,
-    isSniffableContentType,
-    parseMimeType,
-    supportsMarkupComments,
-} from "./content-type.js";
-
-export {
     sanitizeDescription,
     sanitizeResponse,
     detectInjectionPattern,

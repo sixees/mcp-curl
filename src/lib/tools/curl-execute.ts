@@ -6,7 +6,7 @@ import { LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, typ
 import { generateMetadataSeparator, type MetadataBlock, type UrlValidationResult } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits, hostRateLimitSyncHeader, applyServerRemaining } from "../security/index.js";
-import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError, withTimeout } from "../utils/index.js";
+import { getErrorMessage, safeHostname, LocalRefusalError, withTimeout } from "../utils/index.js";
 import { executeCommand, buildCurlArgs, platformSupportsHeaderDump, type CommandResult } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
@@ -412,7 +412,6 @@ export async function executeCurlRequest(
             jqFilter: params.jq_filter,
             maxResultSize: params.max_result_size,
             saveToFile: params.save_to_file,
-            contentType,
             contentTypeUndetermined: !metadataFound,
             outputDir: validatedOutputDir,
         });
@@ -421,12 +420,7 @@ export async function executeCurlRequest(
         // origin's own response headers — so it takes the same defence as the
         // header channel, and the two text channels stay symmetric.
         const defendedStderr = result.stderr
-            ? defendText(result.stderr, {
-                  contentType: MARKDOWN_MIME,
-                  contentTypeUndetermined: false,
-                  hostname: safeHostname(hop.url),
-                  decodeEntities: false,
-              })
+            ? defendText(result.stderr, safeHostname(hop.url))
             : result.stderr;
 
         // **The body is passed on undefended, because the wrap is what defends
@@ -474,7 +468,7 @@ export async function executeCurlRequest(
             // `body_decode_lossy` under metadata, and as an appended notice
             // without it. Silence on either branch would leave a re-encoded
             // body indistinguishable from an exact one.
-            { decodeWasLossy: processed.decodeWasLossy }
+            { decodeWasLossy: processed.decodeWasLossy, declaredContentType: contentType }
         );
 
         // **Two remote-controlled regions, two content parts — invariant 13's

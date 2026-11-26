@@ -4,26 +4,23 @@
 // Threat model: attacker controls HTTP response bytes; the strip path
 // neutralises `<script>` / `<style>` blocks (HTML / XHTML / SVG / *+xml /
 // markdown) and markdown beacon URLs (image / link / dangerous-scheme).
-// The caller sequences these: `processor.ts` sanitises and detects FIRST
-// (Step 2, so padding cannot inflate a body past the cap below), strips
-// here (Steps 3-4), then sanitises and detects again (Step 5) because the
-// entity decode can unmask an injection phrase Step 2 could not see.
+// The caller sequences these: `processor.ts::defendText` sanitises and
+// detects FIRST (Step 2, so padding cannot inflate a body past the cap
+// below), strips here (Steps 3-4), then sanitises and detects again (Step 5)
+// because removing markup can join a phrase it separated.
 //
 // Cost is bounded by the patterns, not by the 256 KB cap: a `g`-flagged
 // replace starts a match attempt at every position, so a failing attempt
 // that can scan forward without limit is quadratic however small the input
-// is (ARCHITECTURE.md invariant 15). The cap is a circuit-breaker and the
-// 4-iteration fixed-point loop bounds the numeric-entity decode; neither is
-// what makes this path linear, and neither is what makes the tag and comment
-// strips converge — those scan the output tail and need no iteration at all.
+// is (ARCHITECTURE.md invariant 15). The cap is a circuit-breaker, not what
+// makes this path linear, and nothing here iterates: the tag and comment
+// strips converge by scanning the output tail.
 //
 // **Best-effort textual sanitisation, not a full HTML sandbox.** We
 // considered `parse5` (zero false positives, no ReDoS class) but rejected
 // it: 60 KB minified, 2× slower on small bodies, adds a runtime dep.
 // Acceptable for our threat model — content reaches an LLM, not a
 // renderer.
-
-import { FIXED_POINT_MAX_ITERATIONS } from "../config/limits.js";
 
 /**
  * Replacement strings written by `stripMarkdownBeacons` over removed
@@ -50,38 +47,14 @@ export const LINK_REMOVED_PLACEHOLDER = "[link removed]";
  * Bodies in the 256 KB–500 KB range are returned inline without strip-pass
  * processing — defence-in-depth, not a sandbox; the always-on sanitiser
  * (no size cap) is the primary defence and runs unconditionally on the
- * full body. The strip cap is therefore a circuit-breaker for the ReDoS-
- * adjacent fixed-point loop, not a content-size policy.
+ * full body. The strip cap is therefore a circuit-breaker, not a
+ * content-size policy.
  *
- * **Exported `@internal`** so the caller (`processor.ts`) can gate the
- * full strip path (Steps 3, 4, 5 — including `stripMarkdownBeacons`) on
- * the same cap. Round-2 lifted the label/URL caps inside the markdown
- * patterns; without an outer-level gate the unbounded replaces could
- * scan multi-MB bodies and the cap inside `stripBlocksFixedPoint` would
- * not bound `stripMarkdownBeacons`'s cost.
+ * **Exported `@internal`** so the caller (`processor.ts::defendText`) can
+ * gate the whole strip path (Steps 3-5) on one cap. None of the passes in
+ * this file checks it itself, so that gate is the only one.
  */
 export const STRIP_PATH_MAX_BYTES = 256 * 1024;
-
-/**
- * Fixed-point iteration cap for {@link stripBlocksFixedPoint}.
- *
- * **What it bounds is the numeric-entity decode, and only that.** Each
- * iteration peels one encoding layer, so `&#x26;#x3c;script&#x26;#x3e;` needs
- * two and 4 caps how deep a nested encoding this path will chase. The loop
- * exits early when the passes converge (`next === curr`).
- *
- * **It is not what neutralises a self-healing payload, and reading it as that
- * is what made the same decline wrong twice.** A cap on an iterated `replace`
- * only moves the surviving splice depth to the cap, and the attacker picks the
- * depth (`LESSONS.md` RC-13). {@link stripTagTokens} and
- * {@link stripHtmlComments} converge by scanning the output tail instead, so
- * splice depth costs no iteration here at all.
- *
- * Imported from `config/limits.ts` so this cap and the parallel sanitiser
- * cap (`utils/sanitize.ts → SANITIZE_FIXED_POINT_MAX_ITERATIONS`) cannot
- * drift independently.
- */
-const STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
 
 // -----------------------------------------------------------------------------
 // Module-private regex constants — `g`/`gi` flags make these stateful (they
@@ -172,8 +145,10 @@ const STYLE_BLOCK_PATTERN =
  *     **Known cost of the `[` exclusion:** a CommonMark-legal label that
  *     itself contains brackets — `[see [1]](https://host/x)` — matches none
  *     of the four patterns and its URL is returned intact. Pre-existing (the
- *     `]` exclusion alone already broke it) and tracked in `docs/todos/005`.
- *     A fix must not restore an unbounded forward scan.
+ *     `]` exclusion alone already broke it), and declined rather than fixed:
+ *     the population `LESSONS.md` RC-47 measured has no attacker choosing
+ *     these bytes, and a terminal client fetches no URL unprompted. A fix
+ *     must not restore an unbounded forward scan.
  *
  *     Earlier revisions capped the label at 256 chars to "defeat
  *     catastrophic backtracking". That was a load-bearing **bypass** —
@@ -246,86 +221,6 @@ const MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN =
  */
 const MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN =
     /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
-
-/**
- * Decode numeric HTML entities (`&#xNN;` / `&#NNN;`) so payloads like
- * `&#x3c;script&#x3e;` cannot smuggle past the strip patterns. Decoded
- * once per fixed-point iteration entry.
- *
- * **Surrogate halves (U+D800–U+DFFF) are deliberately dropped to empty
- * string.** `String.fromCodePoint` happily produces lone surrogates which
- * propagate as malformed UTF-16 to downstream consumers (Buffer encoders
- * substitute U+FFFD; JSON serialisers may emit `"\udXXX"` literally and
- * crash strict parsers). The codepoint clamp `cp < 0xD800 || cp > 0xDFFF`
- * closes that observability/transport hazard.
- *
- * **Out-of-range codepoints** (NaN, negative, > 0x10FFFF) silently drop
- * to empty string. `Number.isInteger` rejects floats and NaN; the
- * explicit range guard is defence-in-depth.
- *
- * **Named entities** (`&amp;`, `&lt;`, `&gt;`) are intentionally left
- * alone — they don't directly carry `<script>` shapes, and decoding them
- * risks re-introducing literal `<` characters into legitimate code-block
- * content. Numeric entities are the realistic smuggling vector.
- *
- * Single regex with hex/decimal alternation rather than two separate
- * passes — one full-body scan instead of two per fixed-point iteration.
- */
-function decodeNumericHtmlEntities(input: string): string {
-    return input.replace(/&#(x[0-9a-f]+|\d+);?/gi, (_, body: string) => {
-        const cp =
-            body[0] === "x" || body[0] === "X"
-                ? Number.parseInt(body.slice(1), 16)
-                : Number.parseInt(body, 10);
-        if (
-            !Number.isInteger(cp) ||
-            cp < 0 ||
-            cp > 0x10ffff ||
-            (cp >= 0xd800 && cp <= 0xdfff)
-        ) {
-            return "";
-        }
-        return String.fromCodePoint(cp);
-    });
-}
-
-/**
- * Strip `<script>` and `<style>` blocks (tag + content). Bodies above
- * {@link STRIP_PATH_MAX_BYTES} skip the strip path entirely — the caller's
- * sanitiser is the only defence above the cap.
- *
- * **The loop is for the decode, not for the strip.** A self-healing payload is
- * neutralised inside {@link stripTagBlocks}, whose token sweep converges on its
- * own; iterating a `replace` would only move the surviving splice depth to the
- * cap (`LESSONS.md` RC-13).
- *
- * **Numeric-entity decode runs INSIDE the loop**, not once at entry, so
- * nested encodings like `&#x26;#x3c;script&#x26;#x3e;` (where `&#x26;`
- * decodes to `&`, exposing `&#x3c;script&#x3e;` for the next iteration's
- * decode to turn into `<script>`) are caught. Decoding once at entry left
- * a single layer unmasked; a payload encoded twice would survive the
- * strip with the inner attack-token shape intact.
- *
- * Returns the input unchanged when no further reductions are possible.
- *
- * @param input - text content to strip (caller is responsible for
- *                content-type gating; this function does not check it)
- */
-export function stripBlocksFixedPoint(
-    input: string,
-    options: { decodeEntities?: boolean } = {}
-): string {
-    const { decodeEntities = true } = options;
-    if (Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES) return input;
-    let curr = input;
-    for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
-        const decoded = decodeEntities ? decodeNumericHtmlEntities(curr) : curr;
-        const next = stripTagBlocks(decoded);
-        if (next === curr) return next;
-        curr = next;
-    }
-    return curr;
-}
 
 /**
  * Run `pass` over only the prefix of `text` in which a match can complete,
@@ -464,7 +359,7 @@ function lastTagCloserEnd(text: string, tag: string): number {
  * iteration cap that made the same decline wrong twice (`LESSONS.md` RC-13).
  * A seeded fuzz over the token alphabet asserts the property directly.
  */
-function stripTagBlocks(text: string): string {
+export function stripScriptStyleBlocks(text: string): string {
     let out = withinClosableRegion(text, lastTagCloserEnd(text, "script"), (s) =>
         s.replace(SCRIPT_BLOCK_PATTERN, "")
     );
@@ -520,9 +415,9 @@ function tagTokenStart(out: string[]): number {
  * **A scan rather than a `replace`, for the reason the comment strip is one.**
  * Deleting a tag can splice a new one out of its neighbours — removing the
  * inner tag from `<scr<script>ipt>` rejoins `<scr` and `ipt>` into `<script>` —
- * and a `replace` exposes exactly ONE layer per pass. Wrapping it in
- * `stripBlocksFixedPoint`'s four-iteration loop therefore does not converge: it
- * moves the surviving depth to four, and an attacker picks the depth.
+ * and a `replace` exposes exactly ONE layer per pass. Wrapping it in a bounded
+ * loop does not converge: it moves the surviving depth to the bound, and an
+ * attacker picks the depth.
  * `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)` returned a live
  * `<script>`.
  *
@@ -656,59 +551,4 @@ export function stripMarkdownBeacons(input: string): string {
             .replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER)
             .replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "")
     );
-}
-
-/**
- * Returns `true` when the input would cause `stripBlocksFixedPoint` to
- * skip its work due to the {@link STRIP_PATH_MAX_BYTES} cap. The strip
- * function silently returns the input unchanged in that case (a
- * defensive fail-open posture so the strip subsystem never breaks the
- * handler boundary). This helper lets callers observe the skip and
- * decide whether to apply a fallback defence (e.g. force save-to-file,
- * decline to inline above-cap bodies, log a warning).
- *
- * `processor.ts` does not need this — it already gates the entire strip
- * path (Steps 3-5) on the same cap upstream. Future direct callers of
- * `stripBlocksFixedPoint` (PR-8 detection-pattern expansion, custom
- * strip variants, test helpers) should consult it rather than relying
- * on the silent-skip behaviour.
- */
-export function wasStripSkipped(input: string): boolean {
-    return Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES;
-}
-
-// NOT exported — `i` flag, used only with `.test()` on input strings.
-// `RegExp.prototype.test` does NOT consume `lastIndex` when the regex
-// has no `g`/`y` flag, so reuse across calls is safe.
-const MARKUP_SHAPE_PATTERN =
-    /<(?:!doctype\b|html\b|svg\b|script\b|style\b|iframe\b|\?xml\b|[a-z][a-z0-9-]{0,16}[\s>/])/i;
-
-/**
- * Body-content sniffer for HTML/SVG/XML markup shape. Used by the
- * response processor when the declared `Content-Type` is
- * sniffable-for-mis-labelled-markup (plain-text-like, binary, or any
- * text/* that isn't already declared markup/markdown/JSON) — an attacker
- * controlling the response server can otherwise tamper the header byte-
- * string to disable the strip path while serving HTML body.
- *
- * Match cases (any opener within the input):
- *  - `<!doctype` / `<!DOCTYPE`
- *  - `<html`, `<svg`, `<script`, `<style`, `<iframe`
- *  - `<?xml` (XML declaration)
- *  - any `<a-z>{1,16}` opening tag with attributes (covers vendor markup
- *    like `<x-component>`, RSS/Atom roots, custom elements)
- *
- * **Scans the full input.** Earlier revisions clipped the scan to the
- * first 1 KB for cost; that was itself a bypass — an attacker padding
- * with 1 KB of benign preamble could place `<script>` past the window.
- * The processor's outer-level `STRIP_PATH_MAX_BYTES` (256 KB) gate
- * bounds the body size that reaches this sniffer, so scanning the
- * whole input is linear-time per call and bounded.
- *
- * Linear-time, ReDoS-safe (bounded `[a-z0-9-]{0,16}` + finite alternation).
- *
- * Pure: depends only on its input.
- */
-export function looksLikeMarkupShape(content: string): boolean {
-    return MARKUP_SHAPE_PATTERN.test(content);
 }

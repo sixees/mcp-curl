@@ -5,11 +5,9 @@ import {
     IMAGE_REMOVED_PLACEHOLDER,
     LINK_REMOVED_PLACEHOLDER,
     STRIP_PATH_MAX_BYTES,
-    looksLikeMarkupShape,
-    stripBlocksFixedPoint,
+    stripScriptStyleBlocks,
     stripHtmlComments,
     stripMarkdownBeacons,
-    wasStripSkipped,
 } from "./strip-blocks.js";
 
 /**
@@ -47,9 +45,9 @@ const BENIGN_BASELINE_BODY = "a".repeat(STRIP_PATH_MAX_BYTES - 10) + "</script>"
  * denominator would derive a budget twice as wide as intended.
  */
 function calibrateBudgetMs(): number {
-    for (let i = 0; i < 3; i++) stripBlocksFixedPoint(BENIGN_BASELINE_BODY);
+    for (let i = 0; i < 3; i++) stripScriptStyleBlocks(BENIGN_BASELINE_BODY);
     const reads: number[] = [];
-    for (let i = 0; i < 9; i++) reads.push(cpuMs(() => stripBlocksFixedPoint(BENIGN_BASELINE_BODY)));
+    for (let i = 0; i < 9; i++) reads.push(cpuMs(() => stripScriptStyleBlocks(BENIGN_BASELINE_BODY)));
     reads.sort((a, b) => a - b);
     const median = reads[4]!;
 
@@ -170,7 +168,7 @@ function calibrateBudgetMs(): number {
  * re-derive the mechanisms from this docblock; derive them from `strip-blocks.ts`.
  *
  * The inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES` (256 KB)
- * `stripBlocksFixedPoint` returns its input untouched, so an oversized flood would
+ * `stripScriptStyleBlocks` returns its input untouched, so an oversized flood would
  * pass by doing nothing at all.
  */
 const REDOS_BUDGET_MS = calibrateBudgetMs();
@@ -264,34 +262,34 @@ describe("stripHtmlComments", () => {
     });
 });
 
-describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
+describe("stripScriptStyleBlocks — balanced blocks + token sweep", () => {
     it("strips a balanced <script> block", () => {
-        expect(stripBlocksFixedPoint("a<script>x()</script>b")).toBe("ab");
+        expect(stripScriptStyleBlocks("a<script>x()</script>b")).toBe("ab");
     });
 
     it("strips a balanced <style> block", () => {
-        expect(stripBlocksFixedPoint("a<style>body{}</style>b")).toBe("ab");
+        expect(stripScriptStyleBlocks("a<style>body{}</style>b")).toBe("ab");
     });
 
     it("is case-insensitive", () => {
-        expect(stripBlocksFixedPoint("a<SCRIPT>x</SCRIPT>b")).toBe("ab");
-        expect(stripBlocksFixedPoint("a<scRiPt>x</ScRiPt>b")).toBe("ab");
+        expect(stripScriptStyleBlocks("a<SCRIPT>x</SCRIPT>b")).toBe("ab");
+        expect(stripScriptStyleBlocks("a<scRiPt>x</ScRiPt>b")).toBe("ab");
     });
 
     it("does not match <scriptlike> (\\b anchor)", () => {
-        expect(stripBlocksFixedPoint("<scriptlike>")).toBe("<scriptlike>");
+        expect(stripScriptStyleBlocks("<scriptlike>")).toBe("<scriptlike>");
     });
 
     it("strips a <script> block with attributes", () => {
-        expect(stripBlocksFixedPoint('a<script src="x.js" defer>x()</script>b')).toBe("ab");
+        expect(stripScriptStyleBlocks('a<script src="x.js" defer>x()</script>b')).toBe("ab");
     });
 
     it("removes an unclosed <script> TAG, leaving its body as inert text (RC-11)", () => {
-        expect(stripBlocksFixedPoint("before<script>steal()")).toBe("beforesteal()");
+        expect(stripScriptStyleBlocks("before<script>steal()")).toBe("beforesteal()");
     });
 
     it("removes an unclosed <style> TAG, leaving its body as inert text (RC-11)", () => {
-        expect(stripBlocksFixedPoint("before<style>body{display:none}")).toBe(
+        expect(stripScriptStyleBlocks("before<style>body{display:none}")).toBe(
             "beforebody{display:none}"
         );
     });
@@ -309,20 +307,20 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
             "<SCRIPT>x",
             "<script><script><script>x",
         ]) {
-            expect(token.test(stripBlocksFixedPoint(input)), input).toBe(false);
+            expect(token.test(stripScriptStyleBlocks(input)), input).toBe(false);
         }
     });
 
     it("strips body when closer has whitespace before 'script'", () => {
-        expect(stripBlocksFixedPoint("a<script>x()</ script>b")).toBe("ab");
+        expect(stripScriptStyleBlocks("a<script>x()</ script>b")).toBe("ab");
     });
 
     it("strips body when closer has newline between '/' and 'script'", () => {
-        expect(stripBlocksFixedPoint("a<script>x()</\nscript>b")).toBe("ab");
+        expect(stripScriptStyleBlocks("a<script>x()</\nscript>b")).toBe("ab");
     });
 
     it("strips body when closer has trailing attribute-like junk", () => {
-        expect(stripBlocksFixedPoint("a<script>x()</script foo>b")).toBe("ab");
+        expect(stripScriptStyleBlocks("a<script>x()</script foo>b")).toBe("ab");
     });
 
     it("neutralises a self-healing payload in one pass", () => {
@@ -330,71 +328,16 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // into a fresh `<script>`; `stripTagTokens` runs unconditionally after
         // it, over the whole string, and takes the spliced token out. No
         // iteration is involved — see the depth cases below.
-        const out = stripBlocksFixedPoint("<scr<script>ipt>alert(1)</scr</script>ipt>");
+        const out = stripScriptStyleBlocks("<scr<script>ipt>alert(1)</scr</script>ipt>");
         expect(out.toLowerCase()).not.toContain("<script");
         expect(out).not.toContain("alert(1)");
     });
 
-    it("strips entity-encoded <script> via numeric-entity decode", () => {
-        const out = stripBlocksFixedPoint("&#x3c;script&#x3e;alert(1)&#x3c;/script&#x3e;");
-        expect(out.toLowerCase()).not.toContain("<script");
-        expect(out).not.toContain("alert(1)");
-    });
-
-    it("strips decimal-entity-encoded <script>", () => {
-        const out = stripBlocksFixedPoint("&#60;script&#62;alert(1)&#60;/script&#62;");
-        expect(out.toLowerCase()).not.toContain("<script");
-    });
-
-    it("strips DOUBLY entity-encoded <script> (decode runs inside fixed-point loop)", () => {
-        // Iter 1 decode: `&#x26;` → `&`, exposing `&#x3c;script&#x3e;...`.
-        // Iter 2 decode: `&#x3c;` → `<`, `&#x3e;` → `>`, exposing real
-        // `<script>alert(1)`.
-        // Iter 2 strip: the token sweep removes the unclosed script's tag.
-        const out = stripBlocksFixedPoint(
-            "&#x26;#x3c;script&#x26;#x3e;alert(1)&#x26;#x3c;/script&#x26;#x3e;"
-        );
-        expect(out.toLowerCase()).not.toContain("<script");
-        expect(out).not.toContain("alert(1)");
-    });
-
-    it("strips triply entity-encoded <script> (within iteration cap)", () => {
-        // Iter 1: `&#x26;#x26;#x3c;` → `&#x26;#x3c;`
-        // Iter 2: → `&#x3c;`
-        // Iter 3: → `<`
-        // Iter 3 or 4 strip: removes script.
-        const out = stripBlocksFixedPoint(
-            "&#x26;#x26;#x3c;script&#x26;#x26;#x3e;steal()"
-        );
-        expect(out.toLowerCase()).not.toContain("<script");
-        // Body survives as inert text — the tag is what mattered (RC-11).
-        expect(out).toBe("steal()");
-    });
-
-    it("DROPS surrogate-half numeric entities (P1-C)", () => {
-        // U+D800-U+DFFF cannot be safely emitted without producing
-        // malformed UTF-16. Decoder returns "" for these.
-        expect(stripBlocksFixedPoint("a&#xD800;b")).toBe("ab");
-        expect(stripBlocksFixedPoint("a&#xDFFF;b")).toBe("ab");
-    });
-
-    it("DROPS out-of-range numeric entities (> 0x10FFFF)", () => {
-        expect(stripBlocksFixedPoint("a&#x110000;b")).toBe("ab");
-    });
-
-    it("preserves &amp;, &lt;, &gt; named entities (only numeric decoded)", () => {
-        // Named entities are intentionally left alone — decoding `&lt;`
-        // would re-introduce literal `<` into legitimate code samples.
-        expect(stripBlocksFixedPoint("&amp;&lt;script&gt;")).toBe("&amp;&lt;script&gt;");
-    });
-
-    it("skips strip path on bodies above 256 KB UTF-8", () => {
-        // The byte cap means the function returns the input unchanged.
-        // Sanitiser is the caller's responsibility above the cap.
-        const filler = "x".repeat(260 * 1024);
-        const body = `<script>alert(1)</script>${filler}`;
-        const out = stripBlocksFixedPoint(body);
-        expect(out).toBe(body);
+    it("leaves entities encoded, named and numeric alike (RC-3)", () => {
+        // Decoding would manufacture live markup from bytes the origin sent as
+        // inert text, and the decoded form is what would be returned.
+        expect(stripScriptStyleBlocks("&amp;&lt;script&gt;")).toBe("&amp;&lt;script&gt;");
+        expect(stripScriptStyleBlocks("&#x3c;script&#x3e;x")).toBe("&#x3c;script&#x3e;x");
     });
 
     // The guard that used to live here fed `"<script>" + "<".repeat(200*1024)`
@@ -419,7 +362,7 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         ["style, depth 5", "<sty".repeat(5) + "<style>" + "le>".repeat(5)],
         ["style, depth 40", "<sty".repeat(40) + "<style>" + "le>".repeat(40)],
     ])("leaves no script/style token: %s", (_label, input) => {
-        expect(stripBlocksFixedPoint(input)).not.toMatch(/<\/?\s*(?:script|style)\b/i);
+        expect(stripScriptStyleBlocks(input)).not.toMatch(/<\/?\s*(?:script|style)\b/i);
     });
 
     // **The guard RC-13 says should have existed.** Every other check here
@@ -448,7 +391,7 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
             let input = "";
             const parts = 2 + Math.floor(rnd() * 12);
             for (let k = 0; k < parts; k++) input += fragments[Math.floor(rnd() * fragments.length)];
-            if (/<\/?\s*(?:script|style)\b/i.test(stripBlocksFixedPoint(input))) survived.push(input);
+            if (/<\/?\s*(?:script|style)\b/i.test(stripScriptStyleBlocks(input))) survived.push(input);
         }
         expect(survived.slice(0, 5)).toEqual([]);
     });
@@ -461,7 +404,7 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
     it.each([1, 2, 4, 5, 40])("balanced-block splice at depth %i leaves no token", (d) => {
         for (const [pre, post, tag] of [["scr", "ipt", "script"], ["sty", "le", "style"]] as const) {
             const input = `<${pre}`.repeat(d) + `<${tag}>x</${tag}>` + `${post}>`.repeat(d);
-            expect(stripBlocksFixedPoint(input), input).not.toMatch(/<\/?\s*(?:script|style)\b/i);
+            expect(stripScriptStyleBlocks(input), input).not.toMatch(/<\/?\s*(?:script|style)\b/i);
         }
     });
 
@@ -469,7 +412,7 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // U+0130 lowercases to two UTF-16 units, so an index taken from
         // `text.toLowerCase()` addresses a different character in `text`. That
         // silently skipped the balanced block pass for the rest of the body.
-        expect(stripBlocksFixedPoint("\u0130<script>![x](https://evil.test)</script>tail")).toBe(
+        expect(stripScriptStyleBlocks("\u0130<script>![x](https://evil.test)</script>tail")).toBe(
             "\u0130tail"
         );
     });
@@ -477,7 +420,7 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
     it("does not treat `</scripture>` as a script closer (round 2)", () => {
         // `\b` is what the pattern requires, so the bound must require it too.
         // The opener still goes; the non-tag text is left alone.
-        expect(stripBlocksFixedPoint("<script>x</scripture>")).toBe("x</scripture>");
+        expect(stripScriptStyleBlocks("<script>x</scripture>")).toBe("x</scripture>");
     });
 
     it("still removes the body of a balanced block after the round-4 fix", () => {
@@ -485,10 +428,10 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // the shapes that must keep working — if the balanced pass stops
         // matching them, the token sweep leaves their bodies as inert text and
         // this file quietly stops removing script content.
-        expect(stripBlocksFixedPoint("<script>alert(1)</script>")).toBe("");
-        expect(stripBlocksFixedPoint('<script type="text/javascript">a()</script>')).toBe("");
-        expect(stripBlocksFixedPoint("<style>body{}</style>")).toBe("");
-        expect(stripBlocksFixedPoint("a<script>x()</script foo>b")).toBe("ab");
+        expect(stripScriptStyleBlocks("<script>alert(1)</script>")).toBe("");
+        expect(stripScriptStyleBlocks('<script type="text/javascript">a()</script>')).toBe("");
+        expect(stripScriptStyleBlocks("<style>body{}</style>")).toBe("");
+        expect(stripScriptStyleBlocks("a<script>x()</script foo>b")).toBe("ab");
     });
 
     it("keeps the body of an opener whose attribute value contains `<` (round 4)", () => {
@@ -498,7 +441,7 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         // body survives as inert text. That is the RC-11 posture the closer has
         // had since round 2 — the two classes now agree — and no tag survives
         // either way, which is the property that matters here.
-        expect(stripBlocksFixedPoint('<script foo="a<b">alert(1)</script>')).toBe("alert(1)");
+        expect(stripScriptStyleBlocks('<script foo="a<b">alert(1)</script>')).toBe("alert(1)");
     });
 
     // **And its replacement was toothless too, in the mirror-image way.** Every
@@ -571,13 +514,13 @@ describe("stripBlocksFixedPoint — balanced blocks + token sweep", () => {
         ["openers borrowing a whitespace closer's `>`", "<script".repeat(30000) + "</ script>"],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
         // **The sixth toothless-guard shape, caught before it cost anything.**
-        // Above the cap `stripBlocksFixedPoint` returns its input untouched, so
+        // Above the cap `stripScriptStyleBlocks` returns its input untouched, so
         // an oversized flood passes by doing no work at all — and the leading-`>`
         // case is 262144 bytes, which is the cap exactly. One character added to
         // any literal above and the whole block is vacuous and still green.
         // Reported by coderabbitai on PR #33 round 5.
         expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(STRIP_PATH_MAX_BYTES);
-        expect(cpuMs(() => stripBlocksFixedPoint(body))).toBeLessThan(REDOS_BUDGET_MS);
+        expect(cpuMs(() => stripScriptStyleBlocks(body))).toBeLessThan(REDOS_BUDGET_MS);
     });
 });
 
@@ -819,82 +762,5 @@ describe("placeholder constants (round-3-CR-r4 DRY)", () => {
         // form so a future change to the placeholder is observable.
         expect(IMAGE_REMOVED_PLACEHOLDER).toBe("[image removed]");
         expect(LINK_REMOVED_PLACEHOLDER).toBe("[link removed]");
-    });
-});
-
-describe("looksLikeMarkupShape — round-3-CR-r4 P1 full-body scan", () => {
-    // Tests moved here from utils/content-type.test.ts as part of the
-    // SRP-driven move (the function inspects body content, not MIME
-    // strings, so it belongs with the strip subsystem).
-
-    it("matches a body starting with <!doctype", () => {
-        expect(looksLikeMarkupShape("<!doctype html><html>...</html>")).toBe(true);
-    });
-
-    it("matches a body starting with <html", () => {
-        expect(looksLikeMarkupShape("<html><body>x</body></html>")).toBe(true);
-    });
-
-    it("matches a body starting with <script", () => {
-        expect(looksLikeMarkupShape("<script>alert(1)</script>")).toBe(true);
-    });
-
-    it("matches a body starting with <svg", () => {
-        expect(looksLikeMarkupShape("<svg><circle/></svg>")).toBe(true);
-    });
-
-    it("matches a body starting with <iframe", () => {
-        expect(looksLikeMarkupShape("<iframe src=evil>")).toBe(true);
-    });
-
-    it("matches a body starting with <?xml", () => {
-        expect(looksLikeMarkupShape('<?xml version="1.0"?><root/>')).toBe(true);
-    });
-
-    it("matches a generic <tagname> opener", () => {
-        expect(looksLikeMarkupShape("<p>hello</p>")).toBe(true);
-        expect(looksLikeMarkupShape("<x-component>...</x-component>")).toBe(true);
-    });
-
-    it("does NOT match prose mentioning `<`", () => {
-        expect(looksLikeMarkupShape("the value is < 5")).toBe(false);
-        expect(looksLikeMarkupShape("a < b but b > c")).toBe(false);
-    });
-
-    it("does NOT match plain JSON", () => {
-        expect(looksLikeMarkupShape('{"key": "value"}')).toBe(false);
-    });
-
-    it("MATCHES markup beyond the first 1 KB — closes round-3-CR-r4 P1 bypass", () => {
-        // PRIOR BEHAVIOUR (rejected as bypass): the sniffer clipped its
-        // scan to the first 1 KB, so 1025+ bytes of benign preamble
-        // followed by `<script>` slipped past. Round-3-CR-r4 fix scans
-        // the full input. The processor's outer `STRIP_PATH_MAX_BYTES`
-        // (256 KB) gate bounds the body that ever reaches the sniffer.
-        const buried = "x".repeat(2048) + "<script>alert(1)</script>";
-        expect(looksLikeMarkupShape(buried)).toBe(true);
-    });
-
-    it("MATCHES markup at offset > 1 KB but < 256 KB cap", () => {
-        const buried = "lorem ipsum ".repeat(8000) + "<svg></svg>";
-        expect(looksLikeMarkupShape(buried)).toBe(true);
-    });
-});
-
-describe("wasStripSkipped — observability helper (round-3-CR-r4)", () => {
-    it("returns false for a small body well below the cap", () => {
-        expect(wasStripSkipped("hello")).toBe(false);
-        expect(wasStripSkipped("<script>foo</script>")).toBe(false);
-    });
-
-    it("returns false for a body at the cap boundary", () => {
-        // 256 KB exactly — at the cap (`>` not `>=`), so this returns false.
-        const atCap = "x".repeat(256 * 1024);
-        expect(wasStripSkipped(atCap)).toBe(false);
-    });
-
-    it("returns true for a body above the cap", () => {
-        const overCap = "x".repeat(256 * 1024 + 1);
-        expect(wasStripSkipped(overCap)).toBe(true);
     });
 });

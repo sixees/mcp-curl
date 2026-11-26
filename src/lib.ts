@@ -13,7 +13,7 @@
 //   4. Schema types + utilities         — ApiSchema, validators, loaders, generators
 //   5. Public API types                 — McpCurlConfig, hooks, tool inputs
 //   6. Sanitization helpers (metadata)  — sanitizeDescription
-//   7. Response-side defence helpers    — sanitize / detect / spotlight / composer
+//   7. Response-side defence helpers    — sanitize / detect / spotlight
 //   8. URL validation helpers           — createHttpOnlyUrlSchema, safeHostname
 //
 // The server applies an internal defence-in-depth wrap (`createWrapper(config)`
@@ -29,14 +29,10 @@
 // `CallToolResult` shape is coupled to the MCP SDK. Library consumers interact
 // with it via `enableSpotlighting` (see McpCurlConfig).
 //
-// What the wrap does to a NON-JSON text part is exported: `defendText`
-// (section 7) is that pipeline, over a plain string. A text part that parses
-// as JSON is detected on and returned unchanged instead, and `defendText`
-// does not reproduce that arm — see `docs/custom-tools.md` → *Composing the
-// Full Defence*. Callers building a non-MCP pipeline should call `defendText`
-// rather than composing `sanitizeAndDetect` by hand — the composer is Step 2
-// of five, and the difference is whether markdown beacons and `<script>`
-// blocks survive.
+// The strip pipeline the wrap runs over a NON-JSON text part is not exported:
+// a custom tool's output goes through the wrap, which is the supported way to
+// get it. The lower-level helpers in section 7 are exported for callers that
+// emit remote content outside an MCP tool result.
 // No subpath exports — flat barrel + section comments is the convention.
 
 // 1. Main server class
@@ -120,30 +116,13 @@ export {
 } from "./lib/utils/index.js";
 
 // 7. Response-side defence helpers — callers emitting external content (HTTP body,
-// file content, third-party API response) should defend + spotlight to honour
-// the same trust boundary the server enforces on built-in tools.
+// file content, third-party API response) outside an MCP tool result should
+// sanitise + spotlight to honour the same trust boundary the server enforces on
+// built-in tools. A custom tool's result needs none of this: the wrap applies
+// the full pipeline, including the markup and markdown strip stages these
+// helpers do not.
 //
-// **`defendText(text, options)` is the whole pipeline, and it is what the
-// built-in tools run on non-JSON text** — response headers and cURL stderr. A
-// JSON document is the calling agent's to interpret and takes no pipeline at
-// all on any built-in path; `defendText` given one still runs Step 2 over it.
-// Sanitise-and-detect is Step 2 of five; Steps 3-5 —
-// markup comments, the `<script>`/`<style>` strip, markdown beacon
-// removal and the numeric-entity re-detect — are what remove exfiltration
-// beacons and script blocks. Reach for the lower-level composers below only
-// when you specifically want one stage; if you want "the defence", it is this.
-// See `ARCHITECTURE.md` invariant 1a for why the distinction has a name.
-//
-// Pass the origin's `contentType` when you know it. When you do not, pass
-// `contentTypeUndetermined: true` rather than omitting it — that selects the
-// STRICTEST grammar, so an unreadable content type can never be the way a
-// stage gets switched off. Pass `decodeEntities: false` on any channel whose
-// consumer does not itself decode HTML entities; the decode's output is what
-// gets returned, so on such a channel it manufactures live markup from inert
-// bytes.
-//
-// Among the lower-level composers, prefer `sanitizeAndDetect(text, label)`
-// over hand-wiring `sanitizeResponse`
+// Prefer `sanitizeAndDetect(text, label)` over hand-wiring `sanitizeResponse`
 // + `detectInjectionPattern` + `logInjectionDetected`. The helper detects on
 // the **original** text and on the sanitised form: a malicious pattern a later
 // strip stage would erase still lands in the per-host `[injection-defense]`
@@ -165,8 +144,6 @@ export {
 // Spotlight (when used directly) must key on `randomUUID()` per request /
 // per message; nothing else gives the per-call entropy the sentinel
 // boundary depends on. See docs/custom-tools.md.
-export { defendText } from "./lib/response/index.js";
-export type { DefendTextOptions } from "./lib/response/index.js";
 export { applySpotlighting, sanitizeResponse, detectInjectionPattern } from "./lib/utils/index.js";
 export { sanitizeAndDetect, logInjectionDetected } from "./lib/security/detection-logger.js";
 

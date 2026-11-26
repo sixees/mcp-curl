@@ -30,10 +30,10 @@ const { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON as typeof JSON &
  * this API nearly reintroduced it.
  *
  * **The guard belongs in this module, not beside a caller.** At
- * `response/processor.ts` module scope it would reach `jq_query` only because
- * `tools/jq-query.ts` imports `defendText` from the same barrel that re-exports
- * `processor.ts`, so any import path not needing `defendText` would downgrade a
- * loud startup error to an opaque `TypeError` from inside `JSON.parse`.
+ * `response/processor.ts` module scope it would reach `jq_query` only through
+ * whatever happened to import `processor.ts` first, so any import path that
+ * skipped it would downgrade a loud startup error to an opaque `TypeError`
+ * from inside `JSON.parse`.
  * Declaring the two functions optional is what makes this guard unskippable
  * rather than conventional: delete it and the narrowing below stops
  * compiling, so `tsc` carries the obligation instead of a cast merely
