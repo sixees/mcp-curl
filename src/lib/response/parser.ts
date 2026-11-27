@@ -1,5 +1,5 @@
 // src/lib/response/parser.ts
-// Parse cURL output and check content types
+// Parse cURL output into the body and the `-w` metadata fields
 
 import { LIMITS } from "../config/limits.js";
 import { URL_CONTROL_CHARACTER } from "../utils/index.js";
@@ -82,7 +82,7 @@ export interface ParsedResponse {
      * load-bearing: "the origin sent no Content-Type" is a fact about the
      * origin, while "we could not find our own metadata" means every
      * cURL-authored field is missing and the body's end is unknown — see
-     * `ProcessResponseOptions.contentTypeUndetermined`.
+     * `ProcessResponseOptions.bodyBoundaryUndetermined`.
      */
     metadataFound: boolean;
 }

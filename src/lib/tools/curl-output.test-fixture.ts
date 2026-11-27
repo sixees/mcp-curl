@@ -97,7 +97,7 @@ export interface MetadataFields {
  * **The one place a test spells the block.** A suite that writes
  * `${SEP}${contentType}` by hand produces a block with the wrong separator
  * count, which parses as undetermined — so its assertions pass or fail against
- * the strictest grammar rather than the path they name. `curl-args-builder.test.ts`
+ * the metadata-not-found arm rather than the path they name. `curl-args-builder.test.ts`
  * holds this function to the builder's real format string.
  */
 export function metadataSuffix({

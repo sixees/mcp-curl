@@ -255,8 +255,7 @@ var LIMITS = {
    * `%{content_type}` is echoed verbatim from the origin with no length limit
    * of its own. 8KB covers every realistic origin (cURL permits ~100KB per
    * header line, but no real service approaches that in a Content-Type); a
-   * longer value is absent rather than truncated, which selects the strictest
-   * grammar downstream.
+   * longer value is absent rather than truncated, never partial.
    */
   MAX_CONTENT_TYPE_FIELD_LENGTH: CONTENT_TYPE_FIELD_BYTES,
   /**
@@ -2634,7 +2633,7 @@ async function processResponse(responseBytes, options) {
         // Read here, at the claim, because `bodyBytes` cannot say it
         // (`ParsedResponse.bodyBytes`). Omitted reads as located: a
         // library caller passing its own body knows where it ends.
-        boundaryUndetermined: options.contentTypeUndetermined === true,
+        boundaryUndetermined: options.bodyBoundaryUndetermined === true,
         measuredBytes: Buffer.byteLength(content, "utf8"),
         decodeWasLossy,
         // Only where the body itself was the reason. An over-cap JSON
@@ -3093,7 +3092,7 @@ async function executeCurlRequest(params, extra = {}) {
       jqFilter: params.jq_filter,
       maxResultSize: params.max_result_size,
       saveToFile: params.save_to_file,
-      contentTypeUndetermined: !metadataFound,
+      bodyBoundaryUndetermined: !metadataFound,
       outputDir: validatedOutputDir
     });
     const defendedStderr = result.stderr ? defendText(result.stderr, safeHostname(hop.url)) : result.stderr;

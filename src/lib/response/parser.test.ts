@@ -167,10 +167,9 @@ describe("parseResponseWithMetadata — bodyBytes carries the wire octets", () =
         // contains this server's OWN separator plus remote header text that was
         // never body.
         //
-        // It fails safe: `metadataFound: false` selects the strictest grammar and
-        // the whole thing is stripped. Asserted because `docs/todos/018` AC 1
-        // wants a byte-exact body, and this is the arm where that is not
-        // available — a fidelity path built on this field must read the flag.
+        // Asserted because `docs/todos/018` AC 1 wants a byte-exact body, and
+        // this is the arm where that is not available — a fidelity path built
+        // on this field must read the flag, as `processResponse` does.
         const longType = `text/plain; profile="${"x".repeat(LIMITS.MAX_METADATA_TAIL_LENGTH)}"`;
         const raw = buf(`body${meta(longType)}`);
         const parsed = parseResponseWithMetadata(raw, BLOCK);
@@ -269,8 +268,8 @@ describe("parseResponseWithMetadata — the multi-field block (invariant 13)", (
         expect(sync.contentType).toBe("text/plain");
 
         // An over-bound content type beside short fields is found and absent,
-        // rather than evicting a separator from the window. Both select the
-        // strictest grammar; found, the body boundary is still exact.
+        // rather than evicting a separator from the window, so the body
+        // boundary is still exact.
         const ct = parse(
             `body${meta({ contentType: "text/plain; p=" + "x".repeat(LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH) })}`
         );

@@ -52,8 +52,7 @@ export const LIMITS = {
      * `%{content_type}` is echoed verbatim from the origin with no length limit
      * of its own. 8KB covers every realistic origin (cURL permits ~100KB per
      * header line, but no real service approaches that in a Content-Type); a
-     * longer value is absent rather than truncated, which selects the strictest
-     * grammar downstream.
+     * longer value is absent rather than truncated, never partial.
      */
     MAX_CONTENT_TYPE_FIELD_LENGTH: CONTENT_TYPE_FIELD_BYTES,
     /**

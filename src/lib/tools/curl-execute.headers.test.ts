@@ -780,11 +780,10 @@ describe("curl_execute include_headers — remaining channels", () => {
     });
 
     it("does not strip a JSON body when the content type is undetermined", async () => {
-        // The strictest-grammar posture is for text the model reads, and a JSON
-        // body is never rewritten: it is returned inline as the origin sent it, and
-        // a saved one is the origin's octets — the artefact jq_query reads back.
-        // Applying the strictest grammar here would rewrite the document's string
-        // values on the way to the model.
+        // A JSON body is never rewritten, metadata block or not: it is returned
+        // inline as the origin sent it, and a saved one is the origin's octets —
+        // the artefact jq_query reads back. A strip pass here would rewrite the
+        // document's string values on the way to the model.
         // stdout is the body alone, so what is unreachable here is the metadata
         // block, not a header/body boundary.
         const body = '{"note":"see [docs](https://example.com/x)"}';

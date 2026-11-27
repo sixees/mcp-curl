@@ -118,9 +118,9 @@ export {
 // 7. Response-side defence helpers — callers emitting external content (HTTP body,
 // file content, third-party API response) outside an MCP tool result should
 // sanitise + spotlight to honour the same trust boundary the server enforces on
-// built-in tools. A custom tool's result needs none of this: the wrap applies
-// the full pipeline, including the markup and markdown strip stages these
-// helpers do not.
+// built-in tools. A custom tool's result needs none of this: the wrap detects
+// on a JSON part and returns it unchanged, and runs every non-JSON part
+// through the markup and markdown strip stages these helpers do not.
 //
 // Prefer `sanitizeAndDetect(text, label)` over hand-wiring `sanitizeResponse`
 // + `detectInjectionPattern` + `logInjectionDetected`. The helper detects on

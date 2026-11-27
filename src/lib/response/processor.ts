@@ -664,7 +664,7 @@ export async function processResponse(
                 // Read here, at the claim, because `bodyBytes` cannot say it
                 // (`ParsedResponse.bodyBytes`). Omitted reads as located: a
                 // library caller passing its own body knows where it ends.
-                boundaryUndetermined: options.contentTypeUndetermined === true,
+                boundaryUndetermined: options.bodyBoundaryUndetermined === true,
                 measuredBytes: Buffer.byteLength(content, "utf8"),
                 decodeWasLossy,
                 // Only where the body itself was the reason. An over-cap JSON

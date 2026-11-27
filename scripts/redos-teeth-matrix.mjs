@@ -105,7 +105,7 @@ const MECHANISMS = {
     // **The block patterns' CLOSING attribute class is deliberately NOT here.** Widening
     // `[^<>]*` to `[^>]*` on `</script`/`</style` is measurably free: no crossing on any of
     // the 24 cases under any subset, none on six inputs built to target it, and no
-    // behavioural difference on four more — the fixed point plus `stripTagTokens` converge
+    // behavioural difference on four more — the balanced passes plus `stripTagTokens` converge
     // to the same output either way, and the whole suite stays green. So it is a defensive
     // symmetry with the opening class rather than a bound, and a cost matrix cannot witness
     // something that costs nothing. It was listed here for two rounds and read as witnessed,
@@ -161,7 +161,7 @@ const CASES = [
     ["beacon", "unterminated image URL flood", "![a](https://x".repeat(18000)],
 ];
 
-const ENTRY = { comment: "stripHtmlComments", block: "stripBlocksFixedPoint", beacon: "stripMarkdownBeacons" };
+const ENTRY = { comment: "stripHtmlComments", block: "stripScriptStyleBlocks", beacon: "stripMarkdownBeacons" };
 
 const work = mkdtempSync(join(tmpdir(), "redos-matrix-"));
 const fail = [];
@@ -259,8 +259,8 @@ if (!testSrc.includes(BASELINE_EXPR)) throw new Error(`strip-blocks.test.ts no l
 // sides still produce a number. Each statement that decides the figure is asserted verbatim
 // inside that function, and the 0 ms throw is not, because it aborts rather than moves it.
 const CALIBRATION_STEPS = [
-    "for (let i = 0; i < 3; i++) stripBlocksFixedPoint(BENIGN_BASELINE_BODY);",
-    "for (let i = 0; i < 9; i++) reads.push(cpuMs(() => stripBlocksFixedPoint(BENIGN_BASELINE_BODY)));",
+    "for (let i = 0; i < 3; i++) stripScriptStyleBlocks(BENIGN_BASELINE_BODY);",
+    "for (let i = 0; i < 9; i++) reads.push(cpuMs(() => stripScriptStyleBlocks(BENIGN_BASELINE_BODY)));",
     "reads.sort((a, b) => a - b);",
     "const median = reads[4]!;",
     "if (median > 200) {",
@@ -276,9 +276,9 @@ for (const step of CALIBRATION_STEPS) {
 
 const calib = await import(pathToFileURL(bundle("calibrate", source)).href);
 const BENIGN = "a".repeat(calib.STRIP_PATH_MAX_BYTES - 10) + "</script>";
-for (let i = 0; i < 3; i++) calib.stripBlocksFixedPoint(BENIGN);
+for (let i = 0; i < 3; i++) calib.stripScriptStyleBlocks(BENIGN);
 const calibReads = [];
-for (let i = 0; i < 9; i++) calibReads.push(cpu(() => calib.stripBlocksFixedPoint(BENIGN)));
+for (let i = 0; i < 9; i++) calibReads.push(cpu(() => calib.stripScriptStyleBlocks(BENIGN)));
 calibReads.sort((a, b) => a - b);
 const CALIB_MEDIAN = calibReads[4];
 if (!(CALIB_MEDIAN > 0)) throw new Error("this host reported 0 ms of CPU for a 256 KB benign pass — its clock is too coarse to calibrate a budget against");

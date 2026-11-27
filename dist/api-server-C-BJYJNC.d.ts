@@ -120,9 +120,9 @@ interface McpCurlConfig {
      * `registerCustomTool()`, and synthesised results returned by a
      * `beforeRequest` short-circuit hook — is routed through a single
      * post-processor wrap (`src/lib/response/post-processor.ts`). The wrap
-     * runs the full response-side defence pipeline on each text content part,
-     * under the strictest grammar (this boundary's content type is always
-     * undetermined), then optionally spotlights the result:
+     * runs the response-side defence pipeline on each text content part —
+     * the same fixed pipeline on every part, selected by nothing the part or
+     * its origin declares — then optionally spotlights the result:
      *
      *   1. **Detect** injection patterns against the **original** text and its
      *      sanitised form, and emit a throttled `[injection-defense]` log

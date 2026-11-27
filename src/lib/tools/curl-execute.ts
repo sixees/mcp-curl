@@ -414,7 +414,7 @@ export async function executeCurlRequest(
             jqFilter: params.jq_filter,
             maxResultSize: params.max_result_size,
             saveToFile: params.save_to_file,
-            contentTypeUndetermined: !metadataFound,
+            bodyBoundaryUndetermined: !metadataFound,
             outputDir: validatedOutputDir,
         });
 

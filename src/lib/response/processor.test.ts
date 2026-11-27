@@ -622,7 +622,7 @@ describe("scalar JSON documents keep the exemption (round 4, coderabbitai)", () 
         const body = JSON.stringify("a &#x22;b&#x22; c");
         const result = await processText(body, {
             url: "http://example.com",
-            contentTypeUndetermined: true,
+            bodyBoundaryUndetermined: true,
         });
         const defended = await bodyFromEitherArm(result);
         expect(defended).toBe(body);

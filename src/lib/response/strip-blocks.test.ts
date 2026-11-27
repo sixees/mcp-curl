@@ -167,9 +167,9 @@ function calibrateBudgetMs(): number {
  * cleared it, and the matrix — not this file — is what holds that list current. Never
  * re-derive the mechanisms from this docblock; derive them from `strip-blocks.ts`.
  *
- * The inputs cannot be enlarged to buy room: above `STRIP_PATH_MAX_BYTES` (256 KB)
- * `stripScriptStyleBlocks` returns its input untouched, so an oversized flood would
- * pass by doing nothing at all.
+ * The inputs cannot be enlarged to buy room: `processor.ts::defendText` runs no strip
+ * pass above `STRIP_PATH_MAX_BYTES` (256 KB), so a flood larger than the cap measures
+ * a cost no production input can incur.
  */
 const REDOS_BUDGET_MS = calibrateBudgetMs();
 
@@ -513,11 +513,10 @@ describe("stripScriptStyleBlocks — balanced blocks + token sweep", () => {
         // opener class widened to `[^>]*`: 2.9 s
         ["openers borrowing a whitespace closer's `>`", "<script".repeat(30000) + "</ script>"],
     ])("ReDoS: %s completes well inside the measured budget", (_label, body) => {
-        // **The sixth toothless-guard shape, caught before it cost anything.**
-        // Above the cap `stripScriptStyleBlocks` returns its input untouched, so
-        // an oversized flood passes by doing no work at all — and the leading-`>`
-        // case is 262144 bytes, which is the cap exactly. One character added to
-        // any literal above and the whole block is vacuous and still green.
+        // **Every flood must fit under the cap `defendText` gates on**, or it
+        // measures a cost no production input can incur. The leading-`>` case is
+        // 262144 bytes, which is the cap exactly, so one character added to any
+        // literal above would take it out of the population these bounds defend.
         // Reported by coderabbitai on PR #33 round 5.
         expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(STRIP_PATH_MAX_BYTES);
         expect(cpuMs(() => stripScriptStyleBlocks(body))).toBeLessThan(REDOS_BUDGET_MS);

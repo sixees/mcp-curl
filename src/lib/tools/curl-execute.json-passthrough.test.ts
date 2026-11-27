@@ -398,11 +398,10 @@ describe("018 — the ordinary-response cases round 1 found", () => {
 // AC 6 — the artefact gate is the same rule as the body gate, and inherits no
 // strip cap.
 //
-// **At a size that reaches the save arm**, which is the whole point:
-// `isDefinitelyJson` answers "not JSON" above `STRIP_PATH_MAX_BYTES` (262,144)
-// while the default inline cap is 500,000, so the arm where this question
-// exists is the arm where that predicate always answers no. Every case below
-// sits in that band.
+// **At a size that reaches the save arm**, which is the whole point: above
+// `STRIP_PATH_MAX_BYTES` (262,144) and the default inline cap (500,000), the
+// band where a gate that skipped its parse above some size would answer "not
+// JSON". Every case below sits in that band.
 // ---------------------------------------------------------------------------
 describe("018 AC6 — the artefact gate is the body gate, with no strip cap", () => {
     // **A zero-width space is what lets the bare-string case below fail.** Above

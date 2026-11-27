@@ -58,9 +58,8 @@ if (typeof rawJsonImpl !== "function" || typeof isRawJsonImpl !== "function") {
  * as "this is a scalar, do not descend", so a marker wrapping an object would
  * make them treat a composite as a scalar. `docs/todos/018` deleted the per-leaf
  * defence walk that made that an undefended-object-graph bug outright, but the
- * misclassification itself is unchanged and still reaches
- * `processor.ts::isCompositeValue`, which is the body gate — so a marker
- * wrapping an object would be classified non-JSON and take the wrong arm. Keeping this private leaves `keepNumberLexeme` as the
+ * misclassification itself is unchanged: `jq/filter.ts`'s walk reads
+ * `isRawNumber` and would not descend into a marker wrapping an object. Keeping this private leaves `keepNumberLexeme` as the
  * only producer in the tree, so the name is true by construction rather than by
  * a convention nothing enforces. RC-29.
  */
