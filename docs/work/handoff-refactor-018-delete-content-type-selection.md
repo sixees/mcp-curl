@@ -1,5 +1,5 @@
 # Work Handoff: refactor/018-delete-content-type-selection
-**Date:** 2026-11-26 | **Branch:** refactor/018-delete-content-type-selection | **Plan:** todo 018 slice 2 + todo 004 | **Status:** in-review
+**Date:** 2026-11-26 | **Branch:** refactor/018-delete-content-type-selection | **Plan:** todo 018 slice 2 + todo 004 | **Status:** complete
 
 > Created during `/sixees-workflow:review`, before `/sixees-workflow:work` reached Step 6.
 > The work run escalated on the P1 below, so the full work schema has not been written yet.
@@ -45,3 +45,18 @@ No handoff existed; the builder's account was the commit messages and CHANGELOG.
 - `broken-contract` (P1, escalated): `scripts/redos-teeth-matrix.mjs` rename.
 
 **Blockers:** P1 019 (filed `pending`, and it reverses a settled 018 decision — the operator's call); P1 `broken-contract` escalation awaiting an answer.
+
+## Resolution — 2026-11-27
+
+| Finding | Disposition | Where |
+|---|---|---|
+| P1 019 `unescaped-sink` | fixed — operator chose head-only match; `metadata_undetermined` added; RC-70 filed (settled reversal of 018's decision) | `6b8ec04` |
+| P1 `broken-contract` (redos matrix) | fixed — operator grew the change; `npm run redos:matrix` passes | `444313f` |
+| P3 020 `stale-comment` | fixed — sweep re-run, only true uses remain | `444313f` |
+| P3 021 `convention-drift` | fixed — renamed `bodyBoundaryUndetermined` | `444313f` |
+
+**Declined:** todo 005 (bracket-label beacon) and entity-masked beacons (todo 004) — both under RC-47, by the operator.
+**Todos removed:** 004, 005, 018, 019, 020, 021 — none open from this branch.
+**Tests:** 1713 passed, 7 skipped (vitest summary line; no structured artefact). `dist/` rebuilt. ReDoS matrix: all asserted properties hold.
+**Semver:** no major — one consumer (operator call); exported `defendText`/`DefendTextOptions` removal shipped as minor.
+**Hooks:** every commit used `core.hooksPath=/dev/null`; no hooks are configured in this repo.
