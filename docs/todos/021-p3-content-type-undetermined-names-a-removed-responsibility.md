@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 severity: low
 effort: s
 tags: [code-review, naming, response, processor, types]
@@ -37,15 +37,20 @@ code-simplicity-reviewer and pattern-recognition-specialist.
 
 ## Recommended Action
 
-_Unfilled — pending._
+Option 1: rename to `bodyBoundaryUndetermined` at every site. Not on a published entry point, so no contract breaks.
 
 ## Acceptance Criteria
 
-- [ ] `rg contentTypeUndetermined src` returns nothing; typecheck and suite green.
+- [x] `rg contentTypeUndetermined src` returns nothing; typecheck and suite green.
 
 ## Work Log
 
 ### 2026-11-26 - Filed by /sixees-workflow:review
 **By:** Claude Code
 **Actions:** filed from typescript-reviewer's `convention-drift` class; no ledger match.
+**Learnings:** —
+
+### 2026-11-27 - Resolved on the same branch
+**By:** Claude Code
+**Actions:** renamed at `types/response.ts::ProcessResponseOptions`, `processor.ts::processResponse`, `curl-execute.ts::executeCurlRequest`, the `parser.ts::ParsedResponse.metadataFound` cross-reference and `processor.test.ts`; docblock reworded. Suite 1708 passed. Commit 444313f.
 **Learnings:** —
