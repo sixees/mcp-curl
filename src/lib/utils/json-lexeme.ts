@@ -22,12 +22,12 @@ const { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON as typeof JSON &
  *
  * `engines` is advisory — npm installs on an older host anyway without
  * `engine-strict` — so a runtime without these functions is reachable. There
- * `rawJson` is `undefined` and the call throws inside whichever defence pass
- * reached it first; `post-processor.ts::createWrapper` catches that and tags the
- * **undefended** result as wrapped, so the whole defence is skipped, a downstream
- * wrap short-circuits on the tag, and nothing on the response says so.
- * `LESSONS.md` RC-20 is that failure measured, and RC-24 is where reaching for
- * this API nearly reintroduced it.
+ * `rawJson` is `undefined`, and every parse that passes `keepNumberLexeme` —
+ * `processResponse`'s `jq_filter` branch and `jq/filter.ts::applyJqFilter` —
+ * would fail on its first number with an opaque `TypeError` from inside
+ * `JSON.parse`, reported as a request error that names nothing about the
+ * runtime. `LESSONS.md` RC-20 and RC-24 record what this API's absence has
+ * already cost here.
  *
  * **The guard belongs in this module, not beside a caller.** At
  * `response/processor.ts` module scope it would reach `jq_query` only through
@@ -39,8 +39,8 @@ const { rawJSON: rawJsonImpl, isRawJSON: isRawJsonImpl } = JSON as typeof JSON &
  * compiling, so `tsc` carries the obligation instead of a cast merely
  * asserting it. RC-29.
  *
- * A throw here is loud, immediate, and names the reason. Silence would be a
- * security bypass wearing a compatibility fallback's clothing.
+ * A throw here is loud, immediate, and names the reason. A silent fallback to
+ * a plain parse would instead round every large number with no signal.
  */
 if (typeof rawJsonImpl !== "function" || typeof isRawJsonImpl !== "function") {
     throw new Error(
@@ -56,10 +56,9 @@ if (typeof rawJsonImpl !== "function" || typeof isRawJsonImpl !== "function") {
  * **`isRawNumber` is `JSON.isRawJSON`, which is true for a marker built from any
  * JSON text — not only a number.** The structural guards that read it treat it
  * as "this is a scalar, do not descend", so a marker wrapping an object would
- * make them treat a composite as a scalar. `docs/todos/018` deleted the per-leaf
- * defence walk that made that an undefended-object-graph bug outright, but the
- * misclassification itself is unchanged: `jq/filter.ts`'s walk reads
- * `isRawNumber` and would not descend into a marker wrapping an object. Keeping this private leaves `keepNumberLexeme` as the
+ * make them treat a composite as a scalar: `jq/filter.ts`'s walk reads
+ * `isRawNumber` and would not descend into one. Keeping this private leaves
+ * `keepNumberLexeme` as the
  * only producer in the tree, so the name is true by construction rather than by
  * a convention nothing enforces. RC-29.
  */

@@ -111,10 +111,11 @@ describe("parseResponseWithMetadata", () => {
     });
 
     it("does not reject a legal value for being long", () => {
-        // No length precondition exists, and none is needed — the head match is
-        // anchored and bounded, so the work is independent of the tail's size.
-        // A bound on the whole value — 1 KB, say — would reject this and select
-        // the strictest grammar for a real API.
+        // The head match needs no length precondition of its own — it is anchored
+        // and bounded, so the work is independent of the tail's size. The only
+        // bound is the field's, `LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH`, and a
+        // tighter one on the whole value — 1 KB, say — would reject this and
+        // report no type for a real API.
         const long = 'text/plain; a="' + "x".repeat(512) + '"; b="' + "x".repeat(512) + '"';
         expect(long.length).toBeGreaterThan(1024);
         expect(parseResponseWithMetadata(buf(`b${meta(long)}`), BLOCK).contentType).toBe("text/plain");
@@ -262,7 +263,7 @@ describe("parseResponseWithMetadata — bodyBytes carries the wire octets", () =
         // contains this server's OWN separator plus remote header text that was
         // never body.
         //
-        // Asserted because `docs/todos/018` AC 1 wants a byte-exact body, and
+        // Asserted because the body path promises a byte-exact artefact, and
         // this is the arm where that is not available — a fidelity path built
         // on this field must read the flag, as `processResponse` does.
         const longType = `text/plain; profile="${"x".repeat(LIMITS.MAX_METADATA_TAIL_LENGTH)}"`;

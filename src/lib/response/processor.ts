@@ -21,8 +21,7 @@ import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.j
  * Why a body is not a JSON document this server will return verbatim.
  *
  * **A closed vocabulary this repository owns, carrying zero remote bytes by
- * construction** — per `.claude/rules/04-no-instance-literals.md`, and per
- * `docs/todos/018`, which measured what the alternative costs. V8's own
+ * construction** — per `.claude/rules/04-no-instance-literals.md`. V8's own
  * `SyntaxError.message` embeds up to ten bytes of the body verbatim, and the
  * WHOLE body when the body is short: `JSON.parse('{"a": SUPERSECRET}')` reports
  * ``Unexpected token 'S', "{"a": SUPERSECRET}" is not valid JSON``. So the
@@ -34,9 +33,9 @@ import type { ProcessResponseOptions, ProcessedResponse } from "../types/index.j
  * - `empty-body` — the body is empty or whitespace only.
  * - `looks-like-markup` — the first non-space byte is `<`. Decided before the
  *   parse, and sound to decide there because no JSON value begins with `<`, so
- *   such a body can never parse. This is the member that
- *   answers *"HTML error page, or truncated body?"* — the question
- *   `docs/todos/018` requires the report to answer — without echoing a byte.
+ *   such a body can never parse. This is the member that answers *"HTML error
+ *   page, or truncated body?"* — the question a saved-body report has to
+ *   answer — without echoing a byte.
  * - `invalid-syntax` — the parse threw and none of the above applies.
  *
  * **A bare scalar is not a member, and its absence is the rule.** `null`, `42`
@@ -122,11 +121,15 @@ export function classifyBody(text: string): BodyClassification {
  *   the original keeps the signal for anything a later stage erases, the
  *   sanitised form joins a phrase an invisible character split.
  * - **Steps 3-4** — markup comments, the `<script>`/`<style>` strip, and
- *   markdown beacon removal. Gated on the strip-path cap because
- *   `stripHtmlComments` and `stripMarkdownBeacons` carry no cap of their own.
+ *   markdown beacon removal.
  * - **Step 5** — sanitise + detect again, because removing markup can join what
  *   it separated: `Ig<!-- -->nore previous instructions` is only a phrase once
  *   the comment is gone.
+ *
+ * Steps 3-5 run only when Step 2's output is within `STRIP_PATH_MAX_BYTES`,
+ * and this is the only place that cap is checked: none of `stripHtmlComments`,
+ * `stripScriptStyleBlocks` or `stripMarkdownBeacons` carries one of its own.
+ * Above it the text is returned after Step 2 alone.
  *
  * A JSON document never reaches here: {@link defendForInline} detects on it and
  * returns it unchanged (`LESSONS.md` RC-49). The callers are that function's
@@ -459,9 +462,9 @@ export async function processResponse(
     const hostname = safeHostname(options.url);
 
     // **The gate, once, for both the body and the artefact.** Everything below
-    // forks on this and nothing re-derives it — `docs/todos/018` requires the
-    // two decisions be the same rule spelled once, because they are the same
-    // question: may these bytes be handed over unmodified?
+    // forks on this and nothing re-derives it: the two decisions are one rule
+    // spelled once, because they are the same question — may these bytes be
+    // handed over unmodified?
     //
     // **It classifies the origin's decode, and so does every other reader.**
     // `classifyBody` trims, which is what lets a BOM-prefixed document from a
@@ -514,11 +517,11 @@ export async function processResponse(
     // whole.** The save happens after this block, so a throw here would discard
     // the body outright — an HTML proxy error page fetched with a filter would
     // yield no path and no byte count, where the same page without a filter is
-    // persisted and reported. `docs/todos/018` → *Bad JSON:
-    // report, save, do not inline* and `curl_execute`'s own description both
-    // promise that save unconditionally. Falling through leaves `filterApplied`
-    // false, so `shouldSave`'s `(!classified.json && !filterApplied)` arm takes
-    // it and `savedMessage` names the reason, the byte count and the path.
+    // persisted and reported. `curl_execute`'s own description promises that
+    // save: a jq_filter on a body that is not JSON is not applied and is not an
+    // error. Falling through leaves `filterApplied` false, so `shouldSave`'s
+    // `(!classified.json && !filterApplied)` arm takes it and `savedMessage`
+    // names the reason, the byte count and the path.
     //
     // The requested filter is not separately reported as refused, because
     // `savedMessage` is told *a filter produced this content* and not *a filter
@@ -607,8 +610,8 @@ export async function processResponse(
 
     if (shouldSave) {
         // **The artefact's form is decided by the gate, never by the declared
-        // header** — `docs/todos/018` settles this, and the header is invariant
-        // 1a's named failure shape precisely because a remote writes it.
+        // header** — the header is invariant 1a's named failure shape precisely
+        // because a remote writes it.
         //
         // - **A JSON document is persisted as the ORIGIN'S OCTETS**, byte for
         //   byte, whatever Step 2 would have changed. Its reader is `jq_query`,

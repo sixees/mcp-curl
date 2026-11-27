@@ -468,10 +468,12 @@ export async function executeCurlRequest(
                 undetermined: headersUndetermined,
                 unsupported: headersUnsupported,
             },
-            // A fidelity fact about the body, reported on both branches: as
-            // `body_decode_lossy` under metadata, and as an appended notice
-            // without it. Silence on either branch would leave a re-encoded
-            // body indistinguishable from an exact one.
+            // Out-of-band facts about the body. The lossy decode is reported on
+            // both branches — as `body_decode_lossy` under metadata, and as an
+            // appended notice without it — because silence on either would leave a
+            // re-encoded body indistinguishable from an exact one. The declared
+            // type and `metadata_undetermined` are metadata fields only: the plain
+            // branch has one string and no field to carry them in.
             {
                 decodeWasLossy: processed.decodeWasLossy,
                 declaredContentType: contentType,

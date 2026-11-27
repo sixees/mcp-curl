@@ -655,11 +655,11 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
 
     describe("residual dangerous-scheme cleanup (round-3 P1-2)", () => {
         // The image-inside-dangerous-link nesting case:
-        // `[![safe-img](http://x)](javascript:foo)`. The inner `]` of the
-        // image strip's `[image removed]` replacement blocks the
-        // dangerous-link pattern's `[^\]\n]` label class from spanning to
-        // the outer `]`. The post-pass with `(?<=\])` lookbehind catches
-        // the residual `(javascript:…)`.
+        // `[![safe-img](http://x)](javascript:foo)`. The dangerous-link
+        // pattern cannot match the outer link, because its `[^\]\[\n]` label
+        // class stops at the inner `[` of `![safe-img]`; the image strip then
+        // leaves `[[image removed]](javascript:…)`. The post-pass with the
+        // `(?<=\])` lookbehind catches that residual `(javascript:…)`.
 
         it("strips javascript: URL from outer link of image-inside-link nesting", () => {
             const out = stripMarkdownBeacons(
@@ -702,13 +702,12 @@ describe("stripMarkdownBeacons — image / link / dangerous-scheme", () => {
     });
 
     describe("padded label / URL bypass (round-3 follow-up)", () => {
-        // CodeRabbit flagged that `{0,256}` label cap and `{1,2048}` URL
-        // cap were a load-bearing bypass: an attacker padding a label to
-        // 257+ chars or a URL beyond 2048 chars defeated all four
-        // enforcement patterns. Caps lifted to unbounded (`*`/`+`)
-        // because the negative-character class `[^\]\n]` is linear-time
-        // per attempt and the upstream `STRIP_PATH_MAX_BYTES` cap bounds
-        // total cost.
+        // A length cap on the label or URL is a bypass: padding a label or a
+        // URL past the cap defeats every enforcement pattern. So both classes
+        // are unbounded (`*`/`+`), and cost is bounded instead by
+        // `withinClosableRegion` at the last `)` together with the
+        // `[`-excluding label class `[^\]\[\n]` — not by `STRIP_PATH_MAX_BYTES`,
+        // which limits the input and not the cost.
 
         it("strips an external link with a 1024-char label", () => {
             const longLabel = "a".repeat(1024);
@@ -752,7 +751,7 @@ describe("placeholder constants (round-3-CR-r4 DRY)", () => {
         expect(stripMarkdownBeacons("[click](https://x.com/x)")).toBe(LINK_REMOVED_PLACEHOLDER);
     });
 
-    it("constants do not contain `]` (preserves outer-link strip on nested cases)", () => {
+    it("pins the placeholder forms, which contain `]` (the residual pass covers nested cases)", () => {
         // The image-inside-link nesting case relies on the image
         // placeholder NOT containing characters that defeat the outer
         // link's `[^\]\n]` label class. The current bracketed form

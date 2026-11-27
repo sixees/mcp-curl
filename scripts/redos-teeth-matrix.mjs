@@ -108,10 +108,10 @@ const MECHANISMS = {
     // behavioural difference on four more — the balanced passes plus `stripTagTokens` converge
     // to the same output either way, and the whole suite stays green. So it is a defensive
     // symmetry with the opening class rather than a bound, and a cost matrix cannot witness
-    // something that costs nothing. It was listed here for two rounds and read as witnessed,
-    // because the un-attributed property 1 credited `lastTagCloserEnd`'s walk with its
-    // teeth: `walk` alone puts `closer flood with no >` at 7.3 s and `walk+closerClass` at
-    // 7.2 s, so the pair crossed on the walk and the closing class got the credit.
+    // something that costs nothing. A pair containing it can still cross on its partner and
+    // read as witnessed: `walk` alone puts `closer flood with no >` at 7.3 s and
+    // `walk+closerClass` at 7.2 s, so the crossing is the walk's — which is what property 1's
+    // attribution exists to refuse.
     // **Do not re-add it from a reading of `strip-blocks.ts`** — measure it first.
     mdLabel: {
         what: "the markdown label class re-admitting `[`, image AND link",
@@ -173,16 +173,15 @@ const fail = [];
 // `!` assertions: esbuild strips them, so `text[j]!` in the TypeScript is `text[j]` here.
 //
 // **esbuild's JS API, not `execFileSync("npx", ...)`.** Node cannot launch a `.cmd` shim
-// with `execFile`, and that is what `npx` is on Windows — so the subprocess form failed
-// there even after the paths were fixed. The API removes the subprocess, the `npx`
-// resolution and the `cwd` argument at once, which is why it is the fix rather than a
-// shell flag. `esbuild` is declared in `devDependencies` for this; it was previously
-// reached only as a transitive dependency of `tsup` and `vitest`.
+// with `execFile`, and that is what `npx` is on Windows. The API removes the subprocess,
+// the `npx` resolution and the `cwd` argument at once, which is why it is the fix rather
+// than a shell flag. `esbuild` is declared in `devDependencies` for this rather than left
+// to arrive as a transitive dependency of `tsup` and `vitest`.
 const PRISTINE = join(work, "pristine.mjs");
 buildSync({ entryPoints: [SRC], bundle: true, format: "esm", platform: "node", outfile: PRISTINE, logLevel: "error" });
 const source = readFileSync(PRISTINE, "utf8");
 
-/** Apply a subset of mechanisms, asserting each anchor matched exactly once. */
+/** Apply a subset of mechanisms, asserting each anchor matched exactly `sites` times (default once), so a respelled arm cannot leave part of a mechanism unmutated. */
 function mutate(names) {
     let out = source;
     for (const n of names) {
@@ -336,7 +335,7 @@ console.log(`${CASES.length} cases — ${teeth.length} with teeth, ${without.len
 console.log(`passing population: ${fmt(Math.min(...base.map((b) => b.ms)))} - ${fmt(Math.max(...base.map((b) => b.ms)))} ms`);
 // **`teeth` empty is a state, not an impossibility** — it means no mutation made any case
 // expensive, which is the single most important thing this script could ever report. A bare
-// `reduce` throws `TypeError` on it, so the run died before properties 1-3 could say so.
+// `reduce` throws `TypeError` on it, which would end the run before properties 1-3 could say so.
 const weakest = crossings.length ? crossings.reduce((a, b) => (a.ms < b.ms ? a : b)) : null;
 console.log(
     weakest
@@ -388,10 +387,10 @@ for (const w of without) if (!marked.includes(w)) fail.push(`"${w}" has no subse
 
 // ---- property 4: this matrix measures the TEST's inputs, in BOTH directions
 //
-// **The reconciliation above compares labels, so a drifted body passed it unseen.** CASES
-// restates each input independently, and one had already drifted: `opener flood, no closer`
-// read `repeat(65535)` here against `repeat(65536)` in the test — so the cell reported as
-// that guard's teeth was measured on a different string.
+// **The reconciliation above compares labels, so a drifted body would pass it unseen.**
+// CASES restates each input independently: `opener flood, no closer` reading
+// `repeat(65535)` here against `repeat(65536)` in the test would report as that guard's
+// teeth a cell measured on a different string.
 //
 // Compared as source text rather than by sharing a fixture: the test's table is inside a
 // `.test.ts` with vitest imports, so sharing it would mean a new fixture module and a second

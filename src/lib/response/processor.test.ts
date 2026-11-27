@@ -192,7 +192,7 @@ describe("processResponse — post-jq injection detection", () => {
         );
     });
 
-    it("re-detects a phrase JSON.parse decoded into jq output, and returns the output unrewritten", async () => {
+    it("returns jq output unrewritten when the raw body spells the phrase with an escape", async () => {
         // The raw text holds `\u0049gnore` as a literal six-character escape.
         // `detectJsonAndLog` decodes each escaped token of the raw body, so the
         // log line fires before the filter runs and does not by itself prove the
@@ -356,8 +356,9 @@ describe("processResponse — review-pass P1 fixes (round 2)", () => {
                 url: "http://evil.com",
                 jqFilter: ".cmd",
             });
-            // Detection should fire — the body looks like JSON, jq filtered
-            // it, and the per-host log is the only observability signal.
+            // The phrase is whole in `cmd`, so detection on the raw body fires
+            // before the filter runs: this pins that a filtered request still logs,
+            // not that the post-filter pass is what logs it.
             expect(console.error).toHaveBeenCalledWith(
                 "[injection-defense] [evil.com] InjectionDetected"
             );
@@ -368,8 +369,9 @@ describe("processResponse — review-pass P1 fixes (round 2)", () => {
 describe("invariant 14 — the size gate weighs what the model receives (RC-15)", () => {
     // The model-facing boundary applies `defendForInline` downstream, and on
     // non-JSON text that pass can make text LONGER — `[link removed]` is 14
-    // bytes and `[a](file:)` is 10 — so a gate weighing the raw body would
-    // pass an at-cap body that reaches the model over it.
+    // bytes and `[a](file:)` is 10 — so the inline gate weighs a JSON body
+    // alone, which that pass returns unchanged, and a non-JSON body has no
+    // inline arm at all: it is saved whatever its size.
     const BEACON_BODY = "[a](file:)".repeat(100); // exactly 1000 bytes
     const CAP = 1000;
 
@@ -379,7 +381,7 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
         expect(Buffer.byteLength(defended, "utf8")).toBeGreaterThan(CAP);
     });
 
-    it("saves to file rather than returning an at-cap body the defence will grow", async () => {
+    it("saves a non-JSON body to file at the cap, as it does at any size", async () => {
         const result = await processText(BEACON_BODY, {
             url: "http://example.com",
             maxResultSize: CAP,
@@ -559,7 +561,7 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
 
     it("leaves a body that stays inside the cap after defence inline", async () => {
         // **A JSON document, because nothing else has an inline arm to stay on**
-        // — a non-JSON body is saved unconditionally (`docs/todos/018`). The
+        // — a non-JSON body is saved unconditionally (`processor.ts::processResponse`). The
         // property: a body inside the cap once the model-facing defence is
         // applied is returned rather than saved.
         const result = await processText(JSON.stringify({ a: "[a](file:)".repeat(10) }), {
@@ -607,8 +609,7 @@ describe("invariant 14 — the size gate weighs what the model receives (RC-15)"
 describe("scalar JSON documents keep the exemption (round 4, coderabbitai)", () => {
     // RFC 8259 puts any VALUE at the top level, so a bare string, number,
     // boolean or null is a whole JSON document; `classifyBody` accepts it, so
-    // `processResponse` returns it verbatim under an undetermined content type
-    // like any other.
+    // `processResponse` returns it verbatim like any other.
     //
     // **Only a STRING document is tested.** Number, boolean and null cases
     // would assert `content === body`, which holds under any gate because
@@ -641,8 +642,8 @@ describe("classifyBody — a BOM-prefixed JSON document is still JSON", () => {
     // ones, a BOM-prefixed document every other layer reads as JSON would be
     // classified `invalid-syntax` and fall to the strip arm — where
     // `stripHtmlComments` pairs `<!--` in one field with `-->` in a later one
-    // and deletes the fields between. That is the corruption `docs/todos/018`
-    // exists to prevent.
+    // and deletes the fields between. That is the corruption the JSON arm's
+    // verbatim return exists to prevent (`LESSONS.md` RC-16, RC-64).
     //
     // `processResponse` classifies the origin's decode with this same function,
     // so it meets the BOM too; the wrap is where a wrong verdict would rewrite

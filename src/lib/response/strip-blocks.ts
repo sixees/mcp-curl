@@ -32,23 +32,24 @@ export const IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
 export const LINK_REMOVED_PLACEHOLDER = "[link removed]";
 
 /**
- * 256 KB cap for the HTML-block-strip path. Above the cap the strip step
- * is skipped entirely and the caller's `sanitiseAndDetect` is the only
+ * 256 KB cap for the HTML-block-strip path. Above the cap the strip stages
+ * are skipped entirely and the caller's `sanitizeAndDetect` is the only
  * defence.
  *
  * **It caps the input, not the cost.** A quadratic pattern is still
- * quadratic below the cap — at 256 KB the pre-fix patterns took 82 seconds
- * (invariant 15). Linearity is the patterns' job; this is a size policy.
+ * quadratic below the cap — at 256 KB a quadratic form of these patterns
+ * took 82 seconds (invariant 15). Linearity is the patterns' job; this is a
+ * size policy.
  *
  * The pipeline orders sanitise BEFORE strip so visible-space-padding
- * inflation can't push the strip target above this cap (PR-7 round 2).
+ * inflation can't push the strip target above this cap.
  *
  * **Deliberately smaller than `LIMITS.DEFAULT_MAX_RESULT_SIZE` (500 KB).**
- * Bodies in the 256 KB–500 KB range are returned inline without strip-pass
- * processing — defence-in-depth, not a sandbox; the always-on sanitiser
- * (no size cap) is the primary defence and runs unconditionally on the
- * full body. The strip cap is therefore a circuit-breaker, not a
- * content-size policy.
+ * Non-JSON text between the two is returned inline without strip-pass
+ * processing — defence-in-depth, not a sandbox. The sanitiser has no size
+ * cap and runs on the full text of every non-JSON part; a JSON document is
+ * detected on and never rewritten, at any size. The strip cap is therefore
+ * a circuit-breaker, not a content-size policy.
  *
  * **Exported `@internal`** so the caller (`processor.ts::defendText`) can
  * gate the whole strip path (Steps 3-5) on one cap. None of the passes in
@@ -72,54 +73,51 @@ export const STRIP_PATH_MAX_BYTES = 256 * 1024;
  *
  * Shape: `<tag\b[^<>]*>[\s\S]*?</\s*tag\b[^<>]*>`
  *
- * - **Body** uses lazy `[\s\S]*?` rather than the older negative-lookahead
+ * - **Body** uses lazy `[\s\S]*?` rather than a negative-lookahead
  *   `(?:(?!<\/?tag\b)[\s\S])*?` — each lazy expansion does an O(1) check of
- *   the closer, and it removes the self-healing-payload edge case where the
- *   older form left a `<script>` orphan in the residue.
+ *   the closer, and the lookahead form leaves a `<script>` orphan in the
+ *   residue of a self-healing payload.
  * - **Closer** allows whitespace-or-newline between `</` and `tag` (`\s*`
  *   absorbs `</ script>`, `</\nscript>`), accepts attributes after the
  *   tag name, and is case-insensitive (`i` flag).
- * - **BOTH attribute runs are `[^<>]*`, never `[^>]*`, and each half of that
- *   was learned separately.** On the closer, a run that swallows `<` swallows
- *   the OPENERS after it, which left
+ * - **BOTH attribute runs are `[^<>]*`, never `[^>]*`, and each half guards
+ *   its own quadratic.** On the closer, a run that swallows `<` swallows the
+ *   OPENERS after it, which leaves
  *   `"</script " + "<script".repeat(35000) + ">"` quadratic at 9 s. On the
  *   opener, a run that crosses `<` reaches the CLOSER's own `>` and consumes
  *   it as the opening tag's terminator — so `"<script".repeat(30000) +
- *   "</script>"` put every opener in a region whose only closer it had just
- *   eaten, and each then scanned to end-of-input looking for a second one:
- *   2881 ms measured. Round 2 fixed the closer and left the opener; round 4
- *   found the mirror (`.claude/rules/01-known-shapes.md` K-11).
+ *   "</script>"` puts every opener in a region whose only closer it has just
+ *   eaten, and each then scans to end-of-input looking for a second one:
+ *   2881 ms measured. Fixing either side alone leaves its mirror open
+ *   (`.claude/rules/01-known-shapes.md` K-11).
  *
  *   **What excluding `<` costs, stated rather than buried:** a literal `<`
- *   inside a quoted attribute value is legal HTML and now stops the BALANCED
+ *   inside a quoted attribute value is legal HTML and stops the BALANCED
  *   match, so `<script foo="a<b">alert(1)</script>` keeps `alert(1)` as inert
- *   text. Both tags still go, via {@link stripTagTokens} — this is the RC-11
- *   posture the closer has had since round 2, and the two now agree.
+ *   text. Both tags still go, via {@link stripTagTokens} — the RC-11 posture,
+ *   the same on opener and closer.
  * - **Word boundary** `\b` after the tag name avoids matching
  *   `<scriptlike>` / `<stylesheet>` etc.
  *
- * **Unclosed forms are NOT handled here.** These patterns carried an `|$)`
- * open-to-end-of-input arm until 3.4.0; it deleted the rest of the payload on
- * any orphan opener, so it was replaced by {@link stripTagTokens} below. Between
- * the two, no `<script` / `</script` / `<style` / `</style` token survives a
- * pass — the property the `|$)` arm was actually carrying. `LESSONS.md` RC-11.
+ * **Unclosed forms are NOT handled here.** An open-to-end-of-input `|$)` arm
+ * would delete the rest of the payload on any orphan opener, so orphans are
+ * {@link stripTagTokens}'s job. Between the two, no `<script` / `</script` /
+ * `<style` / `</style` token survives a pass. `LESSONS.md` RC-11.
  *
  * **Linear per match is not linear per pass.** Each lazy expansion costs O(1),
  * so one match attempt is linear — but a `g`-flagged replace starts an attempt
- * at every position, so O(n) failing attempts of O(n) each is O(n²). An earlier
- * revision of this comment reasoned from the per-match property to "the 256 KB
- * cap guarantees wall-clock < 100 ms on any adversarial input"; that was wrong
- * by roughly 800× (4.5 s here, 82 s for the markdown patterns below).
+ * at every position, so O(n) failing attempts of O(n) each is O(n²). The
+ * 256 KB cap does not rescue that: at the cap and without the region bound,
+ * these patterns measured 4.5 s and the markdown patterns below 82 s.
  *
  * Cost is bounded by construction instead — see {@link withinClosableRegion},
- * which every pass in this file goes through. **The first attempt at that bound
- * keyed on the last `>` and was wrong**: `</script>` needs the tag name, not an
- * angle bracket, so `"<script>".repeat(32000)` kept the whole input in scope
- * and still took 1.1 s. The bound now keys on each pattern's own closing token.
- * `LESSONS.md` RC-11.
+ * which every pass in this file goes through. **The bound keys on each
+ * pattern's own closing token, never on the last `>`**: `</script>` needs the
+ * tag name, not an angle bracket, so a `>`-keyed bound keeps
+ * `"<script>".repeat(32000)` wholly in scope at 1.1 s. `LESSONS.md` RC-11.
  *
- * **The region bound is necessary and it is not sufficient, which is round 4's
- * lesson.** Being inside the region only guarantees a closer lies AHEAD; it
+ * **The region bound is necessary and it is not sufficient.** Being inside the
+ * region only guarantees a closer lies AHEAD; it
  * says nothing about whether the attempt can reach it without eating it first.
  * The character classes are what carry that, so the two are one mechanism and a
  * change to either has to be argued against both.
@@ -136,28 +134,28 @@ const STYLE_BLOCK_PATTERN =
  *     excluded so a failing attempt cannot scan forward from every `[` in the
  *     body — 256 KB of `[` measured 82 seconds, synchronously.
  *
- *     **That exclusion is not on its own what makes the pass linear, and an
- *     earlier revision of this docblock said it was.** It bounds the LABEL;
- *     the URL class `[^)\n]+` was left free to scan to end-of-input, so
- *     `"[a](https://x".repeat(19000)` still took 2.9 s. Linearity comes from
- *     the `)` bound in `stripMarkdownBeacons` (ARCHITECTURE.md invariant 15).
+ *     **That exclusion is not on its own what makes the pass linear.** It
+ *     bounds the LABEL; the URL class `[^)\n]+` is free to scan to
+ *     end-of-input, so `"[a](https://x".repeat(19000)` takes 2.9 s on the
+ *     exclusion alone. Linearity comes from the `)` bound in
+ *     `stripMarkdownBeacons` (ARCHITECTURE.md invariant 15).
  *
  *     **Known cost of the `[` exclusion:** a CommonMark-legal label that
  *     itself contains brackets — `[see [1]](https://host/x)` — matches none
- *     of the four patterns and its URL is returned intact. Pre-existing (the
- *     `]` exclusion alone already broke it), and declined rather than fixed:
+ *     of the four patterns and its URL is returned intact. The `]` exclusion
+ *     alone already breaks it, and it is declined rather than fixed:
  *     the population `LESSONS.md` RC-47 measured has no attacker choosing
  *     these bytes, and a terminal client fetches no URL unprompted. A fix
  *     must not restore an unbounded forward scan.
  *
- *     Earlier revisions capped the label at 256 chars to "defeat
- *     catastrophic backtracking". That was a load-bearing **bypass** —
- *     padding a label past 256 chars defeated all four patterns — and it
- *     did not bound cost either. Length caps are the wrong instrument for
- *     both jobs; the character class is the right one.
- *   - Use `[^)\n]+` (unbounded) for the URL portion. Same reasoning: the
- *     previous 2048-char cap was the same bypass class for over-cap URLs,
- *     and `)` terminates the scan.
+ *     A length cap on the label is the wrong instrument for both jobs:
+ *     capping it at 256 chars to "defeat catastrophic backtracking" is a
+ *     load-bearing **bypass** — padding a label past the cap defeats all
+ *     four patterns — and does not bound cost either. The character class
+ *     is the right one.
+ *   - Use `[^)\n]+` (unbounded) for the URL portion. Same reasoning: a
+ *     2048-char cap is the same bypass class for over-cap URLs, and `)`
+ *     terminates the scan.
  *   - Allow optional whitespace after the opening paren so CommonMark's
  *     `[label]( url )` shape matches.
  *   - Require an http(s) scheme — non-http schemes are handled by
@@ -204,10 +202,8 @@ const MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN =
  * `[![alt](https://safe/img.png)](javascript:alert(1))`:
  *
  *   - `MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN` cannot match the OUTER
- *     because the inner `[` of `![alt]` — and then its `]` — each end the
- *     outer pattern's `[^\]\[\n]` label class before reaching the outer
- *     `)`. (Before 3.4.0 only the `]` did; the `[` exclusion added for
- *     linearity makes it fail one character earlier, same outcome.)
+ *     because the inner `[` of `![alt]` ends the outer pattern's
+ *     `[^\]\[\n]` label class before reaching the outer `)`.
  *   - `MARKDOWN_EXTERNAL_IMAGE_PATTERN` THEN replaces the inner image
  *     with `[image removed]`, leaving residue `[[image removed]](javascript:...)`.
  *   - `MARKDOWN_EXTERNAL_LINK_PATTERN` doesn't match — URL is `javascript:`,
@@ -242,7 +238,7 @@ const MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN =
  * limits the search to where an answer could be.
  *
  * **It does not on its own make an attempt succeed, and reading it that way is
- * how this file went quadratic a third time.** A closer ahead is not a closer
+ * the mistake to avoid.** A closer ahead is not a closer
  * the attempt can REACH: with the opener written `[^>]*`, an attribute run
  * crossing `<` ate the region's only closer as its own terminator, and
  * `"<script".repeat(30000) + "</script>"` took 2881 ms inside a correctly
@@ -281,9 +277,9 @@ const WORD_CHAR_PATTERN = /\w/;
  * **`text.toLowerCase()` cannot be used to find offsets into `text`.** Lowercase
  * mappings can change UTF-16 length — U+0130 (`İ`) lowercases to two units — so
  * an index taken from the folded copy addresses a different character in the
- * original. That misaligned every check in {@link lastTagCloserEnd} after any
- * such character, which on `İ<script>…</script>` skipped the balanced pass
- * entirely. Reported on PR #33 by chatgpt-codex-connector.
+ * original, misaligning every check in {@link lastTagCloserEnd} after any such
+ * character — on `İ<script>…</script>` the balanced pass would be skipped
+ * entirely.
  *
  * `| 0x20` folds ASCII letters and leaves everything else unequal to one, which
  * is all this needs: the tag names it compares are ASCII by construction.
@@ -305,7 +301,7 @@ function lastCloserEnd(text: string, closer: string): number {
 /**
  * Index just past the `>` terminating the last COMPLETE `</tag …>` closer, or 0.
  *
- * Three properties are load-bearing and each was learned by getting it wrong:
+ * Three properties are load-bearing, and each has a measured failure:
  *
  * 1. **A bare `>` is not this token.** `</script>` needs the tag name, so
  *    `"<script>".repeat(32000)` — every character before a `>` — left the whole
@@ -317,13 +313,11 @@ function lastCloserEnd(text: string, closer: string): number {
  *    spans openers puts them inside the bound with no closer of their own
  *    after them — `"</script " + "<script".repeat(35000) + ">"` measured 9 s.
  *    This walk, the pattern's closer and the pattern's opener are therefore
- *    all `[^<>]*`, and the three have to agree: round 4 reopened the class
- *    from the opener's side, where a run crossing `<` ate the closer's `>`.
+ *    all `[^<>]*`, and the three have to agree: a run on the opener that
+ *    crosses `<` eats the closer's `>`.
  *    A tag either class rejects still loses both its tags to
  *    {@link stripTagTokens}, so what the exclusion costs is a surviving
  *    body, never a surviving tag.
- *
- * All three reported on PR #33 by chatgpt-codex-connector, rounds 1 and 2.
  *
  * Linear: the outer loop visits each index once, and the whitespace and
  * attribute walks cover disjoint spans.
@@ -346,17 +340,19 @@ function lastTagCloserEnd(text: string, tag: string): number {
 }
 
 /**
- * One pass of the script/style strip.
+ * Strip `<script>` / `<style>` blocks and every remaining tag of either name.
  *
  * Two balanced `replace` passes, each bounded at its own closing token, then
- * {@link stripTagTokens} over the whole string.
+ * {@link stripTagTokens} over the whole string. One call is the whole strip:
+ * nothing here iterates, and neither does the caller.
  *
  * **The order is what makes the balanced passes safe.** They can splice — a
  * removal rejoins its neighbours, so `<scr<script>x</script>ipt>` becomes
  * `<script>` — and the scan that follows is unconditional and covers the whole
  * string, so any token they leave behind is removed. CodeQL flags both replaces
- * for that residue; the decline stands on this ordering, and NOT on the
- * iteration cap that made the same decline wrong twice (`LESSONS.md` RC-13).
+ * for that residue; the decline stands on this ordering, and NOT on an
+ * iteration cap, which an attacker outruns by nesting one layer deeper than
+ * the cap (`LESSONS.md` RC-13).
  * A seeded fuzz over the token alphabet asserts the property directly.
  */
 export function stripScriptStyleBlocks(text: string): string {
@@ -418,16 +414,13 @@ function tagTokenStart(out: string[]): number {
  * and a `replace` exposes exactly ONE layer per pass. Wrapping it in a bounded
  * loop does not converge: it moves the surviving depth to the bound, and an
  * attacker picks the depth.
- * `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)` returned a live
- * `<script>`.
+ * `"<scr".repeat(4) + "<script>" + "ipt>".repeat(4)` returns a live
+ * `<script>` from such a loop.
  *
- * **This was declined twice before it was fixed.** CodeQL reported it as
- * incomplete multi-character sanitisation on both of the first two review
- * rounds, and both times the reply was that the fixed-point loop handles the
- * splice — true only below the cap, which is the part the rule was pointing at.
- * The comment path had the identical defect fixed one commit earlier, so the
- * decline survived a round in which its mirror image was being repaired.
- * Reported as a class by coderabbitai on PR #33.
+ * **"A loop handles the splice" is the argument to refuse here.** CodeQL's
+ * incomplete multi-character sanitisation rule reports exactly this residue,
+ * and the loop answer is true only below its cap — the part the rule points
+ * at. `LESSONS.md` RC-13.
  *
  * Scanning removes the cap from the argument: the token test runs against the
  * OUTPUT tail after every character, so anything a removal splices together is
@@ -459,17 +452,17 @@ function stripTagTokens(text: string): string {
  * Strip HTML comments (`<!-- … -->`) from input. Exported as a separate
  * step so the caller can sequence it as part of the response pipeline.
  *
- * **A single left-to-right scan, and deliberately not a regex.** Two defects
- * killed the regex form and neither had a fix at that layer:
+ * **A single left-to-right scan, and deliberately not a regex.** The regex
+ * form has two defects and neither has a fix at that layer:
  *
  * - **Cost.** `<!--[\s\S]*?-->` scans to end-of-input from every opener that
- *   has no closer ahead: `"<!--".repeat(65536)` took 5.5 s.
+ *   has no closer ahead: `"<!--".repeat(65536)` takes 5.5 s.
  * - **Splicing.** Deleting a literal can form a new one out of its neighbours —
  *   `<!<!----` loses the inner `<!--` and the surviving `<!` and `--` join into
  *   a fresh opener. Iterating a `replace` only pushes that out by one layer per
- *   pass, so `"<!".repeat(5) + "--".repeat(5)` still returned a live `<!--` at
- *   the four-iteration cap. Both reported on PR #33, by chatgpt-codex-connector
- *   and CodeQL's incomplete multi-character sanitisation rule.
+ *   pass, so a four-iteration loop over `"<!".repeat(5) + "--".repeat(5)` still
+ *   returns a live `<!--`. CodeQL's incomplete multi-character sanitisation
+ *   rule reports this shape.
  *
  * Scanning fixes both at once because it tests the OUTPUT tail rather than the
  * input: whatever a removal splices together is re-examined on the next

@@ -1,5 +1,5 @@
 // src/lib/response/post-processor.ts
-// Defence-in-depth wrap for tool results (PR-6b).
+// Defence-in-depth wrap for tool results.
 //
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
 // the full response-side defence — `defendForInline`, then optional
@@ -238,7 +238,7 @@ function tag<T extends object>(result: T): T {
  * Defend one text part.
  *
  * A part that is not a JSON document takes `defendText`'s whole pipeline — the
- * same one, with no options, that the header channel and cURL stderr take — so
+ * same one the header channel and cURL stderr take — so
  * a `registerCustomTool()` handler return, a `beforeRequest` short-circuit and a
  * YAML endpoint result cannot reach the model on a shorter path.
  *
@@ -334,8 +334,9 @@ export function createWrapper(
             // Per-message UUID: one UUID per wrap call, shared by every
             // text part of this result. Generated whenever spotlighting is
             // enabled, unless the result is marked server-authored (see
-            // SERVER_AUTHORED). Sanitise + detect run on every result below,
-            // marked or not.
+            // SERVER_AUTHORED). The defence below runs on every result, marked
+            // or not — the full pipeline on a non-JSON part, detection alone on
+            // a JSON one.
             const requestId =
                 config.enableSpotlighting && !hasOwnTag(result, SERVER_AUTHORED) ? randomUUID() : undefined;
 

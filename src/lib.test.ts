@@ -21,8 +21,9 @@ import * as publicApi from "./lib.js";
 // dropping one of these `export type` lines from `lib.ts` would silently pass
 // the runtime frozen-surface check below. This `import type` pins each one: if
 // the symbol stops being re-exported from `./lib.js`, `tsc --noEmit` reports an
-// error on this file. `npm test` does not catch it — vitest strips types
-// without checking them — so this guard holds only where the type check runs.
+// error on this file. `npm test` runs that check first (`npm run typecheck`),
+// because vitest strips types without checking them — a bare `vitest run`
+// would not catch it.
 //
 // Keep this list in lockstep with the `export type { … }` blocks in `src/lib.ts`.
 import type {

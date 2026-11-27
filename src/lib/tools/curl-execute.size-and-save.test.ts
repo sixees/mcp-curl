@@ -152,7 +152,7 @@ describe("curl_execute size ceiling — both representations are checked", () =>
     });
 });
 
-describe("curl_execute saved artefact — defended, and honestly measured", () => {
+describe("curl_execute saved artefact — never stripped, and honestly measured", () => {
     it("writes the origin's own bytes to disk, strip stages and all", async () => {
         // **No strip stage runs on the body path, and this is where that is
         // asserted rather than inferred.** The artefact is a file an internal
@@ -251,9 +251,8 @@ describe("curl_execute — a jq_filter never discards an unparseable body", () =
         // either link.** The filter gate and the saver can each be correct while a
         // refusal raised above `shouldSave` discards the diagnostic body outright —
         // no path, no byte count, nothing to open — where the same page fetched
-        // without a filter is persisted and reported. `docs/todos/018` → *Bad JSON:
-        // report, save, do not inline* and `curl_execute`'s own description both
-        // promise that save with no filter exception, and a unit test beside the
+        // without a filter is persisted and reported. `curl_execute`'s own
+        // description promises that save with no filter exception, and a unit test beside the
         // gate cannot see a throw placed above the save.
         const body = Buffer.from(
             "<html><body><h1>502 Bad Gateway</h1><!-- trace-id: abc123 --></body></html>",

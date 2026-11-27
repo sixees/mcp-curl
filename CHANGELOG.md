@@ -32,8 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   git tag, not npm.
 - **Content-type-driven strip selection.** Every built-in channel already ran
   every strip stage, so the selector, the JSON exemption flag, the markup
-  sniffer and `utils/content-type.ts` had no live reader and are deleted, with
-  None was on a published entry point. The metadata parser's head match
+  sniffer and `utils/content-type.ts` had no live reader and are deleted. None
+  of them was on a published entry point. The metadata parser's head match
   (`MEDIA_TYPE_HEAD`) is kept: it no longer selects anything, and now bounds
   what `declared_content_type` can carry.
 - **The numeric-entity decoder.** Every caller passed `decodeEntities: false`,

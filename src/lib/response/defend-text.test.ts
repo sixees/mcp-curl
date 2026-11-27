@@ -59,7 +59,7 @@ describe("defendText — every stage runs", () => {
         expect(defendText("[![x](https://evil.test/p.gif)]", HOST)).not.toContain("evil.test");
     });
 
-    // Positive controls. Every assertion above is an absence, and an
+    // Positive controls. Most assertions above are absences, and an
     // implementation that returned "" would satisfy all of them at once.
     it("leaves legitimate header text intact", () => {
         const legit = "HTTP/2 200\r\ncontent-type: application/json\r\nx-request-id: abc-123";
