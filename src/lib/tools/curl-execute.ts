@@ -103,8 +103,10 @@ Returns:
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
     "filepath": string (path to saved file),
-    "declared_content_type": string (the Content-Type the server sent, if any; reported
-      only — whether the body is JSON is decided by parsing it)
+    "declared_content_type": string (type/subtype of the Content-Type the server sent, if
+      any; reported only — whether the body is JSON is decided by parsing it),
+    "metadata_undetermined": boolean (present when the response metadata could not be read,
+      so a missing declared_content_type does not mean the server sent none)
   }
 
 Examples:
@@ -470,7 +472,11 @@ export async function executeCurlRequest(
             // `body_decode_lossy` under metadata, and as an appended notice
             // without it. Silence on either branch would leave a re-encoded
             // body indistinguishable from an exact one.
-            { decodeWasLossy: processed.decodeWasLossy, declaredContentType: contentType }
+            {
+                decodeWasLossy: processed.decodeWasLossy,
+                declaredContentType: contentType,
+                metadataUndetermined: !metadataFound,
+            }
         );
 
         // **Two remote-controlled regions, two content parts — invariant 13's

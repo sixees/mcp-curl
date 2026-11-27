@@ -1923,6 +1923,7 @@ function buildCurlArgs(params) {
 }
 
 // src/lib/response/parser.ts
+var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
 var SYNC_COUNT = /^[ \t]*(\d{1,10})[ \t]*$/;
 var MAX_SYNC_COUNT = 2 ** 31;
 function parseResponseWithMetadata(rawResponse, block) {
@@ -1955,7 +1956,7 @@ function parseResponseWithMetadata(rawResponse, block) {
   const contentType = contentTypeField.length <= LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH ? contentTypeField.toString("utf8").trim() : "";
   return {
     bodyBytes: raw.subarray(0, separatorIndexes[0]),
-    contentType: contentType || void 0,
+    contentType: MEDIA_TYPE_HEAD.exec(contentType)?.[0],
     httpStatus: /^\d{3}$/.test(httpCode) ? Number(httpCode) : void 0,
     redirectUrl: redirect !== void 0 && !URL_CONTROL_CHARACTER.test(redirect) ? redirect : void 0,
     syncHeaderCount: syncCount,
@@ -2693,6 +2694,7 @@ function applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyI
   if (headerInfo?.unsupported) output.headers_unsupported = true;
   if (bodyInfo?.decodeWasLossy) output.body_decode_lossy = true;
   if (bodyInfo?.declaredContentType) output.declared_content_type = bodyInfo.declaredContentType;
+  if (bodyInfo?.metadataUndetermined) output.metadata_undetermined = true;
   if (stderr) output.stderr = stderr;
 }
 function plainBranchNotices(exitCode, headerInfo, bodyInfo) {
@@ -2928,8 +2930,10 @@ Returns:
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
     "filepath": string (path to saved file),
-    "declared_content_type": string (the Content-Type the server sent, if any; reported
-      only \u2014 whether the body is JSON is decided by parsing it)
+    "declared_content_type": string (type/subtype of the Content-Type the server sent, if
+      any; reported only \u2014 whether the body is JSON is decided by parsing it),
+    "metadata_undetermined": boolean (present when the response metadata could not be read,
+      so a missing declared_content_type does not mean the server sent none)
   }
 
 Examples:
@@ -3124,7 +3128,11 @@ async function executeCurlRequest(params, extra = {}) {
       // `body_decode_lossy` under metadata, and as an appended notice
       // without it. Silence on either branch would leave a re-encoded
       // body indistinguishable from an exact one.
-      { decodeWasLossy: processed.decodeWasLossy, declaredContentType: contentType }
+      {
+        decodeWasLossy: processed.decodeWasLossy,
+        declaredContentType: contentType,
+        metadataUndetermined: !metadataFound
+      }
     );
     const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : void 0;
     const noticePart = !params.include_metadata ? plainBranchNotices(

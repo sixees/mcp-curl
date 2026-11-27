@@ -10,10 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`declared_content_type` on the `include_metadata` envelope**, on both the
-  inline and the saved-to-file arm: the `Content-Type` the origin sent, trimmed,
-  absent when it sent none. Reported only — whether a body is JSON is decided by
-  parsing it — so a CDN's HTML error page in front of a JSON API now reads as
-  `text/html` beside `looks-like-markup`. The plain branch never quotes it.
+  inline and the saved-to-file arm: the type/subtype of the `Content-Type` the
+  origin sent, parameters discarded, absent when it sent none. Reported only —
+  whether a body is JSON is decided by parsing it — so a CDN's HTML error page in
+  front of a JSON API now reads as `text/html` beside `looks-like-markup`. The
+  parameter tail is dropped because it is where an origin can put prose and
+  invisible codepoints, and this envelope reaches the model unrewritten. The
+  plain branch never quotes it.
+- **`metadata_undetermined` on the `include_metadata` envelope**, present when
+  the response metadata could not be read, so a missing `declared_content_type`
+  is not mistaken for an origin that sent none.
 
 ### Removed
 
@@ -27,8 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Content-type-driven strip selection.** Every built-in channel already ran
   every strip stage, so the selector, the JSON exemption flag, the markup
   sniffer and `utils/content-type.ts` had no live reader and are deleted, with
-  the `Content-Type` head-match in the metadata parser (`MEDIA_TYPE_HEAD`).
-  None was on a published entry point.
+  None was on a published entry point. The metadata parser's head match
+  (`MEDIA_TYPE_HEAD`) is kept: it no longer selects anything, and now bounds
+  what `declared_content_type` can carry.
 - **The numeric-entity decoder.** Every caller passed `decodeEntities: false`,
   so it never ran. An entity-masked markdown beacon in non-JSON text is
   returned as the inert text it arrived as; `ARCHITECTURE.md` invariant 1a

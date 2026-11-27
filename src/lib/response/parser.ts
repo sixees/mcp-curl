@@ -6,6 +6,25 @@ import { URL_CONTROL_CHARACTER } from "../utils/index.js";
 import { metadataDirectives, type MetadataBlock } from "../types/common.js";
 
 /**
+ * The type/subtype of a media type, anchored, with the parameter tail ignored.
+ *
+ * **It reports, and selects nothing — and it still has a job.** `%{content_type}`
+ * is chosen by the origin, and the parameter tail is the one region of the
+ * grammar that admits arbitrary text: RFC 9110 puts a quoted-string there so it
+ * can hold any characters, prose and invisible codepoints included. The value
+ * reaches the model as `declared_content_type` inside a JSON envelope the wrap
+ * returns untouched, and `JSON.stringify` escapes neither Unicode tag characters
+ * nor U+200B. Keeping only the head is what makes the field a token rather than
+ * a channel, at the one site every consumer reads through (`LESSONS.md` RC-30).
+ *
+ * The lookahead is load-bearing: without it `text/html<script>` would match
+ * `text/html`. Anchored at `^` with every quantifier bounded, so the attempt is
+ * O(1) in the input's length (invariant 15).
+ */
+const MEDIA_TYPE_HEAD =
+    /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
+
+/**
  * Parsed response with body and optional content type.
  */
 export interface ParsedResponse {
@@ -39,15 +58,16 @@ export interface ParsedResponse {
      */
     bodyBytes: Buffer;
     /**
-     * `%{content_type}` as the origin sent it, trimmed — **a reported fact, never
-     * a decision.** Nothing in this tree selects a behaviour on it; it reaches
-     * the model only as `declared_content_type` in the `include_metadata` JSON
-     * envelope, where the serialiser escapes it and it sits beside the body
-     * rather than inside a sentence this server authors (`docs/todos/018`).
+     * The type/subtype of the origin's `Content-Type` — never its parameters —
+     * **a reported fact, never a decision.** Nothing in this tree selects a
+     * behaviour on it; it reaches the model only as `declared_content_type` in
+     * the `include_metadata` JSON envelope. See `MEDIA_TYPE_HEAD` for why the
+     * tail is discarded.
      *
-     * Absent where the origin sent none, and where the field is over
-     * `LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH` — an over-bound field is absent,
-     * never partial (invariant 13).
+     * Absent where the origin sent none, where what it sent is not a media
+     * type, and where the field is over `LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH`
+     * — an over-bound field is absent, never partial (invariant 13). Absent
+     * also when the block was not located; `metadataFound` says which.
      */
     contentType?: string;
     /**
@@ -186,7 +206,7 @@ export function parseResponseWithMetadata(
 
     return {
         bodyBytes: raw.subarray(0, separatorIndexes[0]),
-        contentType: contentType || undefined,
+        contentType: MEDIA_TYPE_HEAD.exec(contentType)?.[0],
         httpStatus: /^\d{3}$/.test(httpCode) ? Number(httpCode) : undefined,
         redirectUrl: redirect !== undefined && !URL_CONTROL_CHARACTER.test(redirect) ? redirect : undefined,
         syncHeaderCount: syncCount,
