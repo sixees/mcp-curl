@@ -60,3 +60,18 @@ No handoff existed; the builder's account was the commit messages and CHANGELOG.
 **Tests:** 1713 passed, 7 skipped (vitest summary line; no structured artefact). `dist/` rebuilt. ReDoS matrix: all asserted properties hold.
 **Semver:** no major — one consumer (operator call); exported `defendText`/`DefendTextOptions` removal shipped as minor.
 **Hooks:** every commit used `core.hooksPath=/dev/null`; no hooks are configured in this repo.
+
+## Review Comments Addressed — 2026-11-27 (PR #57, round 1)
+
+Bots requested: CodeRabbit (full review), Codex (scoped trigger), Copilot (GraphQL `requestReviews`). Codex: no findings on `16794eb`. Copilot: no open issues; its note that `.sixees/ARCHITECTURE.md` was absent from its snapshot is expected — the file is gitignored.
+
+### Changes Made
+| Thread | Severity | Disposition | Where |
+|---|---|---|---|
+| CodeRabbit — `docs/custom-tools.md` › Composing the Full Defence: "Every stage runs" omits the 256 KB strip cap | P3 (`stale-comment`; CodeRabbit "Minor") | fixed — qualified both promises in `custom-tools.md`; sibling in local `.sixees/ARCHITECTURE.md` invariant 1a corrected too (untracked) | this round's commit |
+| CodeRabbit — `docs/custom-tools.md`: entity-masked beacon called "inert" | P3 (`stale-comment`; CodeRabbit "Minor") | fixed — now "entity preserved; a CommonMark renderer decodes it"; sibling in `CHANGELOG.md` corrected. The decline itself (RC-47) is unchanged | this round's commit |
+
+### Declined Findings
+| Thread | Reason |
+|---|---|
+| — | none this round |

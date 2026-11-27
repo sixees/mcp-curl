@@ -38,8 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what `declared_content_type` can carry.
 - **The numeric-entity decoder.** Every caller passed `decodeEntities: false`,
   so it never ran. An entity-masked markdown beacon in non-JSON text is
-  returned as the inert text it arrived as; `ARCHITECTURE.md` invariant 1a
-  records why that is declined rather than fixed.
+  returned with the entity preserved — a client that renders CommonMark
+  decodes it — and `ARCHITECTURE.md` invariant 1a records why that is declined
+  rather than fixed.
 
 ### Fixed
 
