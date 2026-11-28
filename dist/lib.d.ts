@@ -144,8 +144,8 @@ declare function sanitizeDescription(input: string | null | undefined): string;
  *
  * Whitespace runs collapse to a single ASCII space (rather than a marker like
  * "[WHITESPACE REMOVED]") because callers may JSON.parse the sanitized output
- * (`response/processor.ts → processResponse` runs a `jq_filter` over its
- * post-sanitise body, and writes that body to disk). Inserting a non-whitespace
+ * (`sanitizeResponse` and `sanitizeAndDetect` are on the public barrel, and a
+ * custom tool may run either over a JSON body). Inserting a non-whitespace
  * marker into the middle of a JSON document — between tokens or inside a deeply
  * pretty-printed value — would break the parse. A single space preserves
  * JSON validity while still neutralising the padding attack (the hidden tail
