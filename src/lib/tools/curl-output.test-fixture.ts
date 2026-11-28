@@ -97,7 +97,7 @@ export interface MetadataFields {
  * **The one place a test spells the block.** A suite that writes
  * `${SEP}${contentType}` by hand produces a block with the wrong separator
  * count, which parses as undetermined — so its assertions pass or fail against
- * the strictest grammar rather than the path they name. `curl-args-builder.test.ts`
+ * the metadata-not-found arm rather than the path they name. `curl-args-builder.test.ts`
  * holds this function to the builder's real format string.
  */
 export function metadataSuffix({
@@ -167,8 +167,8 @@ export function curlOutputFor({
  * save path is not taken, the reason is in that text, and an earlier version
  * that swallowed it reported a byte comparison against an empty file.
  *
- * Shared rather than copied — `docs/todos/018` gave a second suite the same need
- * the moment a non-JSON body started taking the save arm unconditionally, and
+ * Shared rather than copied — a second suite has the same need, because a
+ * non-JSON body takes the save arm unconditionally, and
  * two spellings of "find the path" is the shape `.claude/rules/02-reuse-first.md`
  * names. The caller owns cleanup: push the return onto whatever list its
  * `afterAll` removes.

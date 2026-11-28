@@ -1,50 +1,25 @@
 // src/lib/response/parser.ts
-// Parse cURL output and check content types
+// Parse cURL output into the body and the `-w` metadata fields
 
 import { LIMITS } from "../config/limits.js";
-import { parseMimeType, URL_CONTROL_CHARACTER } from "../utils/index.js";
+import { URL_CONTROL_CHARACTER } from "../utils/index.js";
 import { metadataDirectives, type MetadataBlock } from "../types/common.js";
 
 /**
  * The type/subtype of a media type, anchored, with the parameter tail ignored.
  *
- * **This is a trust boundary, not a tidiness check.** `%{content_type}` is
- * echoed verbatim from the origin, so consumers that interpolate it are
- * composing remote-chosen text into sentences they author and the model reads
- * as this server speaking. The fix belongs on the field, because the next
- * consumer has not been written yet.
- *
- * **It matches only the head, and keeping only the head is the defence.** A
- * media type's parameter tail admits arbitrary text by design — RFC 9110 puts a
- * quoted-string in the grammar precisely so it can hold any text, and the
- * unquoted token class admits `- . _ ' * % ~ | ^`, which reads to a model as
- * prose without a single space in it. So no grammar over the tail can answer
- * *"can this carry an instruction"*, and validating the tail was work whose
- * result the caller discarded. Nothing in this tree reads a parameter: every
- * consumer passes the value through `parseMimeType`, which splits on `;` and
- * throws the tail away.
- *
- * **Matching the head rather than the whole value is what keeps a malformed
- * tail CLASSIFIABLE**, and that is the property an all-or-nothing grammar cost
- * us. Rejecting `text/html;;` outright collapsed "declared, unusable" into "not
- * declared" — and `defendText` grants the JSON exemption on that absence, so a
- * markup body could claim the exemption and take NO strip stage at all,
- * reopening the bypass `ARCHITECTURE.md` invariant 1a records as closed. Here
- * `text/html;;` yields `text/html`, the exemption is correctly denied, and
- * `undefined` regains one meaning: no parseable media type at all.
- *
- * **Linear per invariant 15 by construction, not by argument.** The match is
- * anchored at `^` and every quantifier is bounded, so the attempt is O(1) in the
- * input's length — measured flat at 0.0001–0.001 ms from 500 bytes to 131 KB,
- * including a backtrack-bait tail. No length precondition is needed to bound the
- * engine's work, because there is no unbounded region for it to scan.
+ * **It reports, and selects nothing — and it still has a job.** `%{content_type}`
+ * is chosen by the origin, and the parameter tail is the one region of the
+ * grammar that admits arbitrary text: RFC 9110 puts a quoted-string there so it
+ * can hold any characters, prose and invisible codepoints included. The value
+ * reaches the model as `declared_content_type` inside a JSON envelope the wrap
+ * returns untouched, and `JSON.stringify` escapes neither Unicode tag characters
+ * nor U+200B. Keeping only the head is what makes the field a token rather than
+ * a channel, at the one site every consumer reads through (`LESSONS.md` RC-30).
  *
  * The lookahead is load-bearing: without it `text/html<script>` would match
- * `text/html` and a garbage header would be classified as HTML. Requiring a
- * parameter separator, whitespace or end-of-input after the subtype makes such a
- * value reject to `undefined`, which selects the strictest grammar.
- *
- * `LESSONS.md` RC-14, RC-31, RC-32.
+ * `text/html`. Anchored at `^` with every quantifier bounded, so the attempt is
+ * O(1) in the input's length (invariant 15).
  */
 const MEDIA_TYPE_HEAD =
     /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
@@ -68,11 +43,10 @@ export interface ParsedResponse {
      * "not found" and "not present" are one value here.
      *
      * **That is why the distinction is on the field rather than left to the
-     * caller.** It fails safe today — `metadataFound: false` selects the
-     * strictest grammar, so everything is stripped — but `docs/todos/018` wants
-     * a byte-exact body, and byte-exactness is only available on the
-     * `metadataFound: true` arm. A fidelity path built on this field has to read
-     * the flag.
+     * caller.** Byte-exactness is only available on the `metadataFound: true`
+     * arm, so a fidelity claim built on this field has to read the flag —
+     * `processResponse` does, and never calls a file saved on the other arm
+     * the origin's exact bytes.
      *
      * Octets rather than a decoded string because `processResponse` must be able
      * to quote a byte count the origin can be held to, and because one
@@ -84,20 +58,16 @@ export interface ParsedResponse {
      */
     bodyBytes: Buffer;
     /**
-     * The type/subtype of a well-formed Content-Type — never its parameters.
+     * The type/subtype of the origin's `Content-Type` — never its parameters —
+     * **a reported fact, never a decision.** Nothing in this tree selects a
+     * behaviour on it; it reaches the model only as `declared_content_type` in
+     * the `include_metadata` JSON envelope. See `MEDIA_TYPE_HEAD` for why the
+     * tail is discarded.
      *
-     * `application/json; charset=utf-8` arrives here as `application/json`.
-     * The parameter tail is discarded after matching because it is the one
-     * region of the grammar that may hold arbitrary remote text, and no
-     * consumer in this tree reads it.
-     *
-     * Absent both where the origin sent none and where what it sent is not a
-     * media type — see `MEDIA_TYPE_HEAD`. The two collapse deliberately:
-     * both mean "no usable declared grammar", and both must select the
-     * strictest one downstream. **That is a claim about a consumer, so it is
-     * enforced at one** — `defendText` tests this field for `undefined`
-     * alongside `contentTypeUndetermined`, because the two absences are keyed
-     * on different facts and only the flag was consulted. `LESSONS.md` RC-31.
+     * Absent where the origin sent none, where what it sent is not a media
+     * type, and where the field is over `LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH`
+     * — an over-bound field is absent, never partial (invariant 13). Absent
+     * also when the block was not located; `metadataFound` says which.
      */
     contentType?: string;
     /**
@@ -129,10 +99,10 @@ export interface ParsedResponse {
      * Whether the `-w` metadata block was located at all.
      *
      * **Distinct from `contentType === undefined`**, and the distinction is
-     * load-bearing: "the origin sent no Content-Type" and "we could not find
-     * our own metadata" must not select the same defences. The second means
-     * every cURL-authored field is missing, so the strictest grammar applies —
-     * see `defendText`'s `contentTypeUndetermined`.
+     * load-bearing: "the origin sent no Content-Type" is a fact about the
+     * origin, while "we could not find our own metadata" means every
+     * cURL-authored field is missing and the body's end is unknown — see
+     * `ProcessResponseOptions.bodyBoundaryUndetermined`.
      */
     metadataFound: boolean;
 }
@@ -140,21 +110,6 @@ export interface ParsedResponse {
 /** A sync count: decimal digits, with the optional whitespace HTTP allows around a value. */
 const SYNC_COUNT = /^[ \t]*(\d{1,10})[ \t]*$/;
 const MAX_SYNC_COUNT = 2 ** 31;
-
-/**
- * Check if a content-type indicates JSON response.
- *
- * Matches:
- * - application/json
- * - Any content type ending with +json (e.g., application/vnd.api+json)
- *
- * @param contentType - The Content-Type header value
- * @returns true if the content type indicates JSON
- */
-export function isJsonContentType(contentType: string | undefined): boolean {
-    const mime = parseMimeType(contentType);
-    return mime === "application/json" || mime.endsWith("+json");
-}
 
 /**
  * Parse cURL output into the body and the `-w` metadata fields.
@@ -171,7 +126,8 @@ export function isJsonContentType(contentType: string | undefined): boolean {
  * - each field has its own bound, and an over-bound field is absent, never
  *   partial;
  * - a block with the wrong separator count is undetermined
- *   (`metadataFound: false`), which selects the strictest grammar downstream.
+ *   (`metadataFound: false`), so nothing downstream treats the body's end
+ *   as known.
  *
  * As a defence-in-depth measure the search covers only the tail of stdout —
  * one separator length per field plus `MAX_METADATA_TAIL_LENGTH` for the
@@ -204,7 +160,7 @@ export function parseResponseWithMetadata(
     // The window is one separator per field PLUS the field allowance, not a
     // flat constant they share. One shared budget lets a long, entirely legal,
     // remote-chosen field push a separator out of the window, and a perfectly
-    // ordinary reply falls back to the strictest grammar. The measured case is
+    // ordinary reply loses every metadata field. The measured case is
     // in LIMITS.MAX_METADATA_TAIL_LENGTH, which owns the sizing.
     const windowBytes = fieldCount * sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
     const searchStart = Math.max(0, raw.length - windowBytes);
@@ -244,29 +200,13 @@ export function parseResponseWithMetadata(
         ? Number(syncDigits)
         : undefined;
 
-    // An empty content type stays undefined rather than becoming "", so "the
-    // origin sent no Content-Type" keeps selecting the strictest grammar
-    // downstream instead of a falsy value nobody checks.
-    //
-    // A value failing MEDIA_TYPE_HEAD resolves to the SAME undefined, and
-    // that is the whole defence: the origin writes these bytes, and downstream
-    // every consumer composes them into a sentence it authors in its own voice.
-    // Constraining the field here means it cannot carry prose at any consumer,
-    // present or future — where fixing each composition site leaves the next
-    // one to be written wrong. A header this rejects was never usable as a
-    // media type, so nothing diagnostic is lost.
     const contentType = contentTypeField.length <= LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH
         ? contentTypeField.toString("utf8").trim()
         : "";
-    // Keep the matched head and nothing else. The match proves there is a media
-    // type here; discarding the tail is what stops the field carrying prose,
-    // because the tail is the only region of the grammar that admits it and
-    // every consumer throws it away regardless (`parseMimeType`).
-    const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
 
     return {
         bodyBytes: raw.subarray(0, separatorIndexes[0]),
-        contentType: validContentType,
+        contentType: MEDIA_TYPE_HEAD.exec(contentType)?.[0],
         httpStatus: /^\d{3}$/.test(httpCode) ? Number(httpCode) : undefined,
         redirectUrl: redirect !== undefined && !URL_CONTROL_CHARACTER.test(redirect) ? redirect : undefined,
         syncHeaderCount: syncCount,

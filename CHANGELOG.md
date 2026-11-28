@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [5.5.0] - 2026-11-28
+
+### Added
+
+- **`declared_content_type` on the `include_metadata` envelope**, on both the
+  inline and the saved-to-file arm: the type/subtype of the `Content-Type` the
+  origin sent, parameters discarded, absent when it sent none. Reported only —
+  whether a body is JSON is decided by parsing it — so a CDN's HTML error page in
+  front of a JSON API now reads as `text/html` beside `looks-like-markup`. The
+  parameter tail is dropped because it is where an origin can put prose and
+  invisible codepoints, and this envelope reaches the model unrewritten. The
+  plain branch never quotes it.
+- **`metadata_undetermined` on the `include_metadata` envelope**, present when
+  the response metadata could not be read, so a missing `declared_content_type`
+  is not mistaken for an origin that sent none.
+
+### Removed
+
+- **`defendText` and `DefendTextOptions` from the `mcp-curl` entry point.** A
+  custom tool's result reaches the same pipeline through the wrap, which is the
+  supported route; a pipeline outside an MCP tool result composes
+  `sanitizeAndDetect` and `applySpotlighting`. Breaking by the letter of
+  semver. Released as a minor on the operator's call: the one known consumer
+  imports only `McpCurlServer` and its hooks, and the package is distributed by
+  git tag, not npm.
+- **Content-type-driven strip selection.** Every built-in channel already ran
+  every strip stage, so the selector, the JSON exemption flag, the markup
+  sniffer and `utils/content-type.ts` had no live reader and are deleted. None
+  of them was on a published entry point. The metadata parser's head match
+  (`MEDIA_TYPE_HEAD`) is kept: it no longer selects anything, and now bounds
+  what `declared_content_type` can carry.
+- **The numeric-entity decoder.** Every caller passed `decodeEntities: false`,
+  so it never ran. An entity-masked markdown beacon in non-JSON text is
+  returned with the entity preserved — a client that renders CommonMark
+  decodes it — and `ARCHITECTURE.md` invariant 1a records why that is declined
+  rather than fixed.
+
+### Fixed
+
+- **The header and stderr channel tests now fail when any one strip stage is
+  removed.** The header `<script>` case asserted on the body entry, and no
+  stderr case covered markup comments or `<script>` blocks, so deleting either
+  stage failed nothing on those channels.
+
 ## [5.4.0] - 2026-11-04
 
 ### Added

@@ -27,7 +27,6 @@ export {
     defendText,
     defendForInline,
     processResponse,
-    type DefendTextOptions,
     type ProcessResponseOptions,
     type ProcessedResponse,
 } from "./processor.js";

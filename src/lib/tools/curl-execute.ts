@@ -6,7 +6,7 @@ import { LIMITS, SERVER, ANY_HOST_POLICY, isHostAllowed, isAllowedUrlScheme, typ
 import { generateMetadataSeparator, type MetadataBlock, type UrlValidationResult } from "../types/index.js";
 import { resolveOutputDir, validateOutputDir } from "../files/index.js";
 import { validateUrlAndResolveDns, checkRateLimits, hostRateLimitSyncHeader, applyServerRemaining } from "../security/index.js";
-import { getErrorMessage, safeHostname, MARKDOWN_MIME, LocalRefusalError, withTimeout } from "../utils/index.js";
+import { getErrorMessage, safeHostname, LocalRefusalError, withTimeout } from "../utils/index.js";
 import { executeCommand, buildCurlArgs, platformSupportsHeaderDump, type CommandResult } from "../execution/index.js";
 import {
     parseResponseWithMetadata,
@@ -102,7 +102,11 @@ Returns:
     "headers": string (response header text; present only with include_headers),
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
-    "filepath": string (path to saved file)
+    "filepath": string (path to saved file),
+    "declared_content_type": string (type/subtype of the Content-Type the server sent, if
+      any; reported only — whether the body is JSON is decided by parsing it),
+    "metadata_undetermined": boolean (present when the response metadata could not be read,
+      so a missing declared_content_type does not mean the server sent none)
   }
 
 Examples:
@@ -412,8 +416,7 @@ export async function executeCurlRequest(
             jqFilter: params.jq_filter,
             maxResultSize: params.max_result_size,
             saveToFile: params.save_to_file,
-            contentType,
-            contentTypeUndetermined: !metadataFound,
+            bodyBoundaryUndetermined: !metadataFound,
             outputDir: validatedOutputDir,
         });
 
@@ -421,12 +424,7 @@ export async function executeCurlRequest(
         // origin's own response headers — so it takes the same defence as the
         // header channel, and the two text channels stay symmetric.
         const defendedStderr = result.stderr
-            ? defendText(result.stderr, {
-                  contentType: MARKDOWN_MIME,
-                  contentTypeUndetermined: false,
-                  hostname: safeHostname(hop.url),
-                  decodeEntities: false,
-              })
+            ? defendText(result.stderr, safeHostname(hop.url))
             : result.stderr;
 
         // **The body is passed on undefended, because the wrap is what defends
@@ -470,11 +468,17 @@ export async function executeCurlRequest(
                 undetermined: headersUndetermined,
                 unsupported: headersUnsupported,
             },
-            // A fidelity fact about the body, reported on both branches: as
-            // `body_decode_lossy` under metadata, and as an appended notice
-            // without it. Silence on either branch would leave a re-encoded
-            // body indistinguishable from an exact one.
-            { decodeWasLossy: processed.decodeWasLossy }
+            // Out-of-band facts about the body. The lossy decode is reported on
+            // both branches — as `body_decode_lossy` under metadata, and as an
+            // appended notice without it — because silence on either would leave a
+            // re-encoded body indistinguishable from an exact one. The declared
+            // type and `metadata_undetermined` are metadata fields only: the plain
+            // branch has one string and no field to carry them in.
+            {
+                decodeWasLossy: processed.decodeWasLossy,
+                declaredContentType: contentType,
+                metadataUndetermined: !metadataFound,
+            }
         );
 
         // **Two remote-controlled regions, two content parts — invariant 13's

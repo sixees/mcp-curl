@@ -255,8 +255,7 @@ var LIMITS = {
    * `%{content_type}` is echoed verbatim from the origin with no length limit
    * of its own. 8KB covers every realistic origin (cURL permits ~100KB per
    * header line, but no real service approaches that in a Content-Type); a
-   * longer value is absent rather than truncated, which selects the strictest
-   * grammar downstream.
+   * longer value is absent rather than truncated, never partial.
    */
   MAX_CONTENT_TYPE_FIELD_LENGTH: CONTENT_TYPE_FIELD_BYTES,
   /**
@@ -283,7 +282,7 @@ var LIMITS = {
    * `application/vnd.api+json; charset=utf-8; profile="…"` evicted the
    * separator at ~144 characters. The parse then found no separator, reported
    * every cURL-authored field as absent, and the caller silently lost both the
-   * header/body split and the content-type-driven strip stages.
+   * header/body split and every other metadata field.
    *
    * Beyond it the parse fails closed and the caller is told the metadata is
    * undetermined.
@@ -515,85 +514,6 @@ async function withTimeout(work, ms, onTimeout) {
   }
 }
 
-// src/lib/utils/content-type.ts
-function parseMimeType(contentType) {
-  if (typeof contentType !== "string" || !contentType) return "";
-  return contentType.split(";")[0].trim().toLowerCase();
-}
-var BINARY_MIME_PREFIXES = [
-  "image/",
-  "audio/",
-  "video/",
-  "font/",
-  "multipart/",
-  "application/vnd.ms-",
-  "application/vnd.openxmlformats-"
-];
-var TEXTUAL_MIME_OVERRIDES = /* @__PURE__ */ new Set([
-  "image/svg+xml"
-]);
-var BINARY_MIME_EXACT = /* @__PURE__ */ new Set([
-  "application/octet-stream",
-  "application/pdf",
-  "application/wasm",
-  "application/zip",
-  "application/gzip",
-  "application/x-gzip",
-  "application/x-tar",
-  "application/x-bzip2",
-  "application/x-7z-compressed",
-  "application/x-rar-compressed",
-  "application/protobuf",
-  "application/x-protobuf",
-  "application/x-msgpack",
-  "application/cbor",
-  "application/msword"
-]);
-function isBinaryContentType(contentType) {
-  const mime = parseMimeType(contentType);
-  if (!mime) return false;
-  if (TEXTUAL_MIME_OVERRIDES.has(mime)) return false;
-  return BINARY_MIME_EXACT.has(mime) || BINARY_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix));
-}
-var MARKUP_COMMENT_MIME_EXACT = /* @__PURE__ */ new Set([
-  "text/html",
-  "application/xhtml+xml",
-  "application/xml",
-  "text/xml",
-  "image/svg+xml"
-]);
-var MARKUP_COMMENT_MIME_SUFFIXES = ["+xml"];
-function supportsMarkupComments(contentType) {
-  const mime = parseMimeType(contentType);
-  if (!mime) return false;
-  if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return true;
-  return MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
-}
-var MARKDOWN_MIME = "text/markdown";
-var JSON_MIME = "application/json";
-var MARKDOWN_MIME_EXACT = /* @__PURE__ */ new Set([
-  MARKDOWN_MIME,
-  "text/x-markdown"
-]);
-var MARKDOWN_MIME_SUFFIXES = ["+markdown"];
-function isMarkdownContentType(contentType) {
-  const mime = parseMimeType(contentType);
-  if (!mime) return false;
-  if (MARKDOWN_MIME_EXACT.has(mime)) return true;
-  return MARKDOWN_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix));
-}
-function isSniffableContentType(contentType) {
-  const mime = parseMimeType(contentType);
-  if (mime === JSON_MIME) return false;
-  if (MARKUP_COMMENT_MIME_EXACT.has(mime)) return false;
-  if (MARKUP_COMMENT_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix))) return false;
-  if (MARKDOWN_MIME_EXACT.has(mime)) return false;
-  if (MARKDOWN_MIME_SUFFIXES.some((suffix) => mime.endsWith(suffix))) return false;
-  if (mime === "" || mime === "text/plain") return true;
-  if (mime.startsWith("text/")) return true;
-  return isBinaryContentType(contentType);
-}
-
 // src/lib/config/session.ts
 var SESSION = {
   /** Maximum concurrent HTTP sessions */
@@ -815,128 +735,13 @@ var JqQuerySchema = z2.object({
   output_dir: z2.string().optional().describe("Directory to save result files (must exist and be writable)")
 });
 
-// src/lib/jq/tokenizer.ts
-function parseQuotedKey(filter, quoteIndex) {
-  const quote = filter[quoteIndex];
-  let i = quoteIndex + 1;
-  let key = "";
-  let foundClosingQuote = false;
-  while (i < filter.length) {
-    const ch = filter[i];
-    if (ch === "\\") {
-      if (i + 1 < filter.length) {
-        key += filter[i + 1];
-        i += 2;
-        continue;
-      }
-      key += ch;
-      i++;
-      continue;
-    }
-    if (ch === quote) {
-      i++;
-      foundClosingQuote = true;
-      break;
-    }
-    key += ch;
-    i++;
-  }
-  if (!foundClosingQuote) {
-    throw new Error(`Missing closing quote ${quote} in filter "${filter}"`);
-  }
-  if (i >= filter.length || filter[i] !== "]") {
-    throw new Error(`Missing closing bracket "]" after quoted key in filter "${filter}"`);
-  }
-  return { token: { type: "key", value: key }, newIndex: i + 1 };
-}
-function parseNumericOrSlice(filter, contentStart, bracketStart) {
-  let i = contentStart;
-  let numStr = "";
-  let hasColon = false;
-  while (i < filter.length && filter[i] !== "]") {
-    if (filter[i] === ":") hasColon = true;
-    numStr += filter[i];
-    i++;
-  }
-  if (i >= filter.length) {
-    throw new Error(`Unterminated bracket expression in filter "${filter}" at position ${bracketStart}`);
-  }
-  i++;
-  if (hasColon) {
-    return parseSlice(numStr, filter, i);
-  }
-  return parseIndex(numStr, filter, i);
-}
-function parseSlice(numStr, filter, newIndex) {
-  const parts = numStr.split(":");
-  if (parts.length > 2) {
-    throw new Error(`Invalid slice "[${numStr}]" in filter "${filter}": only [start:end] format is supported`);
-  }
-  let start;
-  if (parts[0]) {
-    const parsedStart = parseInt(parts[0], 10);
-    if (Number.isNaN(parsedStart)) {
-      throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}"`);
-    }
-    if (!Number.isSafeInteger(parsedStart)) {
-      throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": exceeds safe integer range`);
-    }
-    if (parsedStart < 0) {
-      throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": negative indices are not supported`);
-    }
-    if (parts[0] !== String(parsedStart)) {
-      throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": leading zeros are not allowed`);
-    }
-    start = parsedStart;
-  }
-  let end;
-  if (parts[1]) {
-    const parsedEnd = parseInt(parts[1], 10);
-    if (Number.isNaN(parsedEnd)) {
-      throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}"`);
-    }
-    if (!Number.isSafeInteger(parsedEnd)) {
-      throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": exceeds safe integer range`);
-    }
-    if (parsedEnd < 0) {
-      throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": negative indices are not supported`);
-    }
-    if (parts[1] !== String(parsedEnd)) {
-      throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": leading zeros are not allowed`);
-    }
-    end = parsedEnd;
-  }
-  return { token: { type: "slice", start, end }, newIndex };
-}
-function parseIndex(numStr, filter, newIndex) {
-  const index = parseInt(numStr, 10);
-  if (Number.isNaN(index)) {
-    throw new Error(`Invalid array index "${numStr}" in filter "${filter}"`);
-  }
-  if (index < 0) {
-    throw new Error(`Invalid array index "${numStr}" in filter "${filter}": negative indices are not supported`);
-  }
-  if (!Number.isSafeInteger(index)) {
-    throw new Error(`Invalid array index "${numStr}" in filter "${filter}": exceeds safe integer range`);
-  }
-  if (numStr !== String(index)) {
-    throw new Error(`Invalid array index "${numStr}" in filter "${filter}": leading zeros and explicit '+' signs are not allowed`);
-  }
-  return { token: { type: "index", value: index }, newIndex };
-}
-function parseBracketToken(filter, startIndex) {
-  const contentStart = startIndex + 1;
-  if (contentStart >= filter.length) {
-    throw new Error(`Unterminated bracket "[" in filter "${filter}"`);
-  }
-  if (filter[contentStart] === "]") {
-    return { token: { type: "iterate" }, newIndex: contentStart + 1 };
-  }
-  if (filter[contentStart] === '"' || filter[contentStart] === "'") {
-    return parseQuotedKey(filter, contentStart);
-  }
-  return parseNumericOrSlice(filter, contentStart, startIndex);
-}
+// src/lib/config/server.ts
+var SERVER = {
+  /** MCP server name for protocol identification */
+  NAME: "curl-mcp-server",
+  /** Server version from package.json */
+  VERSION: true ? "5.5.0" : "0.0.0"
+};
 
 // src/lib/config/jq.ts
 var JQ = {
@@ -990,388 +795,6 @@ var UNSUPPORTED_KEY_CHARS = /* @__PURE__ */ new Set([
   "\v"
 ]);
 
-// src/lib/jq/parser.ts
-function parseJqFilter(filter) {
-  if (filter.length > JQ.MAX_FILTER_LENGTH) {
-    throw new Error(`jq_filter exceeds maximum length of ${JQ.MAX_FILTER_LENGTH} characters`);
-  }
-  const startTime = Date.now();
-  const tokens = [];
-  let i = filter[0] === "." ? 1 : 0;
-  while (i < filter.length) {
-    if (Date.now() - startTime > JQ.MAX_PARSE_TIME_MS) {
-      throw new Error("jq_filter parsing timeout - filter too complex");
-    }
-    if (filter[i] === ".") {
-      i++;
-      continue;
-    }
-    if (filter[i] === "[") {
-      const result = parseBracketToken(filter, i);
-      tokens.push(result.token);
-      if (tokens.length > JQ.MAX_TOKENS) {
-        throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_TOKENS} path segments`);
-      }
-      i = result.newIndex;
-      continue;
-    }
-    let key = "";
-    while (i < filter.length && filter[i] !== "." && filter[i] !== "[") {
-      const ch = filter[i];
-      if (UNSUPPORTED_KEY_CHARS.has(ch)) {
-        throw new Error(
-          `Invalid jq_filter "${filter}": unsupported jq syntax ${JSON.stringify(ch)} at position ${i}. This filter supports paths only: .key, .[n], .[n:m], .["key"], and comma-separated paths. Pipes, object construction, and functions (e.g. "| {id}", "map(...)", "select(...)") are not supported.`
-        );
-      }
-      key += ch;
-      i++;
-    }
-    if (key) {
-      if (/^\d+$/.test(key)) {
-        const parsed = parseInt(key, 10);
-        if (!Number.isSafeInteger(parsed)) {
-          throw new Error(
-            `Invalid array index "${key}" in filter "${filter}": exceeds safe integer range`
-          );
-        }
-        if (key !== String(parsed)) {
-          throw new Error(
-            `Invalid array index "${key}" in filter "${filter}": leading zeros are not allowed`
-          );
-        }
-        tokens.push({ type: "index", value: parsed });
-      } else {
-        tokens.push({ type: "key", value: key });
-      }
-      if (tokens.length > JQ.MAX_TOKENS) {
-        throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_TOKENS} path segments`);
-      }
-    }
-  }
-  const iterateIndex = tokens.findIndex((t) => t.type === "iterate");
-  if (iterateIndex !== -1 && iterateIndex !== tokens.length - 1) {
-    throw new Error(
-      `Invalid jq_filter "${filter}": "[]" cannot be followed by further path segments. This filter does not support jq's iterate-and-project (e.g. ".items[].id"); use an explicit index (".items[0].id") or a slice (".items[0:20]") instead.`
-    );
-  }
-  return tokens;
-}
-function splitJqFilters(filter) {
-  if (filter.length > JQ.MAX_FILTER_LENGTH) {
-    throw new Error(`jq_filter exceeds maximum length of ${JQ.MAX_FILTER_LENGTH} characters`);
-  }
-  const startTime = Date.now();
-  const filters = [];
-  let current = "";
-  let bracketDepth = 0;
-  let inQuote = null;
-  let escaped = false;
-  for (let i = 0; i < filter.length; i++) {
-    if (Date.now() - startTime > JQ.MAX_PARSE_TIME_MS) {
-      throw new Error("jq_filter parsing timeout - filter too complex");
-    }
-    const ch = filter[i];
-    if (escaped) {
-      current += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch === "\\" && inQuote) {
-      current += ch;
-      escaped = true;
-      continue;
-    }
-    if ((ch === '"' || ch === "'") && !inQuote) {
-      inQuote = ch;
-      current += ch;
-      continue;
-    }
-    if (ch === inQuote) {
-      inQuote = null;
-      current += ch;
-      continue;
-    }
-    if (inQuote) {
-      current += ch;
-      continue;
-    }
-    if (ch === "[") {
-      bracketDepth++;
-      current += ch;
-      continue;
-    }
-    if (ch === "]") {
-      bracketDepth--;
-      if (bracketDepth < 0) {
-        throw new Error(
-          `Invalid jq_filter "${filter}": unmatched closing bracket "]"`
-        );
-      }
-      current += ch;
-      continue;
-    }
-    if (ch === "," && bracketDepth === 0) {
-      const trimmed2 = current.trim();
-      if (!trimmed2) {
-        const position = filters.length === 0 ? "leading" : "consecutive";
-        throw new Error(
-          `Invalid jq_filter "${filter}": ${position} comma at position ${i}`
-        );
-      }
-      filters.push(trimmed2);
-      current = "";
-      continue;
-    }
-    current += ch;
-  }
-  if (inQuote) {
-    throw new Error(
-      `Invalid jq_filter "${filter}": unclosed ${inQuote === '"' ? "double" : "single"} quote`
-    );
-  }
-  if (bracketDepth > 0) {
-    throw new Error(
-      `Invalid jq_filter "${filter}": unclosed bracket "["`
-    );
-  }
-  const trimmed = current.trim();
-  if (!trimmed && filters.length > 0) {
-    throw new Error(
-      `Invalid jq_filter "${filter}": trailing comma`
-    );
-  }
-  if (trimmed) {
-    filters.push(trimmed);
-  }
-  if (filters.length > JQ.MAX_FILTERS) {
-    throw new Error(
-      `jq_filter has too many comma-separated paths (${filters.length}). Maximum allowed is ${JQ.MAX_FILTERS}.`
-    );
-  }
-  return filters;
-}
-
-// src/lib/jq/filter.ts
-function isRecord(value) {
-  if (isRawNumber(value)) return false;
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-function applySingleJqFilter(data, filter) {
-  const tokens = parseJqFilter(filter);
-  if (tokens.length === 0) {
-    throw new Error(
-      `Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`
-    );
-  }
-  let result = data;
-  for (const token of tokens) {
-    if (result === null || result === void 0) {
-      return null;
-    }
-    switch (token.type) {
-      case "key":
-        if (!isRecord(result)) {
-          return null;
-        }
-        result = result[token.value];
-        break;
-      case "index":
-        if (Array.isArray(result)) {
-          result = result[token.value];
-        } else {
-          return null;
-        }
-        break;
-      case "slice":
-        if (Array.isArray(result)) {
-          result = result.slice(token.start, token.end);
-        } else {
-          return null;
-        }
-        break;
-      case "iterate":
-        if (!Array.isArray(result)) {
-          return null;
-        }
-        break;
-    }
-  }
-  return result;
-}
-function applyJqFilterToParsed(data, filter) {
-  const filters = splitJqFilters(filter);
-  if (filters.length === 0) {
-    throw new Error(
-      `Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`
-    );
-  }
-  if (filters.length > JQ.MAX_FILTERS) {
-    throw new Error(
-      `jq_filter exceeds maximum of ${JQ.MAX_FILTERS} comma-separated paths`
-    );
-  }
-  if (filters.length === 1) {
-    const result = applySingleJqFilter(data, filters[0]);
-    return JSON.stringify(result, null, 2) ?? "null";
-  }
-  const results = filters.map((f) => applySingleJqFilter(data, f));
-  return JSON.stringify(results, null, 2);
-}
-function applyJqFilter(jsonString, filter) {
-  let data;
-  try {
-    data = JSON.parse(jsonString.trim(), keepNumberLexeme);
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      const preview = jsonString.slice(0, LIMITS.ERROR_PREVIEW_LENGTH);
-      throw new Error(
-        `Response is not valid JSON. Cannot apply jq_filter.
-Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
-      );
-    }
-    throw error;
-  }
-  return applyJqFilterToParsed(data, filter);
-}
-
-// src/lib/response/file-saver.ts
-import { randomUUID } from "crypto";
-import { join as join2, resolve as resolve2 } from "path";
-import { writeFile, realpath as realpath2 } from "fs/promises";
-
-// src/lib/config/security/validation.ts
-var UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-var WINDOWS_RESERVED_BASENAMES_SET = Object.freeze(
-  /* @__PURE__ */ new Set([
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    "COM1",
-    "COM2",
-    "COM3",
-    "COM4",
-    "COM5",
-    "COM6",
-    "COM7",
-    "COM8",
-    "COM9",
-    "LPT1",
-    "LPT2",
-    "LPT3",
-    "LPT4",
-    "LPT5",
-    "LPT6",
-    "LPT7",
-    "LPT8",
-    "LPT9"
-  ])
-);
-var WINDOWS_RESERVED_BASENAMES = Object.freeze(
-  Array.from(WINDOWS_RESERVED_BASENAMES_SET)
-);
-function isWindowsReservedBasename(name) {
-  return WINDOWS_RESERVED_BASENAMES_SET.has(name.toUpperCase());
-}
-var PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
-var WRITE_OUT_HEADER_NAME = /^[!#$&'*+.^_`|~0-9A-Za-z-]+$/;
-
-// src/lib/files/temp-manager.ts
-import { tmpdir } from "os";
-import { join } from "path";
-import { mkdtemp, chmod, rm, readdir, stat } from "fs/promises";
-var sharedTempDir = null;
-var tempDirPromise = null;
-var lastFailureTime = 0;
-async function getOrCreateTempDir() {
-  if (tempDirPromise) {
-    return tempDirPromise;
-  }
-  const now = Date.now();
-  if (lastFailureTime && now - lastFailureTime < TEMP_DIR.RETRY_BACKOFF_MS) {
-    const waitMs = TEMP_DIR.RETRY_BACKOFF_MS - (now - lastFailureTime);
-    throw new Error(
-      `Temp directory creation failed recently. Retry in ${waitMs}ms.`
-    );
-  }
-  tempDirPromise = (async () => {
-    let dir = null;
-    try {
-      dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
-      await chmod(dir, 448);
-      sharedTempDir = dir;
-      lastFailureTime = 0;
-      return dir;
-    } catch (error) {
-      if (dir) {
-        try {
-          await rm(dir, { recursive: true, force: true });
-        } catch (cleanupError) {
-          console.warn("Failed to cleanup temp directory after chmod failure:", cleanupError);
-        }
-      }
-      lastFailureTime = Date.now();
-      tempDirPromise = null;
-      throw error;
-    }
-  })();
-  return tempDirPromise;
-}
-function getSharedTempDir() {
-  return sharedTempDir;
-}
-async function cleanupOrphanedTempDirs() {
-  try {
-    const tempBase = tmpdir();
-    const entries = await readdir(tempBase);
-    const now = Date.now();
-    for (const entry of entries) {
-      if (entry.startsWith(TEMP_DIR.PREFIX)) {
-        const dirPath = join(tempBase, entry);
-        if (dirPath === sharedTempDir) continue;
-        try {
-          const stats = await stat(dirPath);
-          const ageMs = now - stats.mtimeMs;
-          if (ageMs < TEMP_DIR.ORPHAN_MIN_AGE_MS) {
-            continue;
-          }
-          await rm(dirPath, { recursive: true, force: true });
-        } catch (error) {
-          const errno = error.code;
-          if (errno !== "ENOENT" && errno !== "EBUSY") {
-            console.error(`Unexpected error cleaning orphaned temp dir ${dirPath}:`, error);
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Error during orphaned temp dir cleanup:", error);
-  }
-}
-async function cleanupTempDir() {
-  if (sharedTempDir) {
-    try {
-      await rm(sharedTempDir, { recursive: true, force: true });
-    } catch (error) {
-      const errno = error.code;
-      if (errno === "ENOENT") {
-      } else if (errno === "EBUSY" || errno === "EPERM" || errno === "EACCES") {
-        console.error(`Security warning: Failed to clean temp directory (${errno}):`, sharedTempDir, error);
-      } else {
-        console.error("Warning: Failed to clean up temp directory:", error);
-      }
-    } finally {
-      sharedTempDir = null;
-      tempDirPromise = null;
-    }
-  }
-  lastFailureTime = 0;
-}
-
-// src/lib/files/output-dir.ts
-import { resolve } from "path";
-import { stat as stat2, access, realpath, constants as fsConstants } from "fs/promises";
-
 // src/lib/config/environment.ts
 var ENV = {
   /** Directory for saving response files */
@@ -1391,6 +814,33 @@ var ENV = {
   /** Override default Referer header (empty string disables) */
   REFERER: "MCP_CURL_REFERER"
 };
+
+// src/lib/config/defaults.ts
+var DEFAULT_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 mcp-curl/${SERVER.VERSION}`;
+var DEFAULT_REFERER = "";
+function resolveDefault(configValue, envVar, builtInDefault) {
+  if (configValue !== void 0) return configValue || void 0;
+  const envValue = process.env[envVar];
+  if (envValue !== void 0) return envValue || void 0;
+  return builtInDefault || void 0;
+}
+var hasHeaderKey = (obj, key) => Object.keys(obj).some((k) => k.toLowerCase() === key.toLowerCase());
+function applyDefaultHeaders(headers, userAgent, config) {
+  const result = { ...headers };
+  let resolvedUA = userAgent;
+  if (resolvedUA === void 0 && !hasHeaderKey(result, "User-Agent")) {
+    resolvedUA = resolveDefault(config?.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
+  }
+  if (!hasHeaderKey(result, "Referer")) {
+    const referer = resolveDefault(config?.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
+    if (referer) result["Referer"] = referer;
+  }
+  return { headers: result, userAgent: resolvedUA };
+}
+
+// src/lib/config/labels.ts
+var JQ_QUERY_HOSTNAME_LABEL = "n/a";
+var CUSTOM_TOOL_HOSTNAME_LABEL = "custom";
 
 // src/lib/config/security/ssrf.ts
 var IPV4_MAPPED_IPV6_HEX_RE = /^\[?::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]?$/i;
@@ -1502,6 +952,43 @@ function isAllowedLocalhostPort(port) {
   return ALLOWED_LOCALHOST_PORTS_INTERNAL.has(port) || port > MIN_UNPRIVILEGED_PORT;
 }
 
+// src/lib/config/security/validation.ts
+var UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var WINDOWS_RESERVED_BASENAMES_SET = Object.freeze(
+  /* @__PURE__ */ new Set([
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9"
+  ])
+);
+var WINDOWS_RESERVED_BASENAMES = Object.freeze(
+  Array.from(WINDOWS_RESERVED_BASENAMES_SET)
+);
+function isWindowsReservedBasename(name) {
+  return WINDOWS_RESERVED_BASENAMES_SET.has(name.toUpperCase());
+}
+var PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
+var WRITE_OUT_HEADER_NAME = /^[!#$&'*+.^_`|~0-9A-Za-z-]+$/;
+
 // src/lib/config/security/blocked-dirs.ts
 var LINUX_BLOCKED_DIRS = Object.freeze([
   "/etc",
@@ -1586,7 +1073,122 @@ function createBlockedDirectoryError(originalPath, resolvedPath) {
   );
 }
 
+// src/lib/types/common.ts
+import { randomUUID } from "crypto";
+function generateMetadataSeparator() {
+  return `
+---MCP-CURL-${randomUUID()}---
+`;
+}
+function metadataDirectives(block) {
+  const { separator, syncHeaderName } = block;
+  if (separator.length === 0) {
+    throw new Error("Invalid metadata block: separator must not be empty.");
+  }
+  if (syncHeaderName === void 0) {
+    return ["%{http_code}", "%{redirect_url}", "%{content_type}"];
+  }
+  if (!WRITE_OUT_HEADER_NAME.test(syncHeaderName)) {
+    throw new Error("Invalid sync header name: must be an HTTP field name (RFC 9110 token) without %.");
+  }
+  return ["%{http_code}", "%{redirect_url}", `%header{${syncHeaderName}}`, "%{content_type}"];
+}
+
+// src/lib/files/temp-manager.ts
+import { tmpdir } from "os";
+import { join } from "path";
+import { mkdtemp, chmod, rm, readdir, stat } from "fs/promises";
+var sharedTempDir = null;
+var tempDirPromise = null;
+var lastFailureTime = 0;
+async function getOrCreateTempDir() {
+  if (tempDirPromise) {
+    return tempDirPromise;
+  }
+  const now = Date.now();
+  if (lastFailureTime && now - lastFailureTime < TEMP_DIR.RETRY_BACKOFF_MS) {
+    const waitMs = TEMP_DIR.RETRY_BACKOFF_MS - (now - lastFailureTime);
+    throw new Error(
+      `Temp directory creation failed recently. Retry in ${waitMs}ms.`
+    );
+  }
+  tempDirPromise = (async () => {
+    let dir = null;
+    try {
+      dir = await mkdtemp(join(tmpdir(), TEMP_DIR.PREFIX));
+      await chmod(dir, 448);
+      sharedTempDir = dir;
+      lastFailureTime = 0;
+      return dir;
+    } catch (error) {
+      if (dir) {
+        try {
+          await rm(dir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          console.warn("Failed to cleanup temp directory after chmod failure:", cleanupError);
+        }
+      }
+      lastFailureTime = Date.now();
+      tempDirPromise = null;
+      throw error;
+    }
+  })();
+  return tempDirPromise;
+}
+function getSharedTempDir() {
+  return sharedTempDir;
+}
+async function cleanupOrphanedTempDirs() {
+  try {
+    const tempBase = tmpdir();
+    const entries = await readdir(tempBase);
+    const now = Date.now();
+    for (const entry of entries) {
+      if (entry.startsWith(TEMP_DIR.PREFIX)) {
+        const dirPath = join(tempBase, entry);
+        if (dirPath === sharedTempDir) continue;
+        try {
+          const stats = await stat(dirPath);
+          const ageMs = now - stats.mtimeMs;
+          if (ageMs < TEMP_DIR.ORPHAN_MIN_AGE_MS) {
+            continue;
+          }
+          await rm(dirPath, { recursive: true, force: true });
+        } catch (error) {
+          const errno = error.code;
+          if (errno !== "ENOENT" && errno !== "EBUSY") {
+            console.error(`Unexpected error cleaning orphaned temp dir ${dirPath}:`, error);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error during orphaned temp dir cleanup:", error);
+  }
+}
+async function cleanupTempDir() {
+  if (sharedTempDir) {
+    try {
+      await rm(sharedTempDir, { recursive: true, force: true });
+    } catch (error) {
+      const errno = error.code;
+      if (errno === "ENOENT") {
+      } else if (errno === "EBUSY" || errno === "EPERM" || errno === "EACCES") {
+        console.error(`Security warning: Failed to clean temp directory (${errno}):`, sharedTempDir, error);
+      } else {
+        console.error("Warning: Failed to clean up temp directory:", error);
+      }
+    } finally {
+      sharedTempDir = null;
+      tempDirPromise = null;
+    }
+  }
+  lastFailureTime = 0;
+}
+
 // src/lib/files/output-dir.ts
+import { resolve } from "path";
+import { stat as stat2, access, realpath, constants as fsConstants } from "fs/promises";
 function resolveOutputDir(paramDir) {
   if (paramDir !== void 0) {
     const trimmedParam = paramDir.trim();
@@ -1649,201 +1251,6 @@ async function validateOutputDir(dir) {
     throw new Error(`Invalid output_dir "${dir}": ${reason}`);
   }
   return realPath;
-}
-
-// src/lib/response/file-saver.ts
-function createSafeFilenameBase(input, fallback = "response") {
-  const squeeze = (s) => s.replace(/[^a-zA-Z0-9]/g, "_").slice(0, LIMITS.FILENAME_MAX_LENGTH).replace(/^_+|_+$/g, "");
-  const safeFallback = squeeze(fallback) || "response";
-  let base = squeeze(input) || safeFallback;
-  if (isWindowsReservedBasename(base)) {
-    base = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
-  }
-  return base;
-}
-async function writeUniqueFile(content, targetDir, nameBase, fallback) {
-  const safeName = createSafeFilenameBase(nameBase, fallback);
-  const filename = `${safeName}_${Date.now()}_${randomUUID().slice(0, 8)}.txt`;
-  const filepath = join2(targetDir, filename);
-  await writeFile(filepath, content, { mode: 384, flag: "wx" });
-  return filepath;
-}
-async function saveResponseToFile(content, url, outputDir) {
-  const targetDir = outputDir ?? await getOrCreateTempDir();
-  if (outputDir) {
-    const realDir = await realpath2(resolve2(outputDir));
-    const normalizedTarget = await realpath2(resolve2(targetDir));
-    if (realDir !== normalizedTarget) {
-      throw new Error(`Output directory path mismatch after normalization`);
-    }
-  }
-  let baseName;
-  try {
-    const urlObj = new URL(url);
-    baseName = urlObj.hostname + urlObj.pathname;
-  } catch (error) {
-    if (error instanceof TypeError) {
-      baseName = url;
-    } else {
-      throw error;
-    }
-  }
-  return writeUniqueFile(content, targetDir, baseName);
-}
-
-// src/lib/response/strip-blocks.ts
-var IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
-var LINK_REMOVED_PLACEHOLDER = "[link removed]";
-var STRIP_PATH_MAX_BYTES = 256 * 1024;
-var STRIP_FIXED_POINT_MAX_ITERATIONS = FIXED_POINT_MAX_ITERATIONS;
-var SCRIPT_BLOCK_PATTERN = /<script\b[^<>]*>[\s\S]*?<\/\s*script\b[^<>]*>/gi;
-var STYLE_BLOCK_PATTERN = /<style\b[^<>]*>[\s\S]*?<\/\s*style\b[^<>]*>/gi;
-var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
-var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
-var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
-var MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN = /(?<!!)\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
-var MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN = /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
-function decodeNumericHtmlEntities(input) {
-  return input.replace(/&#(x[0-9a-f]+|\d+);?/gi, (_, body) => {
-    const cp = body[0] === "x" || body[0] === "X" ? Number.parseInt(body.slice(1), 16) : Number.parseInt(body, 10);
-    if (!Number.isInteger(cp) || cp < 0 || cp > 1114111 || cp >= 55296 && cp <= 57343) {
-      return "";
-    }
-    return String.fromCodePoint(cp);
-  });
-}
-function stripBlocksFixedPoint(input, options = {}) {
-  const { decodeEntities = true } = options;
-  if (Buffer.byteLength(input, "utf8") > STRIP_PATH_MAX_BYTES) return input;
-  let curr = input;
-  for (let i = 0; i < STRIP_FIXED_POINT_MAX_ITERATIONS; i++) {
-    const decoded = decodeEntities ? decodeNumericHtmlEntities(curr) : curr;
-    const next = stripTagBlocks(decoded);
-    if (next === curr) return next;
-    curr = next;
-  }
-  return curr;
-}
-function withinClosableRegion(text, end, pass) {
-  if (end <= 0) return text;
-  if (end >= text.length) return pass(text);
-  return pass(text.slice(0, end)) + text.slice(end);
-}
-var WHITESPACE_CHAR_PATTERN = /\s/;
-var WORD_CHAR_PATTERN = /\w/;
-function matchesTagNameAt(text, at, tag2) {
-  if (at + tag2.length > text.length) return false;
-  for (let k = 0; k < tag2.length; k++) {
-    if ((text.charCodeAt(at + k) | 32) !== tag2.charCodeAt(k)) return false;
-  }
-  return true;
-}
-function lastCloserEnd(text, closer) {
-  const i = text.lastIndexOf(closer);
-  return i === -1 ? 0 : i + closer.length;
-}
-function lastTagCloserEnd(text, tag2) {
-  let end = 0;
-  for (let i = 0; i + 1 < text.length; i++) {
-    if (text[i] !== "<" || text[i + 1] !== "/") continue;
-    let j = i + 2;
-    while (j < text.length && WHITESPACE_CHAR_PATTERN.test(text[j])) j++;
-    if (!matchesTagNameAt(text, j, tag2)) continue;
-    j += tag2.length;
-    if (j < text.length && WORD_CHAR_PATTERN.test(text[j])) continue;
-    while (j < text.length && text[j] !== ">" && text[j] !== "<") j++;
-    if (text[j] === ">") end = j + 1;
-  }
-  return end;
-}
-function stripTagBlocks(text) {
-  let out = withinClosableRegion(
-    text,
-    lastTagCloserEnd(text, "script"),
-    (s) => s.replace(SCRIPT_BLOCK_PATTERN, "")
-  );
-  out = withinClosableRegion(
-    out,
-    lastTagCloserEnd(out, "style"),
-    (s) => s.replace(STYLE_BLOCK_PATTERN, "")
-  );
-  return stripTagTokens(out);
-}
-var STRIPPED_TAG_NAMES = ["script", "style"];
-var STRIPPED_TAG_LAST_CHARS = new Set(
-  STRIPPED_TAG_NAMES.map((n) => n.charCodeAt(n.length - 1))
-);
-function tagTokenStart(out) {
-  const last = out[out.length - 1].charCodeAt(0) | 32;
-  if (!STRIPPED_TAG_LAST_CHARS.has(last)) return -1;
-  for (const name of STRIPPED_TAG_NAMES) {
-    const k = out.length - name.length;
-    if (k < 1) continue;
-    let matched = true;
-    for (let m = 0; m < name.length; m++) {
-      if ((out[k + m].charCodeAt(0) | 32) !== name.charCodeAt(m)) {
-        matched = false;
-        break;
-      }
-    }
-    if (!matched) continue;
-    let j = k - 1;
-    while (j >= 0 && WHITESPACE_CHAR_PATTERN.test(out[j])) j--;
-    if (j >= 0 && out[j] === "/") j--;
-    if (j >= 0 && out[j] === "<") return j;
-  }
-  return -1;
-}
-function stripTagTokens(text) {
-  const out = [];
-  let i = 0;
-  let noGt = false;
-  while (i < text.length) {
-    out.push(text[i]);
-    i++;
-    const start = tagTokenStart(out);
-    if (start === -1) continue;
-    if (i < text.length && WORD_CHAR_PATTERN.test(text[i])) continue;
-    out.length = start;
-    if (noGt) continue;
-    const gt = text.indexOf(">", i);
-    if (gt === -1) noGt = true;
-    else i = gt + 1;
-  }
-  return out.join("");
-}
-function stripHtmlComments(input) {
-  const out = [];
-  let i = 0;
-  let noCloser = false;
-  while (i < input.length) {
-    out.push(input[i]);
-    i++;
-    const n = out.length;
-    if (n < 4 || out[n - 1] !== "-" || out[n - 2] !== "-" || out[n - 3] !== "!" || out[n - 4] !== "<") {
-      continue;
-    }
-    out.length = n - 4;
-    if (noCloser) continue;
-    const close = input.indexOf("-->", i);
-    if (close === -1) {
-      noCloser = true;
-      continue;
-    }
-    i = close + 3;
-  }
-  return out.join("");
-}
-function stripMarkdownBeacons(input) {
-  return withinClosableRegion(
-    input,
-    lastCloserEnd(input, ")"),
-    (s) => s.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "")
-  );
-}
-var MARKUP_SHAPE_PATTERN = /<(?:!doctype\b|html\b|svg\b|script\b|style\b|iframe\b|\?xml\b|[a-z][a-z0-9-]{0,16}[\s>/])/i;
-function looksLikeMarkupShape(content) {
-  return MARKUP_SHAPE_PATTERN.test(content);
 }
 
 // src/lib/security/ssrf.ts
@@ -2129,51 +1536,14 @@ function validateNoCRLF(value, fieldName) {
 }
 
 // src/lib/security/file-validation.ts
-import { resolve as resolve3, relative, isAbsolute } from "path";
-import { stat as stat3, access as access2, realpath as realpath3, constants as fsConstants2 } from "fs/promises";
-
-// src/lib/config/server.ts
-var SERVER = {
-  /** MCP server name for protocol identification */
-  NAME: "curl-mcp-server",
-  /** Server version from package.json */
-  VERSION: true ? "5.4.0" : "0.0.0"
-};
-
-// src/lib/config/defaults.ts
-var DEFAULT_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 mcp-curl/${SERVER.VERSION}`;
-var DEFAULT_REFERER = "";
-function resolveDefault(configValue, envVar, builtInDefault) {
-  if (configValue !== void 0) return configValue || void 0;
-  const envValue = process.env[envVar];
-  if (envValue !== void 0) return envValue || void 0;
-  return builtInDefault || void 0;
-}
-var hasHeaderKey = (obj, key) => Object.keys(obj).some((k) => k.toLowerCase() === key.toLowerCase());
-function applyDefaultHeaders(headers, userAgent, config) {
-  const result = { ...headers };
-  let resolvedUA = userAgent;
-  if (resolvedUA === void 0 && !hasHeaderKey(result, "User-Agent")) {
-    resolvedUA = resolveDefault(config?.defaultUserAgent, ENV.USER_AGENT, DEFAULT_USER_AGENT);
-  }
-  if (!hasHeaderKey(result, "Referer")) {
-    const referer = resolveDefault(config?.defaultReferer, ENV.REFERER, DEFAULT_REFERER);
-    if (referer) result["Referer"] = referer;
-  }
-  return { headers: result, userAgent: resolvedUA };
-}
-
-// src/lib/config/labels.ts
-var JQ_QUERY_HOSTNAME_LABEL = "n/a";
-var CUSTOM_TOOL_HOSTNAME_LABEL = "custom";
-
-// src/lib/security/file-validation.ts
+import { resolve as resolve2, relative, isAbsolute } from "path";
+import { stat as stat3, access as access2, realpath as realpath2, constants as fsConstants2 } from "fs/promises";
 var allowedDirsCache = null;
 async function resolveSharedTempDirSafely() {
   const tempDir = getSharedTempDir();
   if (!tempDir) return null;
   try {
-    return await realpath3(tempDir);
+    return await realpath2(tempDir);
   } catch (error) {
     const errno = error.code;
     if (errno !== "ENOENT") {
@@ -2203,7 +1573,7 @@ async function getAllowedDirectories() {
   const envOutputDir = process.env[ENV.OUTPUT_DIR];
   if (envOutputDir) {
     try {
-      const realEnvDir = await realpath3(resolve3(envOutputDir));
+      const realEnvDir = await realpath2(resolve2(envOutputDir));
       const envDirStats = await stat3(realEnvDir);
       if (!envDirStats.isDirectory()) {
         throw createConfigError(ENV.OUTPUT_DIR, envOutputDir, "path exists but is not a directory");
@@ -2218,7 +1588,7 @@ async function getAllowedDirectories() {
   }
   let cwdResolved;
   try {
-    cwdResolved = await realpath3(process.cwd());
+    cwdResolved = await realpath2(process.cwd());
   } catch (error) {
     throw new Error(
       `Failed to resolve current working directory: ${getErrorMessage(error)}. This is required for secure file validation.`
@@ -2248,10 +1618,10 @@ async function validateFilePath(filepath) {
       "Please provide a direct path without '..' components"
     );
   }
-  const absolutePath = resolve3(filepath);
+  const absolutePath = resolve2(filepath);
   let realFilePath;
   try {
-    realFilePath = await realpath3(absolutePath);
+    realFilePath = await realpath2(absolutePath);
     const stats = await stat3(realFilePath);
     if (!stats.isFile()) {
       throw new Error(`Invalid filepath "${filepath}": path exists but is not a file`);
@@ -2322,477 +1692,6 @@ function startWrapErrorCleanup() {
 }
 function stopWrapErrorCleanup(interval) {
   clearInterval(interval);
-}
-
-// src/lib/response/processor.ts
-var JSON_DOCUMENT_FIRST_CHARS = /* @__PURE__ */ new Set([
-  "{",
-  "[",
-  '"',
-  "-",
-  "0",
-  "1",
-  "2",
-  "3",
-  "4",
-  "5",
-  "6",
-  "7",
-  "8",
-  "9",
-  "t",
-  "f",
-  "n"
-]);
-function isDefinitelyJson(text) {
-  const trimmed = text.trimStart();
-  if (trimmed.length === 0) return false;
-  if (!JSON_DOCUMENT_FIRST_CHARS.has(trimmed[0])) return false;
-  if (Buffer.byteLength(text, "utf8") > STRIP_PATH_MAX_BYTES) return false;
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function classifyBody(text) {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return { json: false, reason: "empty-body" };
-  if (trimmed.startsWith("<")) return { json: false, reason: "looks-like-markup" };
-  try {
-    JSON.parse(trimmed);
-  } catch {
-    return { json: false, reason: "invalid-syntax" };
-  }
-  return { json: true };
-}
-function defendText(text, options) {
-  let content = text;
-  const { hostname, contentTypeUndetermined = true } = options;
-  content = sanitizeAndDetect(content, hostname);
-  const excludeJsonDocuments = options.excludeJsonDocuments ?? true;
-  const jsonExemptionCouldApply = excludeJsonDocuments && (contentTypeUndetermined || isSniffableContentType(options.contentType));
-  const looksLikeJsonBody = jsonExemptionCouldApply && isDefinitelyJson(content);
-  const strictestGrammar = (contentTypeUndetermined || options.contentType === void 0) && !looksLikeJsonBody;
-  const isMarkup = strictestGrammar || supportsMarkupComments(options.contentType);
-  const isMarkdown = strictestGrammar || isMarkdownContentType(options.contentType);
-  const exceedsStripCap = Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES;
-  const sniffedAsMarkup = !exceedsStripCap && !strictestGrammar && !looksLikeJsonBody && isSniffableContentType(options.contentType) && looksLikeMarkupShape(content);
-  const needsStripPath = isMarkup || isMarkdown || sniffedAsMarkup;
-  if (needsStripPath && !exceedsStripCap) {
-    const decodeEntities = (options.decodeEntities ?? true) && !(looksLikeJsonBody || isDefinitelyJson(content));
-    content = stripHtmlComments(content);
-    content = stripBlocksFixedPoint(content, { decodeEntities });
-    if (isMarkdown) {
-      content = stripMarkdownBeacons(content);
-    }
-    content = sanitizeAndDetect(content, hostname);
-  }
-  return content;
-}
-function defendForInline(text, hostname) {
-  if (classifyBody(text).json) {
-    detectJsonAndLog(text, hostname);
-    return text;
-  }
-  return defendInlineString(text, hostname);
-}
-function defendInlineString(text, hostname) {
-  return defendText(text, {
-    hostname,
-    contentTypeUndetermined: true,
-    excludeJsonDocuments: false,
-    decodeEntities: false
-  });
-}
-function savedMessage(facts) {
-  const {
-    diskBytes,
-    filepath,
-    maxSize,
-    overCap,
-    filtered,
-    rejection,
-    originBytesExact,
-    boundaryUndetermined,
-    measuredBytes,
-    decodeWasLossy
-  } = facts;
-  const measured = measuredBytes === diskBytes ? "" : `, ${measuredBytes} once decoded`;
-  const subject = filtered ? "Result of jq_filter" : "Response";
-  const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not JSON (${rejection.reason}), so no body is returned here.` : overCap ? `${subject} (${diskBytes} bytes on disk${measured}) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
-  const runOn = " The end of the body could not be located, so the file may also hold metadata written after it.";
-  const exactness = filtered ? "" : originBytesExact ? boundaryUndetermined ? runOn : " The file holds the origin's exact bytes." : " The file holds the body with attack codepoints removed and long whitespace or newline runs collapsed" + (decodeWasLossy ? ", and each undecodable sequence replaced with U+FFFD" : "") + ", so it is not byte-identical to what the origin sent." + (boundaryUndetermined ? runOn : "");
-  const narrowing = overCap ? ` To get the body inline instead, narrow the next request \u2014 fewer fields, a limit, or pagination${filtered ? ", or a tighter jq_filter" : ""}.` : "";
-  const route = rejection !== void 0 ? " The body is not JSON; read the path with your own tooling." + exactness : (overCap ? " The saved file is valid to analyse." : "") + " Use the jq_query tool on that path to extract fields" + (overCap ? "; that costs no further request." : ".") + exactness + narrowing;
-  const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
-  return cause + route + scope;
-}
-async function processResponse(responseBytes, options) {
-  if (!Buffer.isBuffer(responseBytes)) {
-    throw new TypeError("processResponse: responseBytes must be a Buffer");
-  }
-  const rawBytes = responseBytes.length;
-  if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
-    throw new Error(
-      `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
-    );
-  }
-  const response = responseBytes.toString("utf8");
-  const decodeWasLossy = !Buffer.from(response, "utf8").equals(responseBytes);
-  const lossy = decodeWasLossy ? { decodeWasLossy: true } : {};
-  const decodedBytes = Buffer.byteLength(response, "utf8");
-  if (decodedBytes > LIMITS.MAX_RESPONSE_SIZE) {
-    throw new Error(
-      `Response size (${rawBytes} bytes on the wire, ${decodedBytes} bytes decoded) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes). The body is not valid UTF-8, and replacement characters make the decoded form larger than the wire form.`
-    );
-  }
-  const hostname = safeHostname(options.url);
-  const sanitised = sanitizeResponse(response);
-  detectJsonAndLog(response, hostname, sanitised);
-  const classified = classifyBody(response);
-  const originOnDisk = classified.json || sanitised === response;
-  let content = response;
-  let filterApplied = false;
-  if (options.jqFilter && classified.json) {
-    const trimmed = content.trim();
-    let parsedData;
-    try {
-      parsedData = JSON.parse(trimmed, keepNumberLexeme);
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        throw new Error(
-          `Cannot apply jq_filter: Response does not appear to be valid JSON`
-        );
-      }
-      throw error;
-    }
-    content = applyJqFilterToParsed(parsedData, options.jqFilter);
-    filterApplied = true;
-    detectJsonAndLog(content, hostname);
-  }
-  const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
-  const overCap = classified.json && Buffer.byteLength(content, "utf8") > maxSize;
-  const emptyBody = !classified.json && classified.reason === "empty-body";
-  if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false, ...lossy };
-  const shouldSave = options.saveToFile || overCap || !classified.json && !filterApplied;
-  if (shouldSave) {
-    const diskContent = filterApplied ? Buffer.from(content, "utf8") : originOnDisk ? responseBytes : Buffer.from(sanitised, "utf8");
-    const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
-    return {
-      savedToFile: true,
-      filepath,
-      ...lossy,
-      message: savedMessage({
-        // Measured on the buffer that was written, so the number
-        // describes the file whatever `diskContent` is built from.
-        diskBytes: diskContent.length,
-        filepath,
-        maxSize,
-        overCap,
-        filtered: filterApplied,
-        // The filter arm writes the filter's output, and a changed
-        // non-JSON body writes sanitised text; every other arm is the
-        // origin's octets.
-        originBytesExact: !filterApplied && originOnDisk,
-        // Read here, at the claim, because `bodyBytes` cannot say it
-        // (`ParsedResponse.bodyBytes`). Omitted reads as located: a
-        // library caller passing its own body knows where it ends.
-        boundaryUndetermined: options.contentTypeUndetermined === true,
-        measuredBytes: Buffer.byteLength(content, "utf8"),
-        decodeWasLossy,
-        // Only where the body itself was the reason. An over-cap JSON
-        // document is saved too, and there is nothing wrong with it.
-        ...classified.json ? {} : { rejection: classified }
-      })
-    };
-  }
-  return {
-    content,
-    savedToFile: false,
-    ...lossy
-  };
-}
-
-// src/lib/types/common.ts
-import { randomUUID as randomUUID2 } from "crypto";
-function generateMetadataSeparator() {
-  return `
----MCP-CURL-${randomUUID2()}---
-`;
-}
-function metadataDirectives(block) {
-  const { separator, syncHeaderName } = block;
-  if (separator.length === 0) {
-    throw new Error("Invalid metadata block: separator must not be empty.");
-  }
-  if (syncHeaderName === void 0) {
-    return ["%{http_code}", "%{redirect_url}", "%{content_type}"];
-  }
-  if (!WRITE_OUT_HEADER_NAME.test(syncHeaderName)) {
-    throw new Error("Invalid sync header name: must be an HTTP field name (RFC 9110 token) without %.");
-  }
-  return ["%{http_code}", "%{redirect_url}", `%header{${syncHeaderName}}`, "%{content_type}"];
-}
-
-// src/lib/response/parser.ts
-var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
-var SYNC_COUNT = /^[ \t]*(\d{1,10})[ \t]*$/;
-var MAX_SYNC_COUNT = 2 ** 31;
-function parseResponseWithMetadata(rawResponse, block) {
-  const raw = rawResponse;
-  const sep = Buffer.from(block.separator, "utf8");
-  const fieldCount = metadataDirectives(block).length;
-  const windowBytes = fieldCount * sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
-  const searchStart = Math.max(0, raw.length - windowBytes);
-  const window = raw.subarray(searchStart);
-  const separatorIndexes = [];
-  for (let i = window.indexOf(sep); i !== -1; i = window.indexOf(sep, i + sep.length)) {
-    separatorIndexes.push(searchStart + i);
-  }
-  if (separatorIndexes.length !== fieldCount) {
-    return {
-      bodyBytes: raw,
-      metadataFound: false
-    };
-  }
-  const fields = separatorIndexes.map(
-    (start, i) => raw.subarray(start + sep.length, separatorIndexes[i + 1] ?? raw.length)
-  );
-  const [httpCodeField, redirectField] = fields;
-  const syncField = block.syncHeaderName !== void 0 ? fields[2] : void 0;
-  const contentTypeField = fields[fieldCount - 1];
-  const httpCode = httpCodeField.toString("utf8");
-  const redirect = redirectField.length <= LIMITS.MAX_REDIRECT_URL_LENGTH ? redirectField.toString("utf8") : void 0;
-  const syncDigits = syncField && syncField.length <= LIMITS.MAX_SYNC_HEADER_VALUE_LENGTH ? SYNC_COUNT.exec(syncField.toString("utf8"))?.[1] : void 0;
-  const syncCount = syncDigits !== void 0 && Number(syncDigits) <= MAX_SYNC_COUNT ? Number(syncDigits) : void 0;
-  const contentType = contentTypeField.length <= LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH ? contentTypeField.toString("utf8").trim() : "";
-  const validContentType = MEDIA_TYPE_HEAD.exec(contentType)?.[0];
-  return {
-    bodyBytes: raw.subarray(0, separatorIndexes[0]),
-    contentType: validContentType,
-    httpStatus: /^\d{3}$/.test(httpCode) ? Number(httpCode) : void 0,
-    redirectUrl: redirect !== void 0 && !URL_CONTROL_CHARACTER.test(redirect) ? redirect : void 0,
-    syncHeaderCount: syncCount,
-    metadataFound: true
-  };
-}
-function sanitizeErrorMessage(message, includeDetails) {
-  if (includeDetails) {
-    return message;
-  }
-  let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
-  sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
-  if (sanitized !== message) {
-    sanitized += " (use include_metadata: true for details)";
-  }
-  return sanitized;
-}
-
-// src/lib/response/header-channel.ts
-function extractHeaderChannel(headerBytes, bytesReceived, url, maxResultSize) {
-  if (!headerBytes || headerBytes.length === 0) {
-    return { undetermined: true, truncated: false };
-  }
-  const totalReceived = bytesReceived ?? headerBytes.length;
-  const droppedByExecutor = totalReceived > headerBytes.length;
-  const inlineCeiling = Math.min(
-    LIMITS.MAX_HEADER_TEXT_BYTES,
-    maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
-  );
-  const inputConsumed = Math.min(headerBytes.length, inlineCeiling);
-  const raw = headerBytes.subarray(0, inputConsumed).toString("utf8").replace(/\r?\n\r?\n$/, "");
-  if (!raw) {
-    return { undetermined: true, truncated: false };
-  }
-  const defended = defendText(raw, {
-    contentType: MARKDOWN_MIME,
-    contentTypeUndetermined: false,
-    hostname: safeHostname(url),
-    decodeEntities: false
-  });
-  const defendedBytes = Buffer.byteLength(defended, "utf8");
-  const grewPastCeiling = defendedBytes > inlineCeiling;
-  const responseHeaders = grewPastCeiling ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8") : defended;
-  const inputWasCut = inputConsumed < headerBytes.length;
-  const truncated = droppedByExecutor || inputWasCut || grewPastCeiling;
-  return {
-    responseHeaders,
-    undetermined: false,
-    truncated,
-    bytesReceived: totalReceived,
-    // Origin octets, or nothing. Never the returned text's own length.
-    bytesReturned: truncated && !grewPastCeiling ? inputConsumed : void 0
-  };
-}
-
-// src/lib/response/formatter.ts
-function applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo) {
-  if (responseHeaders) output.headers = responseHeaders;
-  if (responseHeaders && headerInfo?.truncated) {
-    output.headers_truncated = true;
-    output.header_bytes_received = headerInfo.bytesReceived;
-    output.header_bytes_returned = headerInfo.bytesReturned;
-  }
-  if (headerInfo?.undetermined) output.headers_undetermined = true;
-  if (headerInfo?.unsupported) output.headers_unsupported = true;
-  if (bodyInfo?.decodeWasLossy) output.body_decode_lossy = true;
-  if (stderr) output.stderr = stderr;
-}
-function plainBranchNotices(exitCode, headerInfo, bodyInfo) {
-  return [
-    // `isError` says the request failed; this line says how, and that the
-    // body beside it cannot be trusted. A model reads the text, and a flag
-    // with no sentence beside it explains nothing.
-    //
-    // **"above", because these notices are APPENDED.** `curl-execute.ts`
-    // emits them as a content entry after the body so `content[0]` stays
-    // the body on every branch, which points every positional word in this
-    // function backwards. "below" points at nothing — worst on a truncated
-    // body that still parses as JSON, the one case where the warning is all
-    // that tells a reader not to trust it.
-    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}: the request failed, and the response above may be empty or incomplete` : null,
-    // Two arms, because the pair is only sometimes statable. Where the
-    // defence grew the text past the ceiling, how many origin octets
-    // survived is genuinely unknown — so the fact of the cut is reported
-    // and the ratio is not invented.
-    headerInfo?.truncated ? headerInfo.bytesReturned !== void 0 ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used` : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received` : null,
-    // A fact about this host, so it is stated whatever the exit code was:
-    // the flag is never added here, which is a decision taken before the
-    // request and independent of how the request went.
-    headerInfo?.unsupported ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent" : null,
-    // A fidelity fact about the body, so it is stated whatever the exit
-    // code was and whatever the headers did. A caller comparing what it got
-    // against the origin needs to know a re-encode happened, because U+FFFD
-    // from a lossy decode is indistinguishable from U+FFFD an origin
-    // actually sent.
-    //
-    // **Two wordings, because the decode and the artefact are different
-    // subjects.** Inline, the body IS returned — its JSON structure intact
-    // and only character values moved — so the notice speaks about the text
-    // beside it. On a saved branch there is no inline body, and the
-    // origin's own octets may be what went to disk, so
-    // claiming "the text above is not byte-identical" would name text that
-    // is absent and contradict `savedMessage`, which reports the file's form
-    // itself. The decode is still worth stating: it is what the byte count
-    // was derived from.
-    bodyInfo?.decodeWasLossy ? bodyInfo.savedToFile ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD when it was decoded. The saved file's own message states which bytes it holds" : "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent" : null,
-    // The reassurance is claimed only on a CLEAN exit. Keyed on
-    // `undetermined` alone it would assert the body is sound on every cURL
-    // failure after connect — exit 23, 35, 56, 63 — where the body is empty
-    // precisely BECAUSE the request failed. This flag's domain cannot answer
-    // a question about the body; `exitCode` can.
-    headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
-  ].filter(Boolean).join("\n");
-}
-function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo, bodyInfo) {
-  if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
-    if (includeMetadata) {
-      const output = {
-        success: exitCode === 0,
-        exit_code: exitCode,
-        saved_to_file: true,
-        filepath: fileSaveInfo.filepath,
-        message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
-      };
-      applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
-      return JSON.stringify(output, null, 2);
-    }
-    const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
-    return message;
-  }
-  if (includeMetadata) {
-    const output = {
-      success: exitCode === 0,
-      exit_code: exitCode,
-      response: stdout
-    };
-    applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
-    return JSON.stringify(output, null, 2);
-  }
-  return stdout;
-}
-
-// src/lib/response/post-processor.ts
-import { randomUUID as randomUUID3 } from "crypto";
-var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
-var SERVER_AUTHORED = /* @__PURE__ */ Symbol("mcp-curl.server-authored");
-function hasOwnTag(result, key) {
-  try {
-    return Object.hasOwn(result, key) && result[key] === true;
-  } catch {
-    return false;
-  }
-}
-function isWrappedResult(result) {
-  if (result === null || typeof result !== "object") return false;
-  return hasOwnTag(result, WRAPPED);
-}
-function markServerAuthored(result) {
-  Object.defineProperty(result, SERVER_AUTHORED, { value: true, enumerable: false });
-  return result;
-}
-function tag(result) {
-  if (hasOwnTag(result, WRAPPED)) return result;
-  try {
-    Object.defineProperty(result, WRAPPED, {
-      value: true,
-      enumerable: false,
-      configurable: true,
-      writable: false
-    });
-  } catch {
-  }
-  return result;
-}
-function processTextPart(part, hostname, requestId) {
-  if (part === null || typeof part !== "object") return part;
-  const contentPart = part;
-  let type;
-  let text;
-  try {
-    type = contentPart.type;
-    text = contentPart.text;
-  } catch {
-    return part;
-  }
-  if (type !== "text" || typeof text !== "string") return part;
-  const defended = defendForInline(text, hostname);
-  const finalText = requestId ? applySpotlighting(defended, requestId) : defended;
-  try {
-    return { ...contentPart, text: finalText };
-  } catch {
-    return part;
-  }
-}
-function createWrapper(config) {
-  return function wrap(result, hostname) {
-    if (result === null || typeof result !== "object") return result;
-    if (isWrappedResult(result)) return result;
-    try {
-      if (!Array.isArray(result.content)) return tag(result);
-      const requestId = config.enableSpotlighting && !hasOwnTag(result, SERVER_AUTHORED) ? randomUUID3() : void 0;
-      const newContent = result.content.map(
-        (part) => processTextPart(part, hostname, requestId)
-      );
-      detectStructuredContent(result.structuredContent, hostname);
-      return tag({ ...result, content: newContent });
-    } catch (err) {
-      logWrapError(hostname, err);
-      return tag(result);
-    }
-  };
-}
-function detectStructuredContent(value, hostname) {
-  if (value === null || typeof value !== "object") return;
-  let text;
-  try {
-    text = JSON.stringify(value);
-  } catch {
-    return;
-  }
-  if (text !== void 0) detectJsonAndLog(text, hostname);
 }
 
 // src/lib/execution/command-executor.ts
@@ -3023,6 +1922,936 @@ function buildCurlArgs(params) {
   return args;
 }
 
+// src/lib/response/parser.ts
+var MEDIA_TYPE_HEAD = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}(?=[ \t;]|$)/;
+var SYNC_COUNT = /^[ \t]*(\d{1,10})[ \t]*$/;
+var MAX_SYNC_COUNT = 2 ** 31;
+function parseResponseWithMetadata(rawResponse, block) {
+  const raw = rawResponse;
+  const sep = Buffer.from(block.separator, "utf8");
+  const fieldCount = metadataDirectives(block).length;
+  const windowBytes = fieldCount * sep.length + LIMITS.MAX_METADATA_TAIL_LENGTH;
+  const searchStart = Math.max(0, raw.length - windowBytes);
+  const window = raw.subarray(searchStart);
+  const separatorIndexes = [];
+  for (let i = window.indexOf(sep); i !== -1; i = window.indexOf(sep, i + sep.length)) {
+    separatorIndexes.push(searchStart + i);
+  }
+  if (separatorIndexes.length !== fieldCount) {
+    return {
+      bodyBytes: raw,
+      metadataFound: false
+    };
+  }
+  const fields = separatorIndexes.map(
+    (start, i) => raw.subarray(start + sep.length, separatorIndexes[i + 1] ?? raw.length)
+  );
+  const [httpCodeField, redirectField] = fields;
+  const syncField = block.syncHeaderName !== void 0 ? fields[2] : void 0;
+  const contentTypeField = fields[fieldCount - 1];
+  const httpCode = httpCodeField.toString("utf8");
+  const redirect = redirectField.length <= LIMITS.MAX_REDIRECT_URL_LENGTH ? redirectField.toString("utf8") : void 0;
+  const syncDigits = syncField && syncField.length <= LIMITS.MAX_SYNC_HEADER_VALUE_LENGTH ? SYNC_COUNT.exec(syncField.toString("utf8"))?.[1] : void 0;
+  const syncCount = syncDigits !== void 0 && Number(syncDigits) <= MAX_SYNC_COUNT ? Number(syncDigits) : void 0;
+  const contentType = contentTypeField.length <= LIMITS.MAX_CONTENT_TYPE_FIELD_LENGTH ? contentTypeField.toString("utf8").trim() : "";
+  return {
+    bodyBytes: raw.subarray(0, separatorIndexes[0]),
+    contentType: MEDIA_TYPE_HEAD.exec(contentType)?.[0],
+    httpStatus: /^\d{3}$/.test(httpCode) ? Number(httpCode) : void 0,
+    redirectUrl: redirect !== void 0 && !URL_CONTROL_CHARACTER.test(redirect) ? redirect : void 0,
+    syncHeaderCount: syncCount,
+    metadataFound: true
+  };
+}
+function sanitizeErrorMessage(message, includeDetails) {
+  if (includeDetails) {
+    return message;
+  }
+  let sanitized = message.replace(/\nPreview:[\s\S]*$/, "");
+  sanitized = sanitized.replace(/(?:\/(?:[^\s/:]+\/)+[^\s/:]+|[A-Za-z]:\\[^\s:]+)/g, "[PATH]");
+  if (sanitized !== message) {
+    sanitized += " (use include_metadata: true for details)";
+  }
+  return sanitized;
+}
+
+// src/lib/jq/tokenizer.ts
+function parseQuotedKey(filter, quoteIndex) {
+  const quote = filter[quoteIndex];
+  let i = quoteIndex + 1;
+  let key = "";
+  let foundClosingQuote = false;
+  while (i < filter.length) {
+    const ch = filter[i];
+    if (ch === "\\") {
+      if (i + 1 < filter.length) {
+        key += filter[i + 1];
+        i += 2;
+        continue;
+      }
+      key += ch;
+      i++;
+      continue;
+    }
+    if (ch === quote) {
+      i++;
+      foundClosingQuote = true;
+      break;
+    }
+    key += ch;
+    i++;
+  }
+  if (!foundClosingQuote) {
+    throw new Error(`Missing closing quote ${quote} in filter "${filter}"`);
+  }
+  if (i >= filter.length || filter[i] !== "]") {
+    throw new Error(`Missing closing bracket "]" after quoted key in filter "${filter}"`);
+  }
+  return { token: { type: "key", value: key }, newIndex: i + 1 };
+}
+function parseNumericOrSlice(filter, contentStart, bracketStart) {
+  let i = contentStart;
+  let numStr = "";
+  let hasColon = false;
+  while (i < filter.length && filter[i] !== "]") {
+    if (filter[i] === ":") hasColon = true;
+    numStr += filter[i];
+    i++;
+  }
+  if (i >= filter.length) {
+    throw new Error(`Unterminated bracket expression in filter "${filter}" at position ${bracketStart}`);
+  }
+  i++;
+  if (hasColon) {
+    return parseSlice(numStr, filter, i);
+  }
+  return parseIndex(numStr, filter, i);
+}
+function parseSlice(numStr, filter, newIndex) {
+  const parts = numStr.split(":");
+  if (parts.length > 2) {
+    throw new Error(`Invalid slice "[${numStr}]" in filter "${filter}": only [start:end] format is supported`);
+  }
+  let start;
+  if (parts[0]) {
+    const parsedStart = parseInt(parts[0], 10);
+    if (Number.isNaN(parsedStart)) {
+      throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}"`);
+    }
+    if (!Number.isSafeInteger(parsedStart)) {
+      throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": exceeds safe integer range`);
+    }
+    if (parsedStart < 0) {
+      throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": negative indices are not supported`);
+    }
+    if (parts[0] !== String(parsedStart)) {
+      throw new Error(`Invalid slice start "${parts[0]}" in filter "${filter}": leading zeros are not allowed`);
+    }
+    start = parsedStart;
+  }
+  let end;
+  if (parts[1]) {
+    const parsedEnd = parseInt(parts[1], 10);
+    if (Number.isNaN(parsedEnd)) {
+      throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}"`);
+    }
+    if (!Number.isSafeInteger(parsedEnd)) {
+      throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": exceeds safe integer range`);
+    }
+    if (parsedEnd < 0) {
+      throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": negative indices are not supported`);
+    }
+    if (parts[1] !== String(parsedEnd)) {
+      throw new Error(`Invalid slice end "${parts[1]}" in filter "${filter}": leading zeros are not allowed`);
+    }
+    end = parsedEnd;
+  }
+  return { token: { type: "slice", start, end }, newIndex };
+}
+function parseIndex(numStr, filter, newIndex) {
+  const index = parseInt(numStr, 10);
+  if (Number.isNaN(index)) {
+    throw new Error(`Invalid array index "${numStr}" in filter "${filter}"`);
+  }
+  if (index < 0) {
+    throw new Error(`Invalid array index "${numStr}" in filter "${filter}": negative indices are not supported`);
+  }
+  if (!Number.isSafeInteger(index)) {
+    throw new Error(`Invalid array index "${numStr}" in filter "${filter}": exceeds safe integer range`);
+  }
+  if (numStr !== String(index)) {
+    throw new Error(`Invalid array index "${numStr}" in filter "${filter}": leading zeros and explicit '+' signs are not allowed`);
+  }
+  return { token: { type: "index", value: index }, newIndex };
+}
+function parseBracketToken(filter, startIndex) {
+  const contentStart = startIndex + 1;
+  if (contentStart >= filter.length) {
+    throw new Error(`Unterminated bracket "[" in filter "${filter}"`);
+  }
+  if (filter[contentStart] === "]") {
+    return { token: { type: "iterate" }, newIndex: contentStart + 1 };
+  }
+  if (filter[contentStart] === '"' || filter[contentStart] === "'") {
+    return parseQuotedKey(filter, contentStart);
+  }
+  return parseNumericOrSlice(filter, contentStart, startIndex);
+}
+
+// src/lib/jq/parser.ts
+function parseJqFilter(filter) {
+  if (filter.length > JQ.MAX_FILTER_LENGTH) {
+    throw new Error(`jq_filter exceeds maximum length of ${JQ.MAX_FILTER_LENGTH} characters`);
+  }
+  const startTime = Date.now();
+  const tokens = [];
+  let i = filter[0] === "." ? 1 : 0;
+  while (i < filter.length) {
+    if (Date.now() - startTime > JQ.MAX_PARSE_TIME_MS) {
+      throw new Error("jq_filter parsing timeout - filter too complex");
+    }
+    if (filter[i] === ".") {
+      i++;
+      continue;
+    }
+    if (filter[i] === "[") {
+      const result = parseBracketToken(filter, i);
+      tokens.push(result.token);
+      if (tokens.length > JQ.MAX_TOKENS) {
+        throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_TOKENS} path segments`);
+      }
+      i = result.newIndex;
+      continue;
+    }
+    let key = "";
+    while (i < filter.length && filter[i] !== "." && filter[i] !== "[") {
+      const ch = filter[i];
+      if (UNSUPPORTED_KEY_CHARS.has(ch)) {
+        throw new Error(
+          `Invalid jq_filter "${filter}": unsupported jq syntax ${JSON.stringify(ch)} at position ${i}. This filter supports paths only: .key, .[n], .[n:m], .["key"], and comma-separated paths. Pipes, object construction, and functions (e.g. "| {id}", "map(...)", "select(...)") are not supported.`
+        );
+      }
+      key += ch;
+      i++;
+    }
+    if (key) {
+      if (/^\d+$/.test(key)) {
+        const parsed = parseInt(key, 10);
+        if (!Number.isSafeInteger(parsed)) {
+          throw new Error(
+            `Invalid array index "${key}" in filter "${filter}": exceeds safe integer range`
+          );
+        }
+        if (key !== String(parsed)) {
+          throw new Error(
+            `Invalid array index "${key}" in filter "${filter}": leading zeros are not allowed`
+          );
+        }
+        tokens.push({ type: "index", value: parsed });
+      } else {
+        tokens.push({ type: "key", value: key });
+      }
+      if (tokens.length > JQ.MAX_TOKENS) {
+        throw new Error(`jq_filter exceeds maximum of ${JQ.MAX_TOKENS} path segments`);
+      }
+    }
+  }
+  const iterateIndex = tokens.findIndex((t) => t.type === "iterate");
+  if (iterateIndex !== -1 && iterateIndex !== tokens.length - 1) {
+    throw new Error(
+      `Invalid jq_filter "${filter}": "[]" cannot be followed by further path segments. This filter does not support jq's iterate-and-project (e.g. ".items[].id"); use an explicit index (".items[0].id") or a slice (".items[0:20]") instead.`
+    );
+  }
+  return tokens;
+}
+function splitJqFilters(filter) {
+  if (filter.length > JQ.MAX_FILTER_LENGTH) {
+    throw new Error(`jq_filter exceeds maximum length of ${JQ.MAX_FILTER_LENGTH} characters`);
+  }
+  const startTime = Date.now();
+  const filters = [];
+  let current = "";
+  let bracketDepth = 0;
+  let inQuote = null;
+  let escaped = false;
+  for (let i = 0; i < filter.length; i++) {
+    if (Date.now() - startTime > JQ.MAX_PARSE_TIME_MS) {
+      throw new Error("jq_filter parsing timeout - filter too complex");
+    }
+    const ch = filter[i];
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && inQuote) {
+      current += ch;
+      escaped = true;
+      continue;
+    }
+    if ((ch === '"' || ch === "'") && !inQuote) {
+      inQuote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === inQuote) {
+      inQuote = null;
+      current += ch;
+      continue;
+    }
+    if (inQuote) {
+      current += ch;
+      continue;
+    }
+    if (ch === "[") {
+      bracketDepth++;
+      current += ch;
+      continue;
+    }
+    if (ch === "]") {
+      bracketDepth--;
+      if (bracketDepth < 0) {
+        throw new Error(
+          `Invalid jq_filter "${filter}": unmatched closing bracket "]"`
+        );
+      }
+      current += ch;
+      continue;
+    }
+    if (ch === "," && bracketDepth === 0) {
+      const trimmed2 = current.trim();
+      if (!trimmed2) {
+        const position = filters.length === 0 ? "leading" : "consecutive";
+        throw new Error(
+          `Invalid jq_filter "${filter}": ${position} comma at position ${i}`
+        );
+      }
+      filters.push(trimmed2);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (inQuote) {
+    throw new Error(
+      `Invalid jq_filter "${filter}": unclosed ${inQuote === '"' ? "double" : "single"} quote`
+    );
+  }
+  if (bracketDepth > 0) {
+    throw new Error(
+      `Invalid jq_filter "${filter}": unclosed bracket "["`
+    );
+  }
+  const trimmed = current.trim();
+  if (!trimmed && filters.length > 0) {
+    throw new Error(
+      `Invalid jq_filter "${filter}": trailing comma`
+    );
+  }
+  if (trimmed) {
+    filters.push(trimmed);
+  }
+  if (filters.length > JQ.MAX_FILTERS) {
+    throw new Error(
+      `jq_filter has too many comma-separated paths (${filters.length}). Maximum allowed is ${JQ.MAX_FILTERS}.`
+    );
+  }
+  return filters;
+}
+
+// src/lib/jq/filter.ts
+function isRecord(value) {
+  if (isRawNumber(value)) return false;
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function applySingleJqFilter(data, filter) {
+  const tokens = parseJqFilter(filter);
+  if (tokens.length === 0) {
+    throw new Error(
+      `Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`
+    );
+  }
+  let result = data;
+  for (const token of tokens) {
+    if (result === null || result === void 0) {
+      return null;
+    }
+    switch (token.type) {
+      case "key":
+        if (!isRecord(result)) {
+          return null;
+        }
+        result = result[token.value];
+        break;
+      case "index":
+        if (Array.isArray(result)) {
+          result = result[token.value];
+        } else {
+          return null;
+        }
+        break;
+      case "slice":
+        if (Array.isArray(result)) {
+          result = result.slice(token.start, token.end);
+        } else {
+          return null;
+        }
+        break;
+      case "iterate":
+        if (!Array.isArray(result)) {
+          return null;
+        }
+        break;
+    }
+  }
+  return result;
+}
+function applyJqFilterToParsed(data, filter) {
+  const filters = splitJqFilters(filter);
+  if (filters.length === 0) {
+    throw new Error(
+      `Invalid jq_filter "${filter}": filter must specify a path (e.g., ".data", ".[0]", ".items[0:5]")`
+    );
+  }
+  if (filters.length > JQ.MAX_FILTERS) {
+    throw new Error(
+      `jq_filter exceeds maximum of ${JQ.MAX_FILTERS} comma-separated paths`
+    );
+  }
+  if (filters.length === 1) {
+    const result = applySingleJqFilter(data, filters[0]);
+    return JSON.stringify(result, null, 2) ?? "null";
+  }
+  const results = filters.map((f) => applySingleJqFilter(data, f));
+  return JSON.stringify(results, null, 2);
+}
+function applyJqFilter(jsonString, filter) {
+  let data;
+  try {
+    data = JSON.parse(jsonString.trim(), keepNumberLexeme);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      const preview = jsonString.slice(0, LIMITS.ERROR_PREVIEW_LENGTH);
+      throw new Error(
+        `Response is not valid JSON. Cannot apply jq_filter.
+Preview: ${preview}${jsonString.length > LIMITS.ERROR_PREVIEW_LENGTH ? "..." : ""}`
+      );
+    }
+    throw error;
+  }
+  return applyJqFilterToParsed(data, filter);
+}
+
+// src/lib/response/file-saver.ts
+import { randomUUID as randomUUID2 } from "crypto";
+import { join as join2, resolve as resolve3 } from "path";
+import { writeFile, realpath as realpath3 } from "fs/promises";
+function createSafeFilenameBase(input, fallback = "response") {
+  const squeeze = (s) => s.replace(/[^a-zA-Z0-9]/g, "_").slice(0, LIMITS.FILENAME_MAX_LENGTH).replace(/^_+|_+$/g, "");
+  const safeFallback = squeeze(fallback) || "response";
+  let base = squeeze(input) || safeFallback;
+  if (isWindowsReservedBasename(base)) {
+    base = `${safeFallback}_${base}`.slice(0, LIMITS.FILENAME_MAX_LENGTH);
+  }
+  return base;
+}
+async function writeUniqueFile(content, targetDir, nameBase, fallback) {
+  const safeName = createSafeFilenameBase(nameBase, fallback);
+  const filename = `${safeName}_${Date.now()}_${randomUUID2().slice(0, 8)}.txt`;
+  const filepath = join2(targetDir, filename);
+  await writeFile(filepath, content, { mode: 384, flag: "wx" });
+  return filepath;
+}
+async function saveResponseToFile(content, url, outputDir) {
+  const targetDir = outputDir ?? await getOrCreateTempDir();
+  if (outputDir) {
+    const realDir = await realpath3(resolve3(outputDir));
+    const normalizedTarget = await realpath3(resolve3(targetDir));
+    if (realDir !== normalizedTarget) {
+      throw new Error(`Output directory path mismatch after normalization`);
+    }
+  }
+  let baseName;
+  try {
+    const urlObj = new URL(url);
+    baseName = urlObj.hostname + urlObj.pathname;
+  } catch (error) {
+    if (error instanceof TypeError) {
+      baseName = url;
+    } else {
+      throw error;
+    }
+  }
+  return writeUniqueFile(content, targetDir, baseName);
+}
+
+// src/lib/response/strip-blocks.ts
+var IMAGE_REMOVED_PLACEHOLDER = "[image removed]";
+var LINK_REMOVED_PLACEHOLDER = "[link removed]";
+var STRIP_PATH_MAX_BYTES = 256 * 1024;
+var SCRIPT_BLOCK_PATTERN = /<script\b[^<>]*>[\s\S]*?<\/\s*script\b[^<>]*>/gi;
+var STYLE_BLOCK_PATTERN = /<style\b[^<>]*>[\s\S]*?<\/\s*style\b[^<>]*>/gi;
+var MARKDOWN_EXTERNAL_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
+var MARKDOWN_EXTERNAL_LINK_PATTERN = /(?<!!)\[[^\]\[\n]*\]\(\s*https?:\/\/[^)\n]+\)/g;
+var MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN = /!\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+var MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN = /(?<!!)\[[^\]\[\n]*\]\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+var MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN = /(?<=\])\(\s*(?:javascript|vbscript|file|data):[^)\n]*\)/gi;
+function withinClosableRegion(text, end, pass) {
+  if (end <= 0) return text;
+  if (end >= text.length) return pass(text);
+  return pass(text.slice(0, end)) + text.slice(end);
+}
+var WHITESPACE_CHAR_PATTERN = /\s/;
+var WORD_CHAR_PATTERN = /\w/;
+function matchesTagNameAt(text, at, tag2) {
+  if (at + tag2.length > text.length) return false;
+  for (let k = 0; k < tag2.length; k++) {
+    if ((text.charCodeAt(at + k) | 32) !== tag2.charCodeAt(k)) return false;
+  }
+  return true;
+}
+function lastCloserEnd(text, closer) {
+  const i = text.lastIndexOf(closer);
+  return i === -1 ? 0 : i + closer.length;
+}
+function lastTagCloserEnd(text, tag2) {
+  let end = 0;
+  for (let i = 0; i + 1 < text.length; i++) {
+    if (text[i] !== "<" || text[i + 1] !== "/") continue;
+    let j = i + 2;
+    while (j < text.length && WHITESPACE_CHAR_PATTERN.test(text[j])) j++;
+    if (!matchesTagNameAt(text, j, tag2)) continue;
+    j += tag2.length;
+    if (j < text.length && WORD_CHAR_PATTERN.test(text[j])) continue;
+    while (j < text.length && text[j] !== ">" && text[j] !== "<") j++;
+    if (text[j] === ">") end = j + 1;
+  }
+  return end;
+}
+function stripScriptStyleBlocks(text) {
+  let out = withinClosableRegion(
+    text,
+    lastTagCloserEnd(text, "script"),
+    (s) => s.replace(SCRIPT_BLOCK_PATTERN, "")
+  );
+  out = withinClosableRegion(
+    out,
+    lastTagCloserEnd(out, "style"),
+    (s) => s.replace(STYLE_BLOCK_PATTERN, "")
+  );
+  return stripTagTokens(out);
+}
+var STRIPPED_TAG_NAMES = ["script", "style"];
+var STRIPPED_TAG_LAST_CHARS = new Set(
+  STRIPPED_TAG_NAMES.map((n) => n.charCodeAt(n.length - 1))
+);
+function tagTokenStart(out) {
+  const last = out[out.length - 1].charCodeAt(0) | 32;
+  if (!STRIPPED_TAG_LAST_CHARS.has(last)) return -1;
+  for (const name of STRIPPED_TAG_NAMES) {
+    const k = out.length - name.length;
+    if (k < 1) continue;
+    let matched = true;
+    for (let m = 0; m < name.length; m++) {
+      if ((out[k + m].charCodeAt(0) | 32) !== name.charCodeAt(m)) {
+        matched = false;
+        break;
+      }
+    }
+    if (!matched) continue;
+    let j = k - 1;
+    while (j >= 0 && WHITESPACE_CHAR_PATTERN.test(out[j])) j--;
+    if (j >= 0 && out[j] === "/") j--;
+    if (j >= 0 && out[j] === "<") return j;
+  }
+  return -1;
+}
+function stripTagTokens(text) {
+  const out = [];
+  let i = 0;
+  let noGt = false;
+  while (i < text.length) {
+    out.push(text[i]);
+    i++;
+    const start = tagTokenStart(out);
+    if (start === -1) continue;
+    if (i < text.length && WORD_CHAR_PATTERN.test(text[i])) continue;
+    out.length = start;
+    if (noGt) continue;
+    const gt = text.indexOf(">", i);
+    if (gt === -1) noGt = true;
+    else i = gt + 1;
+  }
+  return out.join("");
+}
+function stripHtmlComments(input) {
+  const out = [];
+  let i = 0;
+  let noCloser = false;
+  while (i < input.length) {
+    out.push(input[i]);
+    i++;
+    const n = out.length;
+    if (n < 4 || out[n - 1] !== "-" || out[n - 2] !== "-" || out[n - 3] !== "!" || out[n - 4] !== "<") {
+      continue;
+    }
+    out.length = n - 4;
+    if (noCloser) continue;
+    const close = input.indexOf("-->", i);
+    if (close === -1) {
+      noCloser = true;
+      continue;
+    }
+    i = close + 3;
+  }
+  return out.join("");
+}
+function stripMarkdownBeacons(input) {
+  return withinClosableRegion(
+    input,
+    lastCloserEnd(input, ")"),
+    (s) => s.replace(MARKDOWN_DANGEROUS_SCHEME_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_IMAGE_PATTERN, IMAGE_REMOVED_PLACEHOLDER).replace(MARKDOWN_EXTERNAL_LINK_PATTERN, LINK_REMOVED_PLACEHOLDER).replace(MARKDOWN_DANGEROUS_SCHEME_RESIDUAL_PATTERN, "")
+  );
+}
+
+// src/lib/response/processor.ts
+function classifyBody(text) {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return { json: false, reason: "empty-body" };
+  if (trimmed.startsWith("<")) return { json: false, reason: "looks-like-markup" };
+  try {
+    JSON.parse(trimmed);
+  } catch {
+    return { json: false, reason: "invalid-syntax" };
+  }
+  return { json: true };
+}
+function defendText(text, hostname) {
+  let content = sanitizeAndDetect(text, hostname);
+  if (Buffer.byteLength(content, "utf8") > STRIP_PATH_MAX_BYTES) return content;
+  content = stripHtmlComments(content);
+  content = stripScriptStyleBlocks(content);
+  content = stripMarkdownBeacons(content);
+  return sanitizeAndDetect(content, hostname);
+}
+function defendForInline(text, hostname) {
+  if (classifyBody(text).json) {
+    detectJsonAndLog(text, hostname);
+    return text;
+  }
+  return defendText(text, hostname);
+}
+function savedMessage(facts) {
+  const {
+    diskBytes,
+    filepath,
+    maxSize,
+    overCap,
+    filtered,
+    rejection,
+    originBytesExact,
+    boundaryUndetermined,
+    measuredBytes,
+    decodeWasLossy
+  } = facts;
+  const measured = measuredBytes === diskBytes ? "" : `, ${measuredBytes} once decoded`;
+  const subject = filtered ? "Result of jq_filter" : "Response";
+  const cause = rejection !== void 0 ? `${subject} (${diskBytes} bytes on disk) was saved to: ${filepath} \u2014 it is not JSON (${rejection.reason}), so no body is returned here.` : overCap ? `${subject} (${diskBytes} bytes on disk${measured}) was saved to: ${filepath} \u2014 it exceeds the ${maxSize}-byte inline limit, so no body is returned here.` : `${subject} (${diskBytes} bytes) saved to: ${filepath}.`;
+  const runOn = " The end of the body could not be located, so the file may also hold metadata written after it.";
+  const exactness = filtered ? "" : originBytesExact ? boundaryUndetermined ? runOn : " The file holds the origin's exact bytes." : " The file holds the body with attack codepoints removed and long whitespace or newline runs collapsed" + (decodeWasLossy ? ", and each undecodable sequence replaced with U+FFFD" : "") + ", so it is not byte-identical to what the origin sent." + (boundaryUndetermined ? runOn : "");
+  const narrowing = overCap ? ` To get the body inline instead, narrow the next request \u2014 fewer fields, a limit, or pagination${filtered ? ", or a tighter jq_filter" : ""}.` : "";
+  const route = rejection !== void 0 ? " The body is not JSON; read the path with your own tooling." + exactness : (overCap ? " The saved file is valid to analyse." : "") + " Use the jq_query tool on that path to extract fields" + (overCap ? "; that costs no further request." : ".") + exactness + narrowing;
+  const scope = filtered ? " That file holds the FILTER OUTPUT, not the full response body." : "";
+  return cause + route + scope;
+}
+async function processResponse(responseBytes, options) {
+  if (!Buffer.isBuffer(responseBytes)) {
+    throw new TypeError("processResponse: responseBytes must be a Buffer");
+  }
+  const rawBytes = responseBytes.length;
+  if (rawBytes > LIMITS.MAX_RESPONSE_SIZE) {
+    throw new Error(
+      `Response size (${rawBytes} bytes) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes)`
+    );
+  }
+  const response = responseBytes.toString("utf8");
+  const decodeWasLossy = !Buffer.from(response, "utf8").equals(responseBytes);
+  const lossy = decodeWasLossy ? { decodeWasLossy: true } : {};
+  const decodedBytes = Buffer.byteLength(response, "utf8");
+  if (decodedBytes > LIMITS.MAX_RESPONSE_SIZE) {
+    throw new Error(
+      `Response size (${rawBytes} bytes on the wire, ${decodedBytes} bytes decoded) exceeds maximum allowed (${LIMITS.MAX_RESPONSE_SIZE} bytes). The body is not valid UTF-8, and replacement characters make the decoded form larger than the wire form.`
+    );
+  }
+  const hostname = safeHostname(options.url);
+  const sanitised = sanitizeResponse(response);
+  detectJsonAndLog(response, hostname, sanitised);
+  const classified = classifyBody(response);
+  const originOnDisk = classified.json || sanitised === response;
+  let content = response;
+  let filterApplied = false;
+  if (options.jqFilter && classified.json) {
+    const trimmed = content.trim();
+    let parsedData;
+    try {
+      parsedData = JSON.parse(trimmed, keepNumberLexeme);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(
+          `Cannot apply jq_filter: Response does not appear to be valid JSON`
+        );
+      }
+      throw error;
+    }
+    content = applyJqFilterToParsed(parsedData, options.jqFilter);
+    filterApplied = true;
+    detectJsonAndLog(content, hostname);
+  }
+  const maxSize = options.maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE;
+  const overCap = classified.json && Buffer.byteLength(content, "utf8") > maxSize;
+  const emptyBody = !classified.json && classified.reason === "empty-body";
+  if (emptyBody && !options.saveToFile) return { content: "", savedToFile: false, ...lossy };
+  const shouldSave = options.saveToFile || overCap || !classified.json && !filterApplied;
+  if (shouldSave) {
+    const diskContent = filterApplied ? Buffer.from(content, "utf8") : originOnDisk ? responseBytes : Buffer.from(sanitised, "utf8");
+    const filepath = await saveResponseToFile(diskContent, options.url, options.outputDir);
+    return {
+      savedToFile: true,
+      filepath,
+      ...lossy,
+      message: savedMessage({
+        // Measured on the buffer that was written, so the number
+        // describes the file whatever `diskContent` is built from.
+        diskBytes: diskContent.length,
+        filepath,
+        maxSize,
+        overCap,
+        filtered: filterApplied,
+        // The filter arm writes the filter's output, and a changed
+        // non-JSON body writes sanitised text; every other arm is the
+        // origin's octets.
+        originBytesExact: !filterApplied && originOnDisk,
+        // Read here, at the claim, because `bodyBytes` cannot say it
+        // (`ParsedResponse.bodyBytes`). Omitted reads as located: a
+        // library caller passing its own body knows where it ends.
+        boundaryUndetermined: options.bodyBoundaryUndetermined === true,
+        measuredBytes: Buffer.byteLength(content, "utf8"),
+        decodeWasLossy,
+        // Only where the body itself was the reason. An over-cap JSON
+        // document is saved too, and there is nothing wrong with it.
+        ...classified.json ? {} : { rejection: classified }
+      })
+    };
+  }
+  return {
+    content,
+    savedToFile: false,
+    ...lossy
+  };
+}
+
+// src/lib/response/header-channel.ts
+function extractHeaderChannel(headerBytes, bytesReceived, url, maxResultSize) {
+  if (!headerBytes || headerBytes.length === 0) {
+    return { undetermined: true, truncated: false };
+  }
+  const totalReceived = bytesReceived ?? headerBytes.length;
+  const droppedByExecutor = totalReceived > headerBytes.length;
+  const inlineCeiling = Math.min(
+    LIMITS.MAX_HEADER_TEXT_BYTES,
+    maxResultSize ?? LIMITS.DEFAULT_MAX_RESULT_SIZE
+  );
+  const inputConsumed = Math.min(headerBytes.length, inlineCeiling);
+  const raw = headerBytes.subarray(0, inputConsumed).toString("utf8").replace(/\r?\n\r?\n$/, "");
+  if (!raw) {
+    return { undetermined: true, truncated: false };
+  }
+  const defended = defendText(raw, safeHostname(url));
+  const defendedBytes = Buffer.byteLength(defended, "utf8");
+  const grewPastCeiling = defendedBytes > inlineCeiling;
+  const responseHeaders = grewPastCeiling ? Buffer.from(defended, "utf8").subarray(0, inlineCeiling).toString("utf8") : defended;
+  const inputWasCut = inputConsumed < headerBytes.length;
+  const truncated = droppedByExecutor || inputWasCut || grewPastCeiling;
+  return {
+    responseHeaders,
+    undetermined: false,
+    truncated,
+    bytesReceived: totalReceived,
+    // Origin octets, or nothing. Never the returned text's own length.
+    bytesReturned: truncated && !grewPastCeiling ? inputConsumed : void 0
+  };
+}
+
+// src/lib/response/formatter.ts
+function applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo) {
+  if (responseHeaders) output.headers = responseHeaders;
+  if (responseHeaders && headerInfo?.truncated) {
+    output.headers_truncated = true;
+    output.header_bytes_received = headerInfo.bytesReceived;
+    output.header_bytes_returned = headerInfo.bytesReturned;
+  }
+  if (headerInfo?.undetermined) output.headers_undetermined = true;
+  if (headerInfo?.unsupported) output.headers_unsupported = true;
+  if (bodyInfo?.decodeWasLossy) output.body_decode_lossy = true;
+  if (bodyInfo?.declaredContentType) output.declared_content_type = bodyInfo.declaredContentType;
+  if (bodyInfo?.metadataUndetermined) output.metadata_undetermined = true;
+  if (stderr) output.stderr = stderr;
+}
+function plainBranchNotices(exitCode, headerInfo, bodyInfo) {
+  return [
+    // `isError` says the request failed; this line says how, and that the
+    // body beside it cannot be trusted. A model reads the text, and a flag
+    // with no sentence beside it explains nothing.
+    //
+    // **"above", because these notices are APPENDED.** `curl-execute.ts`
+    // emits them as a content entry after the body so `content[0]` stays
+    // the body on every branch, which points every positional word in this
+    // function backwards. "below" points at nothing — worst on a truncated
+    // body that still parses as JSON, the one case where the warning is all
+    // that tells a reader not to trust it.
+    exitCode !== 0 ? `[mcp-curl] cURL exited ${exitCode}: the request failed, and the response above may be empty or incomplete` : null,
+    // Two arms, because the pair is only sometimes statable. Where the
+    // defence grew the text past the ceiling, how many origin octets
+    // survived is genuinely unknown — so the fact of the cut is reported
+    // and the ratio is not invented.
+    headerInfo?.truncated ? headerInfo.bytesReturned !== void 0 ? `[mcp-curl] response headers truncated: ${headerInfo.bytesReturned} of ${headerInfo.bytesReceived} bytes used` : `[mcp-curl] response headers truncated to fit the inline limit; ${headerInfo.bytesReceived} bytes were received` : null,
+    // A fact about this host, so it is stated whatever the exit code was:
+    // the flag is never added here, which is a decision taken before the
+    // request and independent of how the request went.
+    headerInfo?.unsupported ? "[mcp-curl] response headers cannot be captured on this host (macOS only); none are reported, and this says nothing about what the origin sent" : null,
+    // A fidelity fact about the body, so it is stated whatever the exit
+    // code was and whatever the headers did. A caller comparing what it got
+    // against the origin needs to know a re-encode happened, because U+FFFD
+    // from a lossy decode is indistinguishable from U+FFFD an origin
+    // actually sent.
+    //
+    // **Two wordings, because the decode and the artefact are different
+    // subjects.** Inline, the body IS returned — its JSON structure intact
+    // and only character values moved — so the notice speaks about the text
+    // beside it. On a saved branch there is no inline body, and the
+    // origin's own octets may be what went to disk, so
+    // claiming "the text above is not byte-identical" would name text that
+    // is absent and contradict `savedMessage`, which reports the file's form
+    // itself. The decode is still worth stating: it is what the byte count
+    // was derived from.
+    bodyInfo?.decodeWasLossy ? bodyInfo.savedToFile ? "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD when it was decoded. The saved file's own message states which bytes it holds" : "[mcp-curl] the response body was not valid UTF-8; each undecodable sequence was replaced with U+FFFD, so the text above is not byte-identical to what the origin sent" : null,
+    // The reassurance is claimed only on a CLEAN exit. Keyed on
+    // `undetermined` alone it would assert the body is sound on every cURL
+    // failure after connect — exit 23, 35, 56, 63 — where the body is empty
+    // precisely BECAUSE the request failed. This flag's domain cannot answer
+    // a question about the body; `exitCode` can.
+    headerInfo?.undetermined ? exitCode === 0 ? "[mcp-curl] response headers were requested but none were received; the body is unaffected" : "[mcp-curl] response headers were requested but none were received" : null
+  ].filter(Boolean).join("\n");
+}
+function formatResponse(stdout, stderr, exitCode, includeMetadata, fileSaveInfo, responseHeaders, headerInfo, bodyInfo) {
+  if (fileSaveInfo?.savedToFile && fileSaveInfo.filepath) {
+    if (includeMetadata) {
+      const output = {
+        success: exitCode === 0,
+        exit_code: exitCode,
+        saved_to_file: true,
+        filepath: fileSaveInfo.filepath,
+        message: fileSaveInfo.message ?? "Response saved to file. Read the file to access contents."
+      };
+      applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
+      return JSON.stringify(output, null, 2);
+    }
+    const message = fileSaveInfo.message ?? `Response saved to: ${fileSaveInfo.filepath}`;
+    return message;
+  }
+  if (includeMetadata) {
+    const output = {
+      success: exitCode === 0,
+      exit_code: exitCode,
+      response: stdout
+    };
+    applyOutOfBandFields(output, responseHeaders, headerInfo, stderr, bodyInfo);
+    return JSON.stringify(output, null, 2);
+  }
+  return stdout;
+}
+
+// src/lib/response/post-processor.ts
+import { randomUUID as randomUUID3 } from "crypto";
+var WRAPPED = /* @__PURE__ */ Symbol("mcp-curl.wrapped");
+var SERVER_AUTHORED = /* @__PURE__ */ Symbol("mcp-curl.server-authored");
+function hasOwnTag(result, key) {
+  try {
+    return Object.hasOwn(result, key) && result[key] === true;
+  } catch {
+    return false;
+  }
+}
+function isWrappedResult(result) {
+  if (result === null || typeof result !== "object") return false;
+  return hasOwnTag(result, WRAPPED);
+}
+function markServerAuthored(result) {
+  Object.defineProperty(result, SERVER_AUTHORED, { value: true, enumerable: false });
+  return result;
+}
+function tag(result) {
+  if (hasOwnTag(result, WRAPPED)) return result;
+  try {
+    Object.defineProperty(result, WRAPPED, {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: false
+    });
+  } catch {
+  }
+  return result;
+}
+function processTextPart(part, hostname, requestId) {
+  if (part === null || typeof part !== "object") return part;
+  const contentPart = part;
+  let type;
+  let text;
+  try {
+    type = contentPart.type;
+    text = contentPart.text;
+  } catch {
+    return part;
+  }
+  if (type !== "text" || typeof text !== "string") return part;
+  const defended = defendForInline(text, hostname);
+  const finalText = requestId ? applySpotlighting(defended, requestId) : defended;
+  try {
+    return { ...contentPart, text: finalText };
+  } catch {
+    return part;
+  }
+}
+function createWrapper(config) {
+  return function wrap(result, hostname) {
+    if (result === null || typeof result !== "object") return result;
+    if (isWrappedResult(result)) return result;
+    try {
+      if (!Array.isArray(result.content)) return tag(result);
+      const requestId = config.enableSpotlighting && !hasOwnTag(result, SERVER_AUTHORED) ? randomUUID3() : void 0;
+      const newContent = result.content.map(
+        (part) => processTextPart(part, hostname, requestId)
+      );
+      detectStructuredContent(result.structuredContent, hostname);
+      return tag({ ...result, content: newContent });
+    } catch (err) {
+      logWrapError(hostname, err);
+      return tag(result);
+    }
+  };
+}
+function detectStructuredContent(value, hostname) {
+  if (value === null || typeof value !== "object") return;
+  let text;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return;
+  }
+  if (text !== void 0) detectJsonAndLog(text, hostname);
+}
+
 // src/lib/tools/redirect-hop.ts
 var FOLLOWED_REDIRECT_STATUSES = /* @__PURE__ */ new Set([301, 302, 303, 307, 308]);
 var CROSS_ORIGIN_FORWARDED_HEADERS = /* @__PURE__ */ new Set([
@@ -3100,7 +2929,11 @@ Returns:
     "headers": string (response header text; present only with include_headers),
     "stderr": string (if present),
     "saved_to_file": boolean (if response was saved),
-    "filepath": string (path to saved file)
+    "filepath": string (path to saved file),
+    "declared_content_type": string (type/subtype of the Content-Type the server sent, if
+      any; reported only \u2014 whether the body is JSON is decided by parsing it),
+    "metadata_undetermined": boolean (present when the response metadata could not be read,
+      so a missing declared_content_type does not mean the server sent none)
   }
 
 Examples:
@@ -3263,16 +3096,10 @@ async function executeCurlRequest(params, extra = {}) {
       jqFilter: params.jq_filter,
       maxResultSize: params.max_result_size,
       saveToFile: params.save_to_file,
-      contentType,
-      contentTypeUndetermined: !metadataFound,
+      bodyBoundaryUndetermined: !metadataFound,
       outputDir: validatedOutputDir
     });
-    const defendedStderr = result.stderr ? defendText(result.stderr, {
-      contentType: MARKDOWN_MIME,
-      contentTypeUndetermined: false,
-      hostname: safeHostname(hop.url),
-      decodeEntities: false
-    }) : result.stderr;
+    const defendedStderr = result.stderr ? defendText(result.stderr, safeHostname(hop.url)) : result.stderr;
     const inlineBody = processed.savedToFile ? "" : processed.content;
     const output = formatResponse(
       inlineBody,
@@ -3297,11 +3124,17 @@ async function executeCurlRequest(params, extra = {}) {
         undetermined: headersUndetermined,
         unsupported: headersUnsupported
       },
-      // A fidelity fact about the body, reported on both branches: as
-      // `body_decode_lossy` under metadata, and as an appended notice
-      // without it. Silence on either branch would leave a re-encoded
-      // body indistinguishable from an exact one.
-      { decodeWasLossy: processed.decodeWasLossy }
+      // Out-of-band facts about the body. The lossy decode is reported on
+      // both branches — as `body_decode_lossy` under metadata, and as an
+      // appended notice without it — because silence on either would leave a
+      // re-encoded body indistinguishable from an exact one. The declared
+      // type and `metadata_undetermined` are metadata fields only: the plain
+      // branch has one string and no field to carry them in.
+      {
+        decodeWasLossy: processed.decodeWasLossy,
+        declaredContentType: contentType,
+        metadataUndetermined: !metadataFound
+      }
     );
     const headerPart = !params.include_metadata && responseHeaders ? responseHeaders : void 0;
     const noticePart = !params.include_metadata ? plainBranchNotices(
@@ -3403,7 +3236,6 @@ export {
   JqQuerySchema,
   applyJqFilter,
   writeUniqueFile,
-  defendText,
   markServerAuthored,
   createWrapper,
   CURL_EXECUTE_TOOL_META,

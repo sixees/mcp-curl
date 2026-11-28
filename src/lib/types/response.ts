@@ -27,27 +27,15 @@ export interface ProcessResponseOptions {
     /** Force saving response to file regardless of size */
     saveToFile?: boolean;
     /**
-     * The response's media type as **type/subtype only** — never its parameters.
+     * True when the `-w` metadata block was not located, so the end of the body
+     * is unknown — a fact about this server's own parse, never about whether
+     * the origin sent a `Content-Type`.
      *
-     * `parseResponseWithMetadata` is the producer and
-     * `ParsedResponse.contentType` owns the reason. `processResponse` does not
-     * read it: the artefact's form and the saved-file message are decided by
-     * `classifyBody`, never by the declared header, so no model-facing sentence
-     * carries it. Keep it type/subtype only regardless — a raw header here is a
-     * remote-authored channel waiting for its first reader (`LESSONS.md` RC-30).
-     */
-    contentType?: string;
-    /**
-     * True when the content type could not be DETERMINED — the `-w` metadata
-     * block was not located — as distinct from the origin sending none.
-     *
-     * `processResponse` reads it as "the end of the body is unknown", so a
+     * `processResponse` reads it so that a
      * saved file is never described as the origin's exact bytes. Omitted reads
      * as located: a library caller passing its own body knows where it ends.
-     * `defendText` takes a flag of the same name on its own options, where it
-     * selects the strictest grammar; this one does not reach it.
      */
-    contentTypeUndetermined?: boolean;
+    bodyBoundaryUndetermined?: boolean;
     /**
      * Directory for saving large responses (default: temp dir).
      *

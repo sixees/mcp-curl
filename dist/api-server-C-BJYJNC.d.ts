@@ -1,6 +1,6 @@
 import { ToolCallback, McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { C as CurlExecuteInput, J as JqQueryInput, s as CurlExecuteResult, G as GeneratorConfig, f as ApiSchema } from './generator-DlK_AEnr.js';
+import { C as CurlExecuteInput, J as JqQueryInput, s as CurlExecuteResult, G as GeneratorConfig, b as ApiSchema } from './generator-BBozd3k8.js';
 
 /**
  * An embedder-configured per-host limit: at most `max` requests to one host in
@@ -120,9 +120,9 @@ interface McpCurlConfig {
      * `registerCustomTool()`, and synthesised results returned by a
      * `beforeRequest` short-circuit hook — is routed through a single
      * post-processor wrap (`src/lib/response/post-processor.ts`). The wrap
-     * runs the full response-side defence pipeline on each text content part,
-     * under the strictest grammar (this boundary's content type is always
-     * undetermined), then optionally spotlights the result:
+     * runs the response-side defence pipeline on each text content part —
+     * the same fixed pipeline on every part, selected by nothing the part or
+     * its origin declares — then optionally spotlights the result:
      *
      *   1. **Detect** injection patterns against the **original** text and its
      *      sanitised form, and emit a throttled `[injection-defense]` log
@@ -717,4 +717,4 @@ declare function createApiServer(options: CreateApiServerOptions): Promise<McpCu
  */
 declare function createApiServerSync(schema: ApiSchema, options?: ApiServerOptionsBase): McpCurlServer;
 
-export { type AfterResponseHook as A, type BeforeRequestHook as B, type CreateApiServerOptions as C, type ExecuteRequestParams as E, type HookContext as H, type InstanceUtilities as I, type McpCurlConfig as M, type OnErrorHook as O, type TransportMode as T, type BeforeRequestResult as a, type CustomToolMeta as b, McpCurlServer as c, createApiServer as d, createApiServerSync as e, createInstanceUtilities as f, executeJqQuery as g, type HostRateLimit as h };
+export { type AfterResponseHook as A, type BeforeRequestHook as B, type CreateApiServerOptions as C, type ExecuteRequestParams as E, type HookContext as H, type InstanceUtilities as I, type McpCurlConfig as M, type OnErrorHook as O, type TransportMode as T, type BeforeRequestResult as a, type CustomToolMeta as b, type HostRateLimit as c, McpCurlServer as d, createApiServer as e, createApiServerSync as f, createInstanceUtilities as g, executeJqQuery as h };

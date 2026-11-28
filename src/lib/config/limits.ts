@@ -5,18 +5,10 @@
 export const BYTES_PER_MB = 1_000_000;
 
 /**
- * Shared cap for fixed-point sanitisation/strip loops on attacker-controlled
- * text. Used by:
- *   - `response/strip-blocks.ts → stripBlocksFixedPoint` (script/style strip
- *     against self-healing payloads like
- *     `<scr<script>ipt>alert(1)</scr</script>ipt>`).
- *   - `utils/sanitize.ts → sanitizeResponse` (whitespace-padding interleaving
- *     against `(49 spaces + ZWSP) × N` payloads).
- *
- * 4 iterations is a soft termination guarantee — both loops exit early when
- * the transform converges (`next === curr`). This shared constant makes the
- * relationship explicit so a future maintainer can see they are intended to
- * share a value, not drift independently.
+ * Cap for `utils/sanitize.ts → sanitizeResponse`'s fixed-point loop, which
+ * iterates against whitespace-padding interleaving (`(49 spaces + ZWSP) × N`).
+ * A soft termination guarantee: the loop exits early once the transform
+ * converges (`next === curr`).
  */
 export const FIXED_POINT_MAX_ITERATIONS = 4;
 
@@ -60,8 +52,7 @@ export const LIMITS = {
      * `%{content_type}` is echoed verbatim from the origin with no length limit
      * of its own. 8KB covers every realistic origin (cURL permits ~100KB per
      * header line, but no real service approaches that in a Content-Type); a
-     * longer value is absent rather than truncated, which selects the strictest
-     * grammar downstream.
+     * longer value is absent rather than truncated, never partial.
      */
     MAX_CONTENT_TYPE_FIELD_LENGTH: CONTENT_TYPE_FIELD_BYTES,
     /**
@@ -88,7 +79,7 @@ export const LIMITS = {
      * `application/vnd.api+json; charset=utf-8; profile="…"` evicted the
      * separator at ~144 characters. The parse then found no separator, reported
      * every cURL-authored field as absent, and the caller silently lost both the
-     * header/body split and the content-type-driven strip stages.
+     * header/body split and every other metadata field.
      *
      * Beyond it the parse fails closed and the caller is told the metadata is
      * undetermined.
